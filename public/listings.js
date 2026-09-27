@@ -1,4 +1,6 @@
-const TAX_RATE = 0.0825;
+const TAX_RATE = 0.0825; // Temporary estimate for testing
+const SELLING_FEE_RATE = 0.13; // Temporary test estimate
+const OUTBOUND_SHIPPING = 6;
 
 function formatTimeRemaining(endTime) {
     const end = new Date(endTime);
@@ -44,6 +46,15 @@ function createListingElement(listing) {
     const estimatedTax = Math.round(subtotal * TAX_RATE * 100) / 100;
     const acquisitionCost = subtotal + estimatedTax;
 
+    const estimatedSellingFees =
+        listing.estimatedResalePrice * SELLING_FEE_RATE;
+
+    const estimatedProfit =
+        listing.estimatedResalePrice -
+        estimatedSellingFees -
+        OUTBOUND_SHIPPING -
+        acquisitionCost;
+
     const currentCost = document.createElement("p");
     currentCost.textContent =
         `Current cost before tax: $${subtotal.toFixed(2)}`;
@@ -55,6 +66,18 @@ function createListingElement(listing) {
     const acquisition = document.createElement("p");
     acquisition.textContent =
         `Estimated acquisition cost: $${acquisitionCost.toFixed(2)}`;
+
+    const resalePrice = document.createElement("p");
+    resalePrice.textContent =
+        `Estimated resale price: $${listing.estimatedResalePrice.toFixed(2)}`;
+
+    const sellingFees = document.createElement("p");
+    sellingFees.textContent =
+        `Estimated selling fees: $${estimatedSellingFees.toFixed(2)}`;
+
+    const profit = document.createElement("p");
+    profit.textContent =
+        `Estimated profit: $${estimatedProfit.toFixed(2)}`;
 
     const bids = document.createElement("p");
     bids.textContent = `Bids: ${listing.bids}`;
@@ -76,6 +99,9 @@ function createListingElement(listing) {
         currentCost,
         tax,
         acquisition,
+        resalePrice,
+        sellingFees,
+        profit,
         bids,
         ending,
         link
