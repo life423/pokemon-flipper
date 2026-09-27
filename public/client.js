@@ -50,8 +50,9 @@ function renderSortedListings() {
 
     const filteredListings = currentListings.filter((listing) => {
         const metrics = calculateFlipMetrics(listing);
+        const isActive = new Date(listing.endTime) > new Date();
 
-        return metrics.roi >= minimumRoi;
+        return metrics.roi >= minimumRoi && isActive;
     });
 
     const sortedListings = sortListings(
