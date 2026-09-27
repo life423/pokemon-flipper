@@ -1,33 +1,58 @@
-// const searchInput = document.querySelector("#search");
-//     const searchButton = document.querySelector("#searchButton");
-//     const results = document.querySelector("#results");
-
-//     searchButton.addEventListener("click", async () => {
-//       const search = searchInput.value;
-
-//       const response = await fetch(
-//         `/api/listings?q=${encodeURIComponent(search)}`
-//       );
-
-//       const listings = await response.json();
-
-//       console.log(listings);
-//     });
-
 const searchForm = document.querySelector("#searchForm");
 const searchInput = document.querySelector("#search");
 const results = document.querySelector("#results");
 
 searchForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
+    event.preventDefault();
 
-  const search = searchInput.value;
+    const search = searchInput.value;
 
-  const response = await fetch(
-    `/api/listings?q=${encodeURIComponent(search)}`
-  );
+    try {
+        results.textContent = "Searching...";
 
-  const listings = await response.json();
+        const response = await fetch(
+            `/api/listings?q=${encodeURIComponent(search)}`
+        );
 
-  console.log(listings);
+        if (!response.ok) {
+            throw new Error("Search request failed");
+        }
+
+        const listings = await response.json();
+
+        results.replaceChildren();
+
+        if (listings.length === 0) {
+            results.textContent = "No listings found.";
+            return;
+        }
+
+        for (const listing of listings) {
+            const listingElement = document.createElement("article");
+
+            const title = document.createElement("h2");
+            title.textContent = listing.title;
+
+            const price = document.createElement("p");
+            price.textContent = `Price: $${listing.price}`;
+
+            const shipping = document.createElement("p");
+            shipping.textContent = `Shipping: $${listing.shipping}`;
+
+            const bids = document.createElement("p");
+            bids.textContent = `Bids: ${listing.bids}`;
+
+            const link = document.createElement("a");
+            link.href = listing.url;
+            link.textContent = "View on eBay";
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+
+            listingElement.append(title, price, shipping, bids, link);
+            results.append(listingElement);
+        }
+    } catch (error) {
+        console.error(error);
+        results.textContent = "Something went wrong while searching.";
+    }
 });
