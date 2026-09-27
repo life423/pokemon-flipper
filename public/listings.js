@@ -55,6 +55,8 @@ function createListingElement(listing) {
         OUTBOUND_SHIPPING -
         acquisitionCost;
 
+    const roi = (estimatedProfit / acquisitionCost) * 100;
+
     const currentCost = document.createElement("p");
     currentCost.textContent =
         `Current cost before tax: $${subtotal.toFixed(2)}`;
@@ -75,9 +77,16 @@ function createListingElement(listing) {
     sellingFees.textContent =
         `Estimated selling fees: $${estimatedSellingFees.toFixed(2)}`;
 
+    const outboundShipping = document.createElement("p");
+    outboundShipping.textContent =
+        `Estimated outbound shipping: $${OUTBOUND_SHIPPING.toFixed(2)}`;
+
     const profit = document.createElement("p");
     profit.textContent =
         `Estimated profit: $${estimatedProfit.toFixed(2)}`;
+
+    const roiElement = document.createElement("p");
+    roiElement.textContent = `Estimated ROI: ${roi.toFixed(1)}%`;
 
     const bids = document.createElement("p");
     bids.textContent = `Bids: ${listing.bids}`;
@@ -101,7 +110,9 @@ function createListingElement(listing) {
         acquisition,
         resalePrice,
         sellingFees,
+        outboundShipping,
         profit,
+        roiElement,
         bids,
         ending,
         link
