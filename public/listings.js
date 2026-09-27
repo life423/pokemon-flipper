@@ -1,3 +1,5 @@
+const TAX_RATE = 0.0825;
+
 function formatTimeRemaining(endTime) {
     const end = new Date(endTime);
     const now = new Date();
@@ -33,10 +35,26 @@ function createListingElement(listing) {
     title.textContent = listing.title;
 
     const price = document.createElement("p");
-    price.textContent = `Current price: $${listing.currentPrice}`;
+    price.textContent = `Current price: $${listing.currentPrice.toFixed(2)}`;
 
     const shipping = document.createElement("p");
-    shipping.textContent = `Shipping: $${listing.shipping}`;
+    shipping.textContent = `Shipping: $${listing.shipping.toFixed(2)}`;
+
+    const subtotal = listing.currentPrice + listing.shipping;
+    const estimatedTax = Math.round(subtotal * TAX_RATE * 100) / 100;
+    const acquisitionCost = subtotal + estimatedTax;
+
+    const currentCost = document.createElement("p");
+    currentCost.textContent =
+        `Current cost before tax: $${subtotal.toFixed(2)}`;
+
+    const tax = document.createElement("p");
+    tax.textContent =
+        `Estimated tax: $${estimatedTax.toFixed(2)}`;
+
+    const acquisition = document.createElement("p");
+    acquisition.textContent =
+        `Estimated acquisition cost: $${acquisitionCost.toFixed(2)}`;
 
     const bids = document.createElement("p");
     bids.textContent = `Bids: ${listing.bids}`;
@@ -50,7 +68,18 @@ function createListingElement(listing) {
     link.target = "_blank";
     link.rel = "noopener noreferrer";
 
-    listingElement.append(image, title, price, shipping, bids, ending, link);
+    listingElement.append(
+        image,
+        title,
+        price,
+        shipping,
+        currentCost,
+        tax,
+        acquisition,
+        bids,
+        ending,
+        link
+    );
 
     return listingElement;
 }
