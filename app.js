@@ -11,9 +11,9 @@ app.get("/", (req, res) => {
   res.send("Pokemon Flipper is running");
 });
 
-app.get("/api/listings", (req, res) => {
+app.get("/api/listings", async (req, res) => {
     const search = req.query.q || "";
-    const listings = getListings(search);
+    const listings = await getListings(search);
   
     res.json(listings);
   });

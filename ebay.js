@@ -1,4 +1,4 @@
-export function getListings(search = "") {
+export async function getListings(search = "") {
     const listings = [
       {
         title: "1999 Pokemon Charizard Holo #4",
