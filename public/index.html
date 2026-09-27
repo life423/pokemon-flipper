@@ -2,9 +2,13 @@
 <html lang="en">
     <head>
         <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1.0"
+        />
 
         <title>Pokemon Flipper</title>
+
         <link rel="icon" type="image/x-icon" href="/favicon.ico" />
         <link
             rel="icon"
@@ -23,11 +27,17 @@
     <body>
         <h1>Pokemon Flipper</h1>
 
-        <label for="search">Search Pokemon cards</label>
+        <form id="searchForm">
+            <label for="search">Search Pokemon cards</label>
 
-        <input id="search" type="text" placeholder="Charizard, Lugia, etc." />
+            <input
+                id="search"
+                type="text"
+                placeholder="Charizard, Lugia, etc."
+            />
 
-        <button id="searchButton">Search</button>
+            <button type="submit">Search</button>
+        </form>
 
         <div id="results"></div>
 
