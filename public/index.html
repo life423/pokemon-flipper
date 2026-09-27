@@ -54,6 +54,18 @@
             <option value="price">Lowest current price</option>
         </select>
 
+        <label for="minRoi">Minimum ROI</label>
+
+        <input
+            id="minRoi"
+            type="number"
+            min="0"
+            step="1"
+            value="0"
+        />
+
+        <span>%</span>
+
         <div id="results"></div>
 
         <script type="module" src="/client.js"></script>

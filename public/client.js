@@ -5,6 +5,7 @@ const searchForm = document.querySelector("#searchForm");
 const searchInput = document.querySelector("#search");
 const results = document.querySelector("#results");
 const sortSelect = document.querySelector("#sort");
+const minRoiInput = document.querySelector("#minRoi");
 
 let currentListings = [];
 
@@ -45,8 +46,16 @@ function sortListings(listings, sortBy) {
 }
 
 function renderSortedListings() {
+    const minimumRoi = Number(minRoiInput.value) || 0;
+
+    const filteredListings = currentListings.filter((listing) => {
+        const metrics = calculateFlipMetrics(listing);
+
+        return metrics.roi >= minimumRoi;
+    });
+
     const sortedListings = sortListings(
-        currentListings,
+        filteredListings,
         sortSelect.value
     );
 
@@ -79,5 +88,9 @@ searchForm.addEventListener("submit", async (event) => {
 });
 
 sortSelect.addEventListener("change", () => {
+    renderSortedListings();
+});
+
+minRoiInput.addEventListener("input", () => {
     renderSortedListings();
 });
