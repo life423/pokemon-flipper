@@ -1,6 +1,4 @@
-const TAX_RATE = 0.0825; // Temporary estimate for testing
-const SELLING_FEE_RATE = 0.13; // Temporary test estimate
-const OUTBOUND_SHIPPING = 6;
+import { calculateFlipMetrics } from "./flip.js";
 
 function formatTimeRemaining(endTime) {
     const end = new Date(endTime);
@@ -42,32 +40,19 @@ function createListingElement(listing) {
     const shipping = document.createElement("p");
     shipping.textContent = `Shipping: $${listing.shipping.toFixed(2)}`;
 
-    const subtotal = listing.currentPrice + listing.shipping;
-    const estimatedTax = Math.round(subtotal * TAX_RATE * 100) / 100;
-    const acquisitionCost = subtotal + estimatedTax;
-
-    const estimatedSellingFees =
-        listing.estimatedResalePrice * SELLING_FEE_RATE;
-
-    const estimatedProfit =
-        listing.estimatedResalePrice -
-        estimatedSellingFees -
-        OUTBOUND_SHIPPING -
-        acquisitionCost;
-
-    const roi = (estimatedProfit / acquisitionCost) * 100;
+    const metrics = calculateFlipMetrics(listing);
 
     const currentCost = document.createElement("p");
     currentCost.textContent =
-        `Current cost before tax: $${subtotal.toFixed(2)}`;
+        `Current cost before tax: $${metrics.subtotal.toFixed(2)}`;
 
     const tax = document.createElement("p");
     tax.textContent =
-        `Estimated tax: $${estimatedTax.toFixed(2)}`;
+        `Estimated tax: $${metrics.estimatedTax.toFixed(2)}`;
 
     const acquisition = document.createElement("p");
     acquisition.textContent =
-        `Estimated acquisition cost: $${acquisitionCost.toFixed(2)}`;
+        `Estimated acquisition cost: $${metrics.acquisitionCost.toFixed(2)}`;
 
     const resalePrice = document.createElement("p");
     resalePrice.textContent =
@@ -75,18 +60,18 @@ function createListingElement(listing) {
 
     const sellingFees = document.createElement("p");
     sellingFees.textContent =
-        `Estimated selling fees: $${estimatedSellingFees.toFixed(2)}`;
+        `Estimated selling fees: $${metrics.estimatedSellingFees.toFixed(2)}`;
 
     const outboundShipping = document.createElement("p");
     outboundShipping.textContent =
-        `Estimated outbound shipping: $${OUTBOUND_SHIPPING.toFixed(2)}`;
+        `Estimated outbound shipping: $${metrics.outboundShipping.toFixed(2)}`;
 
     const profit = document.createElement("p");
     profit.textContent =
-        `Estimated profit: $${estimatedProfit.toFixed(2)}`;
+        `Estimated profit: $${metrics.estimatedProfit.toFixed(2)}`;
 
     const roiElement = document.createElement("p");
-    roiElement.textContent = `Estimated ROI: ${roi.toFixed(1)}%`;
+    roiElement.textContent = `Estimated ROI: ${metrics.roi.toFixed(1)}%`;
 
     const bids = document.createElement("p");
     bids.textContent = `Bids: ${listing.bids}`;
