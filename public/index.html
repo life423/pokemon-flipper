@@ -1,45 +1,23 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <title>Pokemon Flipper</title>
-</head>
+        <title>Pokemon Flipper</title>
+    </head>
 
-<body>
-  <h1>Pokemon Flipper</h1>
+    <body>
+        <h1>Pokemon Flipper</h1>
 
-  <label for="search">Search Pokemon cards</label>
+        <label for="search">Search Pokemon cards</label>
 
-  <input
-    id="search"
-    type="text"
-    placeholder="Charizard, Lugia, etc."
-  >
+        <input id="search" type="text" placeholder="Charizard, Lugia, etc." />
 
-  <button id="searchButton">
-    Search
-  </button>
+        <button id="searchButton">Search</button>
 
-  <div id="results"></div>
+        <div id="results"></div>
 
-  <script>
-    const searchInput = document.querySelector("#search");
-    const searchButton = document.querySelector("#searchButton");
-    const results = document.querySelector("#results");
-
-    searchButton.addEventListener("click", async () => {
-      const search = searchInput.value;
-
-      const response = await fetch(
-        `/api/listings?q=${encodeURIComponent(search)}`
-      );
-
-      const listings = await response.json();
-
-      console.log(listings);
-    });
-  </script>
-</body>
+        <script src="/client.js"></script>
+    </body>
 </html>
