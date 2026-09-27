@@ -1,58 +1,64 @@
-const searchForm = document.querySelector("#searchForm");
-const searchInput = document.querySelector("#search");
-const results = document.querySelector("#results");
+const searchForm = document.querySelector('#searchForm')
+const searchInput = document.querySelector('#search')
+const results = document.querySelector('#results')
 
-searchForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
+searchForm.addEventListener('submit', async event => {
+    event.preventDefault()
 
-    const search = searchInput.value;
+    const search = searchInput.value
 
     try {
-        results.textContent = "Searching...";
+        results.textContent = 'Searching...'
 
         const response = await fetch(
             `/api/listings?q=${encodeURIComponent(search)}`
-        );
+        )
 
         if (!response.ok) {
-            throw new Error("Search request failed");
+            throw new Error('Search request failed')
         }
 
-        const listings = await response.json();
+        const listings = await response.json()
 
-        results.replaceChildren();
+        results.replaceChildren()
 
         if (listings.length === 0) {
-            results.textContent = "No listings found.";
-            return;
+            results.textContent = 'No listings found.'
+            return
         }
 
         for (const listing of listings) {
-            const listingElement = document.createElement("article");
+            const listingElement = document.createElement('article')
 
-            const title = document.createElement("h2");
-            title.textContent = listing.title;
+            const image = document.createElement('img')
+            image.src = listing.image
+            image.alt = listing.title
+            image.width = 250
 
-            const price = document.createElement("p");
-            price.textContent = `Price: $${listing.price}`;
+            const title = document.createElement('h2')
+            title.textContent = listing.title
 
-            const shipping = document.createElement("p");
-            shipping.textContent = `Shipping: $${listing.shipping}`;
+            const price = document.createElement('p')
+            price.textContent = `Price: $${listing.price}`
 
-            const bids = document.createElement("p");
-            bids.textContent = `Bids: ${listing.bids}`;
+            const shipping = document.createElement('p')
+            shipping.textContent = `Shipping: $${listing.shipping}`
 
-            const link = document.createElement("a");
-            link.href = listing.url;
-            link.textContent = "View on eBay";
-            link.target = "_blank";
-            link.rel = "noopener noreferrer";
+            const bids = document.createElement('p')
+            bids.textContent = `Bids: ${listing.bids}`
 
-            listingElement.append(title, price, shipping, bids, link);
-            results.append(listingElement);
+            const link = document.createElement('a')
+            link.href = listing.url
+            link.textContent = 'View on eBay'
+            link.target = '_blank'
+            link.rel = 'noopener noreferrer'
+
+            listingElement.append(image, title, price, shipping, bids, link)
+
+            results.append(listingElement)
         }
     } catch (error) {
-        console.error(error);
-        results.textContent = "Something went wrong while searching.";
+        console.error(error)
+        results.textContent = 'Something went wrong while searching.'
     }
-});
+})
