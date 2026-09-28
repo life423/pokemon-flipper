@@ -19,7 +19,7 @@ export async function getListings(search = "") {
             shipping: 4.99,
             bids: 7,
             buyingOption: "AUCTION",
-            endTime: "2026-08-28T19:15:00",
+            endTime: "2026-10-04T19:15:00",
             estimatedResalePrice: 300,
             image: "/images/lugia.png",
             url: "https://www.ebay.com/",

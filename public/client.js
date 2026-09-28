@@ -6,6 +6,8 @@ const searchInput = document.querySelector("#search");
 const results = document.querySelector("#results");
 const sortSelect = document.querySelector("#sort");
 const minRoiInput = document.querySelector("#minRoi");
+const minCostInput = document.querySelector("#minCost");
+const maxCostInput = document.querySelector("#maxCost");
 
 let currentListings = [];
 
@@ -48,11 +50,37 @@ function sortListings(listings, sortBy) {
 function renderSortedListings() {
     const minimumRoi = Number(minRoiInput.value) || 0;
 
+    const minimumCost =
+        minCostInput.value === ""
+            ? 0
+            : Number(minCostInput.value);
+
+    const maximumCost =
+        maxCostInput.value === ""
+            ? Infinity
+            : Number(maxCostInput.value);
+
     const filteredListings = currentListings.filter((listing) => {
         const metrics = calculateFlipMetrics(listing);
-        const isActive = new Date(listing.endTime) > new Date();
 
-        return metrics.roi >= minimumRoi && isActive;
+        const isActive =
+            new Date(listing.endTime) > new Date();
+
+        const meetsRoi =
+            metrics.roi >= minimumRoi;
+
+        const meetsMinimumCost =
+            metrics.acquisitionCost >= minimumCost;
+
+        const meetsMaximumCost =
+            metrics.acquisitionCost <= maximumCost;
+
+        return (
+            isActive &&
+            meetsRoi &&
+            meetsMinimumCost &&
+            meetsMaximumCost
+        );
     });
 
     const sortedListings = sortListings(
@@ -93,5 +121,13 @@ sortSelect.addEventListener("change", () => {
 });
 
 minRoiInput.addEventListener("input", () => {
+    renderSortedListings();
+});
+
+minCostInput.addEventListener("input", () => {
+    renderSortedListings();
+});
+
+maxCostInput.addEventListener("input", () => {
     renderSortedListings();
 });

@@ -66,6 +66,26 @@
 
         <span>%</span>
 
+        <label for="minCost">Minimum cost</label>
+        <span>$</span>
+        <input
+            id="minCost"
+            type="number"
+            min="0"
+            step="1"
+            placeholder="No minimum"
+        />
+
+        <label for="maxCost">Maximum cost</label>
+        <span>$</span>
+        <input
+            id="maxCost"
+            type="number"
+            min="0"
+            step="1"
+            placeholder="No maximum"
+        />
+
         <div id="results"></div>
 
         <script type="module" src="/client.js"></script>
