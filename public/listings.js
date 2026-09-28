@@ -26,10 +26,17 @@ function formatTimeRemaining(endTime) {
 function createListingElement(listing) {
     const listingElement = document.createElement("article");
 
-    const image = document.createElement("img");
-    image.src = listing.image;
-    image.alt = listing.title;
-    image.width = 250;
+    const images = document.createElement("div");
+
+    for (const [index, imageUrl] of listing.images.entries()) {
+        const image = document.createElement("img");
+
+        image.src = imageUrl;
+        image.alt = `${listing.title} image ${index + 1}`;
+        image.width = 250;
+
+        images.append(image);
+    }
 
     const title = document.createElement("h2");
     title.textContent = listing.title;
@@ -86,7 +93,7 @@ function createListingElement(listing) {
     link.rel = "noopener noreferrer";
 
     listingElement.append(
-        image,
+        images,
         title,
         price,
         shipping,

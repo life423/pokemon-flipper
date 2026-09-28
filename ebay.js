@@ -9,7 +9,10 @@ export async function getListings(search = "") {
             buyingOption: "AUCTION",
             endTime: "2026-09-27T22:30:00",
             estimatedResalePrice: 500,
-            image: "/images/charizard.png",
+            images: [
+                "/images/charizard-front.png",
+                "/images/charizard-back.jpeg",
+            ],
             url: "https://www.ebay.com/",
         },
         {
@@ -21,7 +24,9 @@ export async function getListings(search = "") {
             buyingOption: "AUCTION",
             endTime: "2026-10-04T19:15:00",
             estimatedResalePrice: 300,
-            image: "/images/lugia.png",
+            images: [
+                "/images/lugia.png",
+            ],
             url: "https://www.ebay.com/",
         },
     ];

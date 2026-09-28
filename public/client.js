@@ -8,6 +8,7 @@ const sortSelect = document.querySelector("#sort");
 const minRoiInput = document.querySelector("#minRoi");
 const minCostInput = document.querySelector("#minCost");
 const maxCostInput = document.querySelector("#maxCost");
+const minProfitInput = document.querySelector("#minProfit");
 
 let currentListings = [];
 
@@ -60,6 +61,11 @@ function renderSortedListings() {
             ? Infinity
             : Number(maxCostInput.value);
 
+    const minimumProfit =
+        minProfitInput.value === ""
+            ? 0
+            : Number(minProfitInput.value);
+
     const filteredListings = currentListings.filter((listing) => {
         const metrics = calculateFlipMetrics(listing);
 
@@ -75,11 +81,15 @@ function renderSortedListings() {
         const meetsMaximumCost =
             metrics.acquisitionCost <= maximumCost;
 
+        const meetsMinimumProfit =
+            metrics.estimatedProfit >= minimumProfit;
+
         return (
             isActive &&
             meetsRoi &&
             meetsMinimumCost &&
-            meetsMaximumCost
+            meetsMaximumCost &&
+            meetsMinimumProfit
         );
     });
 
@@ -129,5 +139,9 @@ minCostInput.addEventListener("input", () => {
 });
 
 maxCostInput.addEventListener("input", () => {
+    renderSortedListings();
+});
+
+minProfitInput.addEventListener("input", () => {
     renderSortedListings();
 });

@@ -1,6 +1,10 @@
 import "dotenv/config";
 import express from "express";
 import { getListings } from "./ebay.js";
+import {
+    testOpenAI,
+    testImageAnalysis,
+} from "./openai.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -26,6 +30,39 @@ app.get("/api/listings", async (req, res) => {
       });
     }
   });
+
+app.get("/api/openai/test", async (req, res) => {
+    try {
+        const result = await testOpenAI();
+
+        res.json({
+            result,
+        });
+    } catch (error) {
+        console.error(error);
+
+        res.status(500).json({
+            error: "OpenAI API test failed",
+        });
+    }
+});
+
+app.get("/api/openai/image-test", async (req, res) => {
+    try {
+        const result = await testImageAnalysis();
+
+        res.json({
+            result,
+        });
+    } catch (error) {
+        console.error(error);
+
+        res.status(500).json({
+            error: "OpenAI image test failed",
+            message: error.message,
+        });
+    }
+});
 
 app.listen(PORT, () => {
   console.log(`Server listening on http://localhost:${PORT}`);
