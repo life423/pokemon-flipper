@@ -6,6 +6,7 @@ import {
     testImageAnalysis,
     analyzeListingPhotos,
 } from "./openai.js";
+import { evaluateListing } from "./grading.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -75,6 +76,21 @@ app.get("/api/openai/listing-test", async (req, res) => {
 
         res.status(500).json({
             error: "Listing photo analysis failed",
+            message: error.message,
+        });
+    }
+});
+
+app.get("/api/openai/evaluate-test", async (req, res) => {
+    try {
+        const evaluation = await evaluateListing();
+
+        res.json(evaluation);
+    } catch (error) {
+        console.error(error);
+
+        res.status(500).json({
+            error: "Listing evaluation failed",
             message: error.message,
         });
     }
