@@ -7,7 +7,7 @@ export async function getListings(search = "") {
             shipping: 5.99,
             bids: 12,
             buyingOption: "AUCTION",
-            endTime: "2026-09-27T22:30:00",
+            endTime: "2026-10-27T22:30:00",
             estimatedResalePrice: 500,
             images: [
                 "/images/charizard-front.jpg",
