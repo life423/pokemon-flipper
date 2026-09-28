@@ -1,4 +1,7 @@
-import { analyzeListingPhotos } from "./openai.js";
+import {
+    analyzeListingPhotos,
+    estimateCardGrade,
+} from "./openai.js";
 
 // Maps the photo-sufficiency verdict to how much grading we allow:
 //   SUFFICIENT → FULL    (normal grade range)
@@ -35,10 +38,21 @@ export async function evaluateListing() {
     // Grade estimation will go here, and must respect gradingMode:
     //   FULL    → normal grade range
     //   LIMITED → wider/conservative range, low confidence, warnings
+    const gradeEstimate = await estimateCardGrade(
+        photoAnalysis,
+        gradingMode
+    );
+
+    // Enforced in code, not just the prompt: LIMITED evidence
+    // can never produce more than LOW confidence.
+    if (gradingMode === "LIMITED") {
+        gradeEstimate.confidence = "LOW";
+    }
+
     return {
         photoAnalysis,
         gradingMode,
-        gradeStatus: "NOT_IMPLEMENTED",
-        gradeEstimate: null,
+        gradeStatus: "ESTIMATED",
+        gradeEstimate,
     };
 }
