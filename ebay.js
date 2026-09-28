@@ -10,8 +10,8 @@ export async function getListings(search = "") {
             endTime: "2026-09-27T22:30:00",
             estimatedResalePrice: 500,
             images: [
-                "/images/charizard-front.png",
-                "/images/charizard-back.jpeg",
+                "/images/charizard-front.jpg",
+                "/images/charizard-back.png",
             ],
             url: "https://www.ebay.com/",
         },

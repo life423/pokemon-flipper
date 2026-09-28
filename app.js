@@ -4,6 +4,7 @@ import { getListings } from "./ebay.js";
 import {
     testOpenAI,
     testImageAnalysis,
+    analyzeListingPhotos,
 } from "./openai.js";
 
 const app = express();
@@ -59,6 +60,21 @@ app.get("/api/openai/image-test", async (req, res) => {
 
         res.status(500).json({
             error: "OpenAI image test failed",
+            message: error.message,
+        });
+    }
+});
+
+app.get("/api/openai/listing-test", async (req, res) => {
+    try {
+        const analysis = await analyzeListingPhotos();
+
+        res.json(analysis);
+    } catch (error) {
+        console.error(error);
+
+        res.status(500).json({
+            error: "Listing photo analysis failed",
             message: error.message,
         });
     }
