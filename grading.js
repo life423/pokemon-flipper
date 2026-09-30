@@ -11,6 +11,10 @@ import {
     reusableRecord,
     assessmentStillFits,
 } from "./evaluation-store.js";
+import { identifyCard } from "./card-identity.js";
+import { rawPricesFor } from "./pricing.js";
+import { lookupCards, fetchComps } from "./pkmnprices.js";
+import { gradedPricesFor } from "./graded-comps.js";
 
 // Cost cap: only the first photos, in the seller's order.
 const MAX_PHOTOS = 8;
@@ -255,6 +259,9 @@ export async function evaluateListing(
         gradeStatus: "SKIPPED",
         condition: null,
         answeredAt: null,
+        identity: null,
+        rawPricing: null,
+        gradedPricing: null,
         reusedSteps: [],
         usage: [],
     };
@@ -303,6 +310,20 @@ export async function evaluateListing(
     const { mode, reasons } = getGradingMode(checkedPhotos);
     evaluation.gradingMode = mode;
     evaluation.modeReasons = reasons;
+
+    let identifiedCard = null;
+
+    // Identity and raw pricing don't depend on the grading mode, only
+    // on the listing showing one ungraded card.
+    if (checkedPhotos.cardCount === "ONE" && checkedPhotos.holder !== "GRADED_SLAB") {
+        const { identity, card } = await identifyCard(listing, checkedPhotos, {
+            lookupCards,
+        });
+
+        identifiedCard = card;
+        evaluation.identity = identity;
+        evaluation.rawPricing = rawPricesFor(card, identity);
+    }
 
     if (mode !== "BLOCKED") {
         // Only the clear photos go to the (more expensive) condition step.
@@ -363,6 +384,23 @@ export async function evaluateListing(
             evaluation.gradeStatus = "ESTIMATED";
             evaluation.condition = condition;
             evaluation.setAside = (record.assessment.setAside ?? []).map(summarizeAnswer);
+
+            // Graded prices need an identified card and a grade range.
+            if (identifiedCard) {
+                try {
+                    evaluation.gradedPricing = await gradedPricesFor(
+                        identifiedCard,
+                        evaluation.identity,
+                        condition.gradeRange,
+                        { fetchComps }
+                    );
+                } catch (error) {
+                    evaluation.gradedPricing = {
+                        status: "PRICE_UNAVAILABLE",
+                        reason: `The comp lookup failed: ${error.message}`,
+                    };
+                }
+            }
         }
     }
 

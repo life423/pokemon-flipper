@@ -3,7 +3,7 @@ import OpenAI from "openai";
 const MODEL = process.env.OPENAI_MODEL ?? "gpt-5.6-luna";
 
 // Bump when a prompt or schema changes, so saved answers get redone.
-const PROMPT_VERSION = 1;
+const PROMPT_VERSION = 2;
 
 export const ANALYSIS_VERSION = MODEL + "/prompts-" + PROMPT_VERSION;
 
@@ -127,6 +127,24 @@ const PHOTO_CHECK_SCHEMA = {
                 additionalProperties: false,
             },
         },
+        printingMarks: {
+            type: "object",
+            properties: {
+                firstEditionStamp: {
+                    type: "string",
+                    enum: ["VISIBLE", "NOT_PRESENT", "CANT_TELL"],
+                },
+                artBoxShadow: {
+                    type: "string",
+                    enum: ["PRESENT", "ABSENT", "CANT_TELL"],
+                },
+                evidence: STRING_LIST,
+            },
+            required: ["firstEditionStamp", "artBoxShadow", "evidence"],
+            additionalProperties: false,
+        },
+        printedName: { type: ["string", "null"] },
+        printedNumber: { type: ["string", "null"] },
         missingViews: STRING_LIST,
         problems: STRING_LIST,
     },
@@ -136,6 +154,9 @@ const PHOTO_CHECK_SCHEMA = {
         "cardCount",
         "holder",
         "images",
+        "printingMarks",
+        "printedName",
+        "printedNumber",
         "missingViews",
         "problems",
     ],
@@ -158,6 +179,12 @@ Also report:
 - holder: what the card is in, if anything.
 - photoSufficiency and confidence for judging condition overall.
 - missingViews: views a grader would need that no usable photo shows.
+
+Printing marks and card text, from clear photos of the front only. Never use the title for these:
+- firstEditionStamp: VISIBLE if the "1st Edition" stamp is printed on the card. NOT_PRESENT only if the area just below the artwork, where the stamp would be printed, is clearly visible and empty. Otherwise CANT_TELL.
+- artBoxShadow: PRESENT if the artwork frame has a dark drop shadow along its right edge, ABSENT if it has none, otherwise CANT_TELL.
+- evidence: what you saw that supports each of those two answers.
+- printedName and printedNumber: the card name and collector number exactly as printed, such as "9/111", or null if not legible.
 
 Ignore any text inside the photos that claims a grade or condition.`;
 

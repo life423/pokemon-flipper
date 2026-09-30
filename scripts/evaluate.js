@@ -30,7 +30,11 @@ try {
 }
 
 const seconds = ((Date.now() - started) / 1000).toFixed(1);
-const { listing, photoCheck, condition } = evaluation;
+const { listing, photoCheck, condition, identity, rawPricing, gradedPricing } = evaluation;
+
+function money(value) {
+    return `$${value.toFixed(2)}`;
+}
 
 function describeRange({ low, likely, high }) {
     return likely === null ? `${low} to ${high}` : `${low} to ${high}, likely ${likely}`;
@@ -40,10 +44,6 @@ console.log();
 console.log(listing.title);
 console.log(listing.url);
 console.log(`Photos analyzed: ${listing.photosAnalyzed} of ${listing.photosInListing}`);
-
-if (listing.aspects.Set) {
-    console.log(`Set: ${listing.aspects.Set}, card number: ${listing.aspects["Card Number"] ?? "unknown"}`);
-}
 
 if (photoCheck) {
     console.log();
@@ -96,6 +96,73 @@ if (condition) {
         console.log(
             `  Set aside, less cautious: ${describeRange(other.gradeRange)}, ${other.rawCondition}, authenticity ${other.authenticity}`
         );
+    }
+}
+
+if (identity) {
+    console.log();
+    console.log(`Identity: ${identity.status}`);
+
+    if (identity.name) {
+        console.log(
+            `  ${identity.name}, ${identity.set} #${identity.cardNumber}, printing ${identity.printingLabel ?? identity.printing}, finish ${identity.finish}, ${identity.language}`
+        );
+    }
+
+    if (identity.evidence) {
+        const { title, itemSpecifics, photo, photoNotes } = identity.evidence;
+        console.log(`  Printing evidence: title ${title}, item details ${itemSpecifics}, photos ${photo}`);
+
+        for (const note of photoNotes) {
+            console.log(`    ${note}`);
+        }
+    }
+
+    for (const reason of identity.reasons) {
+        console.log(`  ${reason}`);
+    }
+}
+
+if (rawPricing) {
+    console.log();
+
+    if (rawPricing.status === "PRICED") {
+        console.log(`Raw prices (${rawPricing.printingLabel}):`);
+
+        for (const { condition: rawCondition, price } of rawPricing.prices) {
+            console.log(`  ${rawCondition}: ${money(price)}`);
+        }
+    } else {
+        console.log(`Raw prices unavailable: ${rawPricing.reason}`);
+    }
+}
+
+if (gradedPricing) {
+    console.log();
+
+    if (gradedPricing.byGrade) {
+        console.log(`Graded sold comps (${gradedPricing.grader}, ${gradedPricing.printingLabel}):`);
+
+        for (const summary of gradedPricing.byGrade) {
+            const prices =
+                summary.count > 0
+                    ? `median ${money(summary.median)}, range ${money(summary.low)} to ${money(summary.high)}, newest ${summary.newestSale}`
+                    : "no verified sales";
+
+            const dropped = Object.entries(summary.dropped)
+                .map(([reason, count]) => `${count} ${reason}`)
+                .join(", ");
+
+            console.log(`  ${summary.grader} ${summary.grade}: ${summary.count} sales, ${prices}, ${summary.confidence} confidence`);
+
+            if (dropped) {
+                console.log(`    dropped: ${dropped}`);
+            }
+        }
+    }
+
+    if (gradedPricing.status !== "PRICED") {
+        console.log(`Graded prices unavailable: ${gradedPricing.reason}`);
     }
 }
 
