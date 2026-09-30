@@ -4,6 +4,7 @@ import {
     getGradingMode,
     applyPhotoCheckRules,
     applyConditionRules,
+    moreCautious,
 } from "../grading.js";
 
 const photo = (number, view, overrides = {}) => ({
@@ -173,4 +174,37 @@ test("a partial verdict alone doesn't limit grading", () => {
 
 test("an insufficient verdict still blocks grading", () => {
     assert.equal(getGradingMode(photoCheck({ photoSufficiency: "INSUFFICIENT" })).mode, "BLOCKED");
+});
+
+// Picking the more cautious of two answers
+
+test("the lower grade range is the more cautious answer, in either order", () => {
+    const optimistic = assessment({ gradeRange: { low: 7, likely: 8, high: 9 } });
+    const cautious = assessment({ gradeRange: { low: 6, likely: 7, high: 8 } });
+
+    assert.equal(moreCautious(optimistic, cautious), cautious);
+    assert.equal(moreCautious(cautious, optimistic), cautious);
+});
+
+test("an authenticity flag or a crease in either answer wins over a lower grade", () => {
+    const lower = assessment({ gradeRange: { low: 4, likely: 5, high: 6 } });
+    const flagged = assessment({ authenticity: { concern: "POSSIBLE", reasons: ["odd font"] } });
+    const creased = assessment({ creases: "PRESENT" });
+
+    assert.equal(moreCautious(lower, flagged), flagged);
+    assert.equal(moreCautious(lower, creased), creased);
+});
+
+test("with the same grades, the worse raw condition is more cautious", () => {
+    const nearMint = assessment({ rawCondition: "NEAR_MINT" });
+    const played = assessment({ rawCondition: "LIGHTLY_PLAYED" });
+
+    assert.equal(moreCautious(nearMint, played), played);
+});
+
+test("a value the rules don't recognize counts as the riskiest", () => {
+    const flagged = assessment({ authenticity: { concern: "LIKELY_FAKE", reasons: [] } });
+    const unknown = assessment({ authenticity: { concern: "UNSURE", reasons: [] } });
+
+    assert.equal(moreCautious(flagged, unknown), unknown);
 });

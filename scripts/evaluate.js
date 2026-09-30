@@ -1,24 +1,29 @@
 // Grades one live eBay listing and prints a readable summary.
-// Usage: npm run evaluate -- <eBay link or item number>
-// Paid: runs up to two vision requests.
+// Usage: npm run evaluate -- <eBay link or item number> [--fresh]
+// Reuses the saved answer for a listing while its photos haven't
+// changed. --fresh ignores it and pays for a new one.
 import "dotenv/config";
 import { evaluateListing } from "../grading.js";
 import { toItemId } from "./item-id.js";
 
-const itemId = toItemId(process.argv[2]);
+const STEP_NAMES = { photoCheck: "photo check", condition: "condition report" };
+
+const args = process.argv.slice(2);
+const fresh = args.includes("--fresh");
+const itemId = toItemId(args.find((arg) => !arg.startsWith("--")));
 
 if (!itemId) {
-    console.log("Usage: npm run evaluate -- <eBay link or item number>");
+    console.log("Usage: npm run evaluate -- <eBay link or item number> [--fresh]");
     process.exit(1);
 }
 
-console.log(`Evaluating ${itemId}. This makes paid AI requests and takes about 20 seconds.`);
+console.log(`Evaluating ${itemId}${fresh ? ", ignoring any saved answer" : ""}.`);
 
 const started = Date.now();
 let evaluation;
 
 try {
-    evaluation = await evaluateListing(itemId);
+    evaluation = await evaluateListing(itemId, { fresh });
 } catch (error) {
     console.error(`Evaluation failed: ${error.message}`);
     process.exit(1);
@@ -26,6 +31,10 @@ try {
 
 const seconds = ((Date.now() - started) / 1000).toFixed(1);
 const { listing, photoCheck, condition } = evaluation;
+
+function describeRange({ low, likely, high }) {
+    return likely === null ? `${low} to ${high}` : `${low} to ${high}, likely ${likely}`;
+}
 
 console.log();
 console.log(listing.title);
@@ -73,10 +82,7 @@ if (condition) {
         }
     }
 
-    const { low, likely, high } = condition.gradeRange;
-    const likelyText = likely === null ? "" : `, likely ${likely}`;
-
-    console.log(`  Grade range: ${low} to ${high}${likelyText} (${condition.confidence} confidence)`);
+    console.log(`  Grade range: ${describeRange(condition.gradeRange)} (${condition.confidence} confidence)`);
     console.log(`  Raw condition: ${condition.rawCondition}, creases: ${condition.creases}`);
     console.log(`  Authenticity: ${condition.authenticity.concern}`);
 
@@ -85,6 +91,12 @@ if (condition) {
     }
 
     console.log(`  ${condition.summary}`);
+
+    for (const other of evaluation.setAside ?? []) {
+        console.log(
+            `  Set aside, less cautious: ${describeRange(other.gradeRange)}, ${other.rawCondition}, authenticity ${other.authenticity}`
+        );
+    }
 }
 
 const tokens = evaluation.usage.reduce(
@@ -93,4 +105,13 @@ const tokens = evaluation.usage.reduce(
 );
 
 console.log();
-console.log(`Took ${seconds}s and ${tokens.toLocaleString()} tokens.`);
+
+if (evaluation.usage.length > 0) {
+    const reused = evaluation.reusedSteps.map((step) => STEP_NAMES[step]);
+    const reusedText = reused.length > 0 ? ` Reused the saved ${reused.join(" and ")}.` : "";
+
+    console.log(`Took ${seconds}s and ${tokens.toLocaleString()} tokens.${reusedText}`);
+} else if (evaluation.answeredAt) {
+    const answered = new Date(evaluation.answeredAt).toLocaleString();
+    console.log(`Reused the saved answer from ${answered}: no AI calls, took ${seconds}s.`);
+}

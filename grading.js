@@ -1,10 +1,76 @@
 import { getListingDetails } from "./ebay.js";
-import { checkListingPhotos, assessCardCondition } from "./openai.js";
+import {
+    ANALYSIS_VERSION,
+    checkListingPhotos,
+    assessCardCondition,
+} from "./openai.js";
+import {
+    photoFingerprint,
+    loadSaved,
+    saveRecord,
+    reusableRecord,
+    assessmentStillFits,
+} from "./evaluation-store.js";
 
 // Cost cap: only the first photos, in the seller's order.
 const MAX_PHOTOS = 8;
 
+// A first look grades twice and keeps the more cautious answer, so
+// one optimistic run can't set the saved answer on its own.
+const CONDITION_RUNS = 2;
+
 const AREAS = ["centering", "corners", "edges", "surface"];
+
+// Risk order for picking the more cautious answer. Anything the
+// table doesn't know ranks as the riskiest, so surprises fail closed.
+const AUTHENTICITY_RISK = ["NONE_SEEN", "POSSIBLE", "LIKELY_FAKE"];
+const CREASE_RISK = ["NONE_SEEN", "SUSPECTED", "PRESENT"];
+const RAW_CONDITION_RISK = [
+    "NEAR_MINT",
+    "LIGHTLY_PLAYED",
+    "MODERATELY_PLAYED",
+    "HEAVILY_PLAYED",
+    "DAMAGED",
+    "UNKNOWN",
+];
+
+function riskOf(order, value) {
+    const index = order.indexOf(value);
+    return index === -1 ? order.length : index;
+}
+
+// Returns the more cautious of two condition answers. A red flag in
+// either one wins first (authenticity, then creases), then the lower
+// grade range, then the worse raw condition. Ties keep the first.
+export function moreCautious(a, b) {
+    const likelyOf = (answer) => answer.gradeRange.likely ?? 0;
+
+    const comparisons = [
+        riskOf(AUTHENTICITY_RISK, b.authenticity.concern) -
+            riskOf(AUTHENTICITY_RISK, a.authenticity.concern),
+        riskOf(CREASE_RISK, b.creases) - riskOf(CREASE_RISK, a.creases),
+        a.gradeRange.low - b.gradeRange.low,
+        likelyOf(a) - likelyOf(b),
+        a.gradeRange.high - b.gradeRange.high,
+        riskOf(RAW_CONDITION_RISK, b.rawCondition) -
+            riskOf(RAW_CONDITION_RISK, a.rawCondition),
+    ];
+
+    for (const difference of comparisons) {
+        if (difference > 0) return b;
+        if (difference < 0) return a;
+    }
+
+    return a;
+}
+
+function summarizeAnswer(answer) {
+    return {
+        gradeRange: answer.gradeRange,
+        rawCondition: answer.rawCondition,
+        authenticity: answer.authenticity.concern,
+    };
+}
 const CLOSE_UP_VIEWS = ["FRONT_DETAIL", "BACK_DETAIL"];
 
 const NO_CLOSE_UPS =
@@ -161,7 +227,15 @@ export function applyConditionRules(
     return condition;
 }
 
-export async function evaluateListing(itemId) {
+// Grades one listing. The model's answers are saved per listing and
+// reused until the photos, model, or prompts change. The code rules
+// always run fresh, so rule changes apply to saved answers for free.
+//   fresh: ignore saved answers and ask the model again.
+//   remember: save new answers.
+export async function evaluateListing(
+    itemId,
+    { fresh = false, remember = true } = {}
+) {
     const listing = await getListingDetails(itemId);
     const photoUrls = listing.images.slice(0, MAX_PHOTOS);
 
@@ -180,6 +254,8 @@ export async function evaluateListing(itemId) {
         modeReasons: [],
         gradeStatus: "SKIPPED",
         condition: null,
+        answeredAt: null,
+        reusedSteps: [],
         usage: [],
     };
 
@@ -188,40 +264,117 @@ export async function evaluateListing(itemId) {
         return evaluation;
     }
 
-    const photoCheck = await checkListingPhotos(listing, photoUrls);
-    const checkedPhotos = applyPhotoCheckRules(photoCheck.result, photoUrls.length);
+    const fingerprint = photoFingerprint(photoUrls);
+
+    const saved = fresh
+        ? null
+        : reusableRecord(await loadSaved(listing.id), {
+              version: ANALYSIS_VERSION,
+              fingerprint,
+          });
+
+    const record = saved ?? {
+        itemId: listing.id,
+        version: ANALYSIS_VERSION,
+        photoFingerprint: fingerprint,
+        answeredAt: null,
+        photoCheck: null,
+        assessment: null,
+    };
+
+    let changed = false;
+
+    if (record.photoCheck) {
+        evaluation.reusedSteps.push("photoCheck");
+    } else {
+        const photoCheck = await checkListingPhotos(listing, photoUrls);
+        record.photoCheck = { result: photoCheck.result, usage: photoCheck.usage };
+        evaluation.usage.push({ step: "photoCheck", ...photoCheck.usage });
+        changed = true;
+    }
+
+    const checkedPhotos = applyPhotoCheckRules(
+        record.photoCheck.result,
+        photoUrls.length
+    );
 
     evaluation.photoCheck = checkedPhotos;
-    evaluation.usage.push({ step: "photoCheck", ...photoCheck.usage });
 
     const { mode, reasons } = getGradingMode(checkedPhotos);
     evaluation.gradingMode = mode;
     evaluation.modeReasons = reasons;
 
-    if (mode === "BLOCKED") {
-        return evaluation;
+    if (mode !== "BLOCKED") {
+        // Only the clear photos go to the (more expensive) condition step.
+        const clearPhotos = checkedPhotos.images.filter(isClearPhoto);
+        const photoNumbers = clearPhotos.map((photo) => photo.number);
+        const closeUps = hasCloseUps(checkedPhotos);
+
+        if (assessmentStillFits(record.assessment, mode, photoNumbers)) {
+            evaluation.reusedSteps.push("condition");
+        } else {
+            const photos = clearPhotos.map((photo) => ({
+                url: photoUrls[photo.number - 1],
+                label: photo.view,
+            }));
+
+            const answers = await Promise.all(
+                Array.from({ length: CONDITION_RUNS }, () =>
+                    assessCardCondition(listing, photos, mode)
+                )
+            );
+
+            for (const answer of answers) {
+                evaluation.usage.push({ step: "condition", ...answer.usage });
+            }
+
+            // Broken answers are dropped. Of the rest, the more cautious
+            // one is kept and the others are set aside for reference.
+            const results = answers.map((answer) => answer.result);
+            const valid = results.filter(
+                (result) => applyConditionRules(result, mode, { closeUps }) !== null
+            );
+
+            if (valid.length > 0) {
+                const kept = valid.reduce((a, b) => moreCautious(a, b));
+
+                record.assessment = {
+                    mode,
+                    photoNumbers,
+                    result: kept,
+                    setAside: results.filter((result) => result !== kept),
+                };
+            } else {
+                record.assessment = null;
+            }
+
+            changed = true;
+        }
+
+        const condition = record.assessment
+            ? applyConditionRules(record.assessment.result, mode, { closeUps })
+            : null;
+
+        if (condition === null) {
+            // Don't keep a broken answer: ask again next time.
+            record.assessment = null;
+            evaluation.gradeStatus = "REJECTED_INVALID_RANGE";
+        } else {
+            evaluation.gradeStatus = "ESTIMATED";
+            evaluation.condition = condition;
+            evaluation.setAside = (record.assessment.setAside ?? []).map(summarizeAnswer);
+        }
     }
 
-    // Only the clear photos go to the (more expensive) condition step.
-    const photos = checkedPhotos.images.filter(isClearPhoto).map((photo) => ({
-        url: photoUrls[photo.number - 1],
-        label: photo.view,
-    }));
+    if (changed) {
+        record.answeredAt = new Date().toISOString();
 
-    const assessment = await assessCardCondition(listing, photos, mode);
-    evaluation.usage.push({ step: "condition", ...assessment.usage });
-
-    const condition = applyConditionRules(assessment.result, mode, {
-        closeUps: hasCloseUps(checkedPhotos),
-    });
-
-    if (condition === null) {
-        evaluation.gradeStatus = "REJECTED_INVALID_RANGE";
-        return evaluation;
+        if (remember) {
+            await saveRecord(listing.id, record);
+        }
     }
 
-    evaluation.gradeStatus = "ESTIMATED";
-    evaluation.condition = condition;
+    evaluation.answeredAt = record.answeredAt;
 
     return evaluation;
 }

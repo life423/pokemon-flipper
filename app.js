@@ -24,10 +24,13 @@ app.get("/api/listings", async (req, res) => {
     }
 });
 
-// Paid: runs up to two vision requests per listing.
+// Paid unless the listing's saved answer is reused: up to two
+// vision requests. ?fresh=1 ignores the saved answer.
 app.post("/api/listings/:id/evaluate", async (req, res) => {
     try {
-        const evaluation = await evaluateListing(req.params.id);
+        const evaluation = await evaluateListing(req.params.id, {
+            fresh: req.query.fresh === "1",
+        });
 
         res.json(evaluation);
     } catch (error) {

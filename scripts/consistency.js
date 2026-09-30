@@ -21,7 +21,10 @@ console.log(`Grading ${itemId} ${runs} times at once. Paid: up to ${runs * 2} vi
 const started = Date.now();
 
 const results = await Promise.allSettled(
-    Array.from({ length: runs }, () => evaluateListing(itemId))
+    // Always fresh and never saved: the point is to see the spread.
+    Array.from({ length: runs }, () =>
+        evaluateListing(itemId, { fresh: true, remember: false })
+    )
 );
 
 // One comparable line per run: the fields a verdict depends on.

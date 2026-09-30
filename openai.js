@@ -2,6 +2,11 @@ import OpenAI from "openai";
 
 const MODEL = process.env.OPENAI_MODEL ?? "gpt-5.6-luna";
 
+// Bump when a prompt or schema changes, so saved answers get redone.
+const PROMPT_VERSION = 1;
+
+export const ANALYSIS_VERSION = MODEL + "/prompts-" + PROMPT_VERSION;
+
 let client = null;
 
 // Created on first use, so the server still starts (and listings
