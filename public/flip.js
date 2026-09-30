@@ -3,9 +3,23 @@ const SELLING_FEE_RATE = 0.13; // Temporary estimate for testing
 const OUTBOUND_SHIPPING = 6;
 
 export function calculateFlipMetrics(listing) {
-    const subtotal = listing.currentPrice + listing.shipping;
+    // Unknown (CALCULATED) shipping counts as $0 for now.
+    const subtotal = listing.currentPrice + (listing.shipping ?? 0);
     const estimatedTax = Math.round(subtotal * TAX_RATE * 100) / 100;
     const acquisitionCost = subtotal + estimatedTax;
+
+    // Without a resale estimate there is no profit or ROI to report.
+    if (listing.estimatedResalePrice == null) {
+        return {
+            subtotal,
+            estimatedTax,
+            acquisitionCost,
+            estimatedSellingFees: null,
+            outboundShipping: OUTBOUND_SHIPPING,
+            estimatedProfit: null,
+            roi: null,
+        };
+    }
 
     const estimatedSellingFees =
         listing.estimatedResalePrice * SELLING_FEE_RATE;

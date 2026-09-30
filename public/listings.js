@@ -1,9 +1,14 @@
 import { calculateFlipMetrics } from "./flip.js";
 
+const NOT_ESTIMATED = "not estimated yet";
+
+function formatMoney(value) {
+    return value === null ? null : `$${value.toFixed(2)}`;
+}
+
 function formatTimeRemaining(endTime) {
     const end = new Date(endTime);
     const now = new Date();
-
     const millisecondsRemaining = end - now;
 
     if (millisecondsRemaining <= 0) {
@@ -11,7 +16,6 @@ function formatTimeRemaining(endTime) {
     }
 
     const totalMinutes = Math.floor(millisecondsRemaining / 1000 / 60);
-
     const days = Math.floor(totalMinutes / 1440);
     const hours = Math.floor((totalMinutes % 1440) / 60);
     const minutes = totalMinutes % 60;
@@ -23,6 +27,12 @@ function formatTimeRemaining(endTime) {
     return `${hours}h ${minutes}m`;
 }
 
+function createLine(text) {
+    const line = document.createElement("p");
+    line.textContent = text;
+    return line;
+}
+
 function createListingElement(listing) {
     const listingElement = document.createElement("article");
 
@@ -30,61 +40,36 @@ function createListingElement(listing) {
 
     for (const [index, imageUrl] of listing.images.entries()) {
         const image = document.createElement("img");
-
         image.src = imageUrl;
         image.alt = `${listing.title} image ${index + 1}`;
         image.width = 250;
-
         images.append(image);
     }
 
     const title = document.createElement("h2");
     title.textContent = listing.title;
 
-    const price = document.createElement("p");
-    price.textContent = `Current price: $${listing.currentPrice.toFixed(2)}`;
-
-    const shipping = document.createElement("p");
-    shipping.textContent = `Shipping: $${listing.shipping.toFixed(2)}`;
-
     const metrics = calculateFlipMetrics(listing);
 
-    const currentCost = document.createElement("p");
-    currentCost.textContent =
-        `Current cost before tax: $${metrics.subtotal.toFixed(2)}`;
+    const shippingText =
+        listing.shipping === null
+            ? "calculated at checkout"
+            : formatMoney(listing.shipping);
 
-    const tax = document.createElement("p");
-    tax.textContent =
-        `Estimated tax: $${metrics.estimatedTax.toFixed(2)}`;
+    const roiText =
+        metrics.roi === null
+            ? NOT_ESTIMATED
+            : metrics.roi.toFixed(1) + "%";
 
-    const acquisition = document.createElement("p");
-    acquisition.textContent =
-        `Estimated acquisition cost: $${metrics.acquisitionCost.toFixed(2)}`;
+    const buyingText =
+        listing.buyingOption === "AUCTION"
+            ? `Auction: ${listing.bids} bids`
+            : "Buy It Now";
 
-    const resalePrice = document.createElement("p");
-    resalePrice.textContent =
-        `Estimated resale price: $${listing.estimatedResalePrice.toFixed(2)}`;
-
-    const sellingFees = document.createElement("p");
-    sellingFees.textContent =
-        `Estimated selling fees: $${metrics.estimatedSellingFees.toFixed(2)}`;
-
-    const outboundShipping = document.createElement("p");
-    outboundShipping.textContent =
-        `Estimated outbound shipping: $${metrics.outboundShipping.toFixed(2)}`;
-
-    const profit = document.createElement("p");
-    profit.textContent =
-        `Estimated profit: $${metrics.estimatedProfit.toFixed(2)}`;
-
-    const roiElement = document.createElement("p");
-    roiElement.textContent = `Estimated ROI: ${metrics.roi.toFixed(1)}%`;
-
-    const bids = document.createElement("p");
-    bids.textContent = `Bids: ${listing.bids}`;
-
-    const ending = document.createElement("p");
-    ending.textContent = `Ends in: ${formatTimeRemaining(listing.endTime)}`;
+    const endingText =
+        listing.endTime === null
+            ? "No end date"
+            : `Ends in: ${formatTimeRemaining(listing.endTime)}`;
 
     const link = document.createElement("a");
     link.href = listing.url;
@@ -95,18 +80,18 @@ function createListingElement(listing) {
     listingElement.append(
         images,
         title,
-        price,
-        shipping,
-        currentCost,
-        tax,
-        acquisition,
-        resalePrice,
-        sellingFees,
-        outboundShipping,
-        profit,
-        roiElement,
-        bids,
-        ending,
+        createLine(`Current price: ${formatMoney(listing.currentPrice) ?? "unknown"}`),
+        createLine(`Shipping: ${shippingText}`),
+        createLine(`Current cost before tax: ${formatMoney(metrics.subtotal)}`),
+        createLine(`Estimated tax: ${formatMoney(metrics.estimatedTax)}`),
+        createLine(`Estimated acquisition cost: ${formatMoney(metrics.acquisitionCost)}`),
+        createLine(`Estimated resale price: ${formatMoney(listing.estimatedResalePrice) ?? NOT_ESTIMATED}`),
+        createLine(`Estimated selling fees: ${formatMoney(metrics.estimatedSellingFees) ?? NOT_ESTIMATED}`),
+        createLine(`Estimated outbound shipping: ${formatMoney(metrics.outboundShipping)}`),
+        createLine(`Estimated profit: ${formatMoney(metrics.estimatedProfit) ?? NOT_ESTIMATED}`),
+        createLine(`Estimated ROI: ${roiText}`),
+        createLine(buyingText),
+        createLine(endingText),
         link
     );
 
