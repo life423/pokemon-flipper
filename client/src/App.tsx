@@ -73,10 +73,10 @@ function readTargets(): Targets {
     return MONEY_CONFIG.targets;
 }
 
-// The boxes show whole dollars and percents.
+// The boxes show whole dollars and percents, and stay empty for "any".
 const targetText = (targets: Targets) => ({
-    minProfit: String(targets.minProfit),
-    minRoi: String(Math.round(targets.minRoi * 100)),
+    minProfit: targets.minProfit === 0 ? "" : String(targets.minProfit),
+    minRoi: targets.minRoi === 0 ? "" : String(Math.round(targets.minRoi * 100)),
 });
 
 function readAutoSetting(): number {
@@ -193,10 +193,11 @@ export function App() {
     function changeTarget(field: keyof Targets, text: string) {
         setTargetInputs((previous) => ({ ...previous, [field]: text }));
 
-        const value = Number(text);
+        // Empty means any: no minimum. The max bid still stops at break-even.
+        const value = text.trim() === "" ? 0 : Number(text);
 
         // Half-typed or negative: keep the last good target.
-        if (text.trim() === "" || !Number.isFinite(value) || value < 0) return;
+        if (!Number.isFinite(value) || value < 0) return;
 
         const next = { ...targets, [field]: field === "minRoi" ? value / 100 : value };
         setTargets(next);
@@ -417,12 +418,13 @@ export function App() {
                             {/* Your deal criteria: always in view, since they decide what's a deal. */}
                             <div className={styles.criteria}>
                                 <label className={styles.target} title="Minimum profit after every cost">
-                                    <span>$</span>
+                                    {targetInputs.minProfit !== "" && <span>$</span>}
                                     <input
                                         type="number"
                                         inputMode="decimal"
                                         min="0"
                                         step="5"
+                                        placeholder="Any"
                                         value={targetInputs.minProfit}
                                         onChange={(event) => changeTarget("minProfit", event.target.value)}
                                         aria-label="Minimum profit, dollars"
@@ -435,11 +437,12 @@ export function App() {
                                         inputMode="decimal"
                                         min="0"
                                         step="5"
+                                        placeholder="Any"
                                         value={targetInputs.minRoi}
                                         onChange={(event) => changeTarget("minRoi", event.target.value)}
                                         aria-label="Minimum return, percent"
                                     />
-                                    <span>% ROI</span>
+                                    <span>{targetInputs.minRoi === "" ? "ROI" : "% ROI"}</span>
                                 </label>
 
                                 <div className={styles.filtersMenu} ref={filtersRef}>

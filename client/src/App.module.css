@@ -130,6 +130,11 @@
     outline: none;
 }
 
+.target input::placeholder {
+    color: var(--text);
+    font-weight: 650;
+}
+
 .filtersMenu {
     position: relative;
 }

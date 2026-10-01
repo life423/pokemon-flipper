@@ -56,3 +56,12 @@ test("a free check that couldn't be priced stays as it is", () => {
 
     assert.equal(retargetScreen(screen, 100, { minProfit: 0, minRoi: 0 }), screen);
 });
+
+test("with any profit and any return, the max bid is break-even, never a loss", () => {
+    const any = retargetEvaluation(slabEvaluation(), { minProfit: 0, minRoi: 0 });
+    const best = any.underwriting.best;
+
+    assert.equal(any.underwriting.verdict, "BUY_GRADED");
+    assert.ok(best.profitAtMaxBid >= 0);
+    assert.ok(best.profitAtMaxBid < 2);
+});
