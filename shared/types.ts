@@ -34,6 +34,8 @@ export interface Screen {
     } | null;
     bestCase: { label: string; maxBid: number; profit: number; roi: number | null } | null;
     assumed: string | null;
+    // Item details the AI read from the title because the seller left them out.
+    filledFromTitle?: string[];
 }
 
 // What a search means: the card it's for, and anything it narrows to.

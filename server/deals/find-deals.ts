@@ -5,6 +5,7 @@ import { mapLimit } from "../lib/concurrency.ts";
 import { readSearch } from "../search/intent.ts";
 import { cardMismatch, gradingMatches, titleMatches } from "../search/relevance.ts";
 import { prescreen } from "./prescreen.ts";
+import { fillFromTitle } from "../ai/title-reader.ts";
 import type { ListingSummary, Screen, SearchIntent } from "../../shared/types.ts";
 
 // A search, the way eBay matches it, narrowed to the card searched for,
@@ -54,10 +55,12 @@ async function screenListing(listing: ListingSummary): Promise<ListingSummary> {
         return { ...listing, screen: unscreened(`The listing's details didn't load: ${(error as Error).message}`) };
     }
 
-    const screen = await prescreen(
+    const { aspects, filled } = await fillFromTitle(details);
+
+    const checked = await prescreen(
         {
             title: details.title,
-            aspects: details.aspects,
+            aspects,
             // The search's price is the freshest.
             price: listing.currentPrice,
             shipping: listing.shipping ?? details.shipping,
@@ -66,6 +69,7 @@ async function screenListing(listing: ListingSummary): Promise<ListingSummary> {
         },
         { lookupCards, fetchComps }
     ).catch((error: Error) => unscreened(`The free check failed: ${error.message}`));
+    const screen = filled.length > 0 ? { ...checked, filledFromTitle: filled } : checked;
 
     return {
         ...listing,

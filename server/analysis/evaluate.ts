@@ -1,4 +1,5 @@
 import { getListingDetails } from "../ebay/listings.ts";
+import { fillFromTitle } from "../ai/title-reader.ts";
 import {
     ANALYSIS_VERSION,
     checkListingPhotos,
@@ -92,6 +93,10 @@ export async function evaluateListing(
     { fresh = false, remember = true }: { fresh?: boolean; remember?: boolean } = {}
 ): Promise<Evaluation> {
     const listing = await getListingDetails(itemId);
+
+    // Set, number, and name read from the title when the seller left them
+    // out, the same way the free check reads them.
+    listing.aspects = (await fillFromTitle(listing)).aspects;
     const photoUrls = listing.images.slice(0, MAX_PHOTOS);
 
     const evaluation: Evaluation = {

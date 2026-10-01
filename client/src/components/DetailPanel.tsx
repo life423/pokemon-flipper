@@ -360,6 +360,9 @@ function ListingSection({ listing, evaluation }: { listing: ListingSummary; eval
     if (condition) {
         rows.push(["Seller's condition", condition]);
     }
+    if (screen?.filledFromTitle?.length) {
+        rows.push(["Read from the title", screen.filledFromTitle.join(", ").toLowerCase()]);
+    }
     if (screen?.bestCase) {
         rows.push(["Free check, at best", `${dollars(screen.bestCase.maxBid)} max bid (${screen.assumed})`]);
     }
