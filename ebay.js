@@ -10,6 +10,9 @@ const CCG_INDIVIDUAL_CARDS = "183454";
 // eBay's condition ID for ungraded trading cards.
 const UNGRADED = "4000";
 
+// eBay's condition ID for graded trading cards.
+const GRADED = "2750";
+
 let cachedToken = null;
 let tokenExpiresAt = 0;
 
@@ -97,6 +100,7 @@ function toListing(item) {
         // null when shipping is CALCULATED and eBay has no ship-to ZIP.
         shipping: toAmount(shippingOption?.shippingCost),
         bids: item.bidCount ?? 0,
+        isGraded: item.conditionId === GRADED,
         buyingOption: isAuction ? "AUCTION" : "FIXED_PRICE",
         // Fixed-price listings usually have no end date.
         endTime: item.itemEndDate ?? null,
@@ -114,7 +118,7 @@ export async function getListings(search = "") {
     const params = new URLSearchParams({
         q: `pokemon ${search}`.trim(),
         category_ids: CCG_INDIVIDUAL_CARDS,
-        filter: `buyingOptions:{AUCTION|FIXED_PRICE},conditionIds:{${UNGRADED}}`,
+        filter: `buyingOptions:{AUCTION|FIXED_PRICE},conditionIds:{${UNGRADED}|${GRADED}}`,
         // eBay's maximum. Screening drops some, so start with plenty.
         limit: "200",
     });

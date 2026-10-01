@@ -5,7 +5,7 @@ import {
     normalizeSetName,
     normalizeWords,
     sameCardNumber,
-    setFamily,
+    sameSetFamily,
     setSearchTerm,
 } from "./card-identity.js";
 import { conditionOf } from "./pricing.js";
@@ -74,14 +74,13 @@ export function toCardRecord(detail) {
 // Candidate cards for a listing: every set in the listing's set family,
 // narrowed by name and number before the per-card price lookups.
 export async function lookupCards({ set, name, cardNumber }) {
-    const family = setFamily(set);
 
     const sets = await apiGet(
-        `/sets?${new URLSearchParams({ name: setSearchTerm(set), language: "English", per_page: "20" })}`,
+        `/sets?${new URLSearchParams({ name: setSearchTerm(set), language: "English", per_page: "50" })}`,
         DAY * 7
     );
 
-    const familySets = (sets.data ?? []).filter((s) => family.includes(normalizeSetName(s.name)));
+    const familySets = (sets.data ?? []).filter((s) => sameSetFamily(s.name, set));
     const nameTerm = normalizeWords(name).replace(/\bholo\b/g, "").trim();
     const cards = [];
 

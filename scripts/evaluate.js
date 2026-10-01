@@ -99,6 +99,40 @@ if (condition) {
     }
 }
 
+const { slab, slabPricing } = evaluation;
+
+if (slab) {
+    console.log();
+
+    const qualifier = slab.gradeQualifier ? ` (${slab.gradeQualifier})` : "";
+    console.log(
+        `Slab: ${slab.status}, ${slab.grader ?? "grader unreadable"} ${slab.grade ?? "grade unreadable"}${qualifier}, cert ${slab.certNumber ?? "unreadable"}, case ${slab.caseCondition}`
+    );
+
+    if (slab.labelText) console.log(`  Label: ${slab.labelText}`);
+    if (slab.certUrl) console.log(`  Verify the cert: ${slab.certUrl}`);
+
+    for (const reason of slab.reasons) {
+        console.log(`  ${reason}`);
+    }
+}
+
+if (slabPricing) {
+    console.log();
+
+    const s = slabPricing.summary;
+
+    if (s && s.count > 0) {
+        console.log(
+            `${s.grader} ${s.grade} sold comps (${slabPricing.printingLabel}): ${s.count} sales, median ${money(s.median)}, range ${money(s.low)} to ${money(s.high)}, ${s.confidence} confidence`
+        );
+    }
+
+    if (slabPricing.status !== "PRICED") {
+        console.log(`Slab prices unavailable: ${slabPricing.reason}`);
+    }
+}
+
 if (identity) {
     console.log();
     console.log(`Identity: ${identity.status}`);
@@ -185,9 +219,9 @@ if (underwriting) {
         }
 
         const detail =
-            path.path === "RAW"
-                ? `sells for ${money(path.salePrice)} (${path.priceCondition})`
-                : `${path.tier} ${money(path.gradingFee)}, expected sale ${money(path.expectedSale)}`;
+            path.path === "GRADE"
+                ? `${path.tier} ${money(path.gradingFee)}, expected sale ${money(path.expectedSale)}`
+                : `sells for ${money(path.salePrice)}${path.priceCondition ? ` (${path.priceCondition})` : ""}`;
 
         console.log(
             `  ${path.label}: ${detail}; keep ${money(path.expectedNet)}, all-in cost ${money(path.cost)}, profit ${money(path.profit)} (${Math.round(path.roi * 100)}% ROI), worst case ${money(path.downside)}, max bid ${money(path.maxBid)}${path.clears ? ", clears your targets" : ""}`

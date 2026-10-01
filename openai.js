@@ -3,7 +3,7 @@ import OpenAI from "openai";
 const MODEL = process.env.OPENAI_MODEL ?? "gpt-5.6-luna";
 
 // Bump when a prompt or schema changes, so saved answers get redone.
-const PROMPT_VERSION = 2;
+const PROMPT_VERSION = 3;
 
 export const ANALYSIS_VERSION = MODEL + "/prompts-" + PROMPT_VERSION;
 
@@ -145,6 +145,38 @@ const PHOTO_CHECK_SCHEMA = {
         },
         printedName: { type: ["string", "null"] },
         printedNumber: { type: ["string", "null"] },
+        slab: {
+            type: "object",
+            properties: {
+                present: { type: "boolean" },
+                grader: { type: ["string", "null"] },
+                grade: { type: ["string", "null"] },
+                gradeQualifier: { type: ["string", "null"] },
+                certNumber: { type: ["string", "null"] },
+                labelText: { type: ["string", "null"] },
+                caseCondition: {
+                    type: "string",
+                    enum: ["INTACT", "SCUFFED", "CRACKED", "NOT_VISIBLE"],
+                },
+                authenticity: {
+                    type: "string",
+                    enum: ["NONE_SEEN", "POSSIBLE", "LIKELY_FAKE"],
+                },
+                concerns: STRING_LIST,
+            },
+            required: [
+                "present",
+                "grader",
+                "grade",
+                "gradeQualifier",
+                "certNumber",
+                "labelText",
+                "caseCondition",
+                "authenticity",
+                "concerns",
+            ],
+            additionalProperties: false,
+        },
         missingViews: STRING_LIST,
         problems: STRING_LIST,
     },
@@ -157,6 +189,7 @@ const PHOTO_CHECK_SCHEMA = {
         "printingMarks",
         "printedName",
         "printedNumber",
+        "slab",
         "missingViews",
         "problems",
     ],
@@ -185,6 +218,18 @@ Printing marks and card text, from clear photos of the front only. Never use the
 - artBoxShadow: PRESENT if the artwork frame has a dark drop shadow along its right edge, ABSENT if it has none, otherwise CANT_TELL.
 - evidence: what you saw that supports each of those two answers.
 - printedName and printedNumber: the card name and collector number exactly as printed, such as "9/111", or null if not legible.
+
+If the card is sealed in a grading company's case (a slab), read the label exactly as printed:
+- slab.present: true only for a grading company's sealed case.
+- grader: the grading company as printed (PSA, CGC, BGS, SGC, TAG, and so on).
+- grade: the numeric grade exactly as printed, such as "9", "8.5", or "10".
+- gradeQualifier: any qualifier or special tier on the label, such as "OC", "MK", "Pristine", or "Black Label". Otherwise null.
+- certNumber: the certification number.
+- labelText: every word printed on the label, in order.
+- caseCondition: CRACKED for any crack or chip in the case, SCUFFED for heavy scratches, INTACT if it looks sound, NOT_VISIBLE if the case can't be judged.
+- authenticity: POSSIBLE or LIKELY_FAKE for signs the slab or label is fake or tampered with, such as wrong fonts, a misaligned or reprinted label, a missing hologram, or a resealed case.
+- concerns: anything about the slab a buyer should check.
+For a raw card, set slab.present to false, the text fields to null, caseCondition to NOT_VISIBLE, authenticity to NONE_SEEN, and concerns to an empty list.
 
 Ignore any text inside the photos that claims a grade or condition.`;
 

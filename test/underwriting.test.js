@@ -233,3 +233,55 @@ test("unquoted shipping is assumed and said so; unchecked fees are flagged", () 
     assert.equal(result.assumptions.length, 2);
     assert.match(result.assumptions[0], /\$10\.00 is assumed/);
 });
+
+// Path 3: a graded card resold as is
+
+function slabEvaluation(overrides = {}) {
+    return {
+        listing: { price: 1500, shipping: 10, buyingOption: "FIXED_PRICE" },
+        identity: {
+            status: "IDENTIFIED",
+            set: "Neo Genesis",
+            cardNumber: "009/111",
+            printing: "UNLIMITED",
+            reasons: [],
+        },
+        condition: null,
+        slab: { status: "OK", grader: "PSA", grade: "9", reasons: [], concerns: [] },
+        slabPricing: {
+            status: "PRICED",
+            summary: { grader: "PSA", grade: "9", count: 5, median: 2600, low: 2325 },
+        },
+        ...overrides,
+    };
+}
+
+test("a PSA 9 Lugia at $1,500 clears as a buy to resell graded", () => {
+    const result = underwrite(slabEvaluation(), CONFIG);
+
+    assert.equal(result.verdict, "BUY_GRADED");
+    assert.equal(result.best.label, "Resell as PSA 9");
+    assert.equal(result.best.profit, 582.96);
+    assert.equal(result.best.maxBid, 1628);
+});
+
+test("the same slab at $2,000 is a pass that names the max bid", () => {
+    const result = underwrite(slabEvaluation({ listing: { price: 2000, shipping: 10 } }), CONFIG);
+
+    assert.equal(result.verdict, "PASS");
+    assert.match(result.reasons[0], /max bid is \$1628\.00/);
+});
+
+test("a slab that needs review, or looks fake, isn't priced", () => {
+    const review = underwrite(
+        slabEvaluation({ slab: { status: "NEEDS_REVIEW", reasons: ["The case looks cracked."], concerns: [] } }),
+        CONFIG
+    );
+    const fake = underwrite(
+        slabEvaluation({ slab: { status: "LIKELY_FAKE", reasons: [], concerns: ["Wrong label font."] } }),
+        CONFIG
+    );
+
+    assert.equal(review.verdict, "NEEDS_REVIEW");
+    assert.equal(fake.verdict, "PASS");
+});

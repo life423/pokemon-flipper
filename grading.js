@@ -14,7 +14,8 @@ import {
 import { identifyCard } from "./card-identity.js";
 import { rawPricesFor } from "./pricing.js";
 import { lookupCards, fetchComps } from "./pkmnprices.js";
-import { gradedPricesFor } from "./graded-comps.js";
+import { gradedPricesFor, compsForGrade } from "./graded-comps.js";
+import { checkSlab } from "./slab-check.js";
 import { GRADERS, underwrite } from "./underwriting.js";
 
 // Cost cap: only the first photos, in the seller's order.
@@ -251,6 +252,22 @@ async function gradedPricesByGrader(card, identity, gradeRange) {
     return byGrader;
 }
 
+// Verified sold comps for a slab's exact grader and grade.
+async function slabPricesFor(card, identity, slab) {
+    try {
+        return await compsForGrade(card, identity, {
+            grader: slab.grader,
+            grade: slab.grade,
+            fetchComps,
+        });
+    } catch (error) {
+        return {
+            status: "PRICE_UNAVAILABLE",
+            reason: `The ${slab.grader} comp lookup failed: ${error.message}`,
+        };
+    }
+}
+
 // Grades one listing and prices it. The model's answers are saved per
 // listing and reused until the photos, model, or prompts change. The
 // code rules, identity, prices, and money math always run fresh.
@@ -287,6 +304,8 @@ export async function evaluateListing(
         identity: null,
         rawPricing: null,
         gradedPricing: null,
+        slab: null,
+        slabPricing: null,
         underwriting: null,
         answeredAt: null,
         reusedSteps: [],
@@ -336,15 +355,26 @@ export async function evaluateListing(
     evaluation.modeReasons = reasons;
 
     // Identity and raw pricing don't depend on the grading mode, only
-    // on the listing showing one ungraded card.
+    // on the listing showing one card, raw or graded.
     let identifiedCard = null;
 
-    if (checkedPhotos.cardCount === "ONE" && checkedPhotos.holder !== "GRADED_SLAB") {
+    if (checkedPhotos.cardCount === "ONE") {
         const { identity, card } = await identifyCard(listing, checkedPhotos, { lookupCards });
 
         identifiedCard = card;
         evaluation.identity = identity;
-        evaluation.rawPricing = rawPricesFor(card, identity);
+
+        if (checkedPhotos.holder === "GRADED_SLAB") {
+            // A graded card is resold as is: read its slab, then price
+            // that exact grader and grade.
+            evaluation.slab = checkSlab(checkedPhotos, listing.aspects);
+
+            if (evaluation.slab.status === "OK") {
+                evaluation.slabPricing = await slabPricesFor(card, identity, evaluation.slab);
+            }
+        } else {
+            evaluation.rawPricing = rawPricesFor(card, identity);
+        }
     }
 
     if (mode !== "BLOCKED") {

@@ -134,9 +134,28 @@ export function normalizeWords(value) {
     return normalizeText(value).replace(/[^a-z0-9]+/g, " ").trim();
 }
 
-// "SWSH: Crown Zenith" and "Crown Zenith" are the same set.
+// Set names from grading labels: PSA calls Base Set "Pokemon Game" and
+// Team Rocket "Rocket".
+const SET_ALIASES = {
+    game: "base set",
+    "game shadowless": "base set shadowless",
+    rocket: "team rocket",
+};
+
+// "SWSH: Crown Zenith", "Crown Zenith", and "2023 Pokemon Crown Zenith"
+// are the same set.
 export function normalizeSetName(value) {
-    return normalizeWords(normalizeText(value).replace(/^[a-z0-9&]+\s*:\s*/, ""));
+    const words = normalizeWords(normalizeText(value).replace(/^[a-z0-9&]+\s*:\s*/, ""))
+        .replace(/^(19|20)\d{2} /, "")
+        .replace(/\bpokemon\b/g, " ")
+        // Graded listings often put the printing in the set name
+        // ("Neo Genesis 1st Edition"). The printing is judged on its own.
+        .replace(/\b(1st|first) edition\b/g, " ")
+        .replace(/\bunlimited\b/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+    return SET_ALIASES[words] ?? words;
 }
 
 export function sameSet(a, b) {
@@ -150,14 +169,26 @@ export function setFamily(setName) {
     return SET_FAMILIES[key] ?? [key];
 }
 
-// The text to search a database's sets with.
+// The text to search a database's sets with: the family's name, or the
+// set's most distinctive word.
 export function setSearchTerm(setName) {
     const key = normalizeSetName(setName);
-    return SET_FAMILY_SEARCH[key] ?? String(setName ?? "").replace(/^[A-Za-z0-9&]+\s*:\s*/, "").trim();
+
+    if (SET_FAMILY_SEARCH[key]) return SET_FAMILY_SEARCH[key];
+
+    const longest = key.split(" ").reduce((a, b) => (b.length > a.length ? b : a), "");
+    return longest.charAt(0).toUpperCase() + longest.slice(1);
 }
 
 export function sameSetFamily(candidateSet, listedSet) {
-    return setFamily(listedSet).includes(normalizeSetName(candidateSet));
+    const candidate = normalizeSetName(candidateSet);
+    const listed = normalizeSetName(listedSet);
+
+    if (candidate === "" || listed === "") return false;
+
+    // A listing may put a series name in front ("Sword & Shield Crown
+    // Zenith"), never the other way around.
+    return setFamily(listedSet).includes(candidate) || listed.endsWith(` ${candidate}`);
 }
 
 function sameName(a, b) {
@@ -274,15 +305,18 @@ function review(reason) {
 
 // The title, the item details, and the photos have to agree. There is
 // no majority vote: any disagreement goes to review.
-export function resolvePrinting({ title, itemSpecifics, photo }, { hasEditions, setName = null }) {
+export function resolvePrinting(
+    { title, itemSpecifics, label = "NOT_STATED", photo },
+    { hasEditions, setName = null }
+) {
     const printingName = (printing) => printingLabel(printing, setName);
-    const stated = [title, itemSpecifics].filter((claim) => claim !== "NOT_STATED");
+    const stated = [title, itemSpecifics, label].filter((claim) => claim !== "NOT_STATED");
 
     if (stated.includes("CONFLICTING")) {
         return review("The seller's text contradicts itself about the printing.");
     }
     if (new Set(stated).size > 1) {
-        return review("The title and item details disagree about the printing.");
+        return review("The title, item details, or slab label disagree about the printing.");
     }
 
     const [claim] = stated;
@@ -472,10 +506,25 @@ export async function identifyCard(listing, photoCheck, { lookupCards }) {
     const shadowMatters =
         SHADOWLESS_SETS.has(setKey) || card.variants.some((v) => v.printing === "SHADOWLESS");
 
+    const slab = photoCheck.slab?.present ? photoCheck.slab : null;
+    const label = slab ? printingClaimFromText(slab.labelText) : "NOT_STATED";
+    let photo = photoPrinting(photoCheck.printingMarks, { shadowMatters });
+    let photoSource = "photos";
+
+    // Inside a slab the stamp and shadow can be hard to see, but graders
+    // print 1st Edition and Shadowless on the label. A legible label that
+    // names neither marks the Unlimited printing.
+    if (photo === "UNKNOWN" && slab?.labelText && (label === "NOT_STATED" || PRINTINGS.includes(label))) {
+        photo = label === "NOT_STATED" ? "UNLIMITED" : label;
+        photoSource = "slab label";
+    }
+
     identity.evidence = {
         title: printingClaimFromText(listing.title),
         itemSpecifics: printingClaimFromText(aspectText(aspects, /edition|feature|print/i)),
-        photo: photoPrinting(photoCheck.printingMarks, { shadowMatters }),
+        label,
+        photo,
+        photoSource,
         photoNotes: photoCheck.printingMarks?.evidence ?? [],
     };
 

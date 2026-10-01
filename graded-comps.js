@@ -138,6 +138,44 @@ function unavailable(reason, extra = {}) {
     return { status: "PRICE_UNAVAILABLE", reason, ...extra };
 }
 
+// Checks every graded lookup shares: an identified card, a source that
+// can price graded copies by printing, and exactly one matching printing.
+function gradedVariantFor(card, identity) {
+    if (!readyForPricing(identity)) {
+        return { reason: "The card isn't fully identified, so graded copies can't be priced." };
+    }
+    if (!canPrice(`${card?.source}Comps`, ["printing", "grade"])) {
+        return { reason: "This price source can't price graded copies by printing." };
+    }
+
+    return variantFor(card, identity);
+}
+
+// Recent sales of one grade for this card's printing. Where the title
+// decides, sales filed under every label of the record are read;
+// otherwise only this printing's own label.
+async function fetchVariantComps(card, variant, { grader, grade, fetchComps }) {
+    const sourceLabels = titleDecidesPrinting(variant.setName)
+        ? card.variants.filter((v) => v.recordId === variant.recordId).map((v) => v.name)
+        : [variant.name];
+
+    const comps = [];
+    const seen = new Set();
+
+    for (const sourceLabel of sourceLabels) {
+        for (const comp of await fetchComps(variant.recordId, { grader, grade, variant: sourceLabel })) {
+            const key = comp.id ?? comp.listing_url ?? `${comp.title}|${comp.sold_at}|${comp.price}`;
+
+            if (!seen.has(key)) {
+                seen.add(key);
+                comps.push(comp);
+            }
+        }
+    }
+
+    return comps;
+}
+
 // Verified sold comps for each grade in the estimated range.
 export async function gradedPricesFor(
     card,
@@ -145,44 +183,16 @@ export async function gradedPricesFor(
     gradeRange,
     { fetchComps, grader = "PSA", now = Date.now() }
 ) {
-    if (!readyForPricing(identity)) {
-        return unavailable("The card isn't fully identified, so graded copies can't be priced.");
-    }
-    if (!gradeRange) {
-        return unavailable("There's no grade estimate to price.");
-    }
-    if (!canPrice(`${card?.source}Comps`, ["printing", "grade"])) {
-        return unavailable("This price source can't price graded copies by printing.");
-    }
-
-    const { variant, reason } = variantFor(card, identity);
+    const { variant, reason } = gradedVariantFor(card, identity);
 
     if (!variant) return unavailable(reason);
+    if (!gradeRange) return unavailable("There's no grade estimate to price.");
 
     const label = printingLabel(identity.printing, identity.set);
-
-    // Where the title decides, sales filed under every label of this
-    // record are read; otherwise only this printing's own label.
-    const sourceLabels = titleDecidesPrinting(variant.setName)
-        ? card.variants.filter((v) => v.recordId === variant.recordId).map((v) => v.name)
-        : [variant.name];
-
     const byGrade = [];
 
     for (let grade = gradeRange.low; grade <= gradeRange.high; grade += 1) {
-        const comps = [];
-        const seen = new Set();
-
-        for (const sourceLabel of sourceLabels) {
-            for (const comp of await fetchComps(variant.recordId, { grader, grade, variant: sourceLabel })) {
-                const key = comp.id ?? comp.listing_url ?? `${comp.title}|${comp.sold_at}|${comp.price}`;
-
-                if (!seen.has(key)) {
-                    seen.add(key);
-                    comps.push(comp);
-                }
-            }
-        }
+        const comps = await fetchVariantComps(card, variant, { grader, grade, fetchComps });
 
         byGrade.push(
             summarizeComps(comps, {
@@ -202,6 +212,39 @@ export async function gradedPricesFor(
             `No verified ${grader} sales of the ${label} printing in grades ${gradeRange.low} to ${gradeRange.high}.`,
             details
         );
+    }
+
+    return {
+        status: "PRICED",
+        source: card.source,
+        printing: variant.printing,
+        ...details,
+    };
+}
+
+// Verified sold comps for one exact grader and grade: a graded card
+// resold as is. Grades are strings, so half grades like "8.5" match
+// only themselves.
+export async function compsForGrade(card, identity, { grader, grade, fetchComps, now = Date.now() }) {
+    const { variant, reason } = gradedVariantFor(card, identity);
+
+    if (!variant) return unavailable(reason);
+
+    const label = printingLabel(identity.printing, identity.set);
+    const comps = await fetchVariantComps(card, variant, { grader, grade, fetchComps });
+
+    const summary = summarizeComps(comps, {
+        printing: identity.printing,
+        setName: variant.setName,
+        grader,
+        grade,
+        now,
+    });
+
+    const details = { printingLabel: label, variant: variant.name, grader, grade, summary };
+
+    if (summary.count === 0) {
+        return unavailable(`No verified ${grader} ${grade} sales of the ${label} printing.`, details);
     }
 
     return {

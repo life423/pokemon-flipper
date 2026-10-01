@@ -10,6 +10,8 @@ import {
     readyForPricing,
     mapVariantPrintings,
     printingLabel,
+    normalizeSetName,
+    sameSetFamily,
 } from "../card-identity.js";
 import { rawPricesFor } from "../pricing.js";
 import { toCardRecord } from "../pkmnprices.js";
@@ -402,4 +404,73 @@ test("titles naming 1st Edition Shadowless and Shadowless without 1st Edition ar
     assert.equal(printingClaimFromText("1999 Base Set 1st Edition Shadowless Charizard"), "FIRST_EDITION");
     assert.equal(printingClaimFromText("1999 Base Set Shadowless without 1st Edition Charizard"), "SHADOWLESS");
     assert.equal(printingClaimFromText("Charizard Shadowless NO 1st Ed PSA 8"), "SHADOWLESS");
+});
+
+// Graded listings: set names from labels, and the label as printing evidence
+
+test("set names from grading labels and series prefixes match the database's", () => {
+    assert.equal(normalizeSetName("1999 POKEMON GAME"), "base set");
+    assert.equal(normalizeSetName("POKEMON NEO GENESIS"), "neo genesis");
+    assert.equal(normalizeSetName("2000 Pokemon Rocket"), "team rocket");
+    assert.equal(normalizeSetName("2000 POKEMON NEO GENESIS 1ST EDITION"), "neo genesis");
+    assert.equal(normalizeSetName("1999 POKEMON GAME SHADOWLESS"), "base set shadowless");
+    assert.equal(normalizeSetName("Base Set (Shadowless)"), "base set shadowless");
+    assert.equal(sameSetFamily("Crown Zenith", "Sword & Shield Crown Zenith"), true);
+    assert.equal(sameSetFamily("XY Base Set", "Base Set"), false);
+    assert.equal(sameSetFamily("Base Set 2", "Base Set"), false);
+});
+
+function slabListing(title, labelText, marks = { firstEditionStamp: "CANT_TELL", artBoxShadow: "CANT_TELL" }) {
+    return {
+        listing: {
+            title,
+            aspects: {
+                Set: "1999 POKEMON GAME",
+                "Card Number": "4",
+                "Card Name": "CHARIZARD-HOLO",
+                Language: "English",
+            },
+        },
+        photos: {
+            ...charizardPhotos(marks),
+            slab: { present: true, labelText },
+        },
+    };
+}
+
+test("a PSA label that prints 1ST EDITION identifies a 1st Edition Shadowless slab", async () => {
+    const { listing, photos } = slabListing(
+        "PSA 8 1999 Pokemon 1st Edition Charizard 4/102 Holo",
+        "1999 POKEMON GAME 1ST EDITION #4 CHARIZARD-HOLO NM-MT 8"
+    );
+
+    const { identity } = await identifyCard(listing, photos, { lookupCards: BASE_FAMILY });
+
+    assert.equal(identity.status, "IDENTIFIED");
+    assert.equal(identity.printing, "FIRST_EDITION");
+    assert.equal(identity.printingLabel, "1st Edition Shadowless");
+    assert.equal(identity.evidence.photoSource, "slab label");
+});
+
+test("a legible label with no edition printed marks an Unlimited slab", async () => {
+    const { listing, photos } = slabListing(
+        "PSA 8 Base Set Charizard 4/102 Holo",
+        "1999 POKEMON GAME #4 CHARIZARD-HOLO NM-MT 8"
+    );
+
+    const { identity } = await identifyCard(listing, photos, { lookupCards: BASE_FAMILY });
+
+    assert.equal(identity.printing, "UNLIMITED");
+    assert.equal(identity.set, "Base Set");
+});
+
+test("a title that disagrees with the slab label goes to review", async () => {
+    const { listing, photos } = slabListing(
+        "PSA 8 1st Edition Charizard 4/102 Holo",
+        "1999 POKEMON GAME SHADOWLESS #4 CHARIZARD-HOLO NM-MT 8"
+    );
+
+    const { identity } = await identifyCard(listing, photos, { lookupCards: BASE_FAMILY });
+
+    assert.equal(identity.status, "NEEDS_REVIEW");
 });

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { summarizeComps, gradedPricesFor } from "../graded-comps.js";
+import { summarizeComps, gradedPricesFor, compsForGrade } from "../graded-comps.js";
 import { identifyCard } from "../card-identity.js";
 import { toCardRecord } from "../pkmnprices.js";
 
@@ -234,4 +234,34 @@ test("graded prices never start for a card that isn't identified", async () => {
 
     assert.equal(pricing.status, "PRICE_UNAVAILABLE");
     assert.equal(called, false);
+});
+
+test("a slab's exact grade is priced alone: 8.5 sales never mix with 8s", async () => {
+    const { identity, card } = await identifyCard(
+        {
+            title: "2000 Pokemon Neo Genesis Lugia 9/111 Holo Rare Unlimited",
+            aspects: { Set: "Neo Genesis", "Card Number": "9/111", "Card Name": "Lugia", Language: "English" },
+        },
+        photos("Lugia", "9/111"),
+        { lookupCards: async () => [LUGIA] }
+    );
+
+    const title = "2000 POKEMON NEO GENESIS #9 LUGIA-HOLO";
+    const sales = [
+        comp(1900, "2026-09-01", "Unlimited Holofoil", `${title} PSA 8.5`, { grade: "8.5" }),
+        comp(2000, "2026-09-02", "Unlimited Holofoil", `${title} PSA 8.5`, { grade: "8.5" }),
+        comp(1250, "2026-09-03", "Unlimited Holofoil", `${title} PSA 8`, { grade: "8" }),
+    ];
+
+    const pricing = await compsForGrade(card, identity, {
+        grader: "PSA",
+        grade: "8.5",
+        now: NOW,
+        fetchComps: async () => sales,
+    });
+
+    assert.equal(pricing.status, "PRICED");
+    assert.equal(pricing.summary.count, 2);
+    assert.equal(pricing.summary.median, 1950);
+    assert.equal(pricing.summary.dropped["different grade"], 1);
 });

@@ -267,6 +267,43 @@ function verdict(name, reasons, extra = {}) {
     return { verdict: name, reasons, best: null, paths: [], assumptions: [], ...extra };
 }
 
+// Path 3: a graded card, resold as is.
+function underwriteSlab(evaluation, shipping, config, assumptions) {
+    const { slab, slabPricing, listing } = evaluation;
+
+    if (slab.status === "LIKELY_FAKE") {
+        return verdict("PASS", ["The slab or label looks fake.", ...slab.concerns]);
+    }
+    if (slab.status !== "OK") {
+        return verdict("NEEDS_REVIEW", slab.reasons);
+    }
+    if (slabPricing?.status !== "PRICED") {
+        return verdict(
+            "CANT_PRICE",
+            [slabPricing?.reason ?? `There are no ${slab.grader} ${slab.grade} sales to price with.`],
+            { assumptions }
+        );
+    }
+
+    const path = gradedResalePath(listing, slabPricing.summary, shipping, config);
+
+    if (path.clears) {
+        return { verdict: "BUY_GRADED", reasons: [], best: path, paths: [path], assumptions };
+    }
+
+    return {
+        verdict: "PASS",
+        reasons: [
+            path.maxBid > 0
+                ? `At ${dollars(listing.price)}, reselling it as is doesn't clear your targets. The max bid is ${dollars(path.maxBid)}.`
+                : "Reselling it as is doesn't clear your targets at any price.",
+        ],
+        best: path,
+        paths: [path],
+        assumptions,
+    };
+}
+
 // Every path, and the verdict: the path that clears your targets by
 // the most, or pass. Anything unknown stops the math instead of guessing.
 export function underwrite(evaluation, config = MONEY_CONFIG) {
@@ -278,15 +315,6 @@ export function underwrite(evaluation, config = MONEY_CONFIG) {
     if (!readyForPricing(identity)) {
         return verdict("NEEDS_REVIEW", identity?.reasons?.length ? identity.reasons : ["The card isn't identified yet."]);
     }
-    if (!condition) {
-        return verdict("NEEDS_REVIEW", evaluation.modeReasons?.length ? evaluation.modeReasons : ["There's no condition estimate from the photos."]);
-    }
-    if (condition.authenticity.concern === "LIKELY_FAKE") {
-        return verdict("PASS", ["The photos suggest the card may be fake.", ...condition.authenticity.reasons]);
-    }
-    if (condition.authenticity.concern !== "NONE_SEEN") {
-        return verdict("NEEDS_REVIEW", ["The photos raise an authenticity question.", ...condition.authenticity.reasons]);
-    }
 
     const assumptions = [];
     const shipping = listing.shipping ?? config.buying.assumedShippingWhenUnknown;
@@ -296,6 +324,20 @@ export function underwrite(evaluation, config = MONEY_CONFIG) {
     }
     if (config.verified !== true) {
         assumptions.push("The fees in money.config.js haven't been checked against your accounts yet.");
+    }
+
+    if (evaluation.slab) {
+        return underwriteSlab(evaluation, shipping, config, assumptions);
+    }
+
+    if (!condition) {
+        return verdict("NEEDS_REVIEW", evaluation.modeReasons?.length ? evaluation.modeReasons : ["There's no condition estimate from the photos."]);
+    }
+    if (condition.authenticity.concern === "LIKELY_FAKE") {
+        return verdict("PASS", ["The photos suggest the card may be fake.", ...condition.authenticity.reasons]);
+    }
+    if (condition.authenticity.concern !== "NONE_SEEN") {
+        return verdict("NEEDS_REVIEW", ["The photos raise an authenticity question.", ...condition.authenticity.reasons]);
     }
 
     const paths = [
