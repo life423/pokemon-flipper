@@ -158,6 +158,37 @@
     width: 7.5rem;
 }
 
+/* A number box with its unit: "$ 100", "30 %". */
+.affix {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 40px;
+    padding: 0 0.6rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    color: var(--text-muted);
+}
+
+.affix:focus-within {
+    border-color: var(--accent);
+}
+
+.field .affix input {
+    width: 4.5rem;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+
+.field .affix input:focus-visible {
+    outline: none;
+}
+
 .status {
     margin-block: var(--space-3);
     color: var(--text-muted);

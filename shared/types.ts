@@ -10,6 +10,13 @@ export type Confidence = "HIGH" | "MEDIUM" | "LOW" | "NONE";
 export type BuyingOption = "AUCTION" | "FIXED_PRICE";
 export type PriceStatus = "PRICED" | "PRICE_UNAVAILABLE";
 
+// What a deal has to clear: profit after every cost, and return on
+// everything you put in. You set these on the page.
+export interface Targets {
+    minProfit: number;
+    minRoi: number;
+}
+
 // Graders whose sold comps the money math uses.
 export type Grader = "PSA" | "CGC";
 
@@ -34,6 +41,9 @@ export interface Screen {
     } | null;
     bestCase: { label: string; maxBid: number; profit: number; roi: number | null } | null;
     assumed: string | null;
+    // The paths the free check priced, so its verdict can be redone for
+    // other targets without another lookup.
+    money?: { shipping: number; paths: { label: string; expectedNet: number; fixedCosts: number }[] };
     // Item details the AI read from the title because the seller left them out.
     filledFromTitle?: string[];
 }
@@ -274,6 +284,10 @@ export interface PricedPath {
     status: "PRICED";
     // What you keep from the sale, on average, after fees and shipping.
     expectedNet: number;
+    // Grading fee and grading shipping; zero for a raw or slab resale.
+    fixedCosts: number;
+    // What buying it costs to ship to you.
+    shipping: number;
     // Everything you put in at the current price.
     cost: number;
     profit: number;

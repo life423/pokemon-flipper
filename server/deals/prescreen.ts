@@ -3,9 +3,9 @@ import { graderCode, normalizeGrade } from "../identity/slab-check.ts";
 import { rawPricesFor } from "../pricing/raw-prices.ts";
 import { gradedPricesFor, compsForGrade } from "../pricing/graded-comps.ts";
 import type { FetchComps, LookupCards } from "../pricing/types.ts";
-import { sellerCondition } from "../ebay/seller-condition.ts";
-import { GRADERS, underwrite, type UnderwritingInput } from "../money/underwriting.ts";
-import { MONEY_CONFIG, type MoneyConfig } from "../config/money.ts";
+import { sellerCondition } from "../../shared/conditions.ts";
+import { GRADERS, underwrite, type UnderwritingInput } from "../../shared/money/underwriting.ts";
+import { MONEY_CONFIG, type MoneyConfig } from "../../shared/money/config.ts";
 import { CONDITION_NAMES } from "../../shared/conditions.ts";
 import type { Grader, Screen, Underwriting } from "../../shared/types.ts";
 
@@ -141,31 +141,36 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
             input.condition = { rawCondition, gradeRange, authenticity: { concern: "NONE_SEEN", reasons: [] } };
             input.rawPricing = rawPricesFor(card, identity);
             input.gradedPricing = {};
+
+            // Every path is priced, so the page can redo the verdict for
+            // any targets. Comps are cached per card, so this stays cheap.
+            for (const grader of GRADERS) {
+                input.gradedPricing[grader] = await gradedPricesFor(card, identity, gradeRange, { fetchComps, grader, now });
+            }
+
             outcome = underwrite(input, config);
             assumed = `${CONDITION_NAMES[rawCondition]}, grading ${grade} at best`;
-
-            // pkmnprices charges per sale returned, so sold comps are
-            // fetched only while nothing clears yet.
-            for (const grader of GRADERS) {
-                if (outcome.verdict.startsWith("BUY")) break;
-
-                input.gradedPricing[grader] = await gradedPricesFor(card, identity, gradeRange, { fetchComps, grader, now });
-                outcome = underwrite(input, config);
-            }
         }
     } catch (error) {
         return screen("UNSCREENED", `The price lookup failed: ${(error as Error).message}`, { card: cardInfo });
     }
 
-    const { verdict, reasons, best } = outcome;
+    const { verdict, reasons, best, paths } = outcome;
     const bestCase = best ? { label: best.label, maxBid: best.maxBid, profit: best.profit, roi: best.roi } : null;
+    const priced = paths.filter((path) => path.status === "PRICED");
+    const money = best
+        ? {
+              shipping: best.shipping,
+              paths: priced.map((path) => ({ label: path.label, expectedNet: path.expectedNet, fixedCosts: path.fixedCosts })),
+          }
+        : undefined;
 
     if (verdict.startsWith("BUY")) {
-        return screen("CANDIDATE", null, { card: cardInfo, bestCase, assumed });
+        return screen("CANDIDATE", null, { card: cardInfo, bestCase, assumed, money });
     }
 
     if (verdict === "PASS") {
-        return screen("DROPPED", reasons[0] ?? null, { card: cardInfo, bestCase, assumed });
+        return screen("DROPPED", reasons[0] ?? null, { card: cardInfo, bestCase, assumed, money });
     }
 
     return screen("UNSCREENED", reasons[0] ?? "It couldn't be priced.", { card: cardInfo, assumed });

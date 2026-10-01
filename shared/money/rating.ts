@@ -1,7 +1,6 @@
-import { sellerCondition } from "../ebay/seller-condition.ts";
-import { CONDITION_NAMES, conditionGap, isRawCondition } from "../../shared/conditions.ts";
-import { dollars, percent } from "../../shared/format.ts";
-import type { CompSummary, Confidence, Evaluation, PricedPath, Rating, RatingLevel } from "../../shared/types.ts";
+import { CONDITION_NAMES, conditionGap, isRawCondition, sellerCondition } from "../conditions.ts";
+import { dollars, percent } from "../format.ts";
+import type { CompSummary, Confidence, Evaluation, PricedPath, Rating, RatingLevel } from "../types.ts";
 
 // How good a deal is, beyond clearing your targets. Plain rules on what
 // the analysis found: each concern drops the rating a level. Strong

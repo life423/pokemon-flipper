@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import type { Evaluation, ListingSummary, RatingLevel, SearchIntent } from "./types";
+import type { Evaluation, ListingSummary, RatingLevel, SearchIntent, Targets } from "./types";
+import { MONEY_CONFIG } from "../../shared/money/config.ts";
+import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.ts";
 import { name } from "./format";
 import { evaluateListing, streamDeals } from "./api";
 import { DealCard } from "./components/DealCard";
@@ -59,6 +61,24 @@ const SORTS: Record<Exclude<SortKey, "best">, (a: ListingSummary, b: ListingSumm
     priceHigh: (a, b) => (b.currentPrice ?? -Infinity) - (a.currentPrice ?? -Infinity),
 };
 
+// Your profit and return targets, saved between visits.
+function readTargets(): Targets {
+    try {
+        const saved = JSON.parse(localStorage.getItem("targets") ?? "null");
+        if (typeof saved?.minProfit === "number" && typeof saved?.minRoi === "number") return saved;
+    } catch {
+        // Unreadable: use the defaults.
+    }
+
+    return MONEY_CONFIG.targets;
+}
+
+// The boxes show whole dollars and percents.
+const targetText = (targets: Targets) => ({
+    minProfit: String(targets.minProfit),
+    minRoi: String(Math.round(targets.minRoi * 100)),
+});
+
 function readAutoSetting(): number {
     try {
         const saved = localStorage.getItem("autoAnalyze");
@@ -94,7 +114,7 @@ export function App() {
     const now = useNow(30_000);
 
     const [query, setQuery] = useState("");
-    const [listings, setListings] = useState<ListingSummary[]>([]);
+    const [rawListings, setListings] = useState<ListingSummary[]>([]);
     const [total, setTotal] = useState<number | null>(null);
     const [summary, setSummary] = useState<SearchSummary | null>(null);
     const [searchStatus, setSearchStatus] = useState<"idle" | "checking" | "done" | "error">("idle");
@@ -113,7 +133,50 @@ export function App() {
     const autoQueued = useRef(new Set<string>());
 
     const [selectedId, setSelectedId] = useState<string | null>(null);
-    const [analyses, setAnalyses] = useState<Record<string, AnalysisState>>({});
+    const [rawAnalyses, setAnalyses] = useState<Record<string, AnalysisState>>({});
+
+    const [targets, setTargets] = useState<Targets>(readTargets);
+    const [targetInputs, setTargetInputs] = useState(() => targetText(readTargets()));
+
+    // Everything re-priced for your targets, from numbers already fetched.
+    const listings = useMemo(
+        () =>
+            rawListings.map((listing) =>
+                listing.screen ? { ...listing, screen: retargetScreen(listing.screen, listing.currentPrice, targets) } : listing
+            ),
+        [rawListings, targets]
+    );
+
+    const analyses = useMemo(() => {
+        const repriced: Record<string, AnalysisState> = {};
+
+        for (const [id, analysis] of Object.entries(rawAnalyses)) {
+            repriced[id] =
+                analysis.status === "done"
+                    ? { status: "done", evaluation: retargetEvaluation(analysis.evaluation, targets) }
+                    : analysis;
+        }
+
+        return repriced;
+    }, [rawAnalyses, targets]);
+
+    function changeTarget(field: keyof Targets, text: string) {
+        setTargetInputs((previous) => ({ ...previous, [field]: text }));
+
+        const value = Number(text);
+
+        // Half-typed or negative: keep the last good target.
+        if (text.trim() === "" || !Number.isFinite(value) || value < 0) return;
+
+        const next = { ...targets, [field]: field === "minRoi" ? value / 100 : value };
+        setTargets(next);
+
+        try {
+            localStorage.setItem("targets", JSON.stringify(next));
+        } catch {
+            // Without storage the targets last for this visit.
+        }
+    }
 
     const runAnalysis = useCallback(async (listing: ListingSummary, fresh = false) => {
         setAnalyses((previous) => ({ ...previous, [listing.id]: { status: "loading", startedAt: Date.now() } }));
@@ -351,6 +414,34 @@ export function App() {
                     )}
 
                     <div className={styles.filters}>
+                        <label className={styles.field}>
+                            <span>Min profit</span>
+                            <span className={styles.affix}>
+                                <span>$</span>
+                                <input
+                                    type="number"
+                                    inputMode="decimal"
+                                    min="0"
+                                    step="5"
+                                    value={targetInputs.minProfit}
+                                    onChange={(event) => changeTarget("minProfit", event.target.value)}
+                                />
+                            </span>
+                        </label>
+                        <label className={styles.field}>
+                            <span>Min ROI</span>
+                            <span className={styles.affix}>
+                                <input
+                                    type="number"
+                                    inputMode="decimal"
+                                    min="0"
+                                    step="5"
+                                    value={targetInputs.minRoi}
+                                    onChange={(event) => changeTarget("minRoi", event.target.value)}
+                                />
+                                <span>%</span>
+                            </span>
+                        </label>
                         <Segmented
                             label="Show"
                             value={view}

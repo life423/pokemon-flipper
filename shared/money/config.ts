@@ -1,5 +1,5 @@
-import type { RawCondition } from "../../shared/conditions.ts";
-import type { Grader } from "../../shared/types.ts";
+import type { RawCondition } from "../conditions.ts";
+import type { Grader, Targets } from "../types.ts";
 
 export interface GradingTier {
     tier: string;
@@ -30,7 +30,8 @@ export type GradingConfig = { shippingPerCard: number } & Record<Grader, Grading
 
 export interface MoneyConfig {
     verified: boolean;
-    targets: { minProfit: number; minRoi: number };
+    // Defaults; the page lets you change them.
+    targets: Targets;
     prescreen: { bestGrade: Record<RawCondition, number> };
     buying: BuyingConfig;
     selling: SellingConfig;

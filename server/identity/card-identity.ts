@@ -1,4 +1,7 @@
 import { normalizeText } from "../ebay/filters.ts";
+import { PRINTINGS, isPrinting, readyForPricing } from "../../shared/identity.ts";
+
+export { PRINTINGS, isPrinting, readyForPricing };
 import type { Identity, PhotoCheck, Printing } from "../../shared/types.ts";
 import type { LookupCards, PricedCard, CardRecord, PrintingOrUnknown } from "../pricing/types.ts";
 
@@ -35,12 +38,6 @@ interface PrintingDecision {
 
 // Identify first, price second. A listing gets its canonical identity
 // here, and no price source is allowed to change it.
-
-export const PRINTINGS: Printing[] = ["FIRST_EDITION", "SHADOWLESS", "UNLIMITED"];
-
-export function isPrinting(value: unknown): value is Printing {
-    return PRINTINGS.includes(value as Printing);
-}
 
 const PRINTING_NAMES: Record<string, string> = {
     FIRST_EDITION: "1st Edition",
@@ -408,18 +405,6 @@ export function resolvePrinting(
     }
 
     return accepted(photo);
-}
-
-// Pricing never starts on a partly known card.
-export function readyForPricing(
-    identity: Pick<Identity, "status" | "set" | "cardNumber" | "printing"> | null | undefined
-): boolean {
-    return (
-        identity?.status === "IDENTIFIED" &&
-        Boolean(identity.set) &&
-        Boolean(identity.cardNumber) &&
-        isPrinting(identity.printing)
-    );
 }
 
 function aspectText(aspects: Record<string, string>, namePattern: RegExp): string {

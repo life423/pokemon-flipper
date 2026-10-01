@@ -1,7 +1,7 @@
-import { readyForPricing } from "../identity/card-identity.ts";
-import { MONEY_CONFIG, type BuyingConfig, type GradingConfig, type MoneyConfig, type SellingConfig } from "../config/money.ts";
-import { RAW_CONDITIONS, isRawCondition } from "../../shared/conditions.ts";
-import { dollars, round2 } from "../../shared/format.ts";
+import { readyForPricing } from "../identity.ts";
+import { MONEY_CONFIG, type BuyingConfig, type GradingConfig, type MoneyConfig, type SellingConfig } from "./config.ts";
+import { RAW_CONDITIONS, isRawCondition } from "../conditions.ts";
+import { dollars, round2 } from "../format.ts";
 import type {
     CompSummary,
     Condition,
@@ -18,7 +18,7 @@ import type {
     UnavailablePath,
     Underwriting,
     Verdict,
-} from "../../shared/types.ts";
+} from "../types.ts";
 
 // The money math. Pure code, no AI: every number comes from the
 // evaluation and money config, so the same inputs always give the same
@@ -162,30 +162,61 @@ interface PathMoney {
     config: MoneyConfig;
 }
 
-function pricedPath(
-    { path, label, expectedNet, downsideNet, fixedCosts, listing, shipping, config }: PathMoney,
-    extra: Partial<PricedPath> = {}
-): PricedPath {
-    const totalCost = (price: number) => round2(acquisitionCost(price, shipping, config.buying) + fixedCosts);
-    const cost = totalCost(listing.price);
+// One path's numbers at one price: what it costs, what it makes, and
+// the most you can pay. Also re-prices a free check for new targets.
+export function pathNumbers(
+    {
+        expectedNet,
+        downsideNet = expectedNet,
+        fixedCosts,
+        shipping,
+        price,
+    }: { expectedNet: number; downsideNet?: number; fixedCosts: number; shipping: number; price: number },
+    config: MoneyConfig
+) {
+    const totalCost = (amount: number) => round2(acquisitionCost(amount, shipping, config.buying) + fixedCosts);
+    const cost = totalCost(price);
     const profit = round2(expectedNet - cost);
     const limit = maxBid({ expectedNet, fixedCosts, shipping }, config);
     const costAtLimit = limit > 0 ? totalCost(limit) : null;
     const profitAtMaxBid = costAtLimit === null ? null : round2(expectedNet - costAtLimit);
 
     return {
-        path,
-        label,
-        status: "PRICED",
-        expectedNet: round2(expectedNet),
         cost,
         profit,
         roi: cost > 0 ? round2(profit / cost) : null,
         downside: round2(downsideNet - cost),
         maxBid: limit,
-        clears: limit > 0 && listing.price <= limit,
+        clears: limit > 0 && price <= limit,
         profitAtMaxBid,
         roiAtMaxBid: costAtLimit && profitAtMaxBid !== null ? round2(profitAtMaxBid / costAtLimit) : null,
+    };
+}
+
+// The path to go with: the most profit among those that clear your
+// targets, or else the highest max bid.
+export function bestPath<T extends { profit: number; maxBid: number; clears: boolean }>(paths: T[]): T | null {
+    if (paths.length === 0) return null;
+
+    const clearing = paths.filter((path) => path.clears);
+
+    return clearing.length > 0
+        ? clearing.reduce((a, b) => (b.profit > a.profit ? b : a))
+        : paths.reduce((a, b) => (b.maxBid > a.maxBid ? b : a));
+}
+
+function pricedPath(
+    { path, label, expectedNet, downsideNet, fixedCosts, listing, shipping, config }: PathMoney,
+    extra: Partial<PricedPath> = {}
+): PricedPath {
+    return {
+        path,
+        label,
+        status: "PRICED",
+        expectedNet: round2(expectedNet),
+        fixedCosts: round2(fixedCosts),
+        shipping,
+        ...pathNumbers({ expectedNet, downsideNet, fixedCosts, shipping, price: listing.price }, config),
         ...extra,
     };
 }
@@ -416,12 +447,9 @@ export function underwrite(input: UnderwritingInput, config: MoneyConfig = MONEY
         rawPath(input, listing, shipping, config),
         ...GRADERS.map((grader) => gradePath(input, grader, listing, shipping, config)),
     ];
-    const priced = paths.filter(isPriced);
-    const clearing = priced.filter((path) => path.clears);
+    const best = bestPath(paths.filter(isPriced));
 
-    if (clearing.length > 0) {
-        const best = clearing.reduce((a, b) => (b.profit > a.profit ? b : a));
-
+    if (best?.clears) {
         return {
             verdict: best.path === "RAW" ? "BUY_RAW" : "BUY_AND_GRADE",
             reasons: [],
@@ -431,9 +459,7 @@ export function underwrite(input: UnderwritingInput, config: MoneyConfig = MONEY
         };
     }
 
-    if (priced.length > 0) {
-        const best = priced.reduce((a, b) => (b.maxBid > a.maxBid ? b : a));
-
+    if (best) {
         return {
             verdict: "PASS",
             reasons: [

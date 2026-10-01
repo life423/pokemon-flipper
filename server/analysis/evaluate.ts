@@ -29,8 +29,8 @@ import { rawPricesFor } from "../pricing/raw-prices.ts";
 import { lookupCards, fetchComps } from "../pricing/pkmnprices.ts";
 import { gradedPricesFor, compsForGrade } from "../pricing/graded-comps.ts";
 import { checkSlab } from "../identity/slab-check.ts";
-import { GRADERS, underwrite } from "../money/underwriting.ts";
-import { rateDeal } from "../money/rating.ts";
+import { GRADERS, underwrite } from "../../shared/money/underwriting.ts";
+import { rateDeal } from "../../shared/money/rating.ts";
 
 // Cost cap: only the first photos, in the seller's order.
 const MAX_PHOTOS = 8;
