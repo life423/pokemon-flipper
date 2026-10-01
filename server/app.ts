@@ -2,12 +2,16 @@ import "dotenv/config";
 import http from "node:http";
 import path from "node:path";
 import express from "express";
-import { CLIENT_ROOT } from "./lib/paths.js";
-import { getListings } from "./ebay/listings.js";
+import { CLIENT_ROOT } from "./lib/paths.ts";
+import { getListings } from "./ebay/listings.ts";
 import { findDeals } from "./deals/find-deals.ts";
-import { evaluateListing } from "./analysis/evaluate.js";
+import { evaluateListing } from "./analysis/evaluate.ts";
+import { EbayError } from "./ebay/api.ts";
 
 const app = express();
+
+// The search text from ?q=, or empty.
+const searchText = (req: express.Request) => (typeof req.query.q === "string" ? req.query.q : "");
 const server = http.createServer(app);
 const PORT = process.env.PORT || 3000;
 const isProduction = process.env.NODE_ENV === "production";
@@ -16,8 +20,7 @@ app.use(express.json());
 
 app.get("/api/listings", async (req, res) => {
     try {
-        const search = req.query.q || "";
-        const listings = await getListings(search);
+        const listings = await getListings(searchText(req));
 
         res.json(listings);
     } catch (error) {
@@ -36,10 +39,10 @@ app.get("/api/listings", async (req, res) => {
 app.get("/api/deals", async (req, res) => {
     res.setHeader("Content-Type", "application/x-ndjson");
 
-    const send = (message) => res.write(`${JSON.stringify(message)}\n`);
+    const send = (message: object) => res.write(`${JSON.stringify(message)}\n`);
 
     try {
-        await findDeals(req.query.q || "", {
+        await findDeals(searchText(req), {
             onStart: (count) => send({ type: "start", count }),
             onListing: (listing) => send({ type: "listing", listing }),
         });
@@ -64,7 +67,7 @@ app.post("/api/listings/:id/evaluate", async (req, res) => {
     } catch (error) {
         console.error(error);
 
-        const notFound = error.status === 404;
+        const notFound = error instanceof EbayError && error.status === 404;
 
         res.status(notFound ? 404 : 500).json({
             error: notFound

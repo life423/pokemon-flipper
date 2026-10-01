@@ -1,5 +1,5 @@
 {
-    // The server, the code shared with the client, scripts, and tests.
+    // The server, the code shared with the client, and scripts.
     // tsx runs the TypeScript directly; tsc only checks it.
     "compilerOptions": {
         "target": "ES2023",
@@ -14,10 +14,9 @@
         "isolatedModules": true,
         "verbatimModuleSyntax": true,
         "resolveJsonModule": true,
-        // While files move over: plain JavaScript runs alongside, unchecked.
-        "allowJs": true,
-        "checkJs": false,
         "types": ["node"]
     },
-    "include": ["server", "shared", "scripts", "test"]
+    // Tests run through tsx but aren't type-checked yet: their fixtures are
+    // deliberately partial objects. Typed fixture builders would fix that.
+    "include": ["server", "shared", "scripts"]
 }

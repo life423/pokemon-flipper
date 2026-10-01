@@ -5,7 +5,7 @@ import {
     applyPhotoCheckRules,
     applyConditionRules,
     moreCautious,
-} from "../../server/analysis/evaluate.js";
+} from "../../server/analysis/rules.ts";
 
 const photo = (number, view, overrides = {}) => ({
     number,

@@ -310,6 +310,9 @@ export interface Evaluation {
         cardCondition: string | null;
         conditionNotes: string[];
         seller: Seller | null;
+        // eBay's condition ("Ungraded", "Graded") and the item specifics.
+        sellerCondition: string | null;
+        aspects: Record<string, string>;
     };
     photoCheck: PhotoCheck | null;
     gradingMode: "FULL" | "LIMITED" | "BLOCKED";

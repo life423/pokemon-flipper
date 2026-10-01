@@ -4,7 +4,7 @@ import {
     photoFingerprint,
     reusableRecord,
     assessmentStillFits,
-} from "../../server/analysis/store.js";
+} from "../../server/analysis/store.ts";
 
 const urls = [
     "https://i.ebayimg.com/images/g/a/s-l1600.jpg",

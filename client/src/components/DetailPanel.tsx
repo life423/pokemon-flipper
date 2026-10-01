@@ -16,6 +16,7 @@ import type {
 } from "../types";
 import { describeRange, dollars, name, percent, timeLeft } from "../format";
 import { useNow } from "../useNow";
+import { CONDITION_AREAS } from "../../../shared/conditions.ts";
 import { RatingBadge, VerdictBadge } from "./VerdictBadge";
 import styles from "./DetailPanel.module.css";
 
@@ -443,7 +444,7 @@ function SlabSection({ slab, pricing }: { slab: Slab; pricing: SlabPricing | nul
 }
 
 function ConditionSection({ evaluation, condition }: { evaluation: Evaluation; condition: Condition }) {
-    const areas = ["centering", "corners", "edges", "surface"] as const;
+    const areas = CONDITION_AREAS;
 
     return (
         <Section title="Condition">

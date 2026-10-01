@@ -1,7 +1,7 @@
-import type { GradeRange, Verdict } from "./types";
+import type { Verdict } from "./types";
 import { CONDITION_NAMES } from "../../shared/conditions.ts";
 
-export { dollars, percent } from "../../shared/format.ts";
+export { describeRange, dollars, percent } from "../../shared/format.ts";
 
 export function timeLeft(endTime: string | null, now: number): string | null {
     if (!endTime) return null;
@@ -19,10 +19,6 @@ export function timeLeft(endTime: string | null, now: number): string | null {
     if (hours > 0) return `${hours}h ${rest}m`;
 
     return `${rest}m`;
-}
-
-export function describeRange({ low, likely, high }: GradeRange): string {
-    return likely === null ? `${low} to ${high}` : `${low} to ${high}, likely ${likely}`;
 }
 
 const NAMES: Record<string, string> = {

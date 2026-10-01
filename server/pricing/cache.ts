@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { DATA_DIR } from "../lib/paths.js";
+import { DATA_DIR } from "../lib/paths.ts";
 
 // Saved API responses, so the same lookup isn't paid for twice in a day.
 const CACHE_DIR = path.join(DATA_DIR, "price-cache");

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { rateDeal } from "../../server/money/rating.js";
+import { rateDeal } from "../../server/money/rating.ts";
 
 const evaluation = (overrides = {}) => ({
     listing: {

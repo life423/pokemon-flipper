@@ -21,6 +21,11 @@ export function isRawCondition(value: unknown): value is RawCondition {
     return RAW_CONDITIONS.includes(value as RawCondition);
 }
 
+// The four areas a grader judges.
+export const CONDITION_AREAS = ["centering", "corners", "edges", "surface"] as const;
+
+export type ConditionArea = (typeof CONDITION_AREAS)[number];
+
 // Steps from one condition to another: positive when the second is worse.
 export function conditionGap(from: RawCondition, to: RawCondition): number {
     return RAW_CONDITIONS.indexOf(to) - RAW_CONDITIONS.indexOf(from);

@@ -3,10 +3,12 @@
 // Reuses the saved answer for a listing while its photos haven't
 // changed. --fresh ignores it and pays for a new one.
 import "dotenv/config";
-import { evaluateListing } from "../server/analysis/evaluate.js";
-import { toItemId } from "./item-id.js";
+import { evaluateListing } from "../server/analysis/evaluate.ts";
+import { toItemId } from "./item-id.ts";
+import { CONDITION_AREAS } from "../shared/conditions.ts";
+import { describeRange, dollars, percent } from "../shared/format.ts";
 
-const STEP_NAMES = { photoCheck: "photo check", condition: "condition report" };
+const STEP_NAMES: Record<string, string> = { photoCheck: "photo check", condition: "condition report" };
 
 const args = process.argv.slice(2);
 const fresh = args.includes("--fresh");
@@ -25,20 +27,12 @@ let evaluation;
 try {
     evaluation = await evaluateListing(itemId, { fresh });
 } catch (error) {
-    console.error(`Evaluation failed: ${error.message}`);
+    console.error(`Evaluation failed: ${(error as Error).message}`);
     process.exit(1);
 }
 
 const seconds = ((Date.now() - started) / 1000).toFixed(1);
 const { listing, photoCheck, condition, identity, rawPricing, gradedPricing, underwriting } = evaluation;
-
-function money(value) {
-    return value < 0 ? `-$${Math.abs(value).toFixed(2)}` : `$${value.toFixed(2)}`;
-}
-
-function describeRange({ low, likely, high }) {
-    return likely === null ? `${low} to ${high}` : `${low} to ${high}, likely ${likely}`;
-}
 
 console.log();
 console.log(listing.title);
@@ -73,7 +67,7 @@ for (const reason of evaluation.modeReasons) {
 console.log(`Result: ${evaluation.gradeStatus}`);
 
 if (condition) {
-    for (const area of ["centering", "corners", "edges", "surface"]) {
+    for (const area of CONDITION_AREAS) {
         const finding = condition[area];
         console.log(`  ${area}: ${finding.visibility}, ${finding.severity}`);
 
@@ -124,7 +118,7 @@ if (slabPricing) {
 
     if (s && s.count > 0) {
         console.log(
-            `${s.grader} ${s.grade} sold comps (${slabPricing.printingLabel}): ${s.count} sales, median ${money(s.median)}, range ${money(s.low)} to ${money(s.high)}, ${s.confidence} confidence`
+            `${s.grader} ${s.grade} sold comps (${slabPricing.printingLabel}): ${s.count} sales, median ${dollars(s.median)}, range ${dollars(s.low)} to ${dollars(s.high)}, ${s.confidence} confidence`
         );
     }
 
@@ -166,8 +160,8 @@ if (rawPricing) {
     if (rawPricing.status === "PRICED") {
         console.log(`Raw prices (${rawPricing.printingLabel}):`);
 
-        for (const { condition: rawCondition, price } of rawPricing.prices) {
-            console.log(`  ${rawCondition}: ${money(price)}`);
+        for (const { condition: rawCondition, price } of rawPricing.prices ?? []) {
+            console.log(`  ${rawCondition}: ${dollars(price)}`);
         }
     } else {
         console.log(`Raw prices unavailable: ${rawPricing.reason}`);
@@ -183,7 +177,7 @@ for (const [grader, graded] of Object.entries(gradedPricing ?? {})) {
         for (const summary of graded.byGrade) {
             const prices =
                 summary.count > 0
-                    ? `median ${money(summary.median)}, range ${money(summary.low)} to ${money(summary.high)}, newest ${summary.newestSale}`
+                    ? `median ${dollars(summary.median)}, range ${dollars(summary.low)} to ${dollars(summary.high)}, newest ${summary.newestSale}`
                     : "no verified sales";
 
             const dropped = Object.entries(summary.dropped)
@@ -206,8 +200,8 @@ for (const [grader, graded] of Object.entries(gradedPricing ?? {})) {
 if (underwriting) {
     console.log();
 
-    const shippingText = listing.shipping === null ? "shipping not quoted" : `${money(listing.shipping)} shipping`;
-    const priceText = typeof listing.price === "number" ? money(listing.price) : "no price";
+    const shippingText = listing.shipping === null ? "shipping not quoted" : `${dollars(listing.shipping)} shipping`;
+    const priceText = typeof listing.price === "number" ? dollars(listing.price) : "no price";
     const sale =
         listing.buyingOption === "AUCTION"
             ? `auction at ${priceText} (${listing.bids} bids, ends ${listing.endTime})`
@@ -223,23 +217,23 @@ if (underwriting) {
 
         const detail =
             path.path === "GRADE"
-                ? `${path.tier} ${money(path.gradingFee)}, expected sale ${money(path.expectedSale)}`
-                : `sells for ${money(path.salePrice)}${path.priceCondition ? ` (${path.priceCondition})` : ""}`;
+                ? `${path.tier} ${dollars(path.gradingFee)}, expected sale ${dollars(path.expectedSale)}`
+                : `sells for ${dollars(path.salePrice)}${path.priceCondition ? ` (${path.priceCondition})` : ""}`;
 
         console.log(
-            `  ${path.label}: ${detail}; keep ${money(path.expectedNet)}, all-in cost ${money(path.cost)}, profit ${money(path.profit)} (${Math.round(path.roi * 100)}% ROI), worst case ${money(path.downside)}, max bid ${money(path.maxBid)}${path.clears ? ", clears your targets" : ""}`
+            `  ${path.label}: ${detail}; keep ${dollars(path.expectedNet)}, all-in cost ${dollars(path.cost)}, profit ${dollars(path.profit)} (${percent(path.roi)} ROI), worst case ${dollars(path.downside)}, max bid ${dollars(path.maxBid)}${path.clears ? ", clears your targets" : ""}`
         );
 
         if (path.outlook) {
             const grades = path.outlook
-                .map((o) => `${path.grader} ${o.grade} ${Math.round(o.probability * 100)}% at ${money(o.price)}${o.filledFrom ? ` (from ${o.filledFrom})` : ""}`)
+                .map((o) => `${path.grader} ${o.grade} ${Math.round(o.probability * 100)}% at ${dollars(o.price)}${o.filledFrom ? ` (from ${o.filledFrom})` : ""}`)
                 .join(", ");
 
             console.log(`    ${grades}`);
         }
     }
 
-    const best = underwriting.best ? ` (${underwriting.best.label}, max bid ${money(underwriting.best.maxBid)})` : "";
+    const best = underwriting.best ? ` (${underwriting.best.label}, max bid ${dollars(underwriting.best.maxBid)})` : "";
     console.log(`Verdict: ${underwriting.verdict}${best}`);
 
     for (const reason of underwriting.reasons) {

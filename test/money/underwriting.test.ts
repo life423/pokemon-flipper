@@ -9,7 +9,7 @@ import {
     pricesByGrade,
     maxBid,
     underwrite,
-} from "../../server/money/underwriting.js";
+} from "../../server/money/underwriting.ts";
 
 // A fixed copy of the config, so these tests don't move when you edit
 // server/config/money.ts.

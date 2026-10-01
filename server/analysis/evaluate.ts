@@ -1,16 +1,28 @@
-import { getListingDetails } from "../ebay/listings.js";
+import { getListingDetails } from "../ebay/listings.ts";
 import {
     ANALYSIS_VERSION,
     checkListingPhotos,
     assessCardCondition,
-} from "../ai/openai.js";
+} from "../ai/openai.ts";
 import {
     photoFingerprint,
     loadSaved,
     saveRecord,
     reusableRecord,
     assessmentStillFits,
-} from "./store.js";
+} from "./store.ts";
+import {
+    applyConditionRules,
+    applyPhotoCheckRules,
+    getGradingMode,
+    hasCloseUps,
+    isClearPhoto,
+    moreCautious,
+    summarizeAnswer,
+} from "./rules.ts";
+import type { SavedRecord } from "./types.ts";
+import type { PricedCard } from "../pricing/types.ts";
+import type { Evaluation, Grader, GradeRange, GradedPricing, Identity, Slab, SlabPricing } from "../../shared/types.ts";
 import { identifyCard } from "../identity/card-identity.ts";
 import { rawPricesFor } from "../pricing/raw-prices.ts";
 import { lookupCards, fetchComps } from "../pricing/pkmnprices.ts";
@@ -26,218 +38,13 @@ const MAX_PHOTOS = 8;
 // one optimistic run can't set the saved answer on its own.
 const CONDITION_RUNS = 2;
 
-const AREAS = ["centering", "corners", "edges", "surface"];
-
-// Risk order for picking the more cautious answer. Anything the
-// table doesn't know ranks as the riskiest, so surprises fail closed.
-const AUTHENTICITY_RISK = ["NONE_SEEN", "POSSIBLE", "LIKELY_FAKE"];
-const CREASE_RISK = ["NONE_SEEN", "SUSPECTED", "PRESENT"];
-const RAW_CONDITION_RISK = [
-    "NEAR_MINT",
-    "LIGHTLY_PLAYED",
-    "MODERATELY_PLAYED",
-    "HEAVILY_PLAYED",
-    "DAMAGED",
-    "UNKNOWN",
-];
-
-function riskOf(order, value) {
-    const index = order.indexOf(value);
-    return index === -1 ? order.length : index;
-}
-
-// Returns the more cautious of two condition answers. A red flag in
-// either one wins first (authenticity, then creases), then the lower
-// grade range, then the worse raw condition. Ties keep the first.
-export function moreCautious(a, b) {
-    const likelyOf = (answer) => answer.gradeRange.likely ?? 0;
-
-    const comparisons = [
-        riskOf(AUTHENTICITY_RISK, b.authenticity.concern) -
-            riskOf(AUTHENTICITY_RISK, a.authenticity.concern),
-        riskOf(CREASE_RISK, b.creases) - riskOf(CREASE_RISK, a.creases),
-        a.gradeRange.low - b.gradeRange.low,
-        likelyOf(a) - likelyOf(b),
-        a.gradeRange.high - b.gradeRange.high,
-        riskOf(RAW_CONDITION_RISK, b.rawCondition) -
-            riskOf(RAW_CONDITION_RISK, a.rawCondition),
-    ];
-
-    for (const difference of comparisons) {
-        if (difference > 0) return b;
-        if (difference < 0) return a;
-    }
-
-    return a;
-}
-
-function summarizeAnswer(answer) {
-    return {
-        gradeRange: answer.gradeRange,
-        rawCondition: answer.rawCondition,
-        authenticity: answer.authenticity.concern,
-    };
-}
-
-const CLOSE_UP_VIEWS = ["FRONT_DETAIL", "BACK_DETAIL"];
-
-const NO_CLOSE_UPS =
-    "No close-up photos, so fine surface flaws like holo scratches can't be ruled out.";
-
-function isClearPhoto(photo) {
-    return photo.usable && !photo.isStockImage;
-}
-
-export function hasCloseUps(photoCheck) {
-    return photoCheck.images.some(
-        (photo) => isClearPhoto(photo) && CLOSE_UP_VIEWS.includes(photo.view)
-    );
-}
-
-// Code-enforced rules on the photo check. Drops reports for photos
-// that don't exist or were already reported, and never allows high
-// confidence without a close-up.
-export function applyPhotoCheckRules(photoCheck, photoCount) {
-    const seen = new Set();
-
-    const images = photoCheck.images.filter((photo) => {
-        const valid =
-            Number.isInteger(photo.number) &&
-            photo.number >= 1 &&
-            photo.number <= photoCount &&
-            !seen.has(photo.number);
-
-        seen.add(photo.number);
-        return valid;
-    });
-
-    const checked = { ...photoCheck, images };
-
-    if (!hasCloseUps(checked) && checked.confidence === "HIGH") {
-        checked.confidence = "MEDIUM";
-    }
-
-    return checked;
-}
-
-// The model reports what it sees. These rules, not the model,
-// decide how much grading the evidence allows. Anything missing
-// or unexpected fails closed.
-export function getGradingMode(photoCheck) {
-    const clearPhotos = photoCheck.images.filter(isClearPhoto);
-    const hasView = (view) => clearPhotos.some((photo) => photo.view === view);
-
-    const blockedReasons = [];
-
-    if (photoCheck.cardCount !== "ONE") {
-        blockedReasons.push("The listing doesn't show exactly one card.");
-    }
-    if (photoCheck.holder === "GRADED_SLAB") {
-        blockedReasons.push("The card is already graded.");
-    }
-    if (!hasView("FRONT")) {
-        blockedReasons.push("No usable photo shows the front.");
-    }
-    // The model's overall verdict only counts when it rules the
-    // photos out. "Partial" is a borderline call that flips between
-    // runs, so full versus limited comes from the concrete facts below.
-    if (!["SUFFICIENT", "PARTIAL"].includes(photoCheck.photoSufficiency)) {
-        blockedReasons.push("The photos aren't good enough to judge condition.");
-    }
-
-    if (blockedReasons.length > 0) {
-        return { mode: "BLOCKED", reasons: blockedReasons };
-    }
-
-    const limitedReasons = [];
-
-    if (!hasView("BACK")) {
-        limitedReasons.push("No usable photo shows the back.");
-    }
-    if (photoCheck.confidence === "LOW") {
-        limitedReasons.push("The photo check has low confidence.");
-    }
-    if (photoCheck.images.some((photo) => photo.isStockImage)) {
-        limitedReasons.push("Some photos are stock images, not this copy.");
-    }
-    if (photoCheck.holder !== "NONE") {
-        limitedReasons.push("A sleeve or holder may hide edges and surface.");
-    }
-
-    const mode = limitedReasons.length > 0 ? "LIMITED" : "FULL";
-
-    // A note, not a downgrade: front and back photos alone still
-    // get graded, just without a clean bill for the surface.
-    const notes = hasCloseUps(photoCheck) ? [] : [NO_CLOSE_UPS];
-
-    return { mode, reasons: [...limitedReasons, ...notes] };
-}
-
-function isGrade(value) {
-    return Number.isInteger(value) && value >= 1 && value <= 10;
-}
-
-// Code-enforced rules on the condition report. Returns null when
-// the grade range is broken, since there's no safe way to repair it.
-export function applyConditionRules(
-    assessment,
-    gradingMode,
-    { closeUps = false } = {}
-) {
-    const condition = structuredClone(assessment);
-
-    // Whole-card photos can show a surface flaw, but they can't
-    // prove there isn't one. A visible defect still counts.
-    if (!closeUps) {
-        if (condition.surface.visibility === "CLEAR") {
-            condition.surface.visibility = "PARTIAL";
-        }
-        if (condition.surface.severity === "NONE") {
-            condition.surface.severity = "UNKNOWN";
-        }
-        condition.limitations = [...condition.limitations, NO_CLOSE_UPS];
-    }
-
-    // An area no photo shows has unknown severity, whatever the model said.
-    for (const area of AREAS) {
-        if (condition[area].visibility === "NOT_VISIBLE") {
-            condition[area].severity = "UNKNOWN";
-        }
-    }
-
-    const { low, likely, high } = condition.gradeRange;
-
-    const validRange =
-        isGrade(low) &&
-        isGrade(high) &&
-        low <= high &&
-        (likely === null || (isGrade(likely) && low <= likely && likely <= high));
-
-    if (!validRange) {
-        return null;
-    }
-
-    // Limited evidence never names a single grade or claims confidence.
-    if (gradingMode === "LIMITED") {
-        condition.gradeRange.likely = null;
-        condition.confidence = "LOW";
-    }
-
-    // High confidence needs every area clearly visible.
-    const allClear = AREAS.every(
-        (area) => condition[area].visibility === "CLEAR"
-    );
-
-    if (!allClear && condition.confidence === "HIGH") {
-        condition.confidence = "MEDIUM";
-    }
-
-    return condition;
-}
-
 // Verified sold comps from each grader, for an identified card.
-async function gradedPricesByGrader(card, identity, gradeRange) {
-    const byGrader = {};
+async function gradedPricesByGrader(
+    card: PricedCard,
+    identity: Identity,
+    gradeRange: GradeRange
+): Promise<Partial<Record<Grader, GradedPricing>>> {
+    const byGrader: Partial<Record<Grader, GradedPricing>> = {};
 
     for (const grader of GRADERS) {
         try {
@@ -245,7 +52,7 @@ async function gradedPricesByGrader(card, identity, gradeRange) {
         } catch (error) {
             byGrader[grader] = {
                 status: "PRICE_UNAVAILABLE",
-                reason: `The ${grader} comp lookup failed: ${error.message}`,
+                reason: `The ${grader} comp lookup failed: ${(error as Error).message}`,
             };
         }
     }
@@ -254,17 +61,23 @@ async function gradedPricesByGrader(card, identity, gradeRange) {
 }
 
 // Verified sold comps for a slab's exact grader and grade.
-async function slabPricesFor(card, identity, slab) {
+async function slabPricesFor(card: PricedCard | null, identity: Identity, slab: Slab): Promise<SlabPricing> {
+    const { grader, grade } = slab;
+
+    if (!grader || !grade) {
+        return { status: "PRICE_UNAVAILABLE", reason: "The slab's grader and grade couldn't be read." };
+    }
+
     try {
         return await compsForGrade(card, identity, {
-            grader: slab.grader,
-            grade: slab.grade,
+            grader,
+            grade,
             fetchComps,
         });
     } catch (error) {
         return {
             status: "PRICE_UNAVAILABLE",
-            reason: `The ${slab.grader} comp lookup failed: ${error.message}`,
+            reason: `The ${grader} comp lookup failed: ${(error as Error).message}`,
         };
     }
 }
@@ -275,13 +88,13 @@ async function slabPricesFor(card, identity, slab) {
 //   fresh: ignore saved answers and ask the model again.
 //   remember: save new answers.
 export async function evaluateListing(
-    itemId,
-    { fresh = false, remember = true } = {}
-) {
+    itemId: string,
+    { fresh = false, remember = true }: { fresh?: boolean; remember?: boolean } = {}
+): Promise<Evaluation> {
     const listing = await getListingDetails(itemId);
     const photoUrls = listing.images.slice(0, MAX_PHOTOS);
 
-    const evaluation = {
+    const evaluation: Evaluation = {
         listing: {
             id: listing.id,
             title: listing.title,
@@ -332,7 +145,7 @@ export async function evaluateListing(
               fingerprint,
           });
 
-    const record = saved ?? {
+    const record: SavedRecord = saved ?? {
         itemId: listing.id,
         version: ANALYSIS_VERSION,
         photoFingerprint: fingerprint,
@@ -440,9 +253,9 @@ export async function evaluateListing(
         } else {
             evaluation.gradeStatus = "ESTIMATED";
             evaluation.condition = condition;
-            evaluation.setAside = (record.assessment.setAside ?? []).map(summarizeAnswer);
+            evaluation.setAside = (record.assessment?.setAside ?? []).map(summarizeAnswer);
 
-            if (identifiedCard) {
+            if (identifiedCard && evaluation.identity) {
                 evaluation.gradedPricing = await gradedPricesByGrader(
                     identifiedCard,
                     evaluation.identity,

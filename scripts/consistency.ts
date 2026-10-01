@@ -3,10 +3,10 @@
 // Usage: npm run consistency -- <eBay link or item number> [runs]
 // Paid: every run makes up to two vision requests.
 import "dotenv/config";
-import { evaluateListing } from "../server/analysis/evaluate.js";
-import { toItemId } from "./item-id.js";
-
-const AREAS = ["centering", "corners", "edges", "surface"];
+import { evaluateListing } from "../server/analysis/evaluate.ts";
+import { toItemId } from "./item-id.ts";
+import { CONDITION_AREAS as AREAS } from "../shared/conditions.ts";
+import type { Evaluation } from "../shared/types.ts";
 
 const itemId = toItemId(process.argv[2]);
 const runs = Number(process.argv[3] ?? 5);
@@ -28,7 +28,7 @@ const results = await Promise.allSettled(
 );
 
 // One comparable line per run: the fields a verdict depends on.
-function summarize(evaluation) {
+function summarize(evaluation: Evaluation): Record<string, string> {
     const { photoCheck, condition } = evaluation;
 
     const areas = Object.fromEntries(
@@ -64,12 +64,12 @@ function summarize(evaluation) {
     };
 }
 
-const rows = [];
+const rows: { run: number; row: Record<string, string> }[] = [];
 let tokens = 0;
 
 results.forEach((result, index) => {
     if (result.status === "rejected") {
-        console.log(`Run ${index + 1} failed: ${result.reason.message}`);
+        console.log(`Run ${index + 1} failed: ${(result.reason as Error).message}`);
         return;
     }
 
@@ -85,7 +85,8 @@ if (rows.length === 0) {
 }
 
 console.log();
-console.log(results.find((r) => r.status === "fulfilled").value.listing.title);
+const first = results.find((r): r is PromiseFulfilledResult<Evaluation> => r.status === "fulfilled");
+console.log(first?.value.listing.title);
 console.log();
 
 for (const { run, row } of rows) {
@@ -100,7 +101,7 @@ console.log();
 console.log("Spread across runs");
 
 for (const field of Object.keys(rows[0].row)) {
-    const counts = new Map();
+    const counts = new Map<string, number>();
 
     for (const { row } of rows) {
         counts.set(row[field], (counts.get(row[field]) ?? 0) + 1);
