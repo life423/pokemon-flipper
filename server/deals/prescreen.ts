@@ -87,6 +87,10 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
         slab: null,
     };
 
+    // Missing pieces the listing's own item details might supply.
+    const incomplete =
+        !aspects.Set || !(aspects["Card Number"] || sellerView.printedNumber) || !(aspects["Card Name"] ?? aspects.Character);
+
     let identified;
 
     try {
@@ -98,7 +102,9 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
     const { identity, card } = identified;
 
     if (!readyForPricing(identity)) {
-        return screen("UNSCREENED", identity.reasons[0] ?? "The card couldn't be identified from the listing.");
+        return screen("UNSCREENED", identity.reasons[0] ?? "The card couldn't be identified from the listing.", {
+            incomplete,
+        });
     }
 
     const cardInfo: Screen["card"] = {
@@ -125,7 +131,10 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
             const grade = normalizeGrade(aspects.Grade) ?? (fromTitle ? fromTitle[2] : null);
 
             if (!grader || !grade) {
-                return screen("UNSCREENED", "The listing doesn't give the grader and grade.", { card: cardInfo });
+                return screen("UNSCREENED", "The listing doesn't give the grader and grade.", {
+                    card: cardInfo,
+                    incomplete: true,
+                });
             }
 
             if (!GRADERS.includes(grader as Grader)) {

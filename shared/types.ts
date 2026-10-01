@@ -52,6 +52,9 @@ export interface Screen {
     // An auction that will very likely end above even its best-case max
     // bid. Not worth the AI.
     longShot?: boolean;
+    // The check was missing the set, number, name, grader, or grade: the
+    // listing's own item details might settle it.
+    incomplete?: boolean;
     // Item details the AI read from the title because the seller left them out.
     filledFromTitle?: string[];
 }

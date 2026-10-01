@@ -62,5 +62,7 @@ test("non-English cards are skipped", () => {
     assert.equal(titleMatches("Charizard 4/102 Base Set Holo English WOTC", INTENT), true);
     assert.equal(isEnglish("Japanese"), false);
     assert.equal(isEnglish("English"), true);
+    assert.equal(isEnglish("EN"), true);
+    assert.equal(isEnglish("ENG"), true);
     assert.equal(isEnglish(undefined), true);
 });

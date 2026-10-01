@@ -11,7 +11,8 @@ export type Match = NonNullable<ListingSummary["match"]>;
 const OTHER_LANGUAGE = /\b(japanese|japan|jpn|jp|korean|chinese|german|french|italian|spanish|portuguese|dutch|thai|indonesian)\b/;
 
 export function isEnglish(language: string | null | undefined): boolean {
-    return !language || /\benglish\b/i.test(language);
+    // "English", or the short forms titles use: "EN", "ENG".
+    return !language || /\benglish\b|^\s*(en|eng)\s*$/i.test(language);
 }
 
 export function titleMatches(title: string, intent: SearchIntent): boolean {
