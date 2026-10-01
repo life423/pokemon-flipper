@@ -6,8 +6,25 @@ import { CLIENT_ROOT } from "./lib/paths.ts";
 import { findDeals } from "./deals/find-deals.ts";
 import { evaluateListing } from "./analysis/evaluate.ts";
 import { EbayError } from "./ebay/api.ts";
+import type { CurrentState } from "./analysis/evaluate.ts";
 
 const app = express();
+
+// The listing's price, bid, and end time as the page last saw them, or
+// null when the request doesn't send them.
+function currentState(body: unknown): CurrentState | null {
+    const value = body as Partial<Record<keyof CurrentState, unknown>> | undefined;
+    const number = (field: unknown) => (typeof field === "number" && Number.isFinite(field) ? field : null);
+
+    if (!value || number(value.price) === null) return null;
+
+    return {
+        price: number(value.price),
+        shipping: number(value.shipping),
+        bids: number(value.bids) ?? 0,
+        endTime: typeof value.endTime === "string" ? value.endTime : null,
+    };
+}
 
 // The search text from ?q=, or empty.
 const searchText = (req: express.Request) => (typeof req.query.q === "string" ? req.query.q : "");
@@ -46,6 +63,7 @@ app.post("/api/listings/:id/evaluate", async (req, res) => {
     try {
         const evaluation = await evaluateListing(req.params.id, {
             fresh: req.query.fresh === "1",
+            current: currentState(req.body),
         });
 
         res.json(evaluation);

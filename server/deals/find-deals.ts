@@ -1,6 +1,5 @@
-import { getListingDetails, searchListings, type ListingDetails } from "../ebay/listings.ts";
+import { detailRequestCount, getListingDetails, searchListings, type ListingDetails } from "../ebay/listings.ts";
 import { lookupCards, fetchComps } from "../pricing/pkmnprices.ts";
-import { readCache, writeCache } from "../lib/cache.ts";
 import { mapLimit } from "../lib/concurrency.ts";
 import { readSearch } from "../search/intent.ts";
 import { cardMismatch, gradingMatches, isEnglish, titleMatches } from "../search/relevance.ts";
@@ -20,10 +19,6 @@ import type { ListingSummary, Screen, SearchIntent } from "../../shared/types.ts
 const MAX_RESULTS = 1000;
 const PARALLEL_LISTINGS = 6;
 
-// Item details hardly change, so they're saved for a day. Prices come
-// from the search, which is fresh.
-const DETAILS_MAX_AGE_HOURS = 24;
-
 export interface SearchSummary {
     // eBay's count for the search, and how many were fetched and kept.
     total: number;
@@ -40,25 +35,9 @@ export interface ScreenSteps {
     check: (input: ScreenInput) => Promise<Screen>;
 }
 
-// How many detail requests this server has sent to eBay, for the log.
-let detailRequests = 0;
-
-async function cachedDetails(itemId: string): Promise<ListingDetails> {
-    const key = `ebay:item:${itemId}`;
-    const saved = await readCache<ListingDetails>(key, DETAILS_MAX_AGE_HOURS);
-
-    if (saved) return saved;
-
-    detailRequests += 1;
-    const details = await getListingDetails(itemId);
-    await writeCache(key, details);
-
-    return details;
-}
-
 const REAL_STEPS: ScreenSteps = {
     readTitle: fillFromTitle,
-    loadDetails: cachedDetails,
+    loadDetails: (itemId) => getListingDetails(itemId),
     check: (input) =>
         prescreen(input, { lookupCards, fetchComps, checkComps }).catch((error: Error) =>
             unscreened(`The free check failed: ${error.message}`)
@@ -149,7 +128,7 @@ export async function findDeals(
     const intent = await readSearch(search);
     const { listings, total } = await searchListings(search, { maxResults: MAX_RESULTS });
     const now = Date.now();
-    const requestsBefore = detailRequests;
+    const requestsBefore = detailRequestCount();
 
     const live = listings.filter((listing) => !listing.endTime || Date.parse(listing.endTime) > now);
     const matching = live.filter(
@@ -173,7 +152,7 @@ export async function findDeals(
     });
 
     console.log(
-        `Search ${JSON.stringify(search)}: ${matching.length} listings checked with ${detailRequests - requestsBefore} eBay detail requests`
+        `Search ${JSON.stringify(search)}: ${matching.length} listings checked with ${detailRequestCount() - requestsBefore} eBay detail requests`
     );
 
     return results;

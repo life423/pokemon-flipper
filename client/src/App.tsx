@@ -182,7 +182,7 @@ export function App() {
         setAnalyses((previous) => ({ ...previous, [listing.id]: { status: "loading", startedAt: Date.now() } }));
 
         try {
-            const evaluation = await evaluateListing(listing.id, { fresh });
+            const evaluation = await evaluateListing(listing, { fresh });
             setAnalyses((previous) => ({ ...previous, [listing.id]: { status: "done", evaluation } }));
         } catch (error) {
             const message = error instanceof Error ? error.message : "Analysis failed";

@@ -1,5 +1,6 @@
 import { ebayGet } from "./api.ts";
-import { exclusionReason } from "./filters.ts";
+import { exclusionReason, normalizeText } from "./filters.ts";
+import { readCache, writeCache } from "../lib/cache.ts";
 import type { BuyingOption, ListingSummary, Seller } from "../../shared/types.ts";
 
 // Toys & Hobbies > Collectible Card Games > CCG Individual Cards
@@ -11,6 +12,20 @@ const GRADED = "2750";
 
 // eBay's maximum page size.
 const PAGE_SIZE = 200;
+
+// eBay limits requests per day, so answers are saved. A search is saved
+// briefly, since its prices move. A listing's details (photos, item
+// specifics, seller) hardly change, so they're saved for a week; its
+// price always comes from a search.
+const SEARCH_MAX_AGE_HOURS = 10 / 60;
+export const DETAILS_MAX_AGE_HOURS = 24 * 7;
+
+// Detail requests this server has sent to eBay, for the logs.
+let detailRequests = 0;
+
+export function detailRequestCount(): number {
+    return detailRequests;
+}
 
 interface Amount {
     value: string;
@@ -115,6 +130,11 @@ export async function searchListings(
     search: string,
     { maxResults = PAGE_SIZE }: { maxResults?: number } = {}
 ): Promise<{ listings: ListingSummary[]; total: number }> {
+    const key = `ebay:search:${maxResults}:${normalizeText(search).trim()}`;
+    const saved = await readCache<{ listings: ListingSummary[]; total: number }>(key, SEARCH_MAX_AGE_HOURS);
+
+    if (saved) return saved;
+
     const listings: ListingSummary[] = [];
     const seen = new Set<string>();
     let total = 0;
@@ -146,10 +166,31 @@ export async function searchListings(
 
     console.log(`Search ${JSON.stringify(search)}: eBay has ${total}; kept ${listings.length} single cards`);
 
+    await writeCache(key, { listings, total });
+
     return { listings, total };
 }
 
-export async function getListingDetails(itemId: string): Promise<ListingDetails> {
+// A listing's details, saved for a week. maxAgeHours: 0 always asks eBay.
+export async function getListingDetails(
+    itemId: string,
+    { maxAgeHours = DETAILS_MAX_AGE_HOURS }: { maxAgeHours?: number } = {}
+): Promise<ListingDetails> {
+    const key = `ebay:item:${itemId}`;
+
+    if (maxAgeHours > 0) {
+        const saved = await readCache<ListingDetails>(key, maxAgeHours);
+        if (saved) return saved;
+    }
+
+    detailRequests += 1;
+    const details = await fetchListingDetails(itemId);
+    await writeCache(key, details);
+
+    return details;
+}
+
+async function fetchListingDetails(itemId: string): Promise<ListingDetails> {
     const item = await ebayGet<EbayItem>(`/buy/browse/v1/item/${encodeURIComponent(itemId)}`);
     const descriptors = item.conditionDescriptors ?? [];
 

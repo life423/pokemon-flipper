@@ -53,8 +53,19 @@ export async function streamDeals(query: string, onMessage: (message: DealsMessa
 
 // Paid the first time for a listing; the server reuses saved answers
 // after that. fresh asks the model again.
-export function evaluateListing(id: string, { fresh = false } = {}): Promise<Evaluation> {
+// The listing's current price, bid, and end time go along, so the server
+// can use its saved details instead of asking eBay again.
+export function evaluateListing(listing: ListingSummary, { fresh = false } = {}): Promise<Evaluation> {
     const query = fresh ? "?fresh=1" : "";
 
-    return request(`/api/listings/${encodeURIComponent(id)}/evaluate${query}`, { method: "POST" });
+    return request(`/api/listings/${encodeURIComponent(listing.id)}/evaluate${query}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            price: listing.currentPrice,
+            shipping: listing.shipping,
+            bids: listing.bids,
+            endTime: listing.endTime,
+        }),
+    });
 }
