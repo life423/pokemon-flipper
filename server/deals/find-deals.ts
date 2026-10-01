@@ -6,6 +6,7 @@ import { readSearch } from "../search/intent.ts";
 import { cardMismatch, gradingMatches, isEnglish, titleMatches } from "../search/relevance.ts";
 import { prescreen } from "./prescreen.ts";
 import { fillFromTitle } from "../ai/title-reader.ts";
+import { checkComps } from "../ai/comp-checker.ts";
 import type { ListingSummary, Screen, SearchIntent } from "../../shared/types.ts";
 
 // A search, the way eBay matches it, narrowed to the card searched for,
@@ -72,7 +73,7 @@ async function screenListing(listing: ListingSummary): Promise<ListingSummary> {
             isGraded: listing.isGraded,
             cardCondition: details.cardCondition,
         },
-        { lookupCards, fetchComps }
+        { lookupCards, fetchComps, checkComps }
     ).catch((error: Error) => unscreened(`The free check failed: ${error.message}`));
     const screen = filled.length > 0 ? { ...checked, filledFromTitle: filled } : checked;
 

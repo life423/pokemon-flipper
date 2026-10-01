@@ -226,6 +226,8 @@ export interface CompSummary {
     confidence: Confidence;
     dropped: Record<string, number>;
     sales: CompSale[];
+    // The AI checked the sales that passed the rules.
+    checkedByAI?: boolean;
 }
 
 export interface GradedPricing extends PriceSource {

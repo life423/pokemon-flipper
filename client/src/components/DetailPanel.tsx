@@ -514,7 +514,7 @@ function CompsRow({ summary }: { summary: CompSummary }) {
                 </span>
                 <span className={styles.compStats}>
                     {summary.count > 0
-                        ? `${summary.count} sales, median ${dollars(summary.median)}, ${name(summary.confidence)}`
+                        ? `${summary.count} sales, median ${dollars(summary.median)}, ${name(summary.confidence)}${summary.checkedByAI ? ", checked by AI" : ""}`
                         : "No verified sales"}
                 </span>
             </summary>

@@ -27,13 +27,15 @@ import type { Evaluation, Grader, GradeRange, GradedPricing, Identity, Slab, Sla
 import { identifyCard } from "../identity/card-identity.ts";
 import { rawPricesFor } from "../pricing/raw-prices.ts";
 import { lookupCards, fetchComps } from "../pricing/pkmnprices.ts";
+import { checkComps } from "../ai/comp-checker.ts";
 import { gradedPricesFor, compsForGrade } from "../pricing/graded-comps.ts";
 import { checkSlab } from "../identity/slab-check.ts";
 import { GRADERS, underwrite } from "../../shared/money/underwriting.ts";
 import { rateDeal } from "../../shared/money/rating.ts";
 
-// Cost cap: only the first photos, in the seller's order.
-const MAX_PHOTOS = 8;
+// eBay allows 24 photos; the ones past the first few are often the
+// close-ups that matter most.
+const MAX_PHOTOS = 24;
 
 // A first look grades twice and keeps the more cautious answer, so
 // one optimistic run can't set the saved answer on its own.
@@ -49,7 +51,7 @@ async function gradedPricesByGrader(
 
     for (const grader of GRADERS) {
         try {
-            byGrader[grader] = await gradedPricesFor(card, identity, gradeRange, { fetchComps, grader });
+            byGrader[grader] = await gradedPricesFor(card, identity, gradeRange, { fetchComps, checkComps, grader });
         } catch (error) {
             byGrader[grader] = {
                 status: "PRICE_UNAVAILABLE",
@@ -74,6 +76,7 @@ async function slabPricesFor(card: PricedCard | null, identity: Identity, slab: 
             grader,
             grade,
             fetchComps,
+            checkComps,
         });
     } catch (error) {
         return {

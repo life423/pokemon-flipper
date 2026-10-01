@@ -284,3 +284,43 @@ test("Classic Collection comps drop the 1999 original, metal cards, and the othe
     assert.equal(summary.median, 91.51);
     assert.deepEqual(summary.dropped, { "title names another product": 2, "metal or novelty card": 2 });
 });
+
+test("the AI checks only sales that passed the rules, and its drops are counted", async () => {
+    const { identity, card } = await identifyCard(
+        {
+            title: "2000 Pokemon Neo Genesis Lugia 9/111 Holo Rare Unlimited",
+            aspects: { Set: "Neo Genesis", "Card Number": "9/111", "Card Name": "Lugia", Language: "English" },
+        },
+        photos("Lugia", "9/111"),
+        { lookupCards: async () => [LUGIA] }
+    );
+
+    const title = "2000 POKEMON NEO GENESIS #9 LUGIA-HOLO";
+    const sales = [
+        comp(1900, "2026-09-01", "Unlimited Holofoil", `${title} PSA 8`, { grade: "8" }),
+        comp(2000, "2026-09-02", "Unlimited Holofoil", `${title} PSA 8 SIGNED BY ARTIST`, { grade: "8" }),
+        comp(1950, "2026-09-03", "Unlimited Holofoil", `${title} PSA 8`, { grade: "8" }),
+        // Fails the rules (another grade), so the AI never sees it.
+        comp(1250, "2026-09-04", "Unlimited Holofoil", `${title} PSA 7`, { grade: "7" }),
+    ];
+    let seen = [];
+
+    const pricing = await compsForGrade(card, identity, {
+        grader: "PSA",
+        grade: "8",
+        now: NOW,
+        fetchComps: async () => sales,
+        checkComps: async (comps, target) => {
+            seen = comps.map((c) => c.title);
+            assert.equal(target.printingLabel, "Unlimited");
+            assert.equal(target.grade, "8");
+            return new Map(comps.map((c) => [c, /SIGNED/.test(c.title) ? { keep: false, reason: "SIGNED_OR_ALTERED", note: "signed" } : { keep: true, reason: null, note: "fits" }]));
+        },
+    });
+
+    assert.equal(seen.length, 3);
+    assert.equal(pricing.summary.count, 2);
+    assert.equal(pricing.summary.median, 1925);
+    assert.equal(pricing.summary.dropped["AI: signed or altered"], 1);
+    assert.equal(pricing.summary.checkedByAI, true);
+});

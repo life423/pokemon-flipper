@@ -54,3 +54,36 @@ export type FetchComps = (
     recordId: CardRecord["id"],
     options: { grader: string; grade: number | string; variant?: string }
 ) => Promise<Comp[]>;
+
+// The card a set of comps is priced for, as the comp checker reads it.
+export interface CompTarget {
+    cardName: string;
+    setName: string;
+    cardNumber: string;
+    printingLabel: string;
+    grader: string;
+    grade: string;
+}
+
+export const COMP_DROP_REASONS = [
+    "ANOTHER_CARD",
+    "ANOTHER_PRINTING",
+    "ANOTHER_GRADE",
+    "QUALIFIED_OR_SPECIAL",
+    "NOT_ONE_CARD",
+    "SIGNED_OR_ALTERED",
+    "ERROR_OR_VARIANT",
+    "OTHER",
+] as const;
+
+export type CompDropReason = (typeof COMP_DROP_REASONS)[number];
+
+export interface CompVerdict {
+    keep: boolean;
+    reason: CompDropReason | null;
+    note: string;
+}
+
+// A second look at sales that passed the rules: keep or drop each, with a
+// reason. Sales without a verdict stay on the rules' word.
+export type CheckComps = (comps: Comp[], target: CompTarget) => Promise<Map<Comp, CompVerdict>>;

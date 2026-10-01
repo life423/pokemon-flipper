@@ -2,7 +2,7 @@ import { identifyCard, printingClaimFromText, readyForPricing } from "../identit
 import { graderCode, normalizeGrade } from "../identity/slab-check.ts";
 import { rawPricesFor } from "../pricing/raw-prices.ts";
 import { gradedPricesFor, compsForGrade } from "../pricing/graded-comps.ts";
-import type { FetchComps, LookupCards } from "../pricing/types.ts";
+import type { CheckComps, FetchComps, LookupCards } from "../pricing/types.ts";
 import { sellerCondition } from "../../shared/conditions.ts";
 import { GRADERS, underwrite, type UnderwritingInput } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG, type MoneyConfig } from "../../shared/money/config.ts";
@@ -27,6 +27,8 @@ export interface ScreenInput {
 export interface ScreenDeps {
     lookupCards: LookupCards;
     fetchComps: FetchComps;
+    // The AI's second look at comps; without it, the rules decide alone.
+    checkComps?: CheckComps;
     config?: MoneyConfig;
     now?: number;
 }
@@ -65,7 +67,7 @@ function screen(status: Screen["status"], reason: string | null, extra: Partial<
 }
 
 export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise<Screen> {
-    const { lookupCards, fetchComps, config = MONEY_CONFIG, now = Date.now() } = deps;
+    const { lookupCards, fetchComps, checkComps, config = MONEY_CONFIG, now = Date.now() } = deps;
 
     if (typeof listing.price !== "number") {
         return screen("UNSCREENED", "The listing has no price.");
@@ -128,7 +130,7 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
             }
 
             input.slab = { status: "OK", grader, grade, reasons: [], concerns: [] };
-            input.slabPricing = await compsForGrade(card, identity, { grader, grade, fetchComps, now });
+            input.slabPricing = await compsForGrade(card, identity, { grader, grade, fetchComps, checkComps, now });
             outcome = underwrite(input, config);
             assumed = `${grader} ${grade}, as listed`;
         } else {
@@ -145,7 +147,12 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
             // Every path is priced, so the page can redo the verdict for
             // any targets. Comps are cached per card, so this stays cheap.
             for (const grader of GRADERS) {
-                input.gradedPricing[grader] = await gradedPricesFor(card, identity, gradeRange, { fetchComps, grader, now });
+                input.gradedPricing[grader] = await gradedPricesFor(card, identity, gradeRange, {
+                    fetchComps,
+                    checkComps,
+                    grader,
+                    now,
+                });
             }
 
             outcome = underwrite(input, config);

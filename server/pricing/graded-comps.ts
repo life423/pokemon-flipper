@@ -9,7 +9,29 @@ import {
 } from "../identity/card-identity.ts";
 import { canPrice, variantFor } from "./raw-prices.ts";
 import type { CompSummary, Confidence, GradeRange, GradedPricing, Identity, SlabPricing } from "../../shared/types.ts";
-import type { Comp, FetchComps, PricedCard, PricedVariant, PrintingOrUnknown } from "./types.ts";
+import type {
+    CheckComps,
+    Comp,
+    CompDropReason,
+    CompTarget,
+    CompVerdict,
+    FetchComps,
+    PricedCard,
+    PricedVariant,
+    PrintingOrUnknown,
+} from "./types.ts";
+
+// How an AI-dropped sale is counted with the rest of the dropped sales.
+const AI_DROP_NAMES: Record<CompDropReason, string> = {
+    ANOTHER_CARD: "another card or product",
+    ANOTHER_PRINTING: "another printing",
+    ANOTHER_GRADE: "another grade or grader",
+    QUALIFIED_OR_SPECIAL: "a qualifier or special label",
+    NOT_ONE_CARD: "not a single card",
+    SIGNED_OR_ALTERED: "signed or altered",
+    ERROR_OR_VARIANT: "an error or print variant",
+    OTHER: "another reason",
+};
 import type { PrintingClaim } from "../identity/card-identity.ts";
 
 export interface CompCriteria {
@@ -98,8 +120,13 @@ function confidenceFor(count: number): Confidence {
     return "NONE";
 }
 
-// The verified sales for one grade, and what was dropped and why.
-export function summarizeComps(comps: Comp[], criteria: CompCriteria): CompSummary {
+// The verified sales for one grade, and what was dropped and why. Sales
+// pass the rules first; verdicts, when given, are the AI's second look.
+export function summarizeComps(
+    comps: Comp[],
+    criteria: CompCriteria,
+    verdicts?: Map<Comp, CompVerdict>
+): CompSummary {
     let kept: Comp[] = [];
     const dropped: Record<string, number> = {};
     const drop = (reason: string) => {
@@ -107,7 +134,10 @@ export function summarizeComps(comps: Comp[], criteria: CompCriteria): CompSumma
     };
 
     for (const comp of comps) {
-        const problem = compProblem(comp, criteria);
+        const verdict = verdicts?.get(comp);
+        const problem =
+            compProblem(comp, criteria) ??
+            (verdict && !verdict.keep ? `AI: ${AI_DROP_NAMES[verdict.reason ?? "OTHER"]}` : null);
 
         if (problem) {
             drop(problem);
@@ -146,6 +176,31 @@ export function summarizeComps(comps: Comp[], criteria: CompCriteria): CompSumma
             title: comp.title,
             url: comp.listing_url ?? null,
         })),
+        ...(verdicts ? { checkedByAI: true } : {}),
+    };
+}
+
+// The rules, then the AI's second look at whatever passed them.
+async function checkedSummary(
+    comps: Comp[],
+    criteria: CompCriteria,
+    target: CompTarget,
+    checkComps: CheckComps | undefined
+): Promise<CompSummary> {
+    const passing = comps.filter((comp) => compProblem(comp, criteria) === null);
+    const verdicts = checkComps && passing.length > 0 ? await checkComps(passing, target) : undefined;
+
+    return summarizeComps(comps, criteria, verdicts);
+}
+
+function compTarget(card: PricedCard, identity: Identity, variant: PricedVariant, grader: string, grade: number | string): CompTarget {
+    return {
+        cardName: identity.name ?? card.name,
+        setName: variant.setName ?? identity.set ?? "",
+        cardNumber: identity.cardNumber ?? card.cardNumber,
+        printingLabel: printingLabel(identity.printing, identity.set),
+        grader,
+        grade: String(grade),
     };
 }
 
@@ -200,7 +255,12 @@ export async function gradedPricesFor(
     card: PricedCard | null,
     identity: Identity,
     gradeRange: GradeRange | null,
-    { fetchComps, grader = "PSA", now = Date.now() }: { fetchComps: FetchComps; grader?: string; now?: number }
+    {
+        fetchComps,
+        checkComps,
+        grader = "PSA",
+        now = Date.now(),
+    }: { fetchComps: FetchComps; checkComps?: CheckComps; grader?: string; now?: number }
 ): Promise<GradedPricing> {
     const { variant, reason } = gradedVariantFor(card, identity);
 
@@ -214,13 +274,12 @@ export async function gradedPricesFor(
         const comps = await fetchVariantComps(card, variant, { grader, grade, fetchComps });
 
         byGrade.push(
-            summarizeComps(comps, {
-                printing: identity.printing,
-                setName: variant.setName,
-                grader,
-                grade,
-                now,
-            })
+            await checkedSummary(
+                comps,
+                { printing: identity.printing, setName: variant.setName, grader, grade, now },
+                compTarget(card, identity, variant, grader, grade),
+                checkComps
+            )
         );
     }
 
@@ -247,7 +306,13 @@ export async function gradedPricesFor(
 export async function compsForGrade(
     card: PricedCard | null,
     identity: Identity,
-    { grader, grade, fetchComps, now = Date.now() }: { grader: string; grade: number | string; fetchComps: FetchComps; now?: number }
+    {
+        grader,
+        grade,
+        fetchComps,
+        checkComps,
+        now = Date.now(),
+    }: { grader: string; grade: number | string; fetchComps: FetchComps; checkComps?: CheckComps; now?: number }
 ): Promise<SlabPricing> {
     const { variant, reason } = gradedVariantFor(card, identity);
 
@@ -256,13 +321,12 @@ export async function compsForGrade(
     const label = printingLabel(identity.printing, identity.set);
     const comps = await fetchVariantComps(card, variant, { grader, grade, fetchComps });
 
-    const summary = summarizeComps(comps, {
-        printing: identity.printing,
-        setName: variant.setName,
-        grader,
-        grade,
-        now,
-    });
+    const summary = await checkedSummary(
+        comps,
+        { printing: identity.printing, setName: variant.setName, grader, grade, now },
+        compTarget(card, identity, variant, grader, grade),
+        checkComps
+    );
 
     const details = { printingLabel: label, variant: variant.name, grader, grade, summary };
 
