@@ -472,6 +472,71 @@ function mergeFamily(records: CardRecord[]): PricedCard {
     };
 }
 
+// Look-alike reprints. The 2021 Celebrations Classic Collection and the
+// 2026 30th Celebration Classic Collection both reprint 1999 Base Set
+// cards with the original numbers, and sellers mix up the set names.
+// Years and anniversaries in the text tell them apart.
+type Product = "ORIGINAL" | "CELEBRATIONS" | "THIRTIETH";
+
+const PRODUCT_NAMES: Record<Product, string> = {
+    ORIGINAL: "the 1999 original",
+    CELEBRATIONS: "the 2021 Celebrations reprint",
+    THIRTIETH: "the 2026 30th Celebration reprint",
+};
+
+const PRODUCT_MARKERS: [Product, RegExp][] = [
+    ["THIRTIETH", /\b30th\b|\b2026\b/],
+    ["CELEBRATIONS", /\b25th\b|\b2021\b/],
+    ["ORIGINAL", /\b1999\b|\bpokemon game\b/],
+];
+
+function productOfSet(setName: unknown): Product | null {
+    const words = normalizeWords(setName);
+
+    if (/\b30th\b/.test(words)) return "THIRTIETH";
+    if (/\bcelebrations?\b/.test(words)) return "CELEBRATIONS";
+
+    return null;
+}
+
+// Why a text (a listing, or a sale's title) can't be this set's product,
+// or null. With requireMarker, a Classic Collection text that names no
+// product at all fails too, since either reprint could be meant.
+export function lookAlikeProblem(
+    text: unknown,
+    setName: unknown,
+    { requireMarker = false }: { requireMarker?: boolean } = {}
+): string | null {
+    const product = productOfSet(setName);
+
+    if (!product) return null;
+
+    const value = normalizeText(text);
+    const named = PRODUCT_MARKERS.filter(([, pattern]) => pattern.test(value)).map(([found]) => found);
+    const other = named.find((found) => found !== product);
+
+    if (other) {
+        return `names ${PRODUCT_NAMES[other]}, not ${PRODUCT_NAMES[product]}`;
+    }
+
+    const twins = /\bclassic collection\b|\b30th\b/.test(normalizeWords(setName));
+
+    if (requireMarker && twins && !named.includes(product)) {
+        return `doesn't say which reprint it is: ${PRODUCT_NAMES.CELEBRATIONS} and ${PRODUCT_NAMES.THIRTIETH} share card numbers`;
+    }
+
+    return null;
+}
+
+// Not cards from a set at all: novelty metal cards (the Ultra Premium
+// Collection's metal cards, which PSA labels "Ultra-Prem Coll"), Topps
+// cards, reprints, and fakes.
+const NOVELTY = /\b(reprint|replica|jumbo|oversized?|metal|topps|custom|proxy|fan ?made|gold (foil|plated)|upc|ultra[\s-]*prem(ium)?)\b/;
+
+export function noveltyIn(text: unknown): string | null {
+    return normalizeText(text).match(NOVELTY)?.[0] ?? null;
+}
+
 // Reprints of vintage cards (Celebrations, Classic Collection, Base Set
 // 2) carry the original's number, and sellers often fill in the
 // original's set too. The title gives them away. Each marker is fine
@@ -484,8 +549,7 @@ const REPRINT_MARKERS: [RegExp, string[] | null][] = [
     [/\bbase set 2\b/, ["base set 2"]],
     [/\blegendary collection\b/, ["legendary collection"]],
     [/\bmcdonald'?s\b/, ["mcdonald"]],
-    // Not cards from a set at all: novelty metal cards, Topps cards.
-    [/\b(reprint|replica|jumbo|oversized?|metal|topps|custom|proxy|fan ?made|gold (foil|plated))\b/, null],
+    [NOVELTY, null],
 ];
 
 // "4/102" style numbers in a title. Over 10 only, so "9/10 condition"
@@ -615,6 +679,15 @@ export async function identifyCard(
     }
 
     const card = mergeFamily(matches);
+
+    // The listing has to name the same look-alike reprint as the record:
+    // its title, its set, or its year.
+    const listingText = [listing.title, aspects.Set, aspects["Year Manufactured"]].filter(Boolean).join(" ");
+    const lookAlike = lookAlikeProblem(listingText, card.records[0]?.setName, { requireMarker: true });
+
+    if (lookAlike) {
+        return needsReview(`The listing ${lookAlike}.`, card);
+    }
     const setKey = normalizeSetName(identity.set);
     const pricier = (v: { printing: PrintingOrUnknown }) => v.printing === "FIRST_EDITION" || v.printing === "SHADOWLESS";
 

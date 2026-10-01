@@ -265,3 +265,22 @@ test("a slab's exact grade is priced alone: 8.5 sales never mix with 8s", async 
     assert.equal(pricing.summary.median, 1950);
     assert.equal(pricing.summary.dropped["different grade"], 1);
 });
+
+// Real PSA 6 sales filed under the 2021 Celebrations Classic Collection
+// Charizard: a 1999 original, the Ultra Premium Collection metal card,
+// a 2026 30th Celebration copy, and one real Classic Collection sale.
+const CLASSIC_PSA6 = [
+    comp(504, "2026-09-24", "Holofoil", "1999 Pokemon Game #4 Charizard - Holo PSA 6 EX-MT", { grade: "6" }),
+    comp(149.99, "2026-09-02", "Holofoil", "2021 POKEMON CELEBRATIONS ULTRA-PREM COLL #4 CHARIZARD PSA 6 #4 [eBay]", { grade: "6" }),
+    comp(60, "2026-08-16", "Holofoil", "CHARIZARD Gold Metal Pokemon Card Celebrations Promo UPC 4/102 PSA 6 4", { grade: "6" }),
+    comp(80, "2026-08-10", "Holofoil", "Charizard 4/102 30th Anniversary Classic Collection PSA 6", { grade: "6" }),
+    comp(91.51, "2026-09-04", "Holofoil", "2021 POKEMON CELEBRATIONS CLASSIC COLL #4 CHARIZARD-HOLO PSA 6 #4 [eBay]", { grade: "6" }),
+];
+
+test("Classic Collection comps drop the 1999 original, metal cards, and the other reprint", () => {
+    const summary = summarizeComps(CLASSIC_PSA6, criteria("UNLIMITED", "Celebrations: Classic Collection", 6));
+
+    assert.equal(summary.count, 1);
+    assert.equal(summary.median, 91.51);
+    assert.deepEqual(summary.dropped, { "title names another product": 2, "metal or novelty card": 2 });
+});

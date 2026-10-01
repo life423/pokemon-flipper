@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
     titleContradiction,
+    lookAlikeProblem,
+    noveltyIn,
     normalizeCardNumber,
     sameCardNumber,
     printingClaimFromText,
@@ -574,4 +576,27 @@ test("a title that disagrees with the slab label goes to review", async () => {
     const { identity } = await identifyCard(listing, photos, { lookupCards: BASE_FAMILY });
 
     assert.equal(identity.status, "NEEDS_REVIEW");
+});
+
+test("look-alike reprints: the listing has to say which Classic Collection it is", () => {
+    const CLASSIC = "Celebrations: Classic Collection";
+    const strict = { requireMarker: true };
+
+    assert.match(
+        lookAlikeProblem("MINTY Charizard Classic Collection 4/102 30th ANNIVERSARY!", CLASSIC, strict) ?? "",
+        /2026 30th Celebration/
+    );
+    assert.match(
+        lookAlikeProblem("Charizard 4/102 Celebrations Classic Collection Holo 120HP", CLASSIC, strict) ?? "",
+        /doesn't say which/
+    );
+    assert.equal(lookAlikeProblem("PSA 9 Charizard Holo 4/102 Celebrations Classic Collection 2021", CLASSIC, strict), null);
+    assert.equal(lookAlikeProblem("Charizard 4/102 30th Celebration Classic Collection 2026", "ME: 30th Celebration", strict), null);
+    assert.equal(lookAlikeProblem("1999 Base Set Charizard 4/102 Holo", "Base Set", strict), null);
+});
+
+test("metal cards are novelties, including PSA's Ultra Premium label", () => {
+    assert.ok(noveltyIn("2021 POKEMON CELEBRATIONS ULTRA-PREM COLL #4 CHARIZARD PSA 6"));
+    assert.ok(noveltyIn("Charizard Gold Metal Card Celebrations"));
+    assert.equal(noveltyIn("2021 Pokemon Celebrations Classic Collection Charizard 4/102"), null);
 });
