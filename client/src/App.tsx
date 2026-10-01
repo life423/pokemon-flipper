@@ -133,6 +133,36 @@ export function App() {
     const autoQueued = useRef(new Set<string>());
 
     const [selectedId, setSelectedId] = useState<string | null>(null);
+
+    // The filters popover, closed by a click outside it or Escape.
+    const [filtersOpen, setFiltersOpen] = useState(false);
+    const filtersRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (!filtersOpen) return;
+
+        const close = (event: MouseEvent | KeyboardEvent) => {
+            const outside = event instanceof MouseEvent && !filtersRef.current?.contains(event.target as Node);
+            if (outside || (event instanceof KeyboardEvent && event.key === "Escape")) setFiltersOpen(false);
+        };
+
+        document.addEventListener("mousedown", close);
+        document.addEventListener("keydown", close);
+
+        return () => {
+            document.removeEventListener("mousedown", close);
+            document.removeEventListener("keydown", close);
+        };
+    }, [filtersOpen]);
+
+    // The intro line shows until the first search.
+    const [searchedBefore] = useState(() => {
+        try {
+            return localStorage.getItem("searched") === "1";
+        } catch {
+            return false;
+        }
+    });
     const [rawAnalyses, setAnalyses] = useState<Record<string, AnalysisState>>({});
 
     const [targets, setTargets] = useState<Targets>(readTargets);
@@ -194,6 +224,12 @@ export function App() {
         event.preventDefault();
 
         const id = ++searchId.current;
+
+        try {
+            localStorage.setItem("searched", "1");
+        } catch {
+            // Without storage the intro line just shows again next visit.
+        }
         autoQueued.current = new Set();
         setListings([]);
         setTotal(null);
@@ -326,6 +362,9 @@ export function App() {
     }, [listings, analyses]);
 
     const selected = listings.find((listing) => listing.id === selectedId) ?? null;
+
+    // Filters narrowing the results, shown as a count on the Filters button.
+    const activeFilters = [typeFilter !== "all", kindFilter !== "all", maxPrice !== "", sort !== "best"].filter(Boolean).length;
     const close = useCallback(() => setSelectedId(null), []);
     const budgetLeft = budget - autoQueued.current.size;
 
@@ -346,22 +385,145 @@ export function App() {
         <div className={styles.shell}>
             <div className={styles.layout}>
                 <main className={styles.main}>
-                    <header className={styles.header}>
-                        <h1 className={styles.title}>Pokemon Flipper</h1>
-                    </header>
+                    <header className={styles.toolbar}>
+                        <form className={styles.searchRow} role="search" onSubmit={search}>
+                            <h1 className={styles.title}>Pokemon Flipper</h1>
+                            <input
+                                type="search"
+                                value={query}
+                                onChange={(event) => setQuery(event.target.value)}
+                                placeholder="Charizard, Lugia 9/111, Neo Genesis PSA 8"
+                                aria-label="Search cards"
+                            />
+                            <button type="submit" className={styles.primary}>
+                                Find deals
+                            </button>
+                        </form>
 
-                    <form className={styles.search} role="search" onSubmit={search}>
-                        <input
-                            type="search"
-                            value={query}
-                            onChange={(event) => setQuery(event.target.value)}
-                            placeholder="Charizard, Lugia 9/111, Neo Genesis PSA 8"
-                            aria-label="Search cards"
-                        />
-                        <button type="submit" className={styles.primary}>
-                            Find deals
-                        </button>
-                    </form>
+                        <div className={styles.controlRow}>
+                            <Segmented
+                                label="Show"
+                                value={view}
+                                onChange={setView}
+                                options={[
+                                    ["deals", `Deals ${groups.deals.length}`],
+                                    ["candidates", `Waiting ${groups.candidates.length}`],
+                                    ["longShots", `Long shots ${groups.longShots.length}`],
+                                    ["review", `Review ${groups.review.length}`],
+                                    ["all", `All ${groups.all.length}`],
+                                ]}
+                            />
+
+                            {/* Your deal criteria: always in view, since they decide what's a deal. */}
+                            <div className={styles.criteria}>
+                                <label className={styles.target} title="Minimum profit after every cost">
+                                    <span>$</span>
+                                    <input
+                                        type="number"
+                                        inputMode="decimal"
+                                        min="0"
+                                        step="5"
+                                        value={targetInputs.minProfit}
+                                        onChange={(event) => changeTarget("minProfit", event.target.value)}
+                                        aria-label="Minimum profit, dollars"
+                                    />
+                                    <span>profit</span>
+                                </label>
+                                <label className={styles.target} title="Minimum return on everything you put in">
+                                    <input
+                                        type="number"
+                                        inputMode="decimal"
+                                        min="0"
+                                        step="5"
+                                        value={targetInputs.minRoi}
+                                        onChange={(event) => changeTarget("minRoi", event.target.value)}
+                                        aria-label="Minimum return, percent"
+                                    />
+                                    <span>% ROI</span>
+                                </label>
+
+                                <div className={styles.filtersMenu} ref={filtersRef}>
+                                    <button
+                                        type="button"
+                                        className={styles.filtersButton}
+                                        aria-expanded={filtersOpen}
+                                        aria-controls="filters"
+                                        onClick={() => setFiltersOpen((open) => !open)}
+                                    >
+                                        Filters
+                                        {activeFilters > 0 && <span className={styles.filterCount}>{activeFilters}</span>}
+                                    </button>
+
+                                    {filtersOpen && (
+                                        <div id="filters" className={styles.popover} role="dialog" aria-label="Filters">
+                                            <div className={styles.field}>
+                                                <span>Listing</span>
+                                                <Segmented
+                                                    label="Listing type"
+                                                    value={typeFilter}
+                                                    onChange={setTypeFilter}
+                                                    options={[
+                                                        ["all", "Any"],
+                                                        ["AUCTION", "Auctions"],
+                                                        ["FIXED_PRICE", "Buy It Now"],
+                                                    ]}
+                                                />
+                                            </div>
+                                            <div className={styles.field}>
+                                                <span>Card</span>
+                                                <Segmented
+                                                    label="Raw or graded"
+                                                    value={kindFilter}
+                                                    onChange={setKindFilter}
+                                                    options={[
+                                                        ["all", "Any"],
+                                                        ["raw", "Raw"],
+                                                        ["graded", "Graded"],
+                                                    ]}
+                                                />
+                                            </div>
+                                            <label className={styles.field}>
+                                                <span>Max price</span>
+                                                <span className={styles.affix}>
+                                                    <span>$</span>
+                                                    <input
+                                                        type="number"
+                                                        inputMode="decimal"
+                                                        min="0"
+                                                        value={maxPrice}
+                                                        onChange={(event) => setMaxPrice(event.target.value)}
+                                                        placeholder="Any"
+                                                    />
+                                                </span>
+                                            </label>
+                                            <label className={styles.field}>
+                                                <span>Sort</span>
+                                                <select value={sort} onChange={(event) => setSort(event.target.value as SortKey)}>
+                                                    <option value="best">Best deal first</option>
+                                                    <option value="ending">Ending soonest</option>
+                                                    <option value="priceLow">Price, low to high</option>
+                                                    <option value="priceHigh">Price, high to low</option>
+                                                </select>
+                                            </label>
+                                            <label className={styles.field}>
+                                                <span>AI per search</span>
+                                                <select
+                                                    value={autoSetting}
+                                                    onChange={(event) => changeAutoSetting(Number(event.target.value))}
+                                                >
+                                                    {AUTO_OPTIONS.map((option) => (
+                                                        <option key={option} value={option}>
+                                                            {option === 0 ? "Off" : `Top ${option}`}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </label>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </header>
 
                     {searchStatus !== "idle" && (
                         <section className={styles.funnel} aria-live="polite">
@@ -421,100 +583,7 @@ export function App() {
                         </section>
                     )}
 
-                    <div className={styles.filters}>
-                        <label className={styles.field}>
-                            <span>Min profit</span>
-                            <span className={styles.affix}>
-                                <span>$</span>
-                                <input
-                                    type="number"
-                                    inputMode="decimal"
-                                    min="0"
-                                    step="5"
-                                    value={targetInputs.minProfit}
-                                    onChange={(event) => changeTarget("minProfit", event.target.value)}
-                                />
-                            </span>
-                        </label>
-                        <label className={styles.field}>
-                            <span>Min ROI</span>
-                            <span className={styles.affix}>
-                                <input
-                                    type="number"
-                                    inputMode="decimal"
-                                    min="0"
-                                    step="5"
-                                    value={targetInputs.minRoi}
-                                    onChange={(event) => changeTarget("minRoi", event.target.value)}
-                                />
-                                <span>%</span>
-                            </span>
-                        </label>
-                        <Segmented
-                            label="Show"
-                            value={view}
-                            onChange={setView}
-                            options={[
-                                ["deals", `Deals ${groups.deals.length}`],
-                                ["candidates", `Waiting ${groups.candidates.length}`],
-                                ["longShots", `Long shots ${groups.longShots.length}`],
-                                ["review", `Review ${groups.review.length}`],
-                                ["all", `All ${groups.all.length}`],
-                            ]}
-                        />
-                        <Segmented
-                            label="Listing type"
-                            value={typeFilter}
-                            onChange={setTypeFilter}
-                            options={[
-                                ["all", "Any"],
-                                ["AUCTION", "Auctions"],
-                                ["FIXED_PRICE", "Buy It Now"],
-                            ]}
-                        />
-                        <Segmented
-                            label="Raw or graded"
-                            value={kindFilter}
-                            onChange={setKindFilter}
-                            options={[
-                                ["all", "Any"],
-                                ["raw", "Raw"],
-                                ["graded", "Graded"],
-                            ]}
-                        />
-                        <label className={styles.field}>
-                            <span>Max price</span>
-                            <input
-                                type="number"
-                                inputMode="decimal"
-                                min="0"
-                                value={maxPrice}
-                                onChange={(event) => setMaxPrice(event.target.value)}
-                                placeholder="Any"
-                            />
-                        </label>
-                        <label className={styles.field}>
-                            <span>Sort</span>
-                            <select value={sort} onChange={(event) => setSort(event.target.value as SortKey)}>
-                                <option value="best">Best deal first</option>
-                                <option value="ending">Ending soonest</option>
-                                <option value="priceLow">Price, low to high</option>
-                                <option value="priceHigh">Price, high to low</option>
-                            </select>
-                        </label>
-                        <label className={styles.field}>
-                            <span>AI per search</span>
-                            <select value={autoSetting} onChange={(event) => changeAutoSetting(Number(event.target.value))}>
-                                {AUTO_OPTIONS.map((option) => (
-                                    <option key={option} value={option}>
-                                        {option === 0 ? "Off" : `Top ${option}`}
-                                    </option>
-                                ))}
-                            </select>
-                        </label>
-                    </div>
-
-                    {searchStatus === "idle" && (
+                    {searchStatus === "idle" && !searchedBefore && (
                         <p className={styles.status}>
                             Search for a card. Every listing gets a free check first; only the ones that could
                             be profitable go to the AI.
