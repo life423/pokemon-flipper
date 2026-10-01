@@ -72,6 +72,7 @@ async function screenListing(listing: ListingSummary): Promise<ListingSummary> {
             shipping: listing.shipping ?? details.shipping,
             isGraded: listing.isGraded,
             cardCondition: details.cardCondition,
+            buyingOption: listing.buyingOption,
         },
         { lookupCards, fetchComps, checkComps }
     ).catch((error: Error) => unscreened(`The free check failed: ${error.message}`));

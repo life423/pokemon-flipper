@@ -240,6 +240,17 @@ function VerdictSection({
         rows.push(["Ends in", left]);
     }
 
+    // An auction ends near its usual price, not near today's bid.
+    const outlook = evaluation.rating?.auction;
+
+    if (outlook) {
+        rows.push(["Usually sells for", dollars(outlook.usualPrice)]);
+
+        if (outlook.salesTotal !== null) {
+            rows.push(["Recent sales at or under max bid", `${outlook.salesAtOrUnder} of ${outlook.salesTotal}`]);
+        }
+    }
+
     return (
         <section className={styles.verdict}>
             <div className={styles.badges}>

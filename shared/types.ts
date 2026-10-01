@@ -43,7 +43,15 @@ export interface Screen {
     assumed: string | null;
     // The paths the free check priced, so its verdict can be redone for
     // other targets without another lookup.
-    money?: { shipping: number; paths: { label: string; expectedNet: number; fixedCosts: number }[] };
+    money?: {
+        shipping: number;
+        paths: { label: string; expectedNet: number; fixedCosts: number }[];
+        auction: boolean;
+        usual: UsualPrice | null;
+    };
+    // An auction that will very likely end above even its best-case max
+    // bid. Not worth the AI.
+    longShot?: boolean;
     // Item details the AI read from the title because the seller left them out.
     filledFromTitle?: string[];
 }
@@ -322,7 +330,23 @@ export interface Underwriting {
     assumptions: string[];
 }
 
-export type RatingLevel = "STRONG" | "GOOD" | "THIN";
+// What a listing usually sells for, as listed, and the recent sales
+// behind it when there's a list.
+export interface UsualPrice {
+    price: number;
+    sales?: number[];
+}
+
+// How likely an auction is to end at or under the max bid.
+export interface AuctionOutlook {
+    chance: "LIKELY" | "POSSIBLE" | "LONG_SHOT";
+    usualPrice: number;
+    salesAtOrUnder: number | null;
+    salesTotal: number | null;
+}
+
+// LONG_SHOT: an auction that will very likely end above the max bid.
+export type RatingLevel = "STRONG" | "GOOD" | "THIN" | "LONG_SHOT";
 
 export interface Rating {
     level: RatingLevel;
@@ -331,6 +355,8 @@ export interface Rating {
     strengths: string[];
     concerns: string[];
     notes: string[];
+    // For an auction: how likely it is to end at or under the max bid.
+    auction?: AuctionOutlook | null;
 }
 
 // ---- One analyzed listing ----

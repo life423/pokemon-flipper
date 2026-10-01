@@ -14,6 +14,7 @@ const RATINGS: Record<RatingLevel, { label: string; className: string }> = {
     STRONG: { label: "Strong deal", className: styles.strong },
     GOOD: { label: "Good deal", className: styles.buy },
     THIN: { label: "Thin deal", className: styles.review },
+    LONG_SHOT: { label: "Long shot", className: styles.neutral },
 };
 
 export function RatingBadge({ level, large = false }: { level: RatingLevel; large?: boolean }) {

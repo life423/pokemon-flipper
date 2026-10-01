@@ -2,6 +2,7 @@ import type { AnalysisState } from "../App";
 import type { ListingSummary } from "../types";
 import { dollars, percent, timeLeft } from "../format";
 import { RatingBadge, VerdictBadge } from "./VerdictBadge";
+import { describeOutlook } from "../../../shared/money/auction.ts";
 import styles from "./DealCard.module.css";
 
 interface Props {
@@ -36,8 +37,9 @@ export function DealCard({ listing, analysis, selected, now, onOpen }: Props) {
     let line: string | null = null;
 
     if (deal && best) {
-        line = rating?.concerns[0] ?? rating?.strengths[0] ?? best.label;
-        line = `${best.label}. ${line === best.label ? "" : line}`.trim();
+        // For an auction, how often the card sells as low as the max bid.
+        const why = rating?.auction ? describeOutlook(rating.auction, best.maxBid) : (rating?.concerns[0] ?? rating?.strengths[0]);
+        line = why ? `${best.label}. ${why}` : best.label;
     } else if (!evaluation && screen?.status === "CANDIDATE") {
         line = `At best (${screen.assumed}): ${screen.bestCase?.label.toLowerCase()}.`;
     } else if (!evaluation && screen?.status === "UNSCREENED") {
@@ -57,7 +59,9 @@ export function DealCard({ listing, analysis, selected, now, onOpen }: Props) {
                     <div className={styles.tags}>
                         {deal && rating && <RatingBadge level={rating.level} />}
                         {underwriting && <VerdictBadge verdict={underwriting.verdict} />}
-                        {!underwriting && screen && <span className={styles.tag}>{SCREEN_TAGS[screen.status]}</span>}
+                        {!underwriting && screen && (
+                            <span className={styles.tag}>{screen.longShot ? "Long-shot auction" : SCREEN_TAGS[screen.status]}</span>
+                        )}
                         <span className={styles.tag}>{auction ? `Auction, ${listing.bids} bids` : "Buy It Now"}</span>
                         <span className={styles.tag}>{listing.isGraded ? "Graded" : "Raw"}</span>
                     </div>

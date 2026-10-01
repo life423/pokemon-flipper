@@ -1,6 +1,7 @@
 import { MONEY_CONFIG, type MoneyConfig } from "./config.ts";
 import { bestPath, pathNumbers, underwrite } from "./underwriting.ts";
 import { rateDeal } from "./rating.ts";
+import { isLongShot } from "./auction.ts";
 import type { Evaluation, Screen, Targets } from "../types.ts";
 
 // Your profit and return targets change by card, so the page re-prices
@@ -21,14 +22,19 @@ export function retargetEvaluation(evaluation: Evaluation, targets: Targets): Ev
 
 // A free check: whether the listing could clear your targets at its
 // best, from the paths it priced.
-export function retargetScreen(screen: Screen, price: number | null, targets: Targets): Screen {
+export function retargetScreen(
+    screen: Screen,
+    price: number | null,
+    targets: Targets,
+    config: MoneyConfig = MONEY_CONFIG
+): Screen {
     if (!screen.money || price === null || screen.status === "UNSCREENED") return screen;
 
-    const config = withTargets(targets);
-    const { shipping, paths } = screen.money;
+    const repriced = withTargets(targets, config);
+    const { shipping, paths, auction, usual } = screen.money;
     const priced = paths.map((path) => ({
         label: path.label,
-        ...pathNumbers({ expectedNet: path.expectedNet, fixedCosts: path.fixedCosts, shipping, price }, config),
+        ...pathNumbers({ expectedNet: path.expectedNet, fixedCosts: path.fixedCosts, shipping, price }, repriced),
     }));
     const best = bestPath(priced);
 
@@ -38,5 +44,6 @@ export function retargetScreen(screen: Screen, price: number | null, targets: Ta
         ...screen,
         status: best.clears ? "CANDIDATE" : "DROPPED",
         bestCase: { label: best.label, maxBid: best.maxBid, profit: best.profit, roi: best.roi },
+        longShot: best.clears && isLongShot(auction, usual, best.maxBid),
     };
 }

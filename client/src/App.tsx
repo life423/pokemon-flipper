@@ -14,7 +14,7 @@ export type AnalysisState =
     | { status: "done"; evaluation: Evaluation }
     | { status: "error"; message: string };
 
-type View = "deals" | "candidates" | "review" | "all";
+type View = "deals" | "candidates" | "longShots" | "review" | "all";
 type SortKey = "best" | "ending" | "priceLow" | "priceHigh";
 type TypeFilter = "all" | "AUCTION" | "FIXED_PRICE";
 type KindFilter = "all" | "raw" | "graded";
@@ -39,7 +39,7 @@ function describeIntent(intent: SearchIntent): string {
 
 type SearchSummary = Extract<Parameters<Parameters<typeof streamDeals>[1]>[0], { type: "start" }>;
 
-const LEVEL_ORDER: Record<RatingLevel, number> = { STRONG: 0, GOOD: 1, THIN: 2 };
+const LEVEL_ORDER: Record<RatingLevel, number> = { STRONG: 0, GOOD: 1, THIN: 2, LONG_SHOT: 3 };
 
 const evaluationOf = (analysis?: AnalysisState) => (analysis?.status === "done" ? analysis.evaluation : null);
 const isDeal = (evaluation: Evaluation | null) => evaluation?.underwriting?.verdict.startsWith("BUY") ?? false;
@@ -231,7 +231,8 @@ export function App() {
         if (free <= 0 || remaining <= 0) return;
 
         const waiting = listings
-            .filter((listing) => listing.screen?.status === "CANDIDATE" && !analyses[listing.id])
+            // Long-shot auctions aren't worth the AI.
+            .filter((listing) => listing.screen?.status === "CANDIDATE" && !listing.screen.longShot && !analyses[listing.id])
             .sort((a, b) => bestCaseRoom(b) - bestCaseRoom(a));
 
         for (const listing of waiting) {
@@ -270,18 +271,22 @@ export function App() {
     const groups = useMemo(() => {
         const deals: ListingSummary[] = [];
         const candidates: ListingSummary[] = [];
+        // Auctions that will very likely end above the max bid.
+        const longShots: ListingSummary[] = [];
         const review: ListingSummary[] = [];
 
         for (const listing of filtered) {
             const evaluation = evaluationOf(analyses[listing.id]);
             const verdict = evaluation?.underwriting?.verdict;
 
-            if (isDeal(evaluation)) deals.push(listing);
+            if (isDeal(evaluation)) (evaluation?.rating?.level === "LONG_SHOT" ? longShots : deals).push(listing);
             else if (verdict === "NEEDS_REVIEW" || verdict === "CANT_PRICE") review.push(listing);
-            else if (!evaluation && listing.screen?.status === "CANDIDATE") candidates.push(listing);
+            else if (!evaluation && listing.screen?.status === "CANDIDATE") {
+                (listing.screen.longShot ? longShots : candidates).push(listing);
+            }
         }
 
-        return { deals, candidates, review, all: filtered };
+        return { deals, candidates, longShots, review, all: filtered };
     }, [filtered, analyses]);
 
     const visible = useMemo(() => {
@@ -309,12 +314,14 @@ export function App() {
         const analyzing = Object.values(analyses).filter((analysis) => analysis.status === "loading").length;
 
         return {
-            candidates: count("CANDIDATE"),
+            candidates: listings.filter((listing) => listing.screen?.status === "CANDIDATE" && !listing.screen.longShot).length,
             dropped: count("DROPPED"),
             unchecked: listings.filter((listing) => listing.screen?.status === "UNSCREENED" && !listing.match).length,
             mismatched: listings.filter((listing) => listing.match).length,
             analyzing,
-            waiting: listings.filter((listing) => listing.screen?.status === "CANDIDATE" && !analyses[listing.id]).length,
+            waiting: listings.filter(
+                (listing) => listing.screen?.status === "CANDIDATE" && !listing.screen.longShot && !analyses[listing.id]
+            ).length,
         };
     }, [listings, analyses]);
 
@@ -330,6 +337,7 @@ export function App() {
                   ? `No deals yet. ${counts.waiting} ${counts.waiting === 1 ? "candidate hasn't" : "candidates haven't"} been analyzed: see Waiting.`
                   : "No deals in this search at the current prices.",
         candidates: "Nothing waiting for the AI.",
+        longShots: "No long-shot auctions.",
         review: "Nothing needs review.",
         all: "No listings match the filters.",
     };
@@ -449,6 +457,7 @@ export function App() {
                             options={[
                                 ["deals", `Deals ${groups.deals.length}`],
                                 ["candidates", `Waiting ${groups.candidates.length}`],
+                                ["longShots", `Long shots ${groups.longShots.length}`],
                                 ["review", `Review ${groups.review.length}`],
                                 ["all", `All ${groups.all.length}`],
                             ]}

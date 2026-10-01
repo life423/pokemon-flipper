@@ -1,6 +1,7 @@
 import { CONDITION_NAMES, conditionGap, isRawCondition, sellerCondition } from "../conditions.ts";
 import { dollars, percent } from "../format.ts";
-import type { CompSummary, Confidence, Evaluation, PricedPath, Rating, RatingLevel } from "../types.ts";
+import { auctionOutlook, describeOutlook, usualPrice } from "./auction.ts";
+import type { AuctionOutlook, CompSummary, Confidence, Evaluation, PricedPath, Rating, RatingLevel } from "../types.ts";
 
 // How good a deal is, beyond clearing your targets. Plain rules on what
 // the analysis found: each concern drops the rating a level. Strong
@@ -50,10 +51,19 @@ export function rateDeal(evaluation: RatingInput): Rating | null {
     const notes: string[] = [];
     const auction = listing.buyingOption === "AUCTION";
     let room: number | null = null;
+    let outlook: AuctionOutlook | null = null;
 
     if (auction) {
         // The current bid will rise, so room under the max bid means little.
+        // What matters is how often this card sells as low as the max bid.
         notes.push("It's an auction, so the price can still rise. The max bid is the most to pay.");
+
+        const usual = usualPrice(underwriting.paths, best.path === "GRADED_RESALE" ? evaluation.slabPricing?.summary : null);
+
+        if (usual) {
+            outlook = auctionOutlook(best.maxBid, usual);
+            (outlook.chance === "LIKELY" ? strengths : concerns).push(describeOutlook(outlook, best.maxBid));
+        }
     } else if (listing.price !== null && best.maxBid > 0) {
         room = (best.maxBid - listing.price) / best.maxBid;
 
@@ -124,10 +134,11 @@ export function rateDeal(evaluation: RatingInput): Rating | null {
     }
 
     return {
-        level: LEVELS[Math.min(concerns.length, LEVELS.length - 1)],
+        level: outlook?.chance === "LONG_SHOT" ? "LONG_SHOT" : LEVELS[Math.min(concerns.length, LEVELS.length - 1)],
         room: room === null ? null : Math.round(room * 1000) / 1000,
         strengths,
         concerns,
         notes,
+        auction: outlook,
     };
 }

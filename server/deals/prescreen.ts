@@ -7,7 +7,9 @@ import { sellerCondition } from "../../shared/conditions.ts";
 import { GRADERS, underwrite, type UnderwritingInput } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG, type MoneyConfig } from "../../shared/money/config.ts";
 import { CONDITION_NAMES } from "../../shared/conditions.ts";
-import type { Grader, Screen, Underwriting } from "../../shared/types.ts";
+import type { BuyingOption, Grader, Screen, Underwriting } from "../../shared/types.ts";
+import { usualPrice } from "../../shared/money/auction.ts";
+import { retargetScreen } from "../../shared/money/targets.ts";
 
 // The free first check, before any paid AI: what a listing is worth at
 // its best, from the seller's own details and the price data. A listing
@@ -22,6 +24,7 @@ export interface ScreenInput {
     shipping: number | null;
     isGraded: boolean;
     cardCondition: string | null;
+    buyingOption?: BuyingOption;
 }
 
 export interface ScreenDeps {
@@ -169,11 +172,14 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
         ? {
               shipping: best.shipping,
               paths: priced.map((path) => ({ label: path.label, expectedNet: path.expectedNet, fixedCosts: path.fixedCosts })),
+              auction: listing.buyingOption === "AUCTION",
+              usual: usualPrice(paths, input.slab ? input.slabPricing?.summary : null),
           }
         : undefined;
 
     if (verdict.startsWith("BUY")) {
-        return screen("CANDIDATE", null, { card: cardInfo, bestCase, assumed, money });
+        // Flags an auction that will very likely end above its max bid.
+        return retargetScreen(screen("CANDIDATE", null, { card: cardInfo, bestCase, assumed, money }), listing.price, config.targets, config);
     }
 
     if (verdict === "PASS") {
