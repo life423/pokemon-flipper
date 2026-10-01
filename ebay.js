@@ -130,6 +130,20 @@ export async function getListings(search = "") {
     return kept.map(toListing);
 }
 
+// What buying it costs right now: the current bid for an auction, the
+// price otherwise, and the quoted shipping (null when not quoted).
+function priceDetails(item) {
+    const isAuction = item.buyingOptions?.includes("AUCTION") ?? false;
+
+    return {
+        price: toAmount(isAuction ? item.currentBidPrice ?? item.price : item.price),
+        shipping: toAmount(item.shippingOptions?.[0]?.shippingCost),
+        buyingOption: isAuction ? "AUCTION" : "FIXED_PRICE",
+        bids: item.bidCount ?? 0,
+        endTime: item.itemEndDate ?? null,
+    };
+}
+
 // Full details for analysis: full-size photos, plus the seller's
 // item specifics (set, card number, finish, and so on).
 export async function getListingDetails(itemId) {
@@ -141,6 +155,7 @@ export async function getListingDetails(itemId) {
         id: item.itemId,
         title: item.title,
         condition: item.condition ?? null,
+        ...priceDetails(item),
         aspects: Object.fromEntries(
             (item.localizedAspects ?? []).map((aspect) => [
                 aspect.name,

@@ -30,10 +30,10 @@ try {
 }
 
 const seconds = ((Date.now() - started) / 1000).toFixed(1);
-const { listing, photoCheck, condition, identity, rawPricing, gradedPricing } = evaluation;
+const { listing, photoCheck, condition, identity, rawPricing, gradedPricing, underwriting } = evaluation;
 
 function money(value) {
-    return `$${value.toFixed(2)}`;
+    return value < 0 ? `-$${Math.abs(value).toFixed(2)}` : `$${value.toFixed(2)}`;
 }
 
 function describeRange({ low, likely, high }) {
@@ -137,13 +137,13 @@ if (rawPricing) {
     }
 }
 
-if (gradedPricing) {
+for (const [grader, graded] of Object.entries(gradedPricing ?? {})) {
     console.log();
 
-    if (gradedPricing.byGrade) {
-        console.log(`Graded sold comps (${gradedPricing.grader}, ${gradedPricing.printingLabel}):`);
+    if (graded.byGrade) {
+        console.log(`${grader} sold comps (${graded.printingLabel}):`);
 
-        for (const summary of gradedPricing.byGrade) {
+        for (const summary of graded.byGrade) {
             const prices =
                 summary.count > 0
                     ? `median ${money(summary.median)}, range ${money(summary.low)} to ${money(summary.high)}, newest ${summary.newestSale}`
@@ -153,7 +153,7 @@ if (gradedPricing) {
                 .map(([reason, count]) => `${count} ${reason}`)
                 .join(", ");
 
-            console.log(`  ${summary.grader} ${summary.grade}: ${summary.count} sales, ${prices}, ${summary.confidence} confidence`);
+            console.log(`  ${grader} ${summary.grade}: ${summary.count} sales, ${prices}, ${summary.confidence} confidence`);
 
             if (dropped) {
                 console.log(`    dropped: ${dropped}`);
@@ -161,8 +161,56 @@ if (gradedPricing) {
         }
     }
 
-    if (gradedPricing.status !== "PRICED") {
-        console.log(`Graded prices unavailable: ${gradedPricing.reason}`);
+    if (graded.status !== "PRICED") {
+        console.log(`${grader} prices unavailable: ${graded.reason}`);
+    }
+}
+
+if (underwriting) {
+    console.log();
+
+    const shippingText = listing.shipping === null ? "shipping not quoted" : `${money(listing.shipping)} shipping`;
+    const priceText = typeof listing.price === "number" ? money(listing.price) : "no price";
+    const sale =
+        listing.buyingOption === "AUCTION"
+            ? `auction at ${priceText} (${listing.bids} bids, ends ${listing.endTime})`
+            : `Buy It Now at ${priceText}`;
+
+    console.log(`Money: ${sale}, ${shippingText}`);
+
+    for (const path of underwriting.paths) {
+        if (path.status !== "PRICED") {
+            console.log(`  ${path.label}: can't price. ${path.reason}`);
+            continue;
+        }
+
+        const detail =
+            path.path === "RAW"
+                ? `sells for ${money(path.salePrice)} (${path.priceCondition})`
+                : `${path.tier} ${money(path.gradingFee)}, expected sale ${money(path.expectedSale)}`;
+
+        console.log(
+            `  ${path.label}: ${detail}; keep ${money(path.expectedNet)}, all-in cost ${money(path.cost)}, profit ${money(path.profit)} (${Math.round(path.roi * 100)}% ROI), worst case ${money(path.downside)}, max bid ${money(path.maxBid)}${path.clears ? ", clears your targets" : ""}`
+        );
+
+        if (path.outlook) {
+            const grades = path.outlook
+                .map((o) => `${path.grader} ${o.grade} ${Math.round(o.probability * 100)}% at ${money(o.price)}${o.filledFrom ? ` (from ${o.filledFrom})` : ""}`)
+                .join(", ");
+
+            console.log(`    ${grades}`);
+        }
+    }
+
+    const best = underwriting.best ? ` (${underwriting.best.label}, max bid ${money(underwriting.best.maxBid)})` : "";
+    console.log(`Verdict: ${underwriting.verdict}${best}`);
+
+    for (const reason of underwriting.reasons) {
+        console.log(`  ${reason}`);
+    }
+
+    for (const note of underwriting.assumptions ?? []) {
+        console.log(`  Note: ${note}`);
     }
 }
 

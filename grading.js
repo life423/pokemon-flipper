@@ -15,6 +15,7 @@ import { identifyCard } from "./card-identity.js";
 import { rawPricesFor } from "./pricing.js";
 import { lookupCards, fetchComps } from "./pkmnprices.js";
 import { gradedPricesFor } from "./graded-comps.js";
+import { GRADERS, underwrite } from "./underwriting.js";
 
 // Cost cap: only the first photos, in the seller's order.
 const MAX_PHOTOS = 8;
@@ -75,6 +76,7 @@ function summarizeAnswer(answer) {
         authenticity: answer.authenticity.concern,
     };
 }
+
 const CLOSE_UP_VIEWS = ["FRONT_DETAIL", "BACK_DETAIL"];
 
 const NO_CLOSE_UPS =
@@ -231,9 +233,27 @@ export function applyConditionRules(
     return condition;
 }
 
-// Grades one listing. The model's answers are saved per listing and
-// reused until the photos, model, or prompts change. The code rules
-// always run fresh, so rule changes apply to saved answers for free.
+// Verified sold comps from each grader, for an identified card.
+async function gradedPricesByGrader(card, identity, gradeRange) {
+    const byGrader = {};
+
+    for (const grader of GRADERS) {
+        try {
+            byGrader[grader] = await gradedPricesFor(card, identity, gradeRange, { fetchComps, grader });
+        } catch (error) {
+            byGrader[grader] = {
+                status: "PRICE_UNAVAILABLE",
+                reason: `The ${grader} comp lookup failed: ${error.message}`,
+            };
+        }
+    }
+
+    return byGrader;
+}
+
+// Grades one listing and prices it. The model's answers are saved per
+// listing and reused until the photos, model, or prompts change. The
+// code rules, identity, prices, and money math always run fresh.
 //   fresh: ignore saved answers and ask the model again.
 //   remember: save new answers.
 export async function evaluateListing(
@@ -250,6 +270,11 @@ export async function evaluateListing(
             url: listing.url,
             sellerCondition: listing.condition,
             aspects: listing.aspects,
+            price: listing.price,
+            shipping: listing.shipping,
+            buyingOption: listing.buyingOption,
+            bids: listing.bids,
+            endTime: listing.endTime,
             photosInListing: listing.images.length,
             photosAnalyzed: photoUrls.length,
         },
@@ -258,16 +283,19 @@ export async function evaluateListing(
         modeReasons: [],
         gradeStatus: "SKIPPED",
         condition: null,
-        answeredAt: null,
+        setAside: [],
         identity: null,
         rawPricing: null,
         gradedPricing: null,
+        underwriting: null,
+        answeredAt: null,
         reusedSteps: [],
         usage: [],
     };
 
     if (photoUrls.length === 0) {
         evaluation.modeReasons = ["The listing has no photos."];
+        evaluation.underwriting = underwrite(evaluation);
         return evaluation;
     }
 
@@ -300,25 +328,19 @@ export async function evaluateListing(
         changed = true;
     }
 
-    const checkedPhotos = applyPhotoCheckRules(
-        record.photoCheck.result,
-        photoUrls.length
-    );
-
+    const checkedPhotos = applyPhotoCheckRules(record.photoCheck.result, photoUrls.length);
     evaluation.photoCheck = checkedPhotos;
 
     const { mode, reasons } = getGradingMode(checkedPhotos);
     evaluation.gradingMode = mode;
     evaluation.modeReasons = reasons;
 
-    let identifiedCard = null;
-
     // Identity and raw pricing don't depend on the grading mode, only
     // on the listing showing one ungraded card.
+    let identifiedCard = null;
+
     if (checkedPhotos.cardCount === "ONE" && checkedPhotos.holder !== "GRADED_SLAB") {
-        const { identity, card } = await identifyCard(listing, checkedPhotos, {
-            lookupCards,
-        });
+        const { identity, card } = await identifyCard(listing, checkedPhotos, { lookupCards });
 
         identifiedCard = card;
         evaluation.identity = identity;
@@ -356,18 +378,18 @@ export async function evaluateListing(
                 (result) => applyConditionRules(result, mode, { closeUps }) !== null
             );
 
-            if (valid.length > 0) {
-                const kept = valid.reduce((a, b) => moreCautious(a, b));
-
-                record.assessment = {
-                    mode,
-                    photoNumbers,
-                    result: kept,
-                    setAside: results.filter((result) => result !== kept),
-                };
-            } else {
-                record.assessment = null;
-            }
+            record.assessment =
+                valid.length > 0
+                    ? (() => {
+                          const kept = valid.reduce((a, b) => moreCautious(a, b));
+                          return {
+                              mode,
+                              photoNumbers,
+                              result: kept,
+                              setAside: results.filter((result) => result !== kept),
+                          };
+                      })()
+                    : null;
 
             changed = true;
         }
@@ -385,21 +407,12 @@ export async function evaluateListing(
             evaluation.condition = condition;
             evaluation.setAside = (record.assessment.setAside ?? []).map(summarizeAnswer);
 
-            // Graded prices need an identified card and a grade range.
             if (identifiedCard) {
-                try {
-                    evaluation.gradedPricing = await gradedPricesFor(
-                        identifiedCard,
-                        evaluation.identity,
-                        condition.gradeRange,
-                        { fetchComps }
-                    );
-                } catch (error) {
-                    evaluation.gradedPricing = {
-                        status: "PRICE_UNAVAILABLE",
-                        reason: `The comp lookup failed: ${error.message}`,
-                    };
-                }
+                evaluation.gradedPricing = await gradedPricesByGrader(
+                    identifiedCard,
+                    evaluation.identity,
+                    condition.gradeRange
+                );
             }
         }
     }
@@ -413,6 +426,7 @@ export async function evaluateListing(
     }
 
     evaluation.answeredAt = record.answeredAt;
+    evaluation.underwriting = underwrite(evaluation);
 
     return evaluation;
 }
