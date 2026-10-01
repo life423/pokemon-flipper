@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { prescreen, sellerCondition } from "../../server/deals/prescreen.js";
+import { prescreen } from "../../server/deals/prescreen.ts";
+import { sellerCondition } from "../../server/ebay/seller-condition.ts";
 import { toCardRecord } from "../../server/pricing/pkmnprices.js";
 
 const NOW = Date.parse("2026-09-30T00:00:00Z");

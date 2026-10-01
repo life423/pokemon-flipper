@@ -1,8 +1,47 @@
+import type { RawCondition } from "../../shared/conditions.ts";
+import type { Grader } from "../../shared/types.ts";
+
+export interface GradingTier {
+    tier: string;
+    fee: number;
+    percentOfValue?: number;
+    // null: never used until you fill it in.
+    maxDeclaredValue: number | null;
+}
+
+export interface BuyingConfig {
+    salesTaxRate: number;
+    assumedShippingWhenUnknown: number;
+}
+
+export interface SellingConfig {
+    finalValueRate: number;
+    finalValueTierLimit: number;
+    finalValueRateAboveLimit: number;
+    perOrderFee: number;
+    perOrderFeeSmall: number;
+    smallOrderLimit: number;
+    typicalBuyerTaxRate: number;
+    promotedRate: number;
+    shipping: { raw: number; graded: number };
+}
+
+export type GradingConfig = { shippingPerCard: number } & Record<Grader, GradingTier[]>;
+
+export interface MoneyConfig {
+    verified: boolean;
+    targets: { minProfit: number; minRoi: number };
+    prescreen: { bestGrade: Record<RawCondition, number> };
+    buying: BuyingConfig;
+    selling: SellingConfig;
+    grading: GradingConfig;
+}
+
 // Every number the money math uses, in one place. Fees change often,
 // so check these against your own accounts and set verified to true.
 // A service level with maxDeclaredValue null is never used until you
 // fill it in.
-export const MONEY_CONFIG = {
+export const MONEY_CONFIG: MoneyConfig = {
     verified: false,
 
     // What a deal has to clear: profit after every cost, and return on

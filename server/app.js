@@ -4,7 +4,7 @@ import path from "node:path";
 import express from "express";
 import { CLIENT_ROOT } from "./lib/paths.js";
 import { getListings } from "./ebay/listings.js";
-import { findDeals } from "./deals/find-deals.js";
+import { findDeals } from "./deals/find-deals.ts";
 import { evaluateListing } from "./analysis/evaluate.js";
 
 const app = express();

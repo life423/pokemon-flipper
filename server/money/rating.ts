@@ -1,38 +1,35 @@
-import { sellerCondition } from "../deals/prescreen.js";
+import { sellerCondition } from "../ebay/seller-condition.ts";
+import { CONDITION_NAMES, conditionGap, isRawCondition } from "../../shared/conditions.ts";
+import { dollars, percent } from "../../shared/format.ts";
+import type { CompSummary, Confidence, Evaluation, PricedPath, Rating, RatingLevel } from "../../shared/types.ts";
 
 // How good a deal is, beyond clearing your targets. Plain rules on what
 // the analysis found: each concern drops the rating a level. Strong
 // with none, Good with one, Thin with two or more.
 
-const LEVELS = ["STRONG", "GOOD", "THIN"];
-const CONFIDENCE_ORDER = ["NONE", "LOW", "MEDIUM", "HIGH"];
-const CONDITION_ORDER = ["NEAR_MINT", "LIGHTLY_PLAYED", "MODERATELY_PLAYED", "HEAVILY_PLAYED", "DAMAGED"];
-const CONDITION_NAMES = {
-    NEAR_MINT: "Near Mint",
-    LIGHTLY_PLAYED: "Lightly Played",
-    MODERATELY_PLAYED: "Moderately Played",
-    HEAVILY_PLAYED: "Heavily Played",
-    DAMAGED: "Damaged",
-};
+const LEVELS: RatingLevel[] = ["STRONG", "GOOD", "THIN"];
+const CONFIDENCE_ORDER: Confidence[] = ["NONE", "LOW", "MEDIUM", "HIGH"];
 
-// The price should sit at least this far under the max bid.
+// A fixed price should sit at least this far under the max bid.
 const MIN_ROOM = 0.15;
 
 // Sellers below either of these are a concern.
 const MIN_FEEDBACK_SCORE = 25;
 const MIN_FEEDBACK_PERCENT = 98;
 
-const percent = (value) => `${Math.round(value * 100)}%`;
-const dollars = (value) => `$${Math.abs(value).toFixed(2)}`;
+type RatingInput = Pick<
+    Evaluation,
+    "listing" | "underwriting" | "condition" | "gradingMode" | "gradedPricing" | "slabPricing"
+>;
 
 // The sold comps behind the winning path's prices. Grades priced from a
 // lower grade's sales are left out: they add no sales of their own.
-function compsBehind(evaluation, best) {
+function compsBehind(evaluation: RatingInput, best: PricedPath): CompSummary[] {
     if (best.path === "GRADED_RESALE") {
         return evaluation.slabPricing?.summary ? [evaluation.slabPricing.summary] : [];
     }
 
-    if (best.path === "GRADE") {
+    if (best.path === "GRADE" && best.grader) {
         const grades = (best.outlook ?? []).filter((o) => o.filledFrom === null).map((o) => o.grade);
         const byGrade = evaluation.gradedPricing?.[best.grader]?.byGrade ?? [];
 
@@ -42,23 +39,30 @@ function compsBehind(evaluation, best) {
     return [];
 }
 
-export function rateDeal(evaluation) {
+export function rateDeal(evaluation: RatingInput): Rating | null {
     const underwriting = evaluation.underwriting;
 
-    if (!underwriting?.verdict?.startsWith("BUY") || !underwriting.best) return null;
+    if (!underwriting?.verdict.startsWith("BUY") || !underwriting.best) return null;
 
     const { best } = underwriting;
     const { listing } = evaluation;
-    const strengths = [];
-    const concerns = [];
-    const notes = [];
+    const strengths: string[] = [];
+    const concerns: string[] = [];
+    const notes: string[] = [];
+    const auction = listing.buyingOption === "AUCTION";
+    let room: number | null = null;
 
-    const room = best.maxBid > 0 ? (best.maxBid - listing.price) / best.maxBid : 0;
+    if (auction) {
+        // The current bid will rise, so room under the max bid means little.
+        notes.push("It's an auction, so the price can still rise. The max bid is the most to pay.");
+    } else if (listing.price !== null && best.maxBid > 0) {
+        room = (best.maxBid - listing.price) / best.maxBid;
 
-    if (room >= MIN_ROOM) {
-        strengths.push(`The price is ${percent(room)} under the max bid.`);
-    } else {
-        concerns.push(`The price is only ${percent(room)} under the max bid.`);
+        if (room >= MIN_ROOM) {
+            strengths.push(`The price is ${percent(room)} under the max bid.`);
+        } else {
+            concerns.push(`The price is only ${percent(room)} under the max bid.`);
+        }
     }
 
     if (best.path !== "RAW") {
@@ -67,16 +71,15 @@ export function rateDeal(evaluation) {
         if (best.downside >= 0) {
             strengths.push(`Still profitable ${lowEnd}.`);
         } else {
-            concerns.push(`Loses ${dollars(best.downside)} ${lowEnd}.`);
+            concerns.push(`Loses ${dollars(-best.downside)} ${lowEnd}.`);
         }
     }
 
     const comps = compsBehind(evaluation, best);
 
     if (comps.length > 0) {
-        const weakest = comps.reduce((a, b) =>
-            CONFIDENCE_ORDER.indexOf(b.confidence) < CONFIDENCE_ORDER.indexOf(a.confidence) ? b : a
-        );
+        const rank = (summary: CompSummary) => CONFIDENCE_ORDER.indexOf(summary.confidence);
+        const weakest = comps.reduce((a, b) => (rank(b) < rank(a) ? b : a));
 
         if (weakest.confidence === "HIGH") {
             strengths.push("Every price behind it rests on 5 or more recent verified sales.");
@@ -87,10 +90,12 @@ export function rateDeal(evaluation) {
     }
 
     // A raw card: how sure the photos are, and whether the seller oversold it.
-    if (best.path !== "GRADED_RESALE" && evaluation.condition) {
-        if (evaluation.condition.confidence === "HIGH") {
+    const condition = evaluation.condition;
+
+    if (best.path !== "GRADED_RESALE" && condition) {
+        if (condition.confidence === "HIGH") {
             strengths.push("The condition read from the photos is high confidence.");
-        } else if (evaluation.condition.confidence === "LOW") {
+        } else if (condition.confidence === "LOW") {
             concerns.push("The condition read from the photos is low confidence.");
         }
 
@@ -98,14 +103,12 @@ export function rateDeal(evaluation) {
             concerns.push("There are no close-up photos, so the condition read is limited.");
         }
 
-        if (listing.cardCondition) {
+        if (listing.cardCondition && isRawCondition(condition.rawCondition)) {
             const claimed = sellerCondition(listing.cardCondition);
-            const seen = evaluation.condition.rawCondition;
-            const gap = CONDITION_ORDER.indexOf(seen) - CONDITION_ORDER.indexOf(claimed);
 
-            if (CONDITION_ORDER.includes(seen) && gap >= 2) {
+            if (conditionGap(claimed, condition.rawCondition) >= 2) {
                 concerns.push(
-                    `The seller calls it ${CONDITION_NAMES[claimed]}, but the photos look ${CONDITION_NAMES[seen]}.`
+                    `The seller calls it ${CONDITION_NAMES[claimed]}, but the photos look ${CONDITION_NAMES[condition.rawCondition]}.`
                 );
             }
         }
@@ -121,13 +124,9 @@ export function rateDeal(evaluation) {
         }
     }
 
-    if (listing.buyingOption === "AUCTION") {
-        notes.push("It's an auction, so the price can still rise. The max bid is the most to pay.");
-    }
-
     return {
         level: LEVELS[Math.min(concerns.length, LEVELS.length - 1)],
-        room: Math.round(room * 1000) / 1000,
+        room: room === null ? null : Math.round(room * 1000) / 1000,
         strengths,
         concerns,
         notes,

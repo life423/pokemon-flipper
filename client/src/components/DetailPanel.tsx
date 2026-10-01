@@ -14,7 +14,7 @@ import type {
     SlabPricing,
     Underwriting,
 } from "../types";
-import { describeRange, money, name, percent, timeLeft } from "../format";
+import { describeRange, dollars, name, percent, timeLeft } from "../format";
 import { useNow } from "../useNow";
 import { RatingBadge, VerdictBadge } from "./VerdictBadge";
 import styles from "./DetailPanel.module.css";
@@ -215,18 +215,23 @@ function VerdictSection({
     const room = best?.maxBid !== undefined && listing.price !== null ? best.maxBid - listing.price : null;
 
     const rows: [string, ReactNode][] = [
-        [listing.buyingOption === "AUCTION" ? `Current bid (${listing.bids} bids)` : "Buy It Now", money(listing.price)],
-        ["Shipping", listing.shipping === null ? "Not quoted" : money(listing.shipping)],
+        [listing.buyingOption === "AUCTION" ? `Current bid (${listing.bids} bids)` : "Buy It Now", dollars(listing.price)],
+        ["Shipping", listing.shipping === null ? "Not quoted" : dollars(listing.shipping)],
     ];
 
     if (room !== null) {
-        rows.push(["Room to bid", <span className={room >= 0 ? styles.good : styles.bad}>{money(room)}</span>]);
+        rows.push(["Room to bid", <span className={room >= 0 ? styles.good : styles.bad}>{dollars(room)}</span>]);
     }
-    if (best?.status === "PRICED" && underwriting.verdict.startsWith("BUY")) {
+    if (best && underwriting.verdict.startsWith("BUY")) {
+        // An auction's bid will rise, so its profit is shown at the max bid.
+        const auction = listing.buyingOption === "AUCTION";
+        const profit = auction ? best.profitAtMaxBid : best.profit;
+        const roi = auction ? best.roiAtMaxBid : best.roi;
+
         rows.push([
-            "Profit at this price",
+            auction ? "Profit at max bid" : "Profit at this price",
             <span className={styles.good}>
-                {money(best.profit)} ({percent(best.roi)} return)
+                {dollars(profit)} ({percent(roi)} return)
             </span>,
         ]);
     }
@@ -245,7 +250,7 @@ function VerdictSection({
                 <div className={styles.hero}>
                     <span className={styles.heroLabel}>Max bid</span>
                     <span className={`${styles.heroValue} ${room !== null && room >= 0 ? styles.good : ""}`}>
-                        {money(best.maxBid)}
+                        {dollars(best.maxBid)}
                     </span>
                     <span className={styles.heroLabel}>{best.label}</span>
                 </div>
@@ -278,10 +283,10 @@ function PathCard({ path }: { path: MoneyPath }) {
     const sale: [string, ReactNode][] =
         path.path === "GRADE"
             ? [
-                  ["Service level", `${path.tier} (${money(path.gradingFee)})`],
-                  ["Expected sale", money(path.expectedSale)],
+                  ["Service level", `${path.tier} (${dollars(path.gradingFee)})`],
+                  ["Expected sale", dollars(path.expectedSale)],
               ]
-            : [["Sells for", `${money(path.salePrice)}${path.priceCondition ? ` (${name(path.priceCondition)})` : ""}`]];
+            : [["Sells for", `${dollars(path.salePrice)}${path.priceCondition ? ` (${name(path.priceCondition)})` : ""}`]];
 
     return (
         <div className={`${styles.path} ${path.clears ? styles.clears : ""}`}>
@@ -293,16 +298,17 @@ function PathCard({ path }: { path: MoneyPath }) {
             <Pairs
                 rows={[
                     ...sale,
-                    ["You keep", money(path.expectedNet)],
-                    ["All-in cost", money(path.cost)],
+                    ["You keep", dollars(path.expectedNet)],
+                    ["All-in cost", dollars(path.cost)],
                     [
                         "Profit",
                         <span className={(path.profit ?? 0) >= 0 ? styles.good : styles.bad}>
-                            {money(path.profit)} ({percent(path.roi)})
+                            {dollars(path.profit)} ({percent(path.roi)})
                         </span>,
                     ],
-                    ["Worst case", money(path.downside)],
-                    ["Max bid", <strong>{money(path.maxBid)}</strong>],
+                    ["Worst case", dollars(path.downside)],
+                    ["Profit at max bid", `${dollars(path.profitAtMaxBid)} (${percent(path.roiAtMaxBid)})`],
+                    ["Max bid", <strong>{dollars(path.maxBid)}</strong>],
                 ]}
             />
 
@@ -323,7 +329,7 @@ function PathCard({ path }: { path: MoneyPath }) {
                                 </td>
                                 <td>{percent(outlook.probability)}</td>
                                 <td>
-                                    {money(outlook.price)}
+                                    {dollars(outlook.price)}
                                     {outlook.filledFrom !== null && (
                                         <span className={styles.muted}> (from {outlook.filledFrom})</span>
                                     )}
@@ -354,7 +360,7 @@ function ListingSection({ listing, evaluation }: { listing: ListingSummary; eval
         rows.push(["Seller's condition", condition]);
     }
     if (screen?.bestCase) {
-        rows.push(["Free check, at best", `${money(screen.bestCase.maxBid)} max bid (${screen.assumed})`]);
+        rows.push(["Free check, at best", `${dollars(screen.bestCase.maxBid)} max bid (${screen.assumed})`]);
     }
 
     if (rows.length === 0) return null;
@@ -504,14 +510,14 @@ function CompsRow({ summary }: { summary: CompSummary }) {
                 </span>
                 <span className={styles.compStats}>
                     {summary.count > 0
-                        ? `${summary.count} sales, median ${money(summary.median)}, ${name(summary.confidence)}`
+                        ? `${summary.count} sales, median ${dollars(summary.median)}, ${name(summary.confidence)}`
                         : "No verified sales"}
                 </span>
             </summary>
 
             {summary.count > 0 && (
                 <p className={styles.small}>
-                    Range {money(summary.low)} to {money(summary.high)}. Newest sale {summary.newestSale}.
+                    Range {dollars(summary.low)} to {dollars(summary.high)}. Newest sale {summary.newestSale}.
                 </p>
             )}
 
@@ -524,7 +530,7 @@ function CompsRow({ summary }: { summary: CompSummary }) {
             <ul className={styles.sales}>
                 {summary.sales.map((sale, index) => (
                     <li key={`${sale.soldAt}-${index}`}>
-                        <span className={styles.salePrice}>{money(sale.price)}</span>
+                        <span className={styles.salePrice}>{dollars(sale.price)}</span>
                         <span className={styles.muted}>{sale.soldAt}</span>
                         {sale.url ? (
                             <a href={sale.url} target="_blank" rel="noopener noreferrer">
@@ -553,7 +559,7 @@ function PricesSection({
                 <>
                     <h4 className={styles.subTitle}>Raw{raw.printingLabel ? `, ${raw.printingLabel}` : ""}</h4>
                     {raw.status === "PRICED" ? (
-                        <Pairs rows={(raw.prices ?? []).map((price) => [name(price.condition), money(price.price)])} />
+                        <Pairs rows={(raw.prices ?? []).map((price) => [name(price.condition), dollars(price.price)])} />
                     ) : (
                         <p className={styles.muted}>{raw.reason}</p>
                     )}

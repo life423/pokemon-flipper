@@ -12,7 +12,7 @@ import {
 } from "../../server/money/underwriting.js";
 
 // A fixed copy of the config, so these tests don't move when you edit
-// money.config.js.
+// server/config/money.ts.
 const CONFIG = {
     verified: true,
     targets: { minProfit: 50, minRoi: 0.25 },
@@ -269,7 +269,7 @@ test("the same slab at $2,000 is a pass that names the max bid", () => {
     const result = underwrite(slabEvaluation({ listing: { price: 2000, shipping: 10 } }), CONFIG);
 
     assert.equal(result.verdict, "PASS");
-    assert.match(result.reasons[0], /max bid is \$1628\.00/);
+    assert.match(result.reasons[0], /max bid is \$1,628\.00/);
 });
 
 test("a slab that needs review, or looks fake, isn't priced", () => {

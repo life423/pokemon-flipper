@@ -1,6 +1,6 @@
 import type { AnalysisState } from "../App";
 import type { ListingSummary } from "../types";
-import { money, percent, timeLeft } from "../format";
+import { dollars, percent, timeLeft } from "../format";
 import { RatingBadge, VerdictBadge } from "./VerdictBadge";
 import styles from "./DealCard.module.css";
 
@@ -67,22 +67,33 @@ export function DealCard({ listing, analysis, selected, now, onOpen }: Props) {
                     <dl className={styles.numbers}>
                         <div>
                             <dt>{auction ? "Current bid" : "Price"}</dt>
-                            <dd>{money(listing.currentPrice)}</dd>
+                            <dd>{dollars(listing.currentPrice)}</dd>
                         </div>
 
                         {deal && best ? (
                             <>
                                 <div className={styles.maxBid}>
                                     <dt>Max bid</dt>
-                                    <dd>{money(best.maxBid)}</dd>
+                                    <dd>{dollars(best.maxBid)}</dd>
                                 </div>
                                 <div className={styles.profit}>
-                                    <dt>Profit</dt>
-                                    <dd>
-                                        {money(best.profit)} <span>{percent(best.roi)}</span>
-                                    </dd>
+                                    {auction ? (
+                                        <>
+                                            <dt>Profit at max bid</dt>
+                                            <dd>
+                                                {dollars(best.profitAtMaxBid)} <span>{percent(best.roiAtMaxBid)}</span>
+                                            </dd>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <dt>Profit</dt>
+                                            <dd>
+                                                {dollars(best.profit)} <span>{percent(best.roi)}</span>
+                                            </dd>
+                                        </>
+                                    )}
                                 </div>
-                                {rating && (
+                                {rating?.room != null && (
                                     <div>
                                         <dt>Under max bid</dt>
                                         <dd>{percent(rating.room)}</dd>
@@ -93,18 +104,18 @@ export function DealCard({ listing, analysis, selected, now, onOpen }: Props) {
                             <>
                                 <div>
                                     <dt>Shipping</dt>
-                                    <dd>{listing.shipping === null ? "Not quoted" : money(listing.shipping)}</dd>
+                                    <dd>{listing.shipping === null ? "Not quoted" : dollars(listing.shipping)}</dd>
                                 </div>
                                 {best ? (
                                     <div>
                                         <dt>Max bid</dt>
-                                        <dd>{money(best.maxBid)}</dd>
+                                        <dd>{dollars(best.maxBid)}</dd>
                                     </div>
                                 ) : (
                                     screen?.bestCase && (
                                         <div className={styles.muted}>
                                             <dt>Max bid at best</dt>
-                                            <dd>{money(screen.bestCase.maxBid)}</dd>
+                                            <dd>{dollars(screen.bestCase.maxBid)}</dd>
                                         </div>
                                     )
                                 )}

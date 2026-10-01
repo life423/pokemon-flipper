@@ -9,6 +9,7 @@ import {
     setSearchTerm,
 } from "../identity/card-identity.js";
 import { conditionOf } from "./raw-prices.js";
+import { createLimiter } from "../lib/concurrency.ts";
 
 // pkmnprices.com: TCGplayer prices by printing and condition, and
 // individual eBay sold comps (sourced from PriceCharting). Every call
@@ -22,25 +23,7 @@ const DAY = 24;
 const MAX_IN_FLIGHT = 2;
 const RETRY_WAITS_MS = [5_000, 15_000, 30_000, 60_000];
 
-let inFlight = 0;
-const waiting = [];
-
-async function takeSlot() {
-    if (inFlight < MAX_IN_FLIGHT) {
-        inFlight += 1;
-        return;
-    }
-
-    // release() hands its slot straight to the next in line.
-    await new Promise((resolve) => waiting.push(resolve));
-}
-
-function releaseSlot() {
-    const next = waiting.shift();
-
-    if (next) next();
-    else inFlight -= 1;
-}
+const limit = createLimiter(MAX_IN_FLIGHT);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -56,17 +39,10 @@ async function apiGet(path, maxAgeHours = DAY) {
     }
 
     for (let attempt = 0; ; attempt += 1) {
-        await takeSlot();
-
-        let response;
-        let body;
-
-        try {
-            response = await fetch(`${BASE}${path}`, { headers: { "x-api-key": apiKey } });
-            body = await response.json().catch(() => ({}));
-        } finally {
-            releaseSlot();
-        }
+        const { response, body } = await limit(async () => {
+            const response = await fetch(`${BASE}${path}`, { headers: { "x-api-key": apiKey } });
+            return { response, body: await response.json().catch(() => ({})) };
+        });
 
         const creditLimit = /credit/i.test(`${body.error?.code ?? ""} ${body.error?.message ?? ""}`);
 

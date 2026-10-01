@@ -1,19 +1,7 @@
 import type { GradeRange, Verdict } from "./types";
+import { CONDITION_NAMES } from "../../shared/conditions.ts";
 
-export function money(value: number | null | undefined): string {
-    if (value === null || value === undefined || Number.isNaN(value)) return "\u2014";
-
-    const amount = Math.abs(value).toLocaleString("en-US", {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-    });
-
-    return value < 0 ? `-$${amount}` : `$${amount}`;
-}
-
-export function percent(value: number | null | undefined): string {
-    return value === null || value === undefined ? "\u2014" : `${Math.round(value * 100)}%`;
-}
+export { dollars, percent } from "../../shared/format.ts";
 
 export function timeLeft(endTime: string | null, now: number): string | null {
     if (!endTime) return null;
@@ -38,10 +26,7 @@ export function describeRange({ low, likely, high }: GradeRange): string {
 }
 
 const NAMES: Record<string, string> = {
-    NEAR_MINT: "Near Mint",
-    LIGHTLY_PLAYED: "Lightly Played",
-    MODERATELY_PLAYED: "Moderately Played",
-    HEAVILY_PLAYED: "Heavily Played",
+    ...CONDITION_NAMES,
     NOT_STATED: "Not stated",
     NOT_VISIBLE: "Not visible",
     NONE_SEEN: "None seen",
