@@ -12,6 +12,20 @@ export const MONEY_CONFIG = {
         minRoi: 0.25,
     },
 
+    // The free first check, before any paid AI, assumes each raw card
+    // at its best: the seller's own condition call, and the best grade
+    // a card in that condition could reach. These are guesses to tune,
+    // not data. They only decide which listings get analyzed.
+    prescreen: {
+        bestGrade: {
+            NEAR_MINT: 9,
+            LIGHTLY_PLAYED: 6,
+            MODERATELY_PLAYED: 4,
+            HEAVILY_PLAYED: 2,
+            DAMAGED: 1,
+        },
+    },
+
     buying: {
         // Sales tax eBay charges you on a purchase (price plus shipping).
         salesTaxRate: 0.0825,

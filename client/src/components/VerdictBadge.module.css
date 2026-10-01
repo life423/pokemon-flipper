@@ -1,0 +1,45 @@
+.badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.2rem 0.65rem;
+    border-radius: var(--radius-pill);
+    font-size: var(--text-xs);
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+}
+
+.large {
+    padding: 0.35rem 0.9rem;
+    font-size: var(--text-sm);
+}
+
+.strong {
+    background: var(--success);
+    color: #052e16;
+}
+
+.buy {
+    background: color-mix(in srgb, var(--success) 16%, transparent);
+    color: var(--success);
+}
+
+.grade {
+    background: color-mix(in srgb, var(--grade) 20%, transparent);
+    color: #b9a2fb;
+}
+
+.review {
+    background: color-mix(in srgb, var(--warning) 16%, transparent);
+    color: var(--warning);
+}
+
+.pass {
+    background: color-mix(in srgb, var(--danger) 16%, transparent);
+    color: #f87171;
+}
+
+.neutral {
+    background: var(--surface-alt);
+    color: var(--text-muted);
+}

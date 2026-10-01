@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+    titleContradiction,
     normalizeCardNumber,
     sameCardNumber,
     printingClaimFromText,
@@ -462,6 +463,106 @@ test("a legible label with no edition printed marks an Unlimited slab", async ()
 
     assert.equal(identity.printing, "UNLIMITED");
     assert.equal(identity.set, "Base Set");
+});
+
+test("a reprint in the title, or another card number, overrules the item details", () => {
+    assert.match(
+        titleContradiction("Pokemon TCG Charizard 4/102 25th anniversary celebrations", "Base Set", "4/102"),
+        /celebrations|anniversary/
+    );
+    assert.match(
+        titleContradiction("Charizard Pokemon 30th Anniversary Classic Collection", "Base Set", "4/102"),
+        /classic collection|anniversary/
+    );
+    assert.match(
+        titleContradiction("NM Pokemon TCG Obsidian Flames Hyper Rare Charizard 228/197", "Base Set", "4/102"),
+        /228\/197/
+    );
+    assert.equal(
+        titleContradiction("Charizard 4/102 Celebrations 25th Anniversary", "Celebrations: Classic Collection", "4/102"),
+        null
+    );
+    assert.equal(titleContradiction("Lugia 009/111 Neo Genesis Holo 9/10 condition", "Neo Genesis", "9/111"), null);
+});
+
+test("a database may put a series name in front of a set, except Base Set", () => {
+    assert.equal(sameSetFamily("XY - Evolutions", "Evolutions"), true);
+    assert.equal(sameSetFamily("SV: Scarlet & Violet 151", "151"), true);
+    assert.equal(sameSetFamily("SV: Prismatic Evolutions", "Evolutions"), false);
+    assert.equal(sameSetFamily("XY Base Set", "Base Set"), false);
+});
+
+test("Celebrations reprints are fine when the set says Celebrations", () => {
+    assert.equal(titleContradiction("Charizard 30th Celebration Promo", "Me: 30th Celebration", "4"), null);
+    assert.match(titleContradiction("Rainbow Charizard GX gold foil Holo", "Hidden Fates", "9"), /gold foil/);
+});
+
+test("a reprint listed with the original's set goes to review", async () => {
+    const listing = charizardListing("Pokemon TCG Charizard 4/102 25th anniversary celebrations");
+    const { identity } = await identifyCard(listing, charizardPhotos(), { lookupCards: BASE_FAMILY });
+
+    assert.equal(identity.status, "NEEDS_REVIEW");
+    assert.match(identity.reasons[0], /celebrations|anniversary/);
+});
+
+function lugiaSlab(title, labelText, marks = {}) {
+    return {
+        listing: { ...LUGIA_LISTING, title },
+        photos: photoCheck(marks, { slab: { present: true, labelText } }),
+    };
+}
+
+test("in a set with no Shadowless printing, a label that names no printing says Unlimited", async () => {
+    const { listing, photos } = lugiaSlab(
+        "Pokemon Lugia Neo Genesis Unlimited Holo #9 PSA 6",
+        "2000 P.M. NEO GENESIS #9 LUGIA-HOLO EX-MT 6"
+    );
+
+    const { identity } = await identifyCard(listing, photos, { lookupCards: lookup(LUGIA) });
+
+    assert.equal(identity.status, "IDENTIFIED");
+    assert.equal(identity.printing, "UNLIMITED");
+    assert.equal(identity.evidence.label, "UNLIMITED");
+    assert.equal(identity.evidence.photoSource, "photos");
+});
+
+test("a 1st Edition title and stamp go to review when the label doesn't say 1st Edition", async () => {
+    const { listing, photos } = lugiaSlab(
+        "PSA 6 Lugia 1st Edition Neo Genesis 9/111 Holo",
+        "2000 P.M. NEO GENESIS #9 LUGIA-HOLO EX-MT 6",
+        { firstEditionStamp: "VISIBLE" }
+    );
+
+    const { identity } = await identifyCard(listing, photos, { lookupCards: lookup(LUGIA) });
+
+    assert.equal(identity.status, "NEEDS_REVIEW");
+});
+
+test("in Base Set, a label without 1ST EDITION still rules 1st Edition out", async () => {
+    const { listing, photos } = slabListing(
+        "PSA 8 1st Edition Charizard 4/102 Holo",
+        "1999 POKEMON GAME #4 CHARIZARD-HOLO NM-MT 8",
+        { firstEditionStamp: "VISIBLE", artBoxShadow: "ABSENT" }
+    );
+
+    const { identity } = await identifyCard(listing, photos, { lookupCards: BASE_FAMILY });
+
+    assert.equal(identity.status, "NEEDS_REVIEW");
+    assert.match(identity.reasons.join(" "), /label/);
+});
+
+test("in Base Set, a label that names no printing doesn't overrule Shadowless", async () => {
+    const { listing, photos } = slabListing(
+        "PSA 8 Shadowless Charizard 4/102 Holo",
+        "1999 POKEMON GAME #4 CHARIZARD-HOLO NM-MT 8",
+        { firstEditionStamp: "NOT_PRESENT", artBoxShadow: "ABSENT" }
+    );
+
+    const { identity } = await identifyCard(listing, photos, { lookupCards: BASE_FAMILY });
+
+    assert.equal(identity.status, "IDENTIFIED");
+    assert.equal(identity.printing, "SHADOWLESS");
+    assert.equal(identity.evidence.label, "NOT_STATED");
 });
 
 test("a title that disagrees with the slab label goes to review", async () => {

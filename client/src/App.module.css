@@ -1,0 +1,188 @@
+.shell {
+    container: app / inline-size;
+    min-height: 100dvh;
+}
+
+.layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+}
+
+.main {
+    width: 100%;
+    max-width: 90rem;
+    margin-inline: auto;
+    padding: var(--space-4);
+    padding-bottom: calc(var(--space-5) + env(safe-area-inset-bottom));
+}
+
+.title {
+    font-size: var(--text-xl);
+    font-weight: 750;
+    letter-spacing: -0.02em;
+}
+
+.search {
+    display: flex;
+    gap: var(--space-2);
+    margin-block: var(--space-3);
+}
+
+.search input {
+    flex: 1;
+    min-width: 0;
+    min-height: var(--tap);
+    padding: 0 var(--space-3);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+}
+
+.primary {
+    min-height: var(--tap);
+    padding: 0 var(--space-4);
+    border: 0;
+    border-radius: var(--radius-control);
+    background: var(--accent-strong);
+    color: #fff;
+    font-weight: 650;
+    cursor: pointer;
+}
+
+.secondary {
+    min-height: 40px;
+    padding: 0 var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    background: var(--surface-alt);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+/* The funnel: every listing, what the free check found, and the deals. */
+.funnel {
+    display: grid;
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+    padding: var(--space-3) var(--space-4);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+}
+
+.funnelNumbers {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+    gap: var(--space-3);
+    margin: 0;
+}
+
+.funnelNumbers dt {
+    font-size: var(--text-xs);
+}
+
+.funnelNumbers dd {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--text-xl);
+    font-weight: 750;
+    font-variant-numeric: tabular-nums;
+}
+
+.funnelNumbers .dealCount {
+    color: var(--success);
+}
+
+.aiRow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+}
+
+.error {
+    color: #f87171;
+}
+
+.filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: var(--space-2) var(--space-3);
+}
+
+.segmented {
+    display: inline-flex;
+    padding: 3px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+}
+
+.segmented button {
+    min-height: 34px;
+    padding: 0 0.85rem;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    cursor: pointer;
+}
+
+.segmented button[aria-pressed="true"] {
+    background: var(--surface-alt);
+    color: var(--text);
+}
+
+.field {
+    display: grid;
+    gap: 2px;
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+}
+
+.field input,
+.field select {
+    min-height: 40px;
+    padding: 0 0.6rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+}
+
+.field input {
+    width: 7.5rem;
+}
+
+.status {
+    margin-block: var(--space-3);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+}
+
+/* Columns appear as space allows: no breakpoints. */
+.results {
+    display: grid;
+    gap: var(--space-3);
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
+}
+
+/* Wide enough for the analysis to sit beside the results. */
+@container app (min-width: 64rem) {
+    .layout:has(> aside) {
+        grid-template-columns: minmax(0, 1fr) min(34rem, 42%);
+    }
+}
+
+@media (pointer: coarse) {
+    .segmented button,
+    .field input,
+    .field select {
+        min-height: var(--tap);
+    }
+}

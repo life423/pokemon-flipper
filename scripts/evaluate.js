@@ -144,8 +144,11 @@ if (identity) {
     }
 
     if (identity.evidence) {
-        const { title, itemSpecifics, photo, photoNotes } = identity.evidence;
-        console.log(`  Printing evidence: title ${title}, item details ${itemSpecifics}, photos ${photo}`);
+        const { title, itemSpecifics, label, photo, photoSource, photoNotes } = identity.evidence;
+        const slabLabel = evaluation.slab ? `, slab label ${label}` : "";
+        console.log(
+            `  Printing evidence: title ${title}, item details ${itemSpecifics}${slabLabel}, ${photoSource ?? "photos"} ${photo}`
+        );
 
         for (const note of photoNotes) {
             console.log(`    ${note}`);
@@ -245,6 +248,14 @@ if (underwriting) {
 
     for (const note of underwriting.assumptions ?? []) {
         console.log(`  Note: ${note}`);
+    }
+
+    if (evaluation.rating) {
+        console.log(`Rating: ${evaluation.rating.level}`);
+
+        for (const strength of evaluation.rating.strengths) console.log(`  + ${strength}`);
+        for (const concern of evaluation.rating.concerns) console.log(`  - ${concern}`);
+        for (const note of evaluation.rating.notes) console.log(`  Note: ${note}`);
     }
 }
 

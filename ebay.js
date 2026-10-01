@@ -86,6 +86,16 @@ function toAmount(price) {
     return price ? Number(price.value) : null;
 }
 
+function toSeller(seller) {
+    if (!seller) return null;
+
+    return {
+        username: seller.username ?? null,
+        feedbackPercentage: seller.feedbackPercentage == null ? null : Number(seller.feedbackPercentage),
+        feedbackScore: seller.feedbackScore ?? null,
+    };
+}
+
 function toListing(item) {
     const isAuction = item.buyingOptions?.includes("AUCTION") ?? false;
     const shippingOption = item.shippingOptions?.[0];
@@ -104,8 +114,7 @@ function toListing(item) {
         buyingOption: isAuction ? "AUCTION" : "FIXED_PRICE",
         // Fixed-price listings usually have no end date.
         endTime: item.itemEndDate ?? null,
-        // No pricing source yet, so no resale estimate.
-        estimatedResalePrice: null,
+        seller: toSeller(item.seller),
         images: [
             item.image?.imageUrl,
             ...(item.additionalImages ?? []).map((image) => image.imageUrl),
@@ -148,24 +157,40 @@ function priceDetails(item) {
     };
 }
 
-// Full details for analysis: full-size photos, plus the seller's
-// item specifics (set, card number, finish, and so on).
+// Full details for analysis: full-size photos, the seller's item
+// specifics (set, card number, finish, and so on), and eBay's
+// structured condition: the seller's card condition for a raw card
+// ("Near mint or better", with notes like "Minor corner and edge
+// wear"), or the grader, grade, and cert for a slab.
 export async function getListingDetails(itemId) {
     const item = await ebayGet(
         `/buy/browse/v1/item/${encodeURIComponent(itemId)}`
+    );
+
+    const descriptors = item.conditionDescriptors ?? [];
+    const conditionFields = Object.fromEntries(
+        descriptors.map((descriptor) => [descriptor.name, descriptor.values?.[0]?.content ?? null])
     );
 
     return {
         id: item.itemId,
         title: item.title,
         condition: item.condition ?? null,
-        ...priceDetails(item),
-        aspects: Object.fromEntries(
-            (item.localizedAspects ?? []).map((aspect) => [
-                aspect.name,
-                aspect.value,
-            ])
+        cardCondition: conditionFields["Card Condition"] ?? null,
+        conditionNotes: descriptors.flatMap((descriptor) =>
+            (descriptor.values ?? []).flatMap((value) => value.additionalInfo ?? [])
         ),
+        seller: toSeller(item.seller),
+        ...priceDetails(item),
+        aspects: {
+            ...Object.fromEntries(
+                (item.localizedAspects ?? []).map((aspect) => [
+                    aspect.name,
+                    aspect.value,
+                ])
+            ),
+            ...conditionFields,
+        },
         images: [
             item.image?.imageUrl,
             ...(item.additionalImages ?? []).map((image) => image.imageUrl),

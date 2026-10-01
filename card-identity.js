@@ -180,6 +180,13 @@ export function setSearchTerm(setName) {
     return longest.charAt(0).toUpperCase() + longest.slice(1);
 }
 
+// Series names a database may put in front of a set ("XY - Evolutions",
+// "SV: Scarlet & Violet 151"). Never for Base Set: XY has its own.
+const SERIES_PREFIXES = [
+    "xy", "sm", "swsh", "sv", "me", "bw", "dp", "hgss",
+    "scarlet violet", "sword shield", "sun moon", "black white", "diamond pearl", "mega evolution",
+];
+
 export function sameSetFamily(candidateSet, listedSet) {
     const candidate = normalizeSetName(candidateSet);
     const listed = normalizeSetName(listedSet);
@@ -188,7 +195,13 @@ export function sameSetFamily(candidateSet, listedSet) {
 
     // A listing may put a series name in front ("Sword & Shield Crown
     // Zenith"), never the other way around.
-    return setFamily(listedSet).includes(candidate) || listed.endsWith(` ${candidate}`);
+    if (setFamily(listedSet).includes(candidate) || listed.endsWith(` ${candidate}`)) return true;
+
+    // The database may put a series name in front.
+    return (
+        !listed.startsWith("base set") &&
+        SERIES_PREFIXES.some((prefix) => candidate === `${prefix} ${listed}`)
+    );
 }
 
 function sameName(a, b) {
@@ -409,6 +422,52 @@ function mergeFamily(records) {
     };
 }
 
+// Reprints of vintage cards (Celebrations, Classic Collection, Base Set
+// 2) carry the original's number, and sellers often fill in the
+// original's set too. The title gives them away. Each marker is fine
+// only when the listed set is one it belongs to; null means never.
+const REPRINT_MARKERS = [
+    [/\bcelebrations?\b/, ["celebration"]],
+    [/\bclassic collection\b/, ["classic collection", "celebration"]],
+    [/\b\d+(st|nd|rd|th) anniversary\b/, ["celebration", "classic collection", "anniversary"]],
+    [/\bevolutions\b/, ["evolutions"]],
+    [/\bbase set 2\b/, ["base set 2"]],
+    [/\blegendary collection\b/, ["legendary collection"]],
+    [/\bmcdonald'?s\b/, ["mcdonald"]],
+    // Not cards from a set at all: novelty metal cards, Topps cards.
+    [/\b(reprint|replica|jumbo|oversized?|metal|topps|custom|proxy|fan ?made|gold (foil|plated))\b/, null],
+];
+
+// "4/102" style numbers in a title. Over 10 only, so "9/10 condition"
+// isn't read as a card number.
+const TITLE_NUMBERS = /\b(\d{1,3})\s*\/\s*(\d{1,3})\b/g;
+
+// The title contradicting the item details: a reprint marker for
+// another set, or a card number that isn't the listed one.
+export function titleContradiction(title, setName, cardNumber) {
+    const text = normalizeText(title);
+    // The whole set name: normalizeSetName drops prefixes like "Celebrations:".
+    const setKey = normalizeWords(setName);
+
+    for (const [pattern, allowedIn] of REPRINT_MARKERS) {
+        const match = text.match(pattern);
+
+        if (match && !(allowedIn ?? []).some((word) => setKey.includes(word))) {
+            return `The title says "${match[0]}", but the item details say ${setName}.`;
+        }
+    }
+
+    const numbers = [...text.matchAll(TITLE_NUMBERS)]
+        .filter((match) => Number(match[2]) > 10)
+        .map((match) => `${match[1]}/${match[2]}`);
+
+    if (numbers.length > 0 && !numbers.some((number) => sameCardNumber(number, cardNumber))) {
+        return `The title says #${numbers[0]}, but the item details say #${cardNumber}.`;
+    }
+
+    return null;
+}
+
 // Builds the canonical identity for a listing. lookupCards returns
 // candidate card records from a price database; it's passed in so tests
 // can supply their own.
@@ -445,6 +504,12 @@ export async function identifyCard(listing, photoCheck, { lookupCards }) {
     }
     if (!identity.set || !identity.listedCardNumber || !listedName) {
         return needsReview("The listing doesn't give the set, card number, and card name.");
+    }
+
+    const contradiction = titleContradiction(listing.title, identity.set, identity.listedCardNumber);
+
+    if (contradiction) {
+        return needsReview(contradiction);
     }
     if (
         aspects["Card Number"] &&
@@ -507,7 +572,18 @@ export async function identifyCard(listing, photoCheck, { lookupCards }) {
         SHADOWLESS_SETS.has(setKey) || card.variants.some((v) => v.printing === "SHADOWLESS");
 
     const slab = photoCheck.slab?.present ? photoCheck.slab : null;
-    const label = slab ? printingClaimFromText(slab.labelText) : "NOT_STATED";
+    // Graders print 1ST EDITION on 1st Edition cards, so a legible label
+    // that names no printing rules 1st Edition out. In a set with no
+    // Shadowless printing, that makes the card Unlimited. In Base Set it
+    // doesn't settle Unlimited versus Shadowless.
+    const labelNamesNone =
+        Boolean(slab?.labelText) && printingClaimFromText(slab.labelText) === "NOT_STATED";
+    let label = slab?.labelText ? printingClaimFromText(slab.labelText) : "NOT_STATED";
+
+    if (labelNamesNone && !shadowMatters) {
+        label = "UNLIMITED";
+    }
+
     let photo = photoPrinting(photoCheck.printingMarks, { shadowMatters });
     let photoSource = "photos";
 
@@ -540,6 +616,10 @@ export async function identifyCard(listing, photoCheck, { lookupCards }) {
 
     if (printing.status !== "ACCEPTED") {
         return needsReview(printing.reason, card);
+    }
+
+    if (labelNamesNone && printing.printing === "FIRST_EDITION") {
+        return needsReview("The listing says 1st Edition, but the slab label doesn't.", card);
     }
 
     identity.printing = printing.printing;

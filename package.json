@@ -6,10 +6,12 @@
   "scripts": {
     "predev": "lsof -ti tcp:3000 -sTCP:LISTEN | xargs kill -9 2>/dev/null || true",
     "dev": "node --watch app.js",
-    "start": "node app.js",
+    "start": "NODE_ENV=production node app.js",
     "test": "node --test",
     "evaluate": "node scripts/evaluate.js",
-    "consistency": "node scripts/consistency.js"
+    "consistency": "node scripts/consistency.js",
+    "build": "vite build --config client/vite.config.js",
+    "typecheck": "tsc -p client"
   },
   "keywords": [],
   "author": "",
@@ -18,6 +20,15 @@
   "dependencies": {
     "dotenv": "^18.0.4",
     "express": "^5.2.1",
-    "openai": "^7.23.0"
+    "openai": "^7.23.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "typescript": "^7.0.2",
+    "vite": "^6.4.3"
   }
 }

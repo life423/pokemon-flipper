@@ -1,0 +1,143 @@
+.card {
+    container: card / inline-size;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    overflow: hidden;
+}
+
+/* Selection is the interactive color, never a verdict color. */
+.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+}
+
+.inner {
+    display: grid;
+    grid-template-columns: 6rem minmax(0, 1fr);
+    gap: var(--space-3);
+    padding: var(--space-3);
+}
+
+/* A neutral backdrop, so the card's own colors read true. */
+.photo {
+    aspect-ratio: 5 / 7;
+    background: var(--surface-alt);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.photo img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.body {
+    display: grid;
+    gap: var(--space-2);
+    align-content: start;
+    min-width: 0;
+}
+
+.tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.tag {
+    padding: 0.15rem 0.55rem;
+    border-radius: var(--radius-pill);
+    background: var(--surface-alt);
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+}
+
+.name {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    line-height: 1.35;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.numbers {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-2) var(--space-3);
+    margin: 0;
+}
+
+.numbers dt {
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+}
+
+.numbers dd {
+    margin: 0;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+}
+
+/* The numbers the app exists to find. */
+.maxBid dd,
+.profit dd {
+    font-size: var(--text-lg);
+    color: var(--success);
+}
+
+.profit dd span {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    font-weight: 600;
+}
+
+.muted dd {
+    color: var(--text-muted);
+}
+
+.line {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    font-size: var(--text-sm);
+}
+
+.open {
+    min-height: 38px;
+    padding: 0 var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    background: var(--surface-alt);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+/* A roomier card: bigger photo, all four numbers in one row. */
+@container card (min-width: 30rem) {
+    .inner {
+        grid-template-columns: 8rem minmax(0, 1fr);
+    }
+
+    .numbers {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+}
+
+@media (pointer: coarse) {
+    .open {
+        min-height: var(--tap);
+    }
+}

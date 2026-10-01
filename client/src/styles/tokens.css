@@ -1,0 +1,42 @@
+/* Andrew's palette. Every color in the app comes from here. */
+:root {
+    color-scheme: dark;
+
+    --bg: #0f1115;
+    --surface: #171a21;
+    --surface-alt: #202531;
+    --border: #2a3140;
+    --text: #f5f7fb;
+    --text-muted: #a8b0bf;
+
+    --success: #22c55e;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --accent: #3b82f6;
+    /* Buttons with white text: 5.2:1 contrast, where #3b82f6 is 3.7:1. */
+    --accent-strong: #2563eb;
+    --grade: #8b5cf6;
+
+    --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+    /* Fluid type and space, from a 360px phone to a 1440px desktop. */
+    --text-xs: clamp(0.75rem, 0.72rem + 0.15vw, 0.8125rem);
+    --text-sm: clamp(0.8125rem, 0.78rem + 0.2vw, 0.9375rem);
+    --text-md: clamp(0.9375rem, 0.9rem + 0.2vw, 1.0625rem);
+    --text-lg: clamp(1.0625rem, 1rem + 0.4vw, 1.3125rem);
+    --text-xl: clamp(1.375rem, 1.2rem + 0.9vw, 2rem);
+    --text-hero: clamp(1.75rem, 1.4rem + 1.6vw, 2.5rem);
+
+    --space-1: 0.25rem;
+    --space-2: 0.5rem;
+    --space-3: clamp(0.75rem, 0.7rem + 0.25vw, 1rem);
+    --space-4: clamp(1rem, 0.9rem + 0.5vw, 1.5rem);
+    --space-5: clamp(1.5rem, 1.2rem + 1.5vw, 2.5rem);
+
+    --radius-card: 14px;
+    --radius-control: 10px;
+    --radius-pill: 999px;
+
+    /* Minimum touch target. */
+    --tap: 44px;
+}

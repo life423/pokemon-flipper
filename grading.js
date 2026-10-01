@@ -17,6 +17,7 @@ import { lookupCards, fetchComps } from "./pkmnprices.js";
 import { gradedPricesFor, compsForGrade } from "./graded-comps.js";
 import { checkSlab } from "./slab-check.js";
 import { GRADERS, underwrite } from "./underwriting.js";
+import { rateDeal } from "./deal-rating.js";
 
 // Cost cap: only the first photos, in the seller's order.
 const MAX_PHOTOS = 8;
@@ -286,6 +287,9 @@ export async function evaluateListing(
             title: listing.title,
             url: listing.url,
             sellerCondition: listing.condition,
+            cardCondition: listing.cardCondition,
+            conditionNotes: listing.conditionNotes,
+            seller: listing.seller,
             aspects: listing.aspects,
             price: listing.price,
             shipping: listing.shipping,
@@ -307,6 +311,7 @@ export async function evaluateListing(
         slab: null,
         slabPricing: null,
         underwriting: null,
+        rating: null,
         answeredAt: null,
         reusedSteps: [],
         usage: [],
@@ -457,6 +462,7 @@ export async function evaluateListing(
 
     evaluation.answeredAt = record.answeredAt;
     evaluation.underwriting = underwrite(evaluation);
+    evaluation.rating = rateDeal(evaluation);
 
     return evaluation;
 }
