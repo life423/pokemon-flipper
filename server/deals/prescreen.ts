@@ -100,6 +100,7 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
         name: identity.name,
         set: identity.set,
         cardNumber: identity.cardNumber,
+        printing: identity.printing,
         printingLabel: identity.printingLabel,
     };
 

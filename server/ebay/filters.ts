@@ -15,19 +15,8 @@ export function normalizeText(text: unknown): string {
         .toLowerCase();
 }
 
-// Words the title must contain. "pokemon" is dropped because
-// every search already adds it.
-export function searchTerms(search: string): string[] {
-    return normalizeText(search)
-        .split(/\s+/)
-        .filter((term) => term !== "" && term !== "pokemon");
-}
-
 // Returns why a listing should be dropped, or null to keep it.
-export function exclusionReason(
-    item: { title: string; itemId: string; itemGroupType?: string },
-    search = ""
-): string | null {
+export function exclusionReason(item: { title: string; itemId: string; itemGroupType?: string }): string | null {
     const title = normalizeText(item.title);
 
     // Variation listings match on any option's name, and their
@@ -35,12 +24,6 @@ export function exclusionReason(
     // listing's ID ends in |0.
     if (item.itemGroupType || !String(item.itemId).endsWith("|0")) {
         return "Pick-your-card listing with several cards";
-    }
-
-    const missing = searchTerms(search).filter((term) => !title.includes(term));
-
-    if (missing.length > 0) {
-        return `Title doesn't mention ${missing.join(", ")}`;
     }
 
     if (LOT.test(title)) return "Lot or bundle";

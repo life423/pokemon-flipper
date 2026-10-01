@@ -13,7 +13,7 @@ interface ListingText {
     title: string;
 }
 
-const MODEL = process.env.OPENAI_MODEL ?? "gpt-5.6-luna";
+export const MODEL = process.env.OPENAI_MODEL ?? "gpt-5.6-luna";
 
 // Bump when a prompt or schema changes, so saved answers get redone.
 const PROMPT_VERSION = 3;
@@ -80,7 +80,7 @@ function readUsage(response: OpenAI.Responses.Response): Usage {
     };
 }
 
-async function runStructured<T>({
+export async function runStructured<T>({
     step,
     prompt,
     photos,

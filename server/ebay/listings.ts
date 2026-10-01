@@ -9,6 +9,9 @@ const CCG_INDIVIDUAL_CARDS = "183454";
 const UNGRADED = "4000";
 const GRADED = "2750";
 
+// eBay's maximum page size.
+const PAGE_SIZE = 200;
+
 interface Amount {
     value: string;
     currency: string;
@@ -108,22 +111,42 @@ function toListing(item: EbayItem): ListingSummary {
     };
 }
 
-export async function getListings(search = ""): Promise<ListingSummary[]> {
-    const params = new URLSearchParams({
-        q: `pokemon ${search}`.trim(),
-        category_ids: CCG_INDIVIDUAL_CARDS,
-        filter: `buyingOptions:{AUCTION|FIXED_PRICE},conditionIds:{${UNGRADED}|${GRADED}}`,
-        // eBay's maximum. Screening drops some, so start with plenty.
-        limit: "200",
-    });
+export async function searchListings(
+    search: string,
+    { maxResults = PAGE_SIZE }: { maxResults?: number } = {}
+): Promise<{ listings: ListingSummary[]; total: number }> {
+    const listings: ListingSummary[] = [];
+    const seen = new Set<string>();
+    let total = 0;
 
-    const data = await ebayGet<{ itemSummaries?: EbayItem[] }>(`/buy/browse/v1/item_summary/search?${params}`);
-    const items = data.itemSummaries ?? [];
-    const kept = items.filter((item) => exclusionReason(item, search) === null);
+    for (let offset = 0; offset < maxResults; offset += PAGE_SIZE) {
+        const params = new URLSearchParams({
+            q: `pokemon ${search}`.trim(),
+            category_ids: CCG_INDIVIDUAL_CARDS,
+            filter: `buyingOptions:{AUCTION|FIXED_PRICE},conditionIds:{${UNGRADED}|${GRADED}}`,
+            limit: String(PAGE_SIZE),
+            offset: String(offset),
+        });
 
-    console.log(`Search ${JSON.stringify(search)}: kept ${kept.length} of ${items.length} listings`);
+        const page = await ebayGet<{ itemSummaries?: EbayItem[]; total?: number }>(
+            `/buy/browse/v1/item_summary/search?${params}`
+        );
+        const items = page.itemSummaries ?? [];
+        total = page.total ?? total;
 
-    return kept.map(toListing);
+        for (const item of items) {
+            if (seen.has(item.itemId) || exclusionReason(item) !== null) continue;
+
+            seen.add(item.itemId);
+            listings.push(toListing(item));
+        }
+
+        if (items.length < PAGE_SIZE || offset + PAGE_SIZE >= total) break;
+    }
+
+    console.log(`Search ${JSON.stringify(search)}: eBay has ${total}; kept ${listings.length} single cards`);
+
+    return { listings, total };
 }
 
 export async function getListingDetails(itemId: string): Promise<ListingDetails> {

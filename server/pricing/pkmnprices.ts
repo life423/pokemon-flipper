@@ -1,4 +1,4 @@
-import { readCache, writeCache } from "./cache.ts";
+import { readCache, writeCache } from "../lib/cache.ts";
 import { normalizeWords, sameCardNumber, sameSetFamily, setSearchTerm } from "../identity/card-identity.ts";
 import { conditionOf } from "./raw-prices.ts";
 import { cardNumberOf, cardVariants } from "./records.ts";

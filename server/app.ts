@@ -3,7 +3,6 @@ import http from "node:http";
 import path from "node:path";
 import express from "express";
 import { CLIENT_ROOT } from "./lib/paths.ts";
-import { getListings } from "./ebay/listings.ts";
 import { findDeals } from "./deals/find-deals.ts";
 import { evaluateListing } from "./analysis/evaluate.ts";
 import { EbayError } from "./ebay/api.ts";
@@ -18,20 +17,6 @@ const isProduction = process.env.NODE_ENV === "production";
 
 app.use(express.json());
 
-app.get("/api/listings", async (req, res) => {
-    try {
-        const listings = await getListings(searchText(req));
-
-        res.json(listings);
-    } catch (error) {
-        console.error(error);
-
-        res.status(500).json({
-            error: "Failed to get listings",
-        });
-    }
-});
-
 // Every listing in a search, screened for free (no AI): what each one
 // is worth at its best, and whether it could clear your targets.
 // Streamed as one JSON object per line, so the page fills in as listings
@@ -43,7 +28,7 @@ app.get("/api/deals", async (req, res) => {
 
     try {
         await findDeals(searchText(req), {
-            onStart: (count) => send({ type: "start", count }),
+            onStart: (summary) => send({ type: "start", ...summary }),
             onListing: (listing) => send({ type: "listing", listing }),
         });
         send({ type: "done" });

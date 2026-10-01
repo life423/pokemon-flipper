@@ -1,27 +1,42 @@
-import { getListings, getListingDetails } from "../ebay/listings.js";
+import { getListingDetails, searchListings, type ListingDetails } from "../ebay/listings.ts";
 import { lookupCards, fetchComps } from "../pricing/pkmnprices.ts";
+import { readCache, writeCache } from "../lib/cache.ts";
 import { mapLimit } from "../lib/concurrency.ts";
+import { readSearch } from "../search/intent.ts";
+import { cardMismatch, gradingMatches, titleMatches } from "../search/relevance.ts";
 import { prescreen } from "./prescreen.ts";
-import type { ListingSummary, Screen } from "../../shared/types.ts";
+import type { ListingSummary, Screen, SearchIntent } from "../../shared/types.ts";
 
-// A search, with every listing screened for free: its item details
-// from eBay, its card from the price database, and what it's worth at
-// its best. Only candidates are worth the paid AI analysis.
+// A search, the way eBay matches it, narrowed to the card searched for,
+// with every listing screened for free: its item details from eBay, its
+// card from the price database, and what it's worth at its best. Only
+// candidates are worth the paid AI analysis.
 
-const DETAILS_TTL_MS = 10 * 60 * 1000;
+// eBay returns 200 a page; past this many, results are mostly loose matches.
+const MAX_RESULTS = 1000;
 const PARALLEL_LISTINGS = 6;
 
-type Details = Awaited<ReturnType<typeof getListingDetails>>;
+// Item details hardly change, and eBay limits detail requests per day,
+// so they're saved for a day. Prices come from the search, which is fresh.
+const DETAILS_MAX_AGE_HOURS = 24;
 
-const detailsCache = new Map<string, { details: Details; at: number }>();
+export interface SearchSummary {
+    // eBay's count for the search, and how many were fetched and kept.
+    total: number;
+    found: number;
+    // The ones whose title names the card searched for.
+    count: number;
+    intent: SearchIntent;
+}
 
-async function cachedDetails(itemId: string): Promise<Details> {
-    const hit = detailsCache.get(itemId);
+async function cachedDetails(itemId: string): Promise<ListingDetails> {
+    const key = `ebay:item:${itemId}`;
+    const saved = await readCache<ListingDetails>(key, DETAILS_MAX_AGE_HOURS);
 
-    if (hit && Date.now() - hit.at < DETAILS_TTL_MS) return hit.details;
+    if (saved) return saved;
 
     const details = await getListingDetails(itemId);
-    detailsCache.set(itemId, { details, at: Date.now() });
+    await writeCache(key, details);
 
     return details;
 }
@@ -31,7 +46,7 @@ function unscreened(reason: string): Screen {
 }
 
 async function screenListing(listing: ListingSummary): Promise<ListingSummary> {
-    let details: Details;
+    let details: ListingDetails;
 
     try {
         details = await cachedDetails(listing.id);
@@ -61,26 +76,35 @@ async function screenListing(listing: ListingSummary): Promise<ListingSummary> {
     };
 }
 
-// onStart(count) runs once the search is in, and onListing(listing) as
-// each listing is screened, so a slow first search can show progress.
+// onStart runs once the search is read and eBay has answered, and
+// onListing as each listing is screened, so a slow first search can show
+// progress. A listing that turns out to be another set, card, or
+// printing is still sent, marked with why it doesn't match.
 export async function findDeals(
     search: string,
     {
         onStart = () => {},
         onListing = () => {},
-    }: { onStart?: (count: number) => void; onListing?: (listing: ListingSummary) => void } = {}
+    }: { onStart?: (summary: SearchSummary) => void; onListing?: (listing: ListingSummary) => void } = {}
 ): Promise<ListingSummary[]> {
+    const intent = await readSearch(search);
+    const { listings, total } = await searchListings(search, { maxResults: MAX_RESULTS });
     const now = Date.now();
-    const listings = ((await getListings(search)) as ListingSummary[]).filter(
-        (listing) => !listing.endTime || Date.parse(listing.endTime) > now
+
+    const live = listings.filter((listing) => !listing.endTime || Date.parse(listing.endTime) > now);
+    const matching = live.filter(
+        (listing) => titleMatches(listing.title, intent) && gradingMatches(listing.isGraded, intent)
     );
 
-    onStart(listings.length);
+    onStart({ total, found: live.length, count: matching.length, intent });
 
-    return mapLimit(listings, PARALLEL_LISTINGS, async (listing) => {
+    return mapLimit(matching, PARALLEL_LISTINGS, async (listing) => {
         const screened = await screenListing(listing);
-        onListing(screened);
+        const mismatch = cardMismatch(screened.screen, intent);
+        const result = mismatch ? { ...screened, match: mismatch } : screened;
 
-        return screened;
+        onListing(result);
+
+        return result;
     });
 }

@@ -25,9 +25,29 @@ export interface Seller {
 export interface Screen {
     status: "CANDIDATE" | "DROPPED" | "UNSCREENED";
     reason: string | null;
-    card: { name: string | null; set: string | null; cardNumber: string | null; printingLabel: string | null } | null;
+    card: {
+        name: string | null;
+        set: string | null;
+        cardNumber: string | null;
+        printing: Printing | "UNKNOWN";
+        printingLabel: string | null;
+    } | null;
     bestCase: { label: string; maxBid: number; profit: number; roi: number | null } | null;
     assumed: string | null;
+}
+
+// What a search means: the card it's for, and anything it narrows to.
+// Empty or null fields mean any.
+export interface SearchIntent {
+    cardName: string | null;
+    sets: string[];
+    cardNumber: string | null;
+    printing: Printing | null;
+    graded: boolean | null;
+    // Words a title has to contain to be this card, like ["charizard"].
+    titleWords: string[];
+    // Read by the AI, or by plain rules when the AI isn't available.
+    source: "ai" | "rules";
 }
 
 // One search result, with the free check once it's run.
@@ -46,6 +66,8 @@ export interface ListingSummary {
     cardCondition?: string | null;
     conditionNotes?: string[];
     screen?: Screen;
+    // Set when the free check shows it isn't the card searched for.
+    match?: "OTHER_SET" | "OTHER_CARD" | "OTHER_PRINTING";
 }
 
 // ---- Photos and condition (the AI's findings, after the code rules) ----

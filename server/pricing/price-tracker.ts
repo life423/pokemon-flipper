@@ -1,4 +1,4 @@
-import { readCache, writeCache } from "./cache.ts";
+import { readCache, writeCache } from "../lib/cache.ts";
 import { conditionOf } from "./raw-prices.ts";
 import { cardVariants } from "./records.ts";
 import type { CardRecord } from "./types.ts";

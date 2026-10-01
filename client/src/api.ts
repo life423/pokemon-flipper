@@ -1,4 +1,4 @@
-import type { Evaluation, ListingSummary } from "./types";
+import type { Evaluation, ListingSummary, SearchIntent } from "./types";
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
     const response = await fetch(url, init);
@@ -12,7 +12,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export type DealsMessage =
-    | { type: "start"; count: number }
+    | { type: "start"; total: number; found: number; count: number; intent: SearchIntent }
     | { type: "listing"; listing: ListingSummary }
     | { type: "done" }
     | { type: "error"; error: string };

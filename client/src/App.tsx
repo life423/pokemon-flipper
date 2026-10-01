@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import type { Evaluation, ListingSummary, RatingLevel } from "./types";
+import type { Evaluation, ListingSummary, RatingLevel, SearchIntent } from "./types";
+import { name } from "./format";
 import { evaluateListing, streamDeals } from "./api";
 import { DealCard } from "./components/DealCard";
 import { DetailPanel } from "./components/DetailPanel";
@@ -20,6 +21,21 @@ type KindFilter = "all" | "raw" | "graded";
 const PARALLEL_ANALYSES = 2;
 const AUTO_OPTIONS = [0, 5, 10, 20];
 const DEFAULT_AUTO = 5;
+
+// "1st Edition Charizard from Base Set, graded": how the search was read.
+function describeIntent(intent: SearchIntent): string {
+    let text = [intent.printing ? name(intent.printing) : null, intent.cardName ?? "listings for this search"]
+        .filter(Boolean)
+        .join(" ");
+
+    if (intent.sets.length > 0) text += ` from ${intent.sets.join(" or ")}`;
+    if (intent.cardNumber) text += ` #${intent.cardNumber}`;
+    if (intent.graded !== null) text += intent.graded ? ", graded" : ", raw";
+
+    return text;
+}
+
+type SearchSummary = Extract<Parameters<Parameters<typeof streamDeals>[1]>[0], { type: "start" }>;
 
 const LEVEL_ORDER: Record<RatingLevel, number> = { STRONG: 0, GOOD: 1, THIN: 2 };
 
@@ -80,6 +96,7 @@ export function App() {
     const [query, setQuery] = useState("");
     const [listings, setListings] = useState<ListingSummary[]>([]);
     const [total, setTotal] = useState<number | null>(null);
+    const [summary, setSummary] = useState<SearchSummary | null>(null);
     const [searchStatus, setSearchStatus] = useState<"idle" | "checking" | "done" | "error">("idle");
     const [searchError, setSearchError] = useState("");
     const searchId = useRef(0);
@@ -117,6 +134,7 @@ export function App() {
         autoQueued.current = new Set();
         setListings([]);
         setTotal(null);
+        setSummary(null);
         setSelectedId(null);
         setBudget(autoSetting);
         setView("deals");
@@ -125,7 +143,10 @@ export function App() {
         try {
             await streamDeals(query, (message) => {
                 if (searchId.current !== id) return;
-                if (message.type === "start") setTotal(message.count);
+                if (message.type === "start") {
+                    setTotal(message.count);
+                    setSummary(message);
+                }
                 if (message.type === "listing") setListings((previous) => [...previous, message.listing]);
             });
 
@@ -175,6 +196,8 @@ export function App() {
         const limit = maxPrice === "" ? Infinity : Number(maxPrice);
 
         return listings
+            // Another set, card, or printing than the one searched for.
+            .filter((listing) => !listing.match)
             .filter((listing) => typeFilter === "all" || listing.buyingOption === typeFilter)
             .filter((listing) => kindFilter === "all" || listing.isGraded === (kindFilter === "graded"))
             .filter((listing) => (listing.currentPrice ?? 0) <= limit)
@@ -225,7 +248,8 @@ export function App() {
         return {
             candidates: count("CANDIDATE"),
             dropped: count("DROPPED"),
-            unchecked: count("UNSCREENED"),
+            unchecked: listings.filter((listing) => listing.screen?.status === "UNSCREENED" && !listing.match).length,
+            mismatched: listings.filter((listing) => listing.match).length,
             analyzing,
             waiting: listings.filter((listing) => listing.screen?.status === "CANDIDATE" && !analyses[listing.id]).length,
         };
@@ -275,9 +299,11 @@ export function App() {
                             ) : (
                                 <>
                                     <p>
+                                        {summary &&
+                                            `eBay has ${summary.total.toLocaleString()} results. Of the first ${summary.found.toLocaleString()}, ${summary.count.toLocaleString()} are ${describeIntent(summary.intent)}. `}
                                         {searchStatus === "checking"
-                                            ? `Checking listings for free: ${listings.length} of ${total ?? "..."}. The first search for a card takes a few minutes; repeats are quick.`
-                                            : `${listings.length} listings checked for free.`}
+                                            ? `Checking them for free: ${listings.length} of ${total ?? "..."}. A new search takes a few minutes; repeats are quick.`
+                                            : `All ${listings.length} checked for free.`}
                                     </p>
                                     <dl className={styles.funnelNumbers}>
                                         <div>
@@ -291,6 +317,10 @@ export function App() {
                                         <div>
                                             <dt>Couldn't check</dt>
                                             <dd>{counts.unchecked}</dd>
+                                        </div>
+                                        <div>
+                                            <dt>Other sets or cards</dt>
+                                            <dd>{counts.mismatched}</dd>
                                         </div>
                                         <div>
                                             <dt>Deals</dt>

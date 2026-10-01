@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { DATA_DIR } from "../lib/paths.ts";
+import { DATA_DIR } from "./paths.ts";
 
-// Saved API responses, so the same lookup isn't paid for twice in a day.
+// Saved API responses and AI readings, so the same lookup isn't paid for
+// (or rate-limited) twice. Each caller picks how long its answers last.
 const CACHE_DIR = path.join(DATA_DIR, "price-cache");
 
 function cacheFile(key: string): string {
