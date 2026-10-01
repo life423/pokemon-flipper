@@ -3,7 +3,7 @@ import { lookupCards, fetchComps } from "../pricing/pkmnprices.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { mapLimit } from "../lib/concurrency.ts";
 import { readSearch } from "../search/intent.ts";
-import { cardMismatch, gradingMatches, titleMatches } from "../search/relevance.ts";
+import { cardMismatch, gradingMatches, isEnglish, titleMatches } from "../search/relevance.ts";
 import { prescreen } from "./prescreen.ts";
 import { fillFromTitle } from "../ai/title-reader.ts";
 import type { ListingSummary, Screen, SearchIntent } from "../../shared/types.ts";
@@ -57,6 +57,11 @@ async function screenListing(listing: ListingSummary): Promise<ListingSummary> {
 
     const { aspects, filled } = await fillFromTitle(details);
 
+    // Only English cards are priced; others are set aside, not checked.
+    if (!isEnglish(aspects.Language)) {
+        return { ...listing, match: "OTHER_LANGUAGE" };
+    }
+
     const checked = await prescreen(
         {
             title: details.title,
@@ -104,7 +109,7 @@ export async function findDeals(
 
     return mapLimit(matching, PARALLEL_LISTINGS, async (listing) => {
         const screened = await screenListing(listing);
-        const mismatch = cardMismatch(screened.screen, intent);
+        const mismatch = screened.match ?? cardMismatch(screened.screen, intent);
         const result = mismatch ? { ...screened, match: mismatch } : screened;
 
         onListing(result);

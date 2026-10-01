@@ -319,7 +319,7 @@ export function App() {
                                             <dd>{counts.unchecked}</dd>
                                         </div>
                                         <div>
-                                            <dt>Other sets or cards</dt>
+                                            <dt>Set aside: other sets, cards, languages</dt>
                                             <dd>{counts.mismatched}</dd>
                                         </div>
                                         <div>

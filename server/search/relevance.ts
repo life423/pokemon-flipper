@@ -7,8 +7,17 @@ import type { ListingSummary, Screen, SearchIntent } from "../../shared/types.ts
 
 export type Match = NonNullable<ListingSummary["match"]>;
 
+// Only English cards are priced, so other languages are skipped.
+const OTHER_LANGUAGE = /\b(japanese|japan|jpn|jp|korean|chinese|german|french|italian|spanish|portuguese|dutch|thai|indonesian)\b/;
+
+export function isEnglish(language: string | null | undefined): boolean {
+    return !language || /\benglish\b/i.test(language);
+}
+
 export function titleMatches(title: string, intent: SearchIntent): boolean {
     const text = normalizeWords(title);
+
+    if (OTHER_LANGUAGE.test(text)) return false;
 
     return intent.titleWords.every((word) => text.includes(normalizeWords(word)));
 }
