@@ -3,7 +3,7 @@
 // Usage: npm run consistency -- <eBay link or item number> [runs]
 // Paid: every run makes up to two vision requests.
 import "dotenv/config";
-import { evaluateListing } from "../grading.js";
+import { evaluateListing } from "../server/analysis/evaluate.js";
 import { toItemId } from "./item-id.js";
 
 const AREAS = ["centering", "corners", "edges", "surface"];

@@ -3,7 +3,7 @@
 // Reuses the saved answer for a listing while its photos haven't
 // changed. --fresh ignores it and pays for a new one.
 import "dotenv/config";
-import { evaluateListing } from "../grading.js";
+import { evaluateListing } from "../server/analysis/evaluate.js";
 import { toItemId } from "./item-id.js";
 
 const STEP_NAMES = { photoCheck: "photo check", condition: "condition report" };
