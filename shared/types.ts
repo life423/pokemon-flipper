@@ -66,7 +66,31 @@ export interface PhotoCheck {
     images: PhotoReport[];
     missingViews: string[];
     problems: string[];
+    printedName?: string | null;
+    printedNumber?: string | null;
+    printingMarks?: PrintingMarks;
+    slab?: SlabReading | null;
 }
+
+export interface PrintingMarks {
+    firstEditionStamp: string;
+    artBoxShadow: string;
+    evidence?: string[];
+}
+
+// What the photos show of a graded case and its label.
+export interface SlabReading {
+    present: boolean;
+    grader: string | null;
+    grade: string | null;
+    gradeQualifier: string | null;
+    certNumber: string | null;
+    labelText: string | null;
+    caseCondition: string;
+    authenticity: string;
+    concerns: string[];
+}
+
 
 export interface AreaFinding {
     visibility: string;
@@ -135,10 +159,18 @@ export interface RawPrice {
     updatedAt: string | null;
 }
 
-export interface RawPricing {
+// Where a price came from and which database printing it is.
+interface PriceSource {
+    source?: string;
+    printing?: Printing | "UNKNOWN";
+    variant?: string;
+}
+
+export interface RawPricing extends PriceSource {
     status: PriceStatus;
     reason?: string;
     printingLabel?: string;
+    finish?: string;
     prices?: RawPrice[];
 }
 
@@ -162,7 +194,7 @@ export interface CompSummary {
     sales: CompSale[];
 }
 
-export interface GradedPricing {
+export interface GradedPricing extends PriceSource {
     status: PriceStatus;
     reason?: string;
     printingLabel?: string;
@@ -183,10 +215,12 @@ export interface Slab {
     concerns: string[];
 }
 
-export interface SlabPricing {
+export interface SlabPricing extends PriceSource {
     status: PriceStatus;
     reason?: string;
     printingLabel?: string;
+    grader?: string;
+    grade?: number | string;
     summary?: CompSummary;
 }
 

@@ -8,7 +8,7 @@ const FAKE = /\b(proxy|proxies|custom|replica|fan[\s-]?(made|art)|orica|novelty)
 const PICK_OR_MYSTERY = /\b(mystery|repack|you pick|pick your|choose your|select your)\b/i;
 
 // Lowercase and strip accents, so "Pokémon" matches "pokemon".
-export function normalizeText(text) {
+export function normalizeText(text: unknown): string {
     return String(text ?? "")
         .normalize("NFD")
         .replace(/[\u0300-\u036f]/g, "")
@@ -17,14 +17,17 @@ export function normalizeText(text) {
 
 // Words the title must contain. "pokemon" is dropped because
 // every search already adds it.
-export function searchTerms(search) {
+export function searchTerms(search: string): string[] {
     return normalizeText(search)
         .split(/\s+/)
         .filter((term) => term !== "" && term !== "pokemon");
 }
 
 // Returns why a listing should be dropped, or null to keep it.
-export function exclusionReason(item, search = "") {
+export function exclusionReason(
+    item: { title: string; itemId: string; itemGroupType?: string },
+    search = ""
+): string | null {
     const title = normalizeText(item.title);
 
     // Variation listings match on any option's name, and their

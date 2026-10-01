@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { summarizeComps, gradedPricesFor, compsForGrade } from "../../server/pricing/graded-comps.js";
-import { identifyCard } from "../../server/identity/card-identity.js";
-import { toCardRecord } from "../../server/pricing/pkmnprices.js";
+import { summarizeComps, gradedPricesFor, compsForGrade } from "../../server/pricing/graded-comps.ts";
+import { identifyCard } from "../../server/identity/card-identity.ts";
+import { toCardRecord } from "../../server/pricing/pkmnprices.ts";
 
 const NOW = Date.parse("2026-09-30T00:00:00Z");
 

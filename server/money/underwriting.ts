@@ -1,4 +1,4 @@
-import { readyForPricing } from "../identity/card-identity.js";
+import { readyForPricing } from "../identity/card-identity.ts";
 import { MONEY_CONFIG, type BuyingConfig, type GradingConfig, type MoneyConfig, type SellingConfig } from "../config/money.ts";
 import { RAW_CONDITIONS, isRawCondition } from "../../shared/conditions.ts";
 import { dollars, round2 } from "../../shared/format.ts";

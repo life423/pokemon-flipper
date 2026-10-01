@@ -1,17 +1,30 @@
-import { readCache, writeCache } from "./cache.js";
-import { finishOfVariant, mapVariantPrintings } from "../identity/card-identity.js";
-import { conditionOf } from "./raw-prices.js";
+import { readCache, writeCache } from "./cache.ts";
+import { conditionOf } from "./raw-prices.ts";
+import { cardVariants } from "./records.ts";
+import type { CardRecord } from "./types.ts";
 
 // PokemonPriceTracker. Kept as a cross-check: its raw prices are split
 // by printing, but its graded sales mix printings.
+
 const BASE = "https://www.pokemonpricetracker.com/api/v2";
 const SEARCH_LIMIT = 5;
 
+interface TrackerPrice {
+    price?: number;
+    lastUpdated?: string;
+}
+
+interface TrackerCard {
+    tcgPlayerId: number;
+    name: string;
+    setName: string;
+    cardNumber: string;
+    prices?: { variants?: Record<string, Record<string, TrackerPrice>> };
+}
+
 // A PokemonPriceTracker card in the shape identity and pricing expect.
-export function fromPokemonPriceTracker(record) {
+export function fromPokemonPriceTracker(record: TrackerCard): CardRecord {
     const variants = record.prices?.variants ?? {};
-    const names = Object.keys(variants);
-    const printings = mapVariantPrintings(names, record.setName);
 
     return {
         source: "pokemonPriceTracker",
@@ -20,25 +33,22 @@ export function fromPokemonPriceTracker(record) {
         setName: record.setName,
         cardNumber: record.cardNumber,
         tcgPlayerId: record.tcgPlayerId,
-        variants: names.map((name) => ({
-            name,
-            printing: printings[name],
-            finish: finishOfVariant(name),
-            prices: Object.entries(variants[name])
+        variants: cardVariants(Object.keys(variants), record.setName, (label) =>
+            Object.entries(variants[label])
                 .filter(([, entry]) => typeof entry?.price === "number")
-                .map(([label, entry]) => ({
-                    condition: conditionOf(label),
-                    price: entry.price,
+                .map(([condition, entry]) => ({
+                    condition: conditionOf(condition),
+                    price: entry.price as number,
                     updatedAt: entry.lastUpdated ?? null,
-                })),
-        })),
+                }))
+        ),
     };
 }
 
-export async function lookupCards({ set, name }) {
+export async function lookupCards({ set, name }: { set: string; name: string }): Promise<CardRecord[]> {
     const params = new URLSearchParams({ set, search: name, limit: String(SEARCH_LIMIT) });
     const key = `pokemonpricetracker:cards?${params}`;
-    const cached = await readCache(key, 24);
+    const cached = await readCache<TrackerCard[]>(key, 24);
 
     if (cached) return cached.map(fromPokemonPriceTracker);
 
@@ -51,7 +61,6 @@ export async function lookupCards({ set, name }) {
     const response = await fetch(`${BASE}/cards?${params}`, {
         headers: { Authorization: `Bearer ${apiKey}` },
     });
-
     const body = await response.json().catch(() => ({}));
 
     if (!response.ok) {
@@ -60,7 +69,7 @@ export async function lookupCards({ set, name }) {
         );
     }
 
-    const cards = Array.isArray(body.data) ? body.data : body.data ? [body.data] : [];
+    const cards: TrackerCard[] = Array.isArray(body.data) ? body.data : body.data ? [body.data] : [];
     await writeCache(key, cards);
 
     return cards.map(fromPokemonPriceTracker);

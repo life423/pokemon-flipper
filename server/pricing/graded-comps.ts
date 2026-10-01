@@ -4,8 +4,19 @@ import {
     printingLabel,
     readyForPricing,
     titleDecidesPrinting,
-} from "../identity/card-identity.js";
-import { canPrice, variantFor } from "./raw-prices.js";
+} from "../identity/card-identity.ts";
+import { canPrice, variantFor } from "./raw-prices.ts";
+import type { CompSummary, Confidence, GradeRange, GradedPricing, Identity, SlabPricing } from "../../shared/types.ts";
+import type { Comp, FetchComps, PricedCard, PricedVariant, PrintingOrUnknown } from "./types.ts";
+import type { PrintingClaim } from "../identity/card-identity.ts";
+
+export interface CompCriteria {
+    printing: PrintingOrUnknown;
+    setName: string | null | undefined;
+    grader: string;
+    grade: number | string;
+    now: number;
+}
 
 // Only recent sales price a card.
 const RECENT_DAYS = 180;
@@ -18,7 +29,7 @@ const OUTLIER_FACTOR = 2.5;
 // PSA qualifiers (off-center, miscut, stain...) sell below a plain grade.
 const PSA_QUALIFIER = /\((oc|mk|mc|st|pd|of)\)/i;
 
-function titleAgrees(claim, printing) {
+function titleAgrees(claim: PrintingClaim, printing: PrintingOrUnknown): boolean {
     if (claim === "CONFLICTING") return false;
     if (printing === "FIRST_EDITION") return claim === "FIRST_EDITION";
     if (printing === "SHADOWLESS") return claim === "SHADOWLESS";
@@ -27,7 +38,7 @@ function titleAgrees(claim, printing) {
 }
 
 // Why a comp's printing doesn't match, or null when it does.
-function printingProblem(comp, printing, setName) {
+function printingProblem(comp: Comp, printing: PrintingOrUnknown, setName: string | null | undefined): string | null {
     const claim = printingClaimFromText(comp.title);
 
     // Where the labels are known to be wrong, the title decides:
@@ -51,7 +62,7 @@ function printingProblem(comp, printing, setName) {
 }
 
 // Why a comp can't price this card, or null when it can.
-export function compProblem(comp, { printing, setName, grader, grade, now }) {
+export function compProblem(comp: Comp, { printing, setName, grader, grade, now }: CompCriteria): string | null {
     if (comp.attribution !== "exact") return "shared with another card";
 
     const mismatch = printingProblem(comp, printing, setName);
@@ -68,14 +79,14 @@ export function compProblem(comp, { printing, setName, grader, grade, now }) {
     return null;
 }
 
-function median(values) {
+function median(values: number[]): number {
     const sorted = [...values].sort((a, b) => a - b);
     const middle = Math.floor(sorted.length / 2);
 
     return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
-function confidenceFor(count) {
+function confidenceFor(count: number): Confidence {
     if (count >= 5) return "HIGH";
     if (count >= 3) return "MEDIUM";
     if (count >= 1) return "LOW";
@@ -84,10 +95,10 @@ function confidenceFor(count) {
 }
 
 // The verified sales for one grade, and what was dropped and why.
-export function summarizeComps(comps, criteria) {
-    let kept = [];
-    const dropped = {};
-    const drop = (reason) => {
+export function summarizeComps(comps: Comp[], criteria: CompCriteria): CompSummary {
+    let kept: Comp[] = [];
+    const dropped: Record<string, number> = {};
+    const drop = (reason: string) => {
         dropped[reason] = (dropped[reason] ?? 0) + 1;
     };
 
@@ -134,13 +145,13 @@ export function summarizeComps(comps, criteria) {
     };
 }
 
-function unavailable(reason, extra = {}) {
-    return { status: "PRICE_UNAVAILABLE", reason, ...extra };
+function unavailable<T extends object>(reason: string, extra?: T) {
+    return { status: "PRICE_UNAVAILABLE" as const, reason, ...extra };
 }
 
 // Checks every graded lookup shares: an identified card, a source that
 // can price graded copies by printing, and exactly one matching printing.
-function gradedVariantFor(card, identity) {
+function gradedVariantFor(card: PricedCard | null, identity: Identity): ReturnType<typeof variantFor> {
     if (!readyForPricing(identity)) {
         return { reason: "The card isn't fully identified, so graded copies can't be priced." };
     }
@@ -154,13 +165,17 @@ function gradedVariantFor(card, identity) {
 // Recent sales of one grade for this card's printing. Where the title
 // decides, sales filed under every label of the record are read;
 // otherwise only this printing's own label.
-async function fetchVariantComps(card, variant, { grader, grade, fetchComps }) {
+async function fetchVariantComps(
+    card: PricedCard,
+    variant: PricedVariant,
+    { grader, grade, fetchComps }: { grader: string; grade: number | string; fetchComps: FetchComps }
+): Promise<Comp[]> {
     const sourceLabels = titleDecidesPrinting(variant.setName)
         ? card.variants.filter((v) => v.recordId === variant.recordId).map((v) => v.name)
         : [variant.name];
 
-    const comps = [];
-    const seen = new Set();
+    const comps: Comp[] = [];
+    const seen = new Set<string | number>();
 
     for (const sourceLabel of sourceLabels) {
         for (const comp of await fetchComps(variant.recordId, { grader, grade, variant: sourceLabel })) {
@@ -178,18 +193,18 @@ async function fetchVariantComps(card, variant, { grader, grade, fetchComps }) {
 
 // Verified sold comps for each grade in the estimated range.
 export async function gradedPricesFor(
-    card,
-    identity,
-    gradeRange,
-    { fetchComps, grader = "PSA", now = Date.now() }
-) {
+    card: PricedCard | null,
+    identity: Identity,
+    gradeRange: GradeRange | null,
+    { fetchComps, grader = "PSA", now = Date.now() }: { fetchComps: FetchComps; grader?: string; now?: number }
+): Promise<GradedPricing> {
     const { variant, reason } = gradedVariantFor(card, identity);
 
-    if (!variant) return unavailable(reason);
+    if (!variant || !card) return unavailable(reason ?? "There is no card to price.");
     if (!gradeRange) return unavailable("There's no grade estimate to price.");
 
     const label = printingLabel(identity.printing, identity.set);
-    const byGrade = [];
+    const byGrade: CompSummary[] = [];
 
     for (let grade = gradeRange.low; grade <= gradeRange.high; grade += 1) {
         const comps = await fetchVariantComps(card, variant, { grader, grade, fetchComps });
@@ -225,10 +240,14 @@ export async function gradedPricesFor(
 // Verified sold comps for one exact grader and grade: a graded card
 // resold as is. Grades are strings, so half grades like "8.5" match
 // only themselves.
-export async function compsForGrade(card, identity, { grader, grade, fetchComps, now = Date.now() }) {
+export async function compsForGrade(
+    card: PricedCard | null,
+    identity: Identity,
+    { grader, grade, fetchComps, now = Date.now() }: { grader: string; grade: number | string; fetchComps: FetchComps; now?: number }
+): Promise<SlabPricing> {
     const { variant, reason } = gradedVariantFor(card, identity);
 
-    if (!variant) return unavailable(reason);
+    if (!variant || !card) return unavailable(reason ?? "There is no card to price.");
 
     const label = printingLabel(identity.printing, identity.set);
     const comps = await fetchVariantComps(card, variant, { grader, grade, fetchComps });

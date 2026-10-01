@@ -1,16 +1,13 @@
-import { identifyCard, printingClaimFromText, readyForPricing } from "../identity/card-identity.js";
-import { graderCode, normalizeGrade } from "../identity/slab-check.js";
-import { rawPricesFor } from "../pricing/raw-prices.js";
-import { gradedPricesFor, compsForGrade } from "../pricing/graded-comps.js";
-import type { lookupCards as LookupCards, fetchComps as FetchComps } from "../pricing/pkmnprices.js";
+import { identifyCard, printingClaimFromText, readyForPricing } from "../identity/card-identity.ts";
+import { graderCode, normalizeGrade } from "../identity/slab-check.ts";
+import { rawPricesFor } from "../pricing/raw-prices.ts";
+import { gradedPricesFor, compsForGrade } from "../pricing/graded-comps.ts";
+import type { FetchComps, LookupCards } from "../pricing/types.ts";
 import { sellerCondition } from "../ebay/seller-condition.ts";
 import { GRADERS, underwrite, type UnderwritingInput } from "../money/underwriting.ts";
 import { MONEY_CONFIG, type MoneyConfig } from "../config/money.ts";
 import { CONDITION_NAMES } from "../../shared/conditions.ts";
-import type { GradedPricing, Grader, Identity, RawPricing, Screen, SlabPricing, Underwriting } from "../../shared/types.ts";
-
-// The identity and pricing modules are still JavaScript, so their results
-// are typed here at the boundary until they move to TypeScript.
+import type { Grader, Screen, Underwriting } from "../../shared/types.ts";
 
 // The free first check, before any paid AI: what a listing is worth at
 // its best, from the seller's own details and the price data. A listing
@@ -28,8 +25,8 @@ export interface ScreenInput {
 }
 
 export interface ScreenDeps {
-    lookupCards: typeof LookupCards;
-    fetchComps: typeof FetchComps;
+    lookupCards: LookupCards;
+    fetchComps: FetchComps;
     config?: MoneyConfig;
     now?: number;
 }
@@ -85,7 +82,7 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
         slab: null,
     };
 
-    let identified: Awaited<ReturnType<typeof identifyCard>>;
+    let identified;
 
     try {
         identified = await identifyCard(listing, sellerView, { lookupCards });
@@ -93,8 +90,7 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
         return screen("UNSCREENED", `The card lookup failed: ${(error as Error).message}`);
     }
 
-    const { card } = identified;
-    const identity = identified.identity as unknown as Identity;
+    const { identity, card } = identified;
 
     if (!readyForPricing(identity)) {
         return screen("UNSCREENED", identity.reasons[0] ?? "The card couldn't be identified from the listing.");
@@ -119,7 +115,7 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
     try {
         if (listing.isGraded) {
             const fromTitle = listing.title.match(TITLE_GRADE);
-            const grader = (graderCode(aspects["Professional Grader"]) ?? (fromTitle ? graderCode(fromTitle[1]) : null)) as string | null;
+            const grader = graderCode(aspects["Professional Grader"]) ?? (fromTitle ? graderCode(fromTitle[1]) : null);
             const grade = normalizeGrade(aspects.Grade) ?? (fromTitle ? fromTitle[2] : null);
 
             if (!grader || !grade) {
@@ -131,7 +127,7 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
             }
 
             input.slab = { status: "OK", grader, grade, reasons: [], concerns: [] };
-            input.slabPricing = (await compsForGrade(card, identity, { grader, grade, fetchComps, now })) as SlabPricing;
+            input.slabPricing = await compsForGrade(card, identity, { grader, grade, fetchComps, now });
             outcome = underwrite(input, config);
             assumed = `${grader} ${grade}, as listed`;
         } else {
@@ -142,7 +138,7 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
             const gradeRange = { low: grade, likely: grade, high: grade };
 
             input.condition = { rawCondition, gradeRange, authenticity: { concern: "NONE_SEEN", reasons: [] } };
-            input.rawPricing = rawPricesFor(card, identity) as RawPricing;
+            input.rawPricing = rawPricesFor(card, identity);
             input.gradedPricing = {};
             outcome = underwrite(input, config);
             assumed = `${CONDITION_NAMES[rawCondition]}, grading ${grade} at best`;
@@ -152,11 +148,7 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
             for (const grader of GRADERS) {
                 if (outcome.verdict.startsWith("BUY")) break;
 
-                input.gradedPricing[grader] = (await gradedPricesFor(card, identity, gradeRange, {
-                    fetchComps,
-                    grader,
-                    now,
-                })) as GradedPricing;
+                input.gradedPricing[grader] = await gradedPricesFor(card, identity, gradeRange, { fetchComps, grader, now });
                 outcome = underwrite(input, config);
             }
         }

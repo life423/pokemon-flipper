@@ -1,9 +1,14 @@
-import { normalizeText } from "../ebay/filters.js";
-import { PRINTINGS, printingLabel, readyForPricing } from "../identity/card-identity.js";
+import { normalizeText } from "../ebay/filters.ts";
+import { CONDITION_NAMES, RAW_CONDITIONS, type RawCondition } from "../../shared/conditions.ts";
+import type { Identity, RawPricing } from "../../shared/types.ts";
+import type { PricedCard, PricedVariant } from "./types.ts";
+import { isPrinting, printingLabel, readyForPricing } from "../identity/card-identity.ts";
 
 // What each price source can actually tell apart. A source is only
 // asked questions it can answer.
-export const SOURCE_CAPABILITIES = {
+type Capability = "cardIdentity" | "printing" | "condition" | "grade";
+
+export const SOURCE_CAPABILITIES: Record<string, Record<Capability, boolean>> = {
     // TCGplayer prices by printing and condition.
     pkmnpricesRaw: { cardIdentity: true, printing: true, condition: true, grade: false },
     // Individual eBay sales labeled by printing. Each one is also
@@ -15,34 +20,31 @@ export const SOURCE_CAPABILITIES = {
     pokemonPriceTrackerGraded: { cardIdentity: true, printing: false, condition: false, grade: true },
 };
 
-export function canPrice(source, needs) {
+export function canPrice(source: string, needs: Capability[]): boolean {
     const capabilities = SOURCE_CAPABILITIES[source];
     return Boolean(capabilities) && needs.every((need) => capabilities[need] === true);
 }
 
-const CONDITIONS = [
-    ["near mint", "NEAR_MINT"],
-    ["lightly played", "LIGHTLY_PLAYED"],
-    ["moderately played", "MODERATELY_PLAYED"],
-    ["heavily played", "HEAVILY_PLAYED"],
-    ["damaged", "DAMAGED"],
-];
 
 const FINISHES = ["HOLO", "REVERSE_HOLO", "NON_HOLO"];
 
-export function conditionOf(label) {
+// A price source's condition label ("Near Mint", "Lightly Played Holofoil") as a condition.
+export function conditionOf(label: unknown): RawCondition | "UNKNOWN" {
     const value = normalizeText(label);
-    const found = CONDITIONS.find(([text]) => value.startsWith(text));
-    return found ? found[1] : "UNKNOWN";
+    const found = RAW_CONDITIONS.find((condition) => value.startsWith(CONDITION_NAMES[condition].toLowerCase()));
+    return found ?? "UNKNOWN";
 }
 
-function unavailable(reason) {
+function unavailable(reason: string): RawPricing {
     return { status: "PRICE_UNAVAILABLE", reason };
 }
 
 // The one database printing that matches the identity, or a reason
 // there isn't exactly one. Never a nearby printing.
-export function variantFor(card, identity) {
+export function variantFor(
+    card: PricedCard | null,
+    identity: Identity
+): { variant: PricedVariant; reason?: undefined } | { variant?: undefined; reason: string } {
     const name = printingLabel(identity.printing, identity.set);
     let matches = (card?.variants ?? []).filter((variant) => variant.printing === identity.printing);
 
@@ -60,7 +62,7 @@ export function variantFor(card, identity) {
     const [variant] = matches;
 
     // The invariant: the printing is known on both sides, and the same.
-    if (!PRINTINGS.includes(variant.printing) || variant.printing !== identity.printing) {
+    if (!isPrinting(variant.printing) || variant.printing !== identity.printing) {
         return { reason: "The price source can't prove it's the same printing." };
     }
 
@@ -68,7 +70,7 @@ export function variantFor(card, identity) {
 }
 
 // Raw prices for exactly this card's printing, by condition.
-export function rawPricesFor(card, identity) {
+export function rawPricesFor(card: PricedCard | null, identity: Identity): RawPricing {
     if (!readyForPricing(identity)) {
         return unavailable("The card isn't fully identified, so it can't be priced.");
     }
@@ -78,7 +80,7 @@ export function rawPricesFor(card, identity) {
 
     const { variant, reason } = variantFor(card, identity);
 
-    if (!variant) return unavailable(reason);
+    if (!variant || !card) return unavailable(reason ?? "There is no card to price.");
 
     const label = printingLabel(variant.printing, identity.set);
     const prices = variant.prices.filter((entry) => typeof entry.price === "number");

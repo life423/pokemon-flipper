@@ -11,11 +11,11 @@ import {
     reusableRecord,
     assessmentStillFits,
 } from "./store.js";
-import { identifyCard } from "../identity/card-identity.js";
-import { rawPricesFor } from "../pricing/raw-prices.js";
-import { lookupCards, fetchComps } from "../pricing/pkmnprices.js";
-import { gradedPricesFor, compsForGrade } from "../pricing/graded-comps.js";
-import { checkSlab } from "../identity/slab-check.js";
+import { identifyCard } from "../identity/card-identity.ts";
+import { rawPricesFor } from "../pricing/raw-prices.ts";
+import { lookupCards, fetchComps } from "../pricing/pkmnprices.ts";
+import { gradedPricesFor, compsForGrade } from "../pricing/graded-comps.ts";
+import { checkSlab } from "../identity/slab-check.ts";
 import { GRADERS, underwrite } from "../money/underwriting.ts";
 import { rateDeal } from "../money/rating.ts";
 

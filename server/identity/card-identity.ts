@@ -1,11 +1,48 @@
-import { normalizeText } from "../ebay/filters.js";
+import { normalizeText } from "../ebay/filters.ts";
+import type { Identity, PhotoCheck, Printing } from "../../shared/types.ts";
+import type { LookupCards, PricedCard, CardRecord, PrintingOrUnknown } from "../pricing/types.ts";
+
+// A printing claim in seller text or on a label.
+export type PrintingClaim = Printing | "NOT_STATED" | "CONFLICTING";
+type FinishClaim = "HOLO" | "REVERSE_HOLO" | "NON_HOLO" | "NOT_STATED" | "CONFLICTING";
+
+export type { PrintingOrUnknown };
+
+// What identity reads from a listing: its title and item specifics.
+export interface IdentityListing {
+    title: string;
+    aspects?: Record<string, string>;
+}
+
+// What identity reads from the photo check.
+export type IdentityPhotos = Pick<PhotoCheck, "printedName" | "printedNumber" | "printingMarks" | "slab">;
+
+// The identity as it's built: the public fields plus a few the pricing
+// code reads.
+export interface IdentityDraft extends Identity {
+    listedCardNumber: string | null;
+    hasEditions: boolean | null;
+    recordId: CardRecord["id"] | null;
+    tcgPlayerId: number | null;
+}
+
+interface PrintingDecision {
+    status: "ACCEPTED" | "NEEDS_REVIEW";
+    printing: PrintingOrUnknown;
+    reason: string | null;
+}
+
 
 // Identify first, price second. A listing gets its canonical identity
 // here, and no price source is allowed to change it.
 
-export const PRINTINGS = ["FIRST_EDITION", "SHADOWLESS", "UNLIMITED"];
+export const PRINTINGS: Printing[] = ["FIRST_EDITION", "SHADOWLESS", "UNLIMITED"];
 
-const PRINTING_NAMES = {
+export function isPrinting(value: unknown): value is Printing {
+    return PRINTINGS.includes(value as Printing);
+}
+
+const PRINTING_NAMES: Record<string, string> = {
     FIRST_EDITION: "1st Edition",
     SHADOWLESS: "Shadowless",
     UNLIMITED: "Unlimited",
@@ -32,12 +69,12 @@ const SHADOWLESS_SETS = new Set(["base set", "base set shadowless"]);
 
 // Sets a price database splits into several records. A "Base Set"
 // listing can be any of them; the printing evidence decides which.
-const SET_FAMILIES = {
+const SET_FAMILIES: Record<string, string[]> = {
     "base set": ["base set", "base set shadowless"],
     "base set shadowless": ["base set", "base set shadowless"],
 };
 
-const SET_FAMILY_SEARCH = {
+const SET_FAMILY_SEARCH: Record<string, string> = {
     "base set": "Base Set",
     "base set shadowless": "Base Set",
 };
@@ -45,23 +82,23 @@ const SET_FAMILY_SEARCH = {
 // How printings are labeled inside split sets. In "Base Set" an
 // unlabeled price is Unlimited. In "Base Set (Shadowless)" the
 // printing labeled "Unlimited" is the Shadowless one.
-const SET_PRINTING_RULES = {
+const SET_PRINTING_RULES: Record<string, { unlimited?: Printing; unlabeled?: Printing }> = {
     "base set": { unlabeled: "UNLIMITED" },
     "base set shadowless": { unlimited: "SHADOWLESS", unlabeled: "SHADOWLESS" },
 };
 
-export function printingName(printing) {
+export function printingName(printing: string): string {
     return PRINTING_NAMES[printing] ?? "an unknown printing";
 }
 
 // Base Set printings, named the way collectors say them.
-const BASE_SET_PRINTING_NAMES = {
+const BASE_SET_PRINTING_NAMES: Record<string, string> = {
     FIRST_EDITION: "1st Edition Shadowless",
     SHADOWLESS: "Shadowless (no 1st Edition)",
     UNLIMITED: "Unlimited",
 };
 
-export function printingLabel(printing, setName) {
+export function printingLabel(printing: string, setName: unknown): string {
     if (SHADOWLESS_SETS.has(normalizeSetName(setName))) {
         return BASE_SET_PRINTING_NAMES[printing] ?? "an unknown printing";
     }
@@ -75,13 +112,13 @@ export function printingLabel(printing, setName) {
 // 1st Edition.
 const TITLE_DECIDES_SETS = new Set(["base set shadowless"]);
 
-export function titleDecidesPrinting(setName) {
+export function titleDecidesPrinting(setName: unknown): boolean {
     return TITLE_DECIDES_SETS.has(normalizeSetName(setName));
 }
 
 // Card numbers
 
-function parseNumberPart(part) {
+function parseNumberPart(part: string | undefined) {
     if (part === undefined || part === "") return null;
 
     const match = part.match(/^([A-Z-]*?)0*(\d+)$/);
@@ -93,7 +130,7 @@ function parseNumberPart(part) {
 
 // "009/111" and "9/111" are the same card: compare the numbers, not
 // the text. Letters in promo-style numbers (SWSH075, TG01/TG30) stay.
-export function normalizeCardNumber(value) {
+export function normalizeCardNumber(value: unknown) {
     const text = String(value ?? "")
         .toUpperCase()
         .replace(/\s+/g, "")
@@ -113,7 +150,7 @@ export function normalizeCardNumber(value) {
     };
 }
 
-export function sameCardNumber(a, b) {
+export function sameCardNumber(a: unknown, b: unknown): boolean {
     const x = normalizeCardNumber(a);
     const y = normalizeCardNumber(b);
 
@@ -130,13 +167,13 @@ export function sameCardNumber(a, b) {
 
 // Set and card names
 
-export function normalizeWords(value) {
+export function normalizeWords(value: unknown): string {
     return normalizeText(value).replace(/[^a-z0-9]+/g, " ").trim();
 }
 
 // Set names from grading labels: PSA calls Base Set "Pokemon Game" and
 // Team Rocket "Rocket".
-const SET_ALIASES = {
+const SET_ALIASES: Record<string, string> = {
     game: "base set",
     "game shadowless": "base set shadowless",
     rocket: "team rocket",
@@ -144,7 +181,7 @@ const SET_ALIASES = {
 
 // "SWSH: Crown Zenith", "Crown Zenith", and "2023 Pokemon Crown Zenith"
 // are the same set.
-export function normalizeSetName(value) {
+export function normalizeSetName(value: unknown): string {
     const words = normalizeWords(normalizeText(value).replace(/^[a-z0-9&]+\s*:\s*/, ""))
         .replace(/^(19|20)\d{2} /, "")
         .replace(/\bpokemon\b/g, " ")
@@ -158,20 +195,20 @@ export function normalizeSetName(value) {
     return SET_ALIASES[words] ?? words;
 }
 
-export function sameSet(a, b) {
+export function sameSet(a: unknown, b: unknown): boolean {
     const x = normalizeSetName(a);
     return x !== "" && x === normalizeSetName(b);
 }
 
 // The normalized names of every set a listing's set may be filed under.
-export function setFamily(setName) {
+export function setFamily(setName: unknown): string[] {
     const key = normalizeSetName(setName);
     return SET_FAMILIES[key] ?? [key];
 }
 
 // The text to search a database's sets with: the family's name, or the
 // set's most distinctive word.
-export function setSearchTerm(setName) {
+export function setSearchTerm(setName: unknown): string {
     const key = normalizeSetName(setName);
 
     if (SET_FAMILY_SEARCH[key]) return SET_FAMILY_SEARCH[key];
@@ -187,7 +224,7 @@ const SERIES_PREFIXES = [
     "scarlet violet", "sword shield", "sun moon", "black white", "diamond pearl", "mega evolution",
 ];
 
-export function sameSetFamily(candidateSet, listedSet) {
+export function sameSetFamily(candidateSet: unknown, listedSet: unknown): boolean {
     const candidate = normalizeSetName(candidateSet);
     const listed = normalizeSetName(listedSet);
 
@@ -204,7 +241,7 @@ export function sameSetFamily(candidateSet, listedSet) {
     );
 }
 
-function sameName(a, b) {
+function sameName(a: unknown, b: unknown): boolean {
     const x = normalizeWords(a);
     const y = normalizeWords(b);
     return x !== "" && y !== "" && (x.includes(y) || y.includes(x));
@@ -218,7 +255,7 @@ const SHADOWLESS_TEXT = /\bshadowless\b/;
 const UNLIMITED_TEXT = /\bunlimited\b/;
 
 // Returns a printing, NOT_STATED, or CONFLICTING.
-export function printingClaimFromText(text) {
+export function printingClaimFromText(text: unknown): PrintingClaim {
     const value = normalizeText(text);
     const denied = NOT_FIRST_EDITION_TEXT.test(value);
     const firstEdition = !denied && FIRST_EDITION_TEXT.test(value);
@@ -234,7 +271,7 @@ export function printingClaimFromText(text) {
     return "NOT_STATED";
 }
 
-export function finishClaimFromText(text) {
+export function finishClaimFromText(text: unknown): FinishClaim {
     const value = normalizeText(text);
 
     if (/\breverse[\s-]*holo/.test(value)) return "REVERSE_HOLO";
@@ -244,7 +281,7 @@ export function finishClaimFromText(text) {
     return "NOT_STATED";
 }
 
-function resolveFinish(fromItemDetails, fromTitle) {
+function resolveFinish(fromItemDetails: FinishClaim, fromTitle: FinishClaim): FinishClaim {
     if (fromItemDetails !== "NOT_STATED" && fromTitle !== "NOT_STATED" && fromItemDetails !== fromTitle) {
         return "CONFLICTING";
     }
@@ -258,11 +295,11 @@ function resolveFinish(fromItemDetails, fromTitle) {
 // "Unlimited Holofoil", "Holofoil") to our printings, set by set.
 // A label without an edition only counts where the set rules, or a
 // card printed once, make its meaning certain. Otherwise UNKNOWN.
-export function mapVariantPrintings(variantNames, setName) {
+export function mapVariantPrintings(variantNames: string[], setName: unknown): Record<string, PrintingOrUnknown> {
     const setKey = normalizeSetName(setName);
     const rule = SET_PRINTING_RULES[setKey] ?? {};
 
-    const labeled = variantNames.map((name) => {
+    const labeled = variantNames.map((name): [string, Printing | null] => {
         const value = normalizeText(name);
 
         if (/\b1st edition\b/.test(value)) return [name, "FIRST_EDITION"];
@@ -284,7 +321,7 @@ export function mapVariantPrintings(variantNames, setName) {
     );
 }
 
-export function finishOfVariant(name) {
+export function finishOfVariant(name: string): string {
     const value = normalizeText(name);
 
     if (/\breverse/.test(value)) return "REVERSE_HOLO";
@@ -297,7 +334,10 @@ export function finishOfVariant(name) {
 
 // Maps what the model saw on the card to a printing. Anything unclear
 // stays UNKNOWN; the shadow only matters for Base Set.
-export function photoPrinting(marks, { shadowMatters }) {
+export function photoPrinting(
+    marks: { firstEditionStamp: string; artBoxShadow: string } | null | undefined,
+    { shadowMatters }: { shadowMatters: boolean }
+): PrintingOrUnknown {
     if (!marks) return "UNKNOWN";
     if (marks.firstEditionStamp === "VISIBLE") return "FIRST_EDITION";
     if (marks.firstEditionStamp !== "NOT_PRESENT") return "UNKNOWN";
@@ -308,21 +348,26 @@ export function photoPrinting(marks, { shadowMatters }) {
     return "UNKNOWN";
 }
 
-function accepted(printing) {
+function accepted(printing: PrintingOrUnknown): PrintingDecision {
     return { status: "ACCEPTED", printing, reason: null };
 }
 
-function review(reason) {
+function review(reason: string): PrintingDecision {
     return { status: "NEEDS_REVIEW", printing: "UNKNOWN", reason };
 }
 
 // The title, the item details, and the photos have to agree. There is
 // no majority vote: any disagreement goes to review.
 export function resolvePrinting(
-    { title, itemSpecifics, label = "NOT_STATED", photo },
-    { hasEditions, setName = null }
-) {
-    const printingName = (printing) => printingLabel(printing, setName);
+    {
+        title,
+        itemSpecifics,
+        label = "NOT_STATED",
+        photo,
+    }: { title: PrintingClaim; itemSpecifics: PrintingClaim; label?: PrintingClaim; photo: PrintingOrUnknown },
+    { hasEditions, setName = null }: { hasEditions: boolean | null; setName?: string | null }
+): PrintingDecision {
+    const printingName = (printing: string) => printingLabel(printing, setName);
     const stated = [title, itemSpecifics, label].filter((claim) => claim !== "NOT_STATED");
 
     if (stated.includes("CONFLICTING")) {
@@ -366,16 +411,18 @@ export function resolvePrinting(
 }
 
 // Pricing never starts on a partly known card.
-export function readyForPricing(identity) {
+export function readyForPricing(
+    identity: Pick<Identity, "status" | "set" | "cardNumber" | "printing"> | null | undefined
+): boolean {
     return (
         identity?.status === "IDENTIFIED" &&
         Boolean(identity.set) &&
         Boolean(identity.cardNumber) &&
-        PRINTINGS.includes(identity.printing)
+        isPrinting(identity.printing)
     );
 }
 
-function aspectText(aspects, namePattern) {
+function aspectText(aspects: Record<string, string>, namePattern: RegExp): string {
     return Object.entries(aspects)
         .filter(([name]) => namePattern.test(name))
         .map(([, value]) => value)
@@ -385,16 +432,19 @@ function aspectText(aspects, namePattern) {
 // Error and special versions ("Charizard (Black Dot Error)") share a
 // number with the regular card, so when both match, a version only
 // counts if the listing names it.
-function versionTag(name) {
+function versionTag(name: unknown): string | null {
     const match = String(name ?? "").match(/\(([^)]+)\)/);
     return match ? normalizeWords(match[1]) : null;
 }
 
-function pickNamedVersions(cards, title) {
+function pickNamedVersions(cards: CardRecord[], title: string): CardRecord[] {
     if (cards.length <= 1) return cards;
 
     const text = normalizeWords(title);
-    const named = cards.filter((card) => versionTag(card.name) && text.includes(versionTag(card.name)));
+    const named = cards.filter((card) => {
+        const tag = versionTag(card.name);
+        return tag !== null && text.includes(tag);
+    });
 
     if (named.length > 0) return named;
 
@@ -404,7 +454,7 @@ function pickNamedVersions(cards, title) {
 
 // One card as it appears across a family of database records, with every
 // printing tagged by the record it came from.
-function mergeFamily(records) {
+function mergeFamily(records: CardRecord[]): PricedCard {
     const [first] = records;
 
     return {
@@ -426,7 +476,7 @@ function mergeFamily(records) {
 // 2) carry the original's number, and sellers often fill in the
 // original's set too. The title gives them away. Each marker is fine
 // only when the listed set is one it belongs to; null means never.
-const REPRINT_MARKERS = [
+const REPRINT_MARKERS: [RegExp, string[] | null][] = [
     [/\bcelebrations?\b/, ["celebration"]],
     [/\bclassic collection\b/, ["classic collection", "celebration"]],
     [/\b\d+(st|nd|rd|th) anniversary\b/, ["celebration", "classic collection", "anniversary"]],
@@ -444,7 +494,7 @@ const TITLE_NUMBERS = /\b(\d{1,3})\s*\/\s*(\d{1,3})\b/g;
 
 // The title contradicting the item details: a reprint marker for
 // another set, or a card number that isn't the listed one.
-export function titleContradiction(title, setName, cardNumber) {
+export function titleContradiction(title: string, setName: string | null, cardNumber: string | null): string | null {
     const text = normalizeText(title);
     // The whole set name: normalizeSetName drops prefixes like "Celebrations:".
     const setKey = normalizeWords(setName);
@@ -471,11 +521,15 @@ export function titleContradiction(title, setName, cardNumber) {
 // Builds the canonical identity for a listing. lookupCards returns
 // candidate card records from a price database; it's passed in so tests
 // can supply their own.
-export async function identifyCard(listing, photoCheck, { lookupCards }) {
+export async function identifyCard(
+    listing: IdentityListing,
+    photoCheck: IdentityPhotos,
+    { lookupCards }: { lookupCards: LookupCards }
+): Promise<{ identity: IdentityDraft; card: PricedCard | null }> {
     const aspects = listing.aspects ?? {};
     const listedName = aspects["Card Name"] ?? aspects.Character ?? photoCheck.printedName ?? null;
 
-    const identity = {
+    const identity: IdentityDraft = {
         status: "NEEDS_REVIEW",
         name: null,
         set: aspects.Set ?? null,
@@ -494,7 +548,7 @@ export async function identifyCard(listing, photoCheck, { lookupCards }) {
         reasons: [],
     };
 
-    const needsReview = (reason, card = null) => {
+    const needsReview = (reason: string, card: PricedCard | null = null) => {
         identity.reasons.push(reason);
         return { identity, card };
     };
@@ -521,7 +575,7 @@ export async function identifyCard(listing, photoCheck, { lookupCards }) {
         );
     }
 
-    let candidates;
+    let candidates: CardRecord[];
 
     try {
         candidates = await lookupCards({
@@ -530,7 +584,7 @@ export async function identifyCard(listing, photoCheck, { lookupCards }) {
             cardNumber: identity.listedCardNumber,
         });
     } catch (error) {
-        return needsReview(`The card lookup failed: ${error.message}`);
+        return needsReview(`The card lookup failed: ${(error as Error).message}`);
     }
 
     // The database never decides what the card is: every record has to
@@ -562,7 +616,7 @@ export async function identifyCard(listing, photoCheck, { lookupCards }) {
 
     const card = mergeFamily(matches);
     const setKey = normalizeSetName(identity.set);
-    const pricier = (v) => v.printing === "FIRST_EDITION" || v.printing === "SHADOWLESS";
+    const pricier = (v: { printing: PrintingOrUnknown }) => v.printing === "FIRST_EDITION" || v.printing === "SHADOWLESS";
 
     identity.name = card.name;
     identity.cardNumber = card.cardNumber;
@@ -577,25 +631,25 @@ export async function identifyCard(listing, photoCheck, { lookupCards }) {
     // Shadowless printing, that makes the card Unlimited. In Base Set it
     // doesn't settle Unlimited versus Shadowless.
     const labelNamesNone =
-        Boolean(slab?.labelText) && printingClaimFromText(slab.labelText) === "NOT_STATED";
-    let label = slab?.labelText ? printingClaimFromText(slab.labelText) : "NOT_STATED";
+        Boolean(slab?.labelText && printingClaimFromText(slab.labelText) === "NOT_STATED");
+    let label: PrintingClaim = slab?.labelText ? printingClaimFromText(slab.labelText) : "NOT_STATED";
 
     if (labelNamesNone && !shadowMatters) {
         label = "UNLIMITED";
     }
 
-    let photo = photoPrinting(photoCheck.printingMarks, { shadowMatters });
+    let photo: PrintingOrUnknown = photoPrinting(photoCheck.printingMarks, { shadowMatters });
     let photoSource = "photos";
 
     // Inside a slab the stamp and shadow can be hard to see, but graders
     // print 1st Edition and Shadowless on the label. A legible label that
     // names neither marks the Unlimited printing.
-    if (photo === "UNKNOWN" && slab?.labelText && (label === "NOT_STATED" || PRINTINGS.includes(label))) {
+    if (photo === "UNKNOWN" && slab?.labelText && label !== "CONFLICTING") {
         photo = label === "NOT_STATED" ? "UNLIMITED" : label;
         photoSource = "slab label";
     }
 
-    identity.evidence = {
+    const evidence = {
         title: printingClaimFromText(listing.title),
         itemSpecifics: printingClaimFromText(aspectText(aspects, /edition|feature|print/i)),
         label,
@@ -603,19 +657,20 @@ export async function identifyCard(listing, photoCheck, { lookupCards }) {
         photoSource,
         photoNotes: photoCheck.printingMarks?.evidence ?? [],
     };
+    identity.evidence = evidence;
 
     identity.finish = resolveFinish(
         finishClaimFromText(aspectText(aspects, /finish|feature/i)),
         finishClaimFromText(listing.title)
     );
 
-    const printing = resolvePrinting(identity.evidence, {
+    const printing = resolvePrinting(evidence, {
         hasEditions: identity.hasEditions,
         setName: identity.set,
     });
 
     if (printing.status !== "ACCEPTED") {
-        return needsReview(printing.reason, card);
+        return needsReview(printing.reason ?? "The printing couldn't be settled.", card);
     }
 
     if (labelNamesNone && printing.printing === "FIRST_EDITION") {
@@ -635,9 +690,12 @@ export async function identifyCard(listing, photoCheck, { lookupCards }) {
 
     if (holders.length === 1) {
         const record = card.records.find((r) => r.id === holders[0]);
-        identity.set = record.setName;
-        identity.recordId = record.id;
-        identity.tcgPlayerId = record.tcgPlayerId ?? null;
+
+        if (record) {
+            identity.set = record.setName;
+            identity.recordId = record.id;
+            identity.tcgPlayerId = record.tcgPlayerId ?? null;
+        }
     }
 
     identity.printingLabel = printingLabel(identity.printing, identity.set);

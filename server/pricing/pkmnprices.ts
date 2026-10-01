@@ -1,14 +1,8 @@
-import { readCache, writeCache } from "./cache.js";
-import {
-    finishOfVariant,
-    mapVariantPrintings,
-    normalizeSetName,
-    normalizeWords,
-    sameCardNumber,
-    sameSetFamily,
-    setSearchTerm,
-} from "../identity/card-identity.js";
-import { conditionOf } from "./raw-prices.js";
+import { readCache, writeCache } from "./cache.ts";
+import { normalizeWords, sameCardNumber, sameSetFamily, setSearchTerm } from "../identity/card-identity.ts";
+import { conditionOf } from "./raw-prices.ts";
+import { cardNumberOf, cardVariants } from "./records.ts";
+import type { CardRecord, Comp, FetchComps, LookupCards } from "./types.ts";
 import { createLimiter } from "../lib/concurrency.ts";
 
 // pkmnprices.com: TCGplayer prices by printing and condition, and
@@ -25,9 +19,12 @@ const RETRY_WAITS_MS = [5_000, 15_000, 30_000, 60_000];
 
 const limit = createLimiter(MAX_IN_FLIGHT);
 
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function apiGet(path, maxAgeHours = DAY) {
+// pkmnprices responses are read field by field where they're used.
+type ApiBody = any;
+
+async function apiGet(path: string, maxAgeHours = DAY): Promise<ApiBody> {
     const cached = await readCache(`pkmnprices:${path}`, maxAgeHours);
 
     if (cached) return cached;
@@ -57,7 +54,7 @@ async function apiGet(path, maxAgeHours = DAY) {
     }
 }
 
-async function finish(path, response, body) {
+async function finish(path: string, response: Response, body: ApiBody): Promise<ApiBody> {
     if (!response.ok) {
         throw new Error(
             `pkmnprices request failed (${response.status}): ${body.error?.message ?? "unknown error"}`
@@ -69,48 +66,61 @@ async function finish(path, response, body) {
     return body;
 }
 
+interface PkmnPrice {
+    currency?: string;
+    variant: string;
+    condition: string;
+    market_price: number;
+    created_at?: string;
+}
+
+interface PkmnCard {
+    id: number;
+    name: string;
+    number: string;
+    total_set_number?: string | null;
+    tcg_player_id?: number | null;
+    set?: { id: number; name: string };
+    prices?: PkmnPrice[];
+}
+
 // A pkmnprices card in the shape identity and pricing expect.
-export function toCardRecord(detail) {
+export function toCardRecord(detail: PkmnCard): CardRecord {
     const usd = (detail.prices ?? []).filter((price) => (price.currency ?? "USD") === "USD");
-    const names = [...new Set(usd.map((price) => price.variant))];
-    const printings = mapVariantPrintings(names, detail.set?.name);
 
     return {
         source: "pkmnprices",
         id: detail.id,
         name: detail.name,
         setName: detail.set?.name ?? null,
-        cardNumber: detail.total_set_number
-            ? `${detail.number}/${detail.total_set_number}`
-            : detail.number,
+        cardNumber: cardNumberOf(detail),
         tcgPlayerId: detail.tcg_player_id ?? null,
-        variants: names.map((name) => ({
-            name,
-            printing: printings[name],
-            finish: finishOfVariant(name),
-            prices: usd
-                .filter((price) => price.variant === name)
+        variants: cardVariants([...new Set(usd.map((price) => price.variant))], detail.set?.name, (label) =>
+            usd
+                .filter((price) => price.variant === label)
                 .map((price) => ({
                     condition: conditionOf(price.condition),
                     price: price.market_price,
                     updatedAt: price.created_at ?? null,
-                })),
-        })),
+                }))
+        ),
     };
 }
 
 // Candidate cards for a listing: every set in the listing's set family,
 // narrowed by name and number before the per-card price lookups.
-export async function lookupCards({ set, name, cardNumber }) {
+export const lookupCards: LookupCards = async ({ set, name, cardNumber }) => {
 
     const sets = await apiGet(
         `/sets?${new URLSearchParams({ name: setSearchTerm(set), language: "English", per_page: "50" })}`,
         DAY * 7
     );
 
-    const familySets = (sets.data ?? []).filter((s) => sameSetFamily(s.name, set));
+    const familySets: { id: number; name: string }[] = (sets.data ?? []).filter((s: { name: string }) =>
+        sameSetFamily(s.name, set)
+    );
     const nameTerm = normalizeWords(name).replace(/\bholo\b/g, "").trim();
-    const cards = [];
+    const cards: CardRecord[] = [];
 
     for (const familySet of familySets) {
         const list = await apiGet(
@@ -118,11 +128,7 @@ export async function lookupCards({ set, name, cardNumber }) {
         );
 
         for (const item of list.data ?? []) {
-            const number = item.total_set_number
-                ? `${item.number}/${item.total_set_number}`
-                : item.number;
-
-            if (!sameCardNumber(number, cardNumber)) continue;
+            if (!sameCardNumber(cardNumberOf(item), cardNumber)) continue;
 
             const detail = await apiGet(`/cards/${item.id}?currency=usd`);
             cards.push(toCardRecord(detail));
@@ -130,10 +136,10 @@ export async function lookupCards({ set, name, cardNumber }) {
     }
 
     return cards;
-}
+};
 
 // One page of recent graded eBay sales for a card record and printing.
-export async function fetchComps(recordId, { grader, grade, variant }) {
+export const fetchComps: FetchComps = async (recordId, { grader, grade, variant }) => {
     const params = new URLSearchParams({
         graded: "true",
         grader,
@@ -146,5 +152,5 @@ export async function fetchComps(recordId, { grader, grade, variant }) {
 
     const body = await apiGet(`/cards/${recordId}/listings/ebay?${params}`);
 
-    return body.data ?? [];
-}
+    return (body.data ?? []) as Comp[];
+};

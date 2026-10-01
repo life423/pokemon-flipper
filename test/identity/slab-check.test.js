@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkSlab, graderCode, normalizeGrade } from "../../server/identity/slab-check.js";
+import { checkSlab, graderCode, normalizeGrade } from "../../server/identity/slab-check.ts";
 
 const slabPhotos = (overrides = {}) => ({
     slab: {

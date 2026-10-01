@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canPrice, rawPricesFor } from "../../server/pricing/raw-prices.js";
-import { toCardRecord } from "../../server/pricing/pkmnprices.js";
-import { fromPokemonPriceTracker } from "../../server/pricing/price-tracker.js";
+import { canPrice, rawPricesFor } from "../../server/pricing/raw-prices.ts";
+import { toCardRecord } from "../../server/pricing/pkmnprices.ts";
+import { fromPokemonPriceTracker } from "../../server/pricing/price-tracker.ts";
 
 const usd = (variant, condition, price) => ({
     currency: "USD",

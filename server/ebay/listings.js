@@ -1,4 +1,4 @@
-import { exclusionReason } from "./filters.js";
+import { exclusionReason } from "./filters.ts";
 
 // eBay Browse API: reads public listings with an application
 // token (client credentials). No eBay user ever signs in.

@@ -13,9 +13,9 @@ import {
     printingLabel,
     normalizeSetName,
     sameSetFamily,
-} from "../../server/identity/card-identity.js";
-import { rawPricesFor } from "../../server/pricing/raw-prices.js";
-import { toCardRecord } from "../../server/pricing/pkmnprices.js";
+} from "../../server/identity/card-identity.ts";
+import { rawPricesFor } from "../../server/pricing/raw-prices.ts";
+import { toCardRecord } from "../../server/pricing/pkmnprices.ts";
 
 const usd = (variant, condition, price) => ({
     currency: "USD",

@@ -1,10 +1,11 @@
-import { normalizeText } from "../ebay/filters.js";
+import type { Slab, SlabReading } from "../../shared/types.ts";
+import { normalizeText } from "../ebay/filters.ts";
 
 // What the photos show about a slab, checked against the listing's item
 // details. The label is the grader's own record, so a slab only passes
 // when its label is readable and nothing disagrees with it.
 
-const GRADER_PATTERNS = [
+const GRADER_PATTERNS: [RegExp, string][] = [
     [/\bpsa\b|professional sports authenticator/, "PSA"],
     [/\bcgc\b|certified guaranty/, "CGC"],
     [/\bbgs\b|beckett/, "BGS"],
@@ -12,13 +13,13 @@ const GRADER_PATTERNS = [
     [/\btag\b/, "TAG"],
 ];
 
-const CERT_URLS = {
+const CERT_URLS: Record<string, (cert: string) => string> = {
     PSA: (cert) => `https://www.psacard.com/cert/${cert}`,
     CGC: (cert) => `https://www.cgccards.com/certlookup/${cert}/`,
 };
 
 // "Professional Sports Authenticator (PSA)" and "PSA" are both PSA.
-export function graderCode(text) {
+export function graderCode(text: unknown): string | null {
     const value = normalizeText(text);
 
     if (!value) return null;
@@ -28,22 +29,25 @@ export function graderCode(text) {
 }
 
 // "MINT 9", "9", "GEM MT 10", and "8.5" become "9", "10", and "8.5".
-export function normalizeGrade(text) {
+export function normalizeGrade(text: unknown): string | null {
     const match = String(text ?? "").match(/\b(10|[1-9](?:\.5)?)\b/);
     return match ? match[1] : null;
 }
 
-function digits(text) {
+function digits(text: unknown): string | null {
     const value = String(text ?? "").replace(/\D/g, "");
     return value || null;
 }
 
-function qualifierOf(text) {
+function qualifierOf(text: unknown): string | null {
     const value = String(text ?? "").trim();
     return /^(none|n\/a|null)?$/i.test(value) ? null : value;
 }
 
-export function checkSlab(photoCheck, aspects = {}) {
+export function checkSlab(
+    photoCheck: { slab?: SlabReading | null },
+    aspects: Record<string, string> = {}
+): Slab {
     const slab = photoCheck.slab;
 
     if (!slab?.present) {
@@ -65,7 +69,7 @@ export function checkSlab(photoCheck, aspects = {}) {
     const grade = normalizeGrade(slab.grade);
     const gradeQualifier = qualifierOf(slab.gradeQualifier);
     const labelCert = digits(slab.certNumber);
-    const reasons = [];
+    const reasons: string[] = [];
 
     if (!grader) reasons.push("The grading company on the label couldn't be read.");
     if (!grade) reasons.push("The grade on the label couldn't be read.");

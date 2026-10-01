@@ -6,12 +6,13 @@ import { DATA_DIR } from "../lib/paths.js";
 // Saved API responses, so the same lookup isn't paid for twice in a day.
 const CACHE_DIR = path.join(DATA_DIR, "price-cache");
 
-function cacheFile(key) {
+function cacheFile(key: string): string {
     const name = createHash("sha1").update(key).digest("hex");
     return path.join(CACHE_DIR, `${name}.json`);
 }
 
-export async function readCache(key, maxAgeHours) {
+// T is what was saved; the caller knows its shape.
+export async function readCache<T = any>(key: string, maxAgeHours: number): Promise<T | null> {
     try {
         const saved = JSON.parse(await fs.readFile(cacheFile(key), "utf8"));
         const ageHours = (Date.now() - Date.parse(saved.savedAt)) / 3600000;
@@ -21,7 +22,7 @@ export async function readCache(key, maxAgeHours) {
     }
 }
 
-export async function writeCache(key, data) {
+export async function writeCache(key: string, data: unknown): Promise<void> {
     await fs.mkdir(CACHE_DIR, { recursive: true });
     await fs.writeFile(
         cacheFile(key),

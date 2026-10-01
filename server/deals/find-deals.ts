@@ -1,5 +1,5 @@
 import { getListings, getListingDetails } from "../ebay/listings.js";
-import { lookupCards, fetchComps } from "../pricing/pkmnprices.js";
+import { lookupCards, fetchComps } from "../pricing/pkmnprices.ts";
 import { mapLimit } from "../lib/concurrency.ts";
 import { prescreen } from "./prescreen.ts";
 import type { ListingSummary, Screen } from "../../shared/types.ts";

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { exclusionReason, searchTerms } from "../../server/ebay/filters.js";
+import { exclusionReason, searchTerms } from "../../server/ebay/filters.ts";
 
 // Titles below are real eBay listings from a "charizard" search.
 const single = (title, itemId = "v1|111|0") => ({ title, itemId });
