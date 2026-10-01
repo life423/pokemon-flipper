@@ -1,5 +1,4 @@
 .shell {
-    container: app / inline-size;
     min-height: 100dvh;
 }
 
@@ -173,7 +172,7 @@
 }
 
 /* Wide enough for the analysis to sit beside the results. */
-@container app (min-width: 64rem) {
+@media (min-width: 64rem) {
     .layout:has(> aside) {
         grid-template-columns: minmax(0, 1fr) min(34rem, 42%);
     }

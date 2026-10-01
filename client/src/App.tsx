@@ -444,6 +444,8 @@ export function App() {
 
                 {selected && (
                     <DetailPanel
+                        // A new listing opens at the top of the panel.
+                        key={selected.id}
                         listing={selected}
                         analysis={analyses[selected.id]}
                         now={now}

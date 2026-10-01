@@ -22,11 +22,14 @@
     background: rgb(0 0 0 / 0.55);
 }
 
-@container app (min-width: 64rem) {
+/* A screen-width query, not a container query: a container would become
+   the box the fixed bottom sheet positions against, instead of the screen. */
+@media (min-width: 64rem) {
     .panel {
         position: sticky;
-        top: 0;
+        /* After inset, which would otherwise reset top and stop the sticking. */
         inset: auto;
+        top: 0;
         height: 100dvh;
         max-height: none;
         border-top: 0;
