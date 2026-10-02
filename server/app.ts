@@ -113,6 +113,16 @@ if (isProduction) {
     app.use(vite.middlewares);
 }
 
+// Ctrl+C, or tsx restarting the server after an edit: close every open
+// connection (an open browser tab keeps a live-reload one) and exit right
+// away, instead of waiting on them.
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.once(signal, () => {
+        server.closeAllConnections();
+        process.exit(0);
+    });
+}
+
 server.on("error", (error) => {
     console.error(`Couldn't start on port ${PORT}: ${error.message}`);
     process.exit(1);
