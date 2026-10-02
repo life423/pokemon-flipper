@@ -149,6 +149,24 @@ export function App() {
     const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
     const [kindFilter, setKindFilter] = useState<KindFilter>("all");
     const [maxPrice, setMaxPrice] = useState("");
+    // Buy It Now only: auctions start low on purpose. Remembered between visits.
+    const [minPrice, setMinPrice] = useState(() => {
+        try {
+            return localStorage.getItem("minPrice") ?? "";
+        } catch {
+            return "";
+        }
+    });
+
+    function changeMinPrice(text: string) {
+        setMinPrice(text);
+
+        try {
+            localStorage.setItem("minPrice", text);
+        } catch {
+            // Without storage the setting lasts for this visit.
+        }
+    }
 
     const [autoSetting, setAutoSetting] = useState(readAutoSetting);
     const [resultsSetting, setResultsSetting] = useState(readResultsSetting);
@@ -283,7 +301,7 @@ export function App() {
         setSearchStatus("checking");
 
         try {
-            await streamDeals(query, resultsSetting, (message) => {
+            await streamDeals(query, { maxResults: resultsSetting, minPrice: Number(minPrice) || 0 }, (message) => {
                 if (searchId.current !== id) return;
                 if (message.type === "start") {
                     setTotal(message.count);
@@ -339,6 +357,7 @@ export function App() {
 
     const filtered = useMemo(() => {
         const limit = maxPrice === "" ? Infinity : Number(maxPrice);
+        const floor = Number(minPrice) || 0;
 
         return listings
             // Another set, card, or printing than the one searched for, including
@@ -347,8 +366,9 @@ export function App() {
             .filter((listing) => typeFilter === "all" || listing.buyingOption === typeFilter)
             .filter((listing) => kindFilter === "all" || listing.isGraded === (kindFilter === "graded"))
             .filter((listing) => (listing.currentPrice ?? 0) <= limit)
+            .filter((listing) => listing.buyingOption !== "FIXED_PRICE" || (listing.currentPrice ?? 0) >= floor)
             .filter((listing) => !listing.endTime || Date.parse(listing.endTime) > now);
-    }, [listings, typeFilter, kindFilter, maxPrice, now]);
+    }, [listings, typeFilter, kindFilter, maxPrice, minPrice, now]);
 
     const groups = useMemo(() => {
         const deals: ListingSummary[] = [];
@@ -419,7 +439,9 @@ export function App() {
     const selected = listings.find((listing) => listing.id === selectedId) ?? null;
 
     // Filters narrowing the results, shown as a count on the Filters button.
-    const activeFilters = [typeFilter !== "all", kindFilter !== "all", maxPrice !== "", sort !== "best"].filter(Boolean).length;
+    const activeFilters = [typeFilter !== "all", kindFilter !== "all", maxPrice !== "", minPrice !== "", sort !== "best"].filter(
+        Boolean
+    ).length;
     const close = useCallback(() => setSelectedId(null), []);
     const budgetLeft = budget - autoQueued.current.size;
 
@@ -539,6 +561,20 @@ export function App() {
                                                     ]}
                                                 />
                                             </div>
+                                            <label className={styles.field}>
+                                                <span>Min price, Buy It Now only</span>
+                                                <span className={styles.affix}>
+                                                    <span>$</span>
+                                                    <input
+                                                        type="number"
+                                                        inputMode="decimal"
+                                                        min="0"
+                                                        value={minPrice}
+                                                        onChange={(event) => changeMinPrice(event.target.value)}
+                                                        placeholder="Any"
+                                                    />
+                                                </span>
+                                            </label>
                                             <label className={styles.field}>
                                                 <span>Max price</span>
                                                 <span className={styles.affix}>

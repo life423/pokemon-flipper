@@ -30,10 +30,10 @@ export type DealsMessage =
 // a time so the page fills in while the first, slower search runs.
 export async function streamDeals(
     query: string,
-    maxResults: number,
+    { maxResults, minPrice }: { maxResults: number; minPrice: number },
     onMessage: (message: DealsMessage) => void
 ): Promise<void> {
-    const response = await reach(`/api/deals?q=${encodeURIComponent(query)}&max=${maxResults}`);
+    const response = await reach(`/api/deals?q=${encodeURIComponent(query)}&max=${maxResults}&min=${minPrice}`);
 
     if (!response.ok || !response.body) {
         throw new Error(`Search failed (${response.status})`);

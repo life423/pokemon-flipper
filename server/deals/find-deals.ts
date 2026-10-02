@@ -164,10 +164,13 @@ export async function findDeals(
         onStart = () => {},
         onListing = () => {},
         maxResults = DEFAULT_RESULTS,
+        minPrice = 0,
     }: {
         onStart?: (summary: SearchSummary) => void;
         onListing?: (listing: ListingSummary) => void;
         maxResults?: number;
+        // Buy It Now listings under this are skipped; auctions aren't affected.
+        minPrice?: number;
     } = {}
 ): Promise<ListingSummary[]> {
     const intent = await readSearch(search);
@@ -178,7 +181,10 @@ export async function findDeals(
 
     const live = listings.filter((listing) => !listing.endTime || Date.parse(listing.endTime) > now);
     const matching = live.filter(
-        (listing) => titleMatches(listing.title, intent) && gradingMatches(listing.isGraded, intent)
+        (listing) =>
+            titleMatches(listing.title, intent) &&
+            gradingMatches(listing.isGraded, intent) &&
+            !(listing.buyingOption === "FIXED_PRICE" && (listing.currentPrice ?? 0) < minPrice)
     );
 
     onStart({ total, found: live.length, count: matching.length, skipped, intent });

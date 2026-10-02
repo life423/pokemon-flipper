@@ -70,6 +70,7 @@ app.get("/api/deals", async (req, res) => {
     try {
         await findDeals(searchText(req), {
             maxResults: Number(req.query.max) || undefined,
+            minPrice: Number(req.query.min) || 0,
             onStart: (summary) => send({ type: "start", ...summary }),
             onListing: (listing) => send({ type: "listing", listing }),
         });
