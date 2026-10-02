@@ -759,6 +759,10 @@
         border: 0;
     }
 
+    .controlPanel[data-idle] {
+        display: none;
+    }
+
     /* Compact tabs, so four fit across a phone. */
     .controlPanel .segmented button {
         min-height: 42px;
@@ -902,6 +906,53 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-2);
+}
+
+/* Quick picks under the empty state: recent searches, or starters. */
+.quickPicks {
+    display: grid;
+    justify-items: center;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+}
+
+.quickPicks p {
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+}
+
+.quickChips {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--space-2);
+    max-width: 28rem;
+}
+
+.quickChip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: var(--tap);
+    padding: 0 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    cursor: pointer;
+    animation: chip-in var(--dur-base) var(--ease-out) backwards;
+}
+
+.quickChip svg {
+    color: var(--text-muted);
+}
+
+@media (hover: hover) {
+    .quickChip:hover {
+        border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+        background: var(--surface-alt);
+    }
 }
 
 /* Which controls show where: tabs and targets need a wide screen. */

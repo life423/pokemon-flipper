@@ -39,6 +39,22 @@ type View = "deals" | "candidates" | "longShots" | "review" | "hidden" | "all";
 // Long shots come late: auctions unlikely to end at a profitable price.
 const VIEWS: View[] = ["deals", "candidates", "review", "hidden", "longShots", "all"];
 
+// Recent searches, newest first, offered before the next search.
+const RECENT_KEY = "recentSearches";
+const RECENT_LIMIT = 6;
+
+// Offered before there are recent searches.
+const STARTER_SEARCHES = ["1999 charizard", "neo genesis lugia", "base set blastoise", "dark charizard team rocket"];
+
+function readRecentSearches(): string[] {
+    try {
+        const saved = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
+        return Array.isArray(saved) ? saved.filter((item): item is string => typeof item === "string") : [];
+    } catch {
+        return [];
+    }
+}
+
 // Shorter tab names where phones need the room.
 const VIEW_SHORT: Partial<Record<View, string>> = { hidden: "Hidden" };
 const VIEW_ICONS: Record<View, ReactNode> = {
@@ -394,15 +410,41 @@ export function App() {
         refreshUsage();
     }
 
-    async function search(event: FormEvent) {
-        event.preventDefault();
+    const [recentSearches, setRecentSearches] = useState<string[]>(readRecentSearches);
+
+    function rememberSearch(text: string) {
+        const trimmed = text.trim();
+
+        setRecentSearches((previous) => {
+            const next = [trimmed, ...previous.filter((item) => item.toLowerCase() !== trimmed.toLowerCase())].slice(
+                0,
+                RECENT_LIMIT
+            );
+
+            try {
+                localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+            } catch {
+                // Without storage they last for this visit.
+            }
+
+            return next;
+        });
+    }
+
+    // From the search box, or a quick pick with its own text.
+    async function search(event?: FormEvent, text = query) {
+        event?.preventDefault();
+
+        if (!text.trim()) return;
+
 
         const id = ++searchId.current;
         searchAbort.current?.abort();
         const controller = new AbortController();
         searchAbort.current = controller;
         setStopped(false);
-        lastQuery.current = query;
+        lastQuery.current = text;
+        rememberSearch(text);
         setDigStatus("idle");
         setDigTotal(0);
         setDigError(null);
@@ -417,7 +459,7 @@ export function App() {
         setSearchStatus("checking");
 
         try {
-            await streamDeals(query, { maxResults: resultsSetting, minPrice: Number(minPrice) || 0, signal: controller.signal }, (message) => {
+            await streamDeals(text, { maxResults: resultsSetting, minPrice: Number(minPrice) || 0, signal: controller.signal }, (message) => {
                 if (searchId.current !== id) return;
                 if (message.type === "start") {
                     setTotal(message.count);
@@ -911,7 +953,8 @@ export function App() {
                             </form>
                         </div>
 
-                        <div className={styles.controlPanel}>
+                        {/* Before the first search there's nothing to count, so phones skip the tabs. */}
+                        <div className={styles.controlPanel} data-idle={searchStatus === "idle" || undefined}>
                             <div className={styles.controlRow}>
                                 {/* Every view: tabs on wide screens, a scrolling strip on phones. */}
                                 <div className={styles.tabs}>
@@ -1138,7 +1181,30 @@ export function App() {
                         />
                     )}
 
-                    {searchStatus === "idle" && <EmptyState />}
+                    {searchStatus === "idle" && (
+                        <EmptyState>
+                            {/* One tap to a search: recent ones, or a few to start with. */}
+                            <div className={styles.quickPicks}>
+                                <p>{recentSearches.length > 0 ? "Recent searches" : "Try a search"}</p>
+                                <div className={styles.quickChips}>
+                                    {(recentSearches.length > 0 ? recentSearches : STARTER_SEARCHES).map((text) => (
+                                        <button
+                                            key={text}
+                                            type="button"
+                                            className={styles.quickChip}
+                                            onClick={() => {
+                                                setQuery(text);
+                                                void search(undefined, text);
+                                            }}
+                                        >
+                                            {recentSearches.length > 0 ? <ClockIcon /> : <SearchIcon />}
+                                            {text}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </EmptyState>
+                    )}
 
                     {searchStatus !== "idle" &&
                         searchStatus !== "error" &&
