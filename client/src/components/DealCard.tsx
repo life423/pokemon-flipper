@@ -5,6 +5,7 @@ import { dollars, timeLeft } from "../format";
 import { ceilingLabel } from "../../../shared/format.ts";
 import { offerFor, offerWorthMaking } from "../../../shared/money/offer.ts";
 import { bargainScore, bargainSignals } from "../../../shared/signals.ts";
+import { yearOf } from "../../../shared/sets.ts";
 import { ChevronIcon } from "./Icons";
 import { Tween } from "./Tween";
 import styles from "./DealCard.module.css";
@@ -18,6 +19,8 @@ interface Props {
     selected: boolean;
     now: number;
     onOpen: () => void;
+    // Release years by set, for the subtitle.
+    years: Record<string, number>;
 }
 
 // How Dig deeper found it, in a word or two.
@@ -42,7 +45,7 @@ function signed(value: number | null): string {
     return value < 0 ? `\u2212${dollars(-value)}` : `+${dollars(value)}`;
 }
 
-export function DealCard({ listing, analysis, selected, now, onOpen, index = 0, transitionName }: Props) {
+export function DealCard({ listing, analysis, selected, now, onOpen, years, index = 0, transitionName }: Props) {
     const evaluation = analysis?.status === "done" ? analysis.evaluation : null;
     const underwriting = evaluation?.underwriting ?? null;
     const best = underwriting?.best ?? null;
@@ -86,7 +89,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen, index = 0, 
     const card = evaluation?.identity ?? screen?.card ?? null;
     const name = card?.name ? [card.name, card.cardNumber].filter(Boolean).join(" ") : listing.title;
     const subtitle = card?.name
-        ? [card.set, card.printingLabel].filter(Boolean).join(" \u00b7 ")
+        ? [card.set, yearOf(years, card.set), card.printingLabel].filter(Boolean).join(" \u00b7 ")
         : listing.isGraded
           ? "Graded"
           : "Raw";

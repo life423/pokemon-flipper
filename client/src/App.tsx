@@ -6,7 +6,7 @@ import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.t
 import { offerFor, offerWorthMaking } from "../../shared/money/offer.ts";
 import { bargainScore, bargainSignals } from "../../shared/signals.ts";
 import { name } from "./format";
-import { evaluateListing, fetchEbayUsage, streamDeals, streamDig, type DealsMessage } from "./api";
+import { evaluateListing, fetchEbayUsage, fetchSetYears, streamDeals, streamDig, type DealsMessage } from "./api";
 import { DealCard } from "./components/DealCard";
 import { Drawer } from "./components/Drawer";
 import { EmptyState } from "./components/EmptyState";
@@ -233,6 +233,17 @@ export function App() {
     const lastQuery = useRef("");
     const [searchStatus, setSearchStatus] = useState<"idle" | "checking" | "done" | "error">("idle");
     const [searchError, setSearchError] = useState("");
+    // Release years by set, loaded once, for the cards' subtitles.
+    const [setYearsByKey, setSetYearsByKey] = useState<Record<string, number>>({});
+
+    useEffect(() => {
+        fetchSetYears()
+            .then(setSetYearsByKey)
+            .catch(() => {
+                // Without them the cards just show no year.
+            });
+    }, []);
+
     const searchId = useRef(0);
     // Stops the running search's stream; the server stops checking with it.
     const searchAbort = useRef<AbortController | null>(null);
@@ -1146,6 +1157,7 @@ export function App() {
                                 // The first screenfuls glide when you sort or filter.
                                 transitionName={index < 24 ? transitionName(listing.id) : undefined}
                                 analysis={analyses[listing.id]}
+                                years={setYearsByKey}
                                 selected={listing.id === selectedId}
                                 now={now}
                                 onOpen={() => {

@@ -1,3 +1,4 @@
+import { setYears } from "./pricing/price-tracker.ts";
 import "dotenv/config";
 import http from "node:http";
 import path from "node:path";
@@ -131,6 +132,16 @@ app.post("/api/listings/:id/evaluate", async (req, res) => {
                 ? "Listing not found or no longer available"
                 : "Listing evaluation failed",
         });
+    }
+});
+
+// Each set's release year, for the cards' subtitles. Saved for a month.
+app.get("/api/set-years", async (req, res) => {
+    try {
+        res.json(await setYears());
+    } catch (error) {
+        console.error(error);
+        res.json({});
     }
 });
 

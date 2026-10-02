@@ -116,3 +116,8 @@ export function evaluateListing(listing: ListingSummary, { fresh = false } = {})
         }),
     });
 }
+
+// Each set's release year, by set key (shared/sets.ts).
+export function fetchSetYears(): Promise<Record<string, number>> {
+    return request("/api/set-years");
+}
