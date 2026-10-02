@@ -8,6 +8,7 @@ import { evaluateListing } from "./analysis/evaluate.ts";
 import { EbayError } from "./ebay/api.ts";
 import { ebayUsage, EbayBudgetError } from "./ebay/usage.ts";
 import { writeOfferNote } from "./ai/offer-note.ts";
+import { digDeeper } from "./deals/dig.ts";
 import type { CurrentState } from "./analysis/evaluate.ts";
 
 const app = express();
@@ -78,6 +79,28 @@ app.get("/api/deals", async (req, res) => {
     } catch (error) {
         console.error(error);
         send({ type: "error", error: error instanceof EbayBudgetError ? error.message : "Failed to screen listings" });
+    }
+
+    res.end();
+});
+
+// Dig deeper: the listings a plain search misses (misspelled, vague, the
+// wrong category, lots), checked by photo. Streams like a search.
+app.get("/api/dig", async (req, res) => {
+    res.setHeader("Content-Type", "application/x-ndjson");
+
+    const send = (message: object) => res.write(`${JSON.stringify(message)}\n`);
+
+    try {
+        await digDeeper(searchText(req), {
+            minPrice: Number(req.query.min) || 0,
+            onStart: (summary) => send({ type: "start", ...summary }),
+            onListing: (listing) => send({ type: "listing", listing }),
+        });
+        send({ type: "done" });
+    } catch (error) {
+        console.error(error);
+        send({ type: "error", error: error instanceof Error ? error.message : "Dig deeper failed" });
     }
 
     res.end();

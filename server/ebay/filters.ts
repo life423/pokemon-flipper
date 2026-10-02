@@ -13,6 +13,11 @@ const SEALED = /\b(booster (packs?|box(es)?)|elite trainer box(es)?|etb|sealed (
 const MERCH = /\b(plush(ie)?|stickers?|decals?|figures?|figurines?|funko|keychains?|posters?|art prints?|binders?|playmats?|deck box(es)?|coins?|pins?|burger king|topps)\b/i;
 const NOT_A_CARD = /\b(empty (slab|case|box)|(slab|case|label|flip) only|no card)\b/i;
 
+// A lot or bundle of several cards: skipped by a plain search, scanned by Dig deeper.
+export function isLot(title: string): boolean {
+    return LOT.test(normalizeText(title));
+}
+
 // Lowercase and strip accents, so "Pokémon" matches "pokemon".
 export function normalizeText(text: unknown): string {
     return String(text ?? "")
@@ -22,7 +27,10 @@ export function normalizeText(text: unknown): string {
 }
 
 // Returns why a listing should be dropped, or null to keep it.
-export function exclusionReason(item: { title: string; itemId: string; itemGroupType?: string }): string | null {
+export function exclusionReason(
+    item: { title: string; itemId: string; itemGroupType?: string },
+    { keepLots = false }: { keepLots?: boolean } = {}
+): string | null {
     const title = normalizeText(item.title);
 
     // Variation listings match on any option's name, and their
@@ -32,7 +40,7 @@ export function exclusionReason(item: { title: string; itemId: string; itemGroup
         return "Pick-your-card listing with several cards";
     }
 
-    if (LOT.test(title)) return "Lot or bundle";
+    if (LOT.test(title) && !keepLots) return "Lot or bundle";
     if (DIGITAL.test(title)) return "Digital item";
     if (FAKE.test(title)) return "Proxy, custom, or replica";
     if (PICK_OR_MYSTERY.test(title)) return "Mystery or pick-your-card listing";

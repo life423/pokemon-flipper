@@ -5,7 +5,7 @@ import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.t
 import { offerFor, offerWorthMaking } from "../../shared/money/offer.ts";
 import { bargainScore, bargainSignals } from "../../shared/signals.ts";
 import { name } from "./format";
-import { evaluateListing, fetchEbayUsage, streamDeals, type DealsMessage } from "./api";
+import { evaluateListing, fetchEbayUsage, streamDeals, streamDig, type DealsMessage } from "./api";
 import { DealCard } from "./components/DealCard";
 import { DetailPanel } from "./components/DetailPanel";
 import { useNow } from "./useNow";
@@ -16,7 +16,7 @@ export type AnalysisState =
     | { status: "done"; evaluation: Evaluation }
     | { status: "error"; message: string };
 
-type View = "deals" | "candidates" | "longShots" | "review" | "all";
+type View = "deals" | "candidates" | "longShots" | "review" | "hidden" | "all";
 type SortKey = "best" | "bargain" | "ending" | "priceLow" | "priceHigh";
 type TypeFilter = "all" | "AUCTION" | "FIXED_PRICE";
 type KindFilter = "all" | "raw" | "graded";
@@ -146,6 +146,12 @@ export function App() {
     const [rawListings, setListings] = useState<ListingSummary[]>([]);
     const [total, setTotal] = useState<number | null>(null);
     const [summary, setSummary] = useState<SearchSummary | null>(null);
+
+    // Dig deeper: the listings the plain search missed.
+    const [digStatus, setDigStatus] = useState<"idle" | "digging" | "done">("idle");
+    const [digTotal, setDigTotal] = useState(0);
+    const [digError, setDigError] = useState<string | null>(null);
+    const lastQuery = useRef("");
     const [searchStatus, setSearchStatus] = useState<"idle" | "checking" | "done" | "error">("idle");
     const [searchError, setSearchError] = useState("");
     const searchId = useRef(0);
@@ -287,10 +293,41 @@ export function App() {
         }
     }, []);
 
+    // Misspelled, vague, wrong-category, and lot listings, checked by photo,
+    // added to this search's results as they turn up.
+    async function dig() {
+        const id = searchId.current;
+
+        setDigStatus("digging");
+        setDigTotal(0);
+        setDigError(null);
+
+        try {
+            await streamDig(lastQuery.current, Number(minPrice) || 0, (message) => {
+                if (searchId.current !== id) return;
+                if (message.type === "start") setDigTotal(message.total);
+                if (message.type === "listing") {
+                    setListings((current) =>
+                        current.some((listing) => listing.id === message.listing.id) ? current : [...current, message.listing]
+                    );
+                }
+            });
+        } catch (error) {
+            if (searchId.current === id) setDigError((error as Error).message);
+        }
+
+        if (searchId.current === id) setDigStatus("done");
+        refreshUsage();
+    }
+
     async function search(event: FormEvent) {
         event.preventDefault();
 
         const id = ++searchId.current;
+        lastQuery.current = query;
+        setDigStatus("idle");
+        setDigTotal(0);
+        setDigError(null);
 
         try {
             localStorage.setItem("searched", "1");
@@ -399,7 +436,10 @@ export function App() {
             }
         }
 
-        return { deals, candidates, longShots, review, all: filtered };
+        // Turned up by Dig deeper, whatever their verdict.
+        const hidden = filtered.filter((listing) => listing.found);
+
+        return { deals, candidates, longShots, review, hidden, all: filtered };
     }, [filtered, analyses]);
 
     const visible = useMemo(() => {
@@ -466,6 +506,7 @@ export function App() {
         candidates: "Nothing waiting for the AI.",
         longShots: "No long-shot auctions.",
         review: "Nothing needs review.",
+        hidden: "Nothing hidden found yet. Dig deeper goes looking.",
         all: "No listings match the filters.",
     };
 
@@ -498,6 +539,7 @@ export function App() {
                                     ["candidates", `Waiting ${groups.candidates.length}`],
                                     ["longShots", `Long shots ${groups.longShots.length}`],
                                     ["review", `Review ${groups.review.length}`],
+                                    ["hidden", `Hidden finds ${groups.hidden.length}`],
                                     ["all", `All ${groups.all.length}`],
                                 ]}
                             />
@@ -705,7 +747,21 @@ export function App() {
                                                 Analyze 5 more (paid)
                                             </button>
                                         )}
+                                        {searchStatus === "done" && summary?.intent.cardName && digStatus !== "digging" && (
+                                            <button type="button" className={styles.secondary} onClick={dig}>
+                                                {digStatus === "done" ? "Dig again" : "Dig deeper"}
+                                            </button>
+                                        )}
                                     </div>
+                                    {digStatus !== "idle" && (
+                                        <p className={digError ? styles.warning : undefined}>
+                                            {digError
+                                                ? digError
+                                                : digStatus === "digging"
+                                                  ? `Digging: misspelled titles, number-only titles, other categories, and lots${digTotal ? ` (${digTotal} more listings)` : ""}. The photos decide.`
+                                                  : `Dig deeper checked ${digTotal} more listings and found ${groups.hidden.length} hidden ${groups.hidden.length === 1 ? "one" : "ones"}: see Hidden finds.`}
+                                        </p>
+                                    )}
                                 </>
                             )}
                         </section>

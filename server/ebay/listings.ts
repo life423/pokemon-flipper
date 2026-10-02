@@ -5,7 +5,7 @@ import { countRequest, ebayUsage, EbayBudgetError } from "./usage.ts";
 import type { BuyingOption, ListingSummary, Seller } from "../../shared/types.ts";
 
 // Toys & Hobbies > Collectible Card Games > CCG Individual Cards
-const CCG_INDIVIDUAL_CARDS = "183454";
+export const CCG_INDIVIDUAL_CARDS = "183454";
 
 // eBay's condition IDs for ungraded and graded trading cards.
 const UNGRADED = "4000";
@@ -49,6 +49,7 @@ interface EbayItem {
     image?: { imageUrl: string };
     additionalImages?: { imageUrl: string }[];
     shippingOptions?: { shippingCost?: Amount }[];
+    categories?: { categoryId: string }[];
     seller?: { username?: string; feedbackPercentage?: string; feedbackScore?: number };
     localizedAspects?: { name: string; value: string }[];
     conditionDescriptors?: { name: string; values?: { content: string; additionalInfo?: string[] }[] }[];
@@ -122,6 +123,7 @@ function toListing(item: EbayItem): ListingSummary {
         ...rest,
         isGraded: item.conditionId === GRADED,
         bestOffer: item.buyingOptions?.includes("BEST_OFFER") ?? false,
+        categoryId: item.categories?.[0]?.categoryId,
         seller: toSeller(item.seller),
         images: photosOf(item),
         url: item.itemWebUrl,
@@ -130,9 +132,14 @@ function toListing(item: EbayItem): ListingSummary {
 
 export async function searchListings(
     search: string,
-    { maxResults = PAGE_SIZE }: { maxResults?: number } = {}
+    {
+        maxResults = PAGE_SIZE,
+        anyCategory = false,
+        keepLots = false,
+    }: { maxResults?: number; anyCategory?: boolean; keepLots?: boolean } = {}
 ): Promise<{ listings: ListingSummary[]; total: number; skipped: number }> {
-    const key = `ebay:search:${maxResults}:${normalizeText(search).trim()}`;
+    const scope = `${anyCategory ? "any" : "cards"}${keepLots ? "+lots" : ""}`;
+    const key = `ebay:search:${maxResults}:${scope}:${normalizeText(search).trim()}`;
     const saved = await readCache<{ listings: ListingSummary[]; total: number; skipped: number }>(key, SEARCH_MAX_AGE_HOURS);
 
     if (saved) return saved;
@@ -153,7 +160,8 @@ export async function searchListings(
     for (let offset = 0; offset < maxResults; offset += PAGE_SIZE) {
         const params = new URLSearchParams({
             q: `pokemon ${search}`.trim(),
-            category_ids: CCG_INDIVIDUAL_CARDS,
+            // Outside the card category, for listings filed in the wrong one.
+            ...(anyCategory ? {} : { category_ids: CCG_INDIVIDUAL_CARDS }),
             filter: `buyingOptions:{AUCTION|FIXED_PRICE},conditionIds:{${UNGRADED}|${GRADED}}`,
             limit: String(PAGE_SIZE),
             offset: String(offset),
@@ -169,7 +177,7 @@ export async function searchListings(
         for (const item of items) {
             if (seen.has(item.itemId)) continue;
 
-            if (exclusionReason(item) !== null) {
+            if (exclusionReason(item, { keepLots }) !== null) {
                 skipped += 1;
                 continue;
             }

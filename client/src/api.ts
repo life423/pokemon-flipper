@@ -28,12 +28,9 @@ export type DealsMessage =
 
 // A search with every listing screened for free, streamed one listing at
 // a time so the page fills in while the first, slower search runs.
-export async function streamDeals(
-    query: string,
-    { maxResults, minPrice }: { maxResults: number; minPrice: number },
-    onMessage: (message: DealsMessage) => void
-): Promise<void> {
-    const response = await reach(`/api/deals?q=${encodeURIComponent(query)}&max=${maxResults}&min=${minPrice}`);
+// Reads a stream of JSON lines, handing each message on as it arrives.
+async function streamLines<T extends { type: string }>(url: string, onMessage: (message: T) => void): Promise<void> {
+    const response = await reach(url);
 
     if (!response.ok || !response.body) {
         throw new Error(`Search failed (${response.status})`);
@@ -45,7 +42,6 @@ export async function streamDeals(
 
     for (;;) {
         const { done, value } = await reader.read();
-
         buffered += decoder.decode(value, { stream: !done });
 
         const lines = buffered.split("\n");
@@ -54,14 +50,32 @@ export async function streamDeals(
         for (const line of lines) {
             if (!line.trim()) continue;
 
-            const message = JSON.parse(line) as DealsMessage;
-
+            const message = JSON.parse(line) as T & { error?: string };
             if (message.type === "error") throw new Error(message.error);
             onMessage(message);
         }
 
         if (done) return;
     }
+}
+
+export function streamDeals(
+    query: string,
+    { maxResults, minPrice }: { maxResults: number; minPrice: number },
+    onMessage: (message: DealsMessage) => void
+): Promise<void> {
+    return streamLines(`/api/deals?q=${encodeURIComponent(query)}&max=${maxResults}&min=${minPrice}`, onMessage);
+}
+
+export type DigMessage =
+    | { type: "start"; total: number; queries: string[] }
+    | { type: "listing"; listing: ListingSummary }
+    | { type: "done" }
+    | { type: "error"; error: string };
+
+// Dig deeper: misspelled, vague, wrong-category, and lot listings, checked by photo.
+export function streamDig(query: string, minPrice: number, onMessage: (message: DigMessage) => void): Promise<void> {
+    return streamLines(`/api/dig?q=${encodeURIComponent(query)}&min=${minPrice}`, onMessage);
 }
 
 // A friendly note to send with a Best Offer, written fresh each time.

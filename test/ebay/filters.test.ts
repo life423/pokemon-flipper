@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { exclusionReason } from "../../server/ebay/filters.ts";
+import { exclusionReason, isLot } from "../../server/ebay/filters.ts";
 
 // Titles below are real eBay listings from a "charizard" search.
 const single = (title, itemId = "v1|111|0") => ({ title, itemId });
@@ -69,4 +69,13 @@ test("drops random-card fillers and novelty cards", () => {
     assert.equal(reason("Charizard #6 VTG Pokemon Burger King PokeTrivia Movie Card 1999"), "Merchandise, not a card");
     assert.equal(reason("Topps 1999 Charizard #06E6 of 12 Vintage Pokemon Trading Cards"), "Merchandise, not a card");
     assert.equal(reason("Pokemon Sticker - Charizard Original Base Set Card Artwork, Vinyl Decal"), "Merchandise, not a card");
+});
+
+test("Dig deeper keeps lots that a plain search skips", () => {
+    const lot = single("Vintage Pokemon WOTC Holo Lot Base Set Jungle Fossil");
+
+    assert.equal(exclusionReason(lot), "Lot or bundle");
+    assert.equal(exclusionReason(lot, { keepLots: true }), null);
+    assert.equal(isLot(lot.title), true);
+    assert.equal(isLot("Charizard 4/102 Base Set Holo"), false);
 });

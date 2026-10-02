@@ -41,7 +41,7 @@ export interface ScreenSteps {
     matchPhoto: (imageUrl: string, card: ClaimedCard) => Promise<PhotoMatch | null>;
 }
 
-const REAL_STEPS: ScreenSteps = {
+export const REAL_STEPS: ScreenSteps = {
     readTitle: fillFromTitle,
     // Past the day's reserve, eBay refuses and the title's check stands.
     loadDetails: (itemId) => getListingDetails(itemId, { keepReserve: true }),

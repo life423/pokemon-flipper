@@ -1,4 +1,4 @@
-import type { Evaluation, ListingSummary } from "./types.ts";
+import type { Evaluation, FoundHow, ListingSummary } from "./types.ts";
 
 // Bargain signals: signs a listing is overlooked or mispriced because of how
 // it was listed, not because of the card. None of them means buy. Each is a
@@ -10,6 +10,15 @@ export interface BargainSignal {
     detail: string;
     weight: number;
 }
+
+// How Dig deeper turned a listing up: the reason it's hidden from others.
+const FOUND_LABELS: Record<FoundHow, string> = {
+    MISSPELLED: "Misspelled title",
+    NUMBER_ONLY: "Title gives only the number",
+    WRONG_CATEGORY: "Listed in the wrong category",
+    PHOTO_SHOWS_IT: "Title hides it; the photo shows it",
+    LOT: "Inside a lot",
+};
 
 const PRINTING_NAMES: Record<string, string> = { FIRST_EDITION: "1st Edition", SHADOWLESS: "Shadowless" };
 const PRICIER = (printing: string | null | undefined) => printing === "FIRST_EDITION" || printing === "SHADOWLESS";
@@ -60,6 +69,16 @@ export function bargainSignals(
     const name = identity?.name ?? listing.screen?.card?.name ?? null;
     const set = identity?.set ?? listing.screen?.card?.set ?? null;
 
+    // Found by digging: a listing most buyers' searches never show.
+    if (listing.found) {
+        signals.push({
+            id: "FOUND",
+            label: FOUND_LABELS[listing.found.how],
+            detail: `Found by Dig deeper: ${listing.found.note}`,
+            weight: listing.found.how === "LOT" ? 35 : 30,
+        });
+    }
+
     // The strongest: the photos show a pricier printing the seller never states.
     if (evidence && PRICIER(evidence.photo) && !PRICIER(evidence.title) && !PRICIER(evidence.itemSpecifics)) {
         signals.push({
@@ -77,7 +96,8 @@ export function bargainSignals(
         });
     }
 
-    if (name && !words(name).split(" ").every((word) => title.includes(word))) {
+    // A dig already says how the title hides it.
+    if (name && !listing.found && !words(name).split(" ").every((word) => title.includes(word))) {
         signals.push({
             id: "NAME_OFF",
             label: "Name misspelled or missing",

@@ -86,6 +86,9 @@ export interface SearchIntent {
     source: "ai" | "rules";
 }
 
+// How Dig deeper turned a listing up.
+export type FoundHow = "MISSPELLED" | "NUMBER_ONLY" | "WRONG_CATEGORY" | "PHOTO_SHOWS_IT" | "LOT";
+
 // One search result, with the free check once it's run.
 export interface ListingSummary {
     id: string;
@@ -101,6 +104,10 @@ export interface ListingSummary {
     seller: Seller | null;
     // A Buy It Now that takes Best Offers.
     bestOffer?: boolean;
+    // eBay's leaf category for the listing.
+    categoryId?: string;
+    // Turned up by Dig deeper, and how: where the hidden deals are.
+    found?: { how: FoundHow; note: string };
     cardCondition?: string | null;
     conditionNotes?: string[];
     screen?: Screen;
