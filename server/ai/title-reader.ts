@@ -96,21 +96,36 @@ const readInBatches = createBatcher((titles: string[]) => limit(() => readBatch(
 
 const cacheKey = (title: string) => `title-reading:v${READER_VERSION}:${MODEL}:${normalizeText(title).trim()}`;
 
-export async function readTitle(title: string): Promise<TitleReading | null> {
-    const saved = await readCache<TitleReading>(cacheKey(title), MONTH_HOURS);
+// Titles being read right now, so a second ask for one waits on the
+// first instead of paying for it twice.
+const inFlight = new Map<string, Promise<TitleReading | null>>();
 
-    if (saved) return saved;
+export function readTitle(title: string): Promise<TitleReading | null> {
+    const key = cacheKey(title);
+    const pending = inFlight.get(key);
 
-    try {
-        const reading = await readInBatches(title);
+    if (pending) return pending;
 
-        if (reading) await writeCache(cacheKey(title), reading);
+    const reading = (async () => {
+        const saved = await readCache<TitleReading>(key, MONTH_HOURS);
 
-        return reading;
-    } catch (error) {
-        console.error(`Reading a title failed: ${(error as Error).message}`);
-        return null;
-    }
+        if (saved) return saved;
+
+        try {
+            const answer = await readInBatches(title);
+
+            if (answer) await writeCache(key, answer);
+
+            return answer;
+        } catch (error) {
+            console.error(`Reading a title failed: ${(error as Error).message}`);
+            return null;
+        }
+    })().finally(() => inFlight.delete(key));
+
+    inFlight.set(key, reading);
+
+    return reading;
 }
 
 const FILLABLE: [aspect: string, field: keyof TitleReading][] = [

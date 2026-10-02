@@ -137,9 +137,10 @@ export async function findDeals(
 
     onStart({ total, found: live.length, count: matching.length, intent });
 
-    // Every title read up front, so the AI gets full batches of 25 instead
-    // of the few that happen to be in flight. Each reading is saved.
-    await Promise.all(matching.map((listing) => readTitle(listing.title)));
+    // Every title queued for reading at once, so the AI gets full batches
+    // of 25, but not waited on: each listing is checked as soon as its own
+    // title comes back, so results start arriving within seconds.
+    for (const listing of matching) void readTitle(listing.title);
 
     const results = await mapLimit(matching, PARALLEL_LISTINGS, async (listing) => {
         const screened = await screenListing(listing);

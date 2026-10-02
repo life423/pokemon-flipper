@@ -569,7 +569,9 @@ export function App() {
                                                 ? `AI is analyzing ${counts.analyzing} now.`
                                                 : counts.waiting > 0
                                                   ? `${counts.waiting} ${counts.waiting === 1 ? "candidate is" : "candidates are"} waiting for the AI.`
-                                                  : "The AI has looked at every candidate."}
+                                                  : searchStatus === "checking"
+                                                    ? "Candidates go to the AI as they turn up."
+                                                    : "The AI has looked at every candidate."}
                                         </p>
                                         {counts.waiting > 0 && budgetLeft <= 0 && (
                                             <button
