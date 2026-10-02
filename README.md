@@ -63,6 +63,7 @@ Three ways to flip a card are priced for every listing:
 - **A max bid:** the most you can pay and still clear your targets after eBay fees, sales tax, shipping, and grading costs.
 - **Your targets, live:** set a minimum profit and minimum return in the toolbar (or *Any*). Every max bid, verdict, and ranking recalculates instantly, with no new lookups.
 - **Ratings:** *Strong*, *Good*, or *Thin*, from plain rules: room under the max bid, the outcome at the low end of the grade range, how many sales back the price, photo confidence, and seller feedback. Every concern is listed.
+- **Best Offer:** for a Buy It Now that takes offers, what to offer and where to walk away, plus a friendly note to send with it. Listings that would be a deal at a realistic offer show up in **Deals**.
 - **Honest auctions:** an auction is judged by how often the card actually sells as low as your max bid, not by today's bid. Auctions that will very likely end above it go to **Long shots**.
 - **The exact printing:** 1st Edition, Shadowless, and Unlimited are priced apart, and the title, item details, slab label, and photos have to agree.
 - **Reprints caught:** Celebrations, Classic Collection (2021 and 2026), Base Set 2, metal cards, and Topps cards don't get priced as vintage originals.

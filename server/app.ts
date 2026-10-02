@@ -7,6 +7,7 @@ import { findDeals } from "./deals/find-deals.ts";
 import { evaluateListing } from "./analysis/evaluate.ts";
 import { EbayError } from "./ebay/api.ts";
 import { ebayUsage, EbayBudgetError } from "./ebay/usage.ts";
+import { writeOfferNote } from "./ai/offer-note.ts";
 import type { CurrentState } from "./analysis/evaluate.ts";
 
 const app = express();
@@ -34,6 +35,23 @@ const PORT = process.env.PORT || 3000;
 const isProduction = process.env.NODE_ENV === "production";
 
 app.use(express.json());
+
+// A friendly note to send with a Best Offer.
+app.post("/api/offer-note", async (req, res) => {
+    const title = typeof req.body?.title === "string" ? req.body.title.slice(0, 200) : "";
+
+    if (!title) {
+        res.status(400).json({ error: "A listing title is needed" });
+        return;
+    }
+
+    try {
+        res.json({ note: await writeOfferNote(title) });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: "Couldn't write a note" });
+    }
+});
 
 // How much of today's eBay allowance is left.
 app.get("/api/ebay-usage", async (req, res) => {

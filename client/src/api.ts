@@ -64,6 +64,17 @@ export async function streamDeals(
     }
 }
 
+// A friendly note to send with a Best Offer, written fresh each time.
+export async function writeOfferNote(title: string): Promise<string> {
+    const { note } = await request<{ note: string }>("/api/offer-note", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title }),
+    });
+
+    return note;
+}
+
 // How much of today's eBay allowance is left, or null if eBay won't say.
 export function fetchEbayUsage(): Promise<EbayUsage | null> {
     return request("/api/ebay-usage");

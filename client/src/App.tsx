@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import type { EbayUsage, Evaluation, ListingSummary, RatingLevel, SearchIntent, Targets } from "./types";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.ts";
+import { offerFor, offerWorthMaking } from "../../shared/money/offer.ts";
 import { name } from "./format";
 import { evaluateListing, fetchEbayUsage, streamDeals, type DealsMessage } from "./api";
 import { DealCard } from "./components/DealCard";
@@ -361,6 +362,10 @@ export function App() {
             const verdict = evaluation?.underwriting?.verdict;
 
             if (isDeal(evaluation)) (evaluation?.rating?.level === "LONG_SHOT" ? longShots : deals).push(listing);
+            // A pass at the asking price that a realistic Best Offer would make a deal.
+            else if (verdict === "PASS" && offerWorthMaking(offerFor(listing, evaluation?.underwriting?.best?.maxBid))) {
+                deals.push(listing);
+            }
             else if (verdict === "NEEDS_REVIEW" || verdict === "CANT_PRICE") review.push(listing);
             else if (!evaluation && listing.screen?.status === "CANDIDATE") {
                 (listing.screen.longShot ? longShots : candidates).push(listing);

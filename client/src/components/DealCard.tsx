@@ -4,6 +4,7 @@ import { dollars, percent, timeLeft } from "../format";
 import { RatingBadge, VerdictBadge } from "./VerdictBadge";
 import { describeOutlook } from "../../../shared/money/auction.ts";
 import { ceilingLabel } from "../../../shared/format.ts";
+import { describeOffer, offerFor, offerWorthMaking } from "../../../shared/money/offer.ts";
 import styles from "./DealCard.module.css";
 
 interface Props {
@@ -31,6 +32,9 @@ export function DealCard({ listing, analysis, selected, now, onOpen }: Props) {
     const left = timeLeft(listing.endTime, now);
     const auction = listing.buyingOption === "AUCTION";
     const ceiling = ceilingLabel(listing.buyingOption);
+    const plan = offerFor(listing, best?.maxBid);
+    // Doesn't clear at its asking price, but would at a realistic offer.
+    const offer = underwriting?.verdict === "PASS" && offerWorthMaking(plan) ? plan : null;
 
     const action =
         analysis?.status === "loading" ? "Analyzing..." : analysis ? "View analysis" : "Analyze";
@@ -46,6 +50,8 @@ export function DealCard({ listing, analysis, selected, now, onOpen }: Props) {
         line = `At best (${screen.assumed}): ${screen.bestCase?.label.toLowerCase()}.`;
     } else if (!evaluation && screen?.status === "UNSCREENED") {
         line = screen.reason;
+    } else if (offer && listing.currentPrice !== null) {
+        line = describeOffer(offer, listing.currentPrice);
     } else if (underwriting && !deal) {
         line = underwriting.reasons[0] ?? null;
     }
@@ -60,7 +66,12 @@ export function DealCard({ listing, analysis, selected, now, onOpen }: Props) {
                 <div className={styles.body}>
                     <div className={styles.tags}>
                         {deal && rating && <RatingBadge level={rating.level} />}
-                        {underwriting && <VerdictBadge verdict={underwriting.verdict} />}
+                        {offer ? (
+                            <span className={styles.offerTag}>Make an offer: {dollars(offer.offer)}</span>
+                        ) : (
+                            underwriting && <VerdictBadge verdict={underwriting.verdict} />
+                        )}
+                        {deal && plan && <span className={styles.tag}>Accepts offers</span>}
                         {!underwriting && screen && (
                             <span className={styles.tag}>{screen.longShot ? "Long-shot auction" : SCREEN_TAGS[screen.status]}</span>
                         )}

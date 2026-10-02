@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { AnalysisState } from "../App";
 import type {
     CompSummary,
@@ -18,6 +18,8 @@ import { describeRange, dollars, name, percent, timeLeft } from "../format";
 import { useNow } from "../useNow";
 import { CONDITION_AREAS } from "../../../shared/conditions.ts";
 import { ceilingLabel } from "../../../shared/format.ts";
+import { describeOffer, offerFor } from "../../../shared/money/offer.ts";
+import { writeOfferNote } from "../api";
 import { RatingBadge, VerdictBadge } from "./VerdictBadge";
 import styles from "./DetailPanel.module.css";
 
@@ -176,6 +178,7 @@ function Analysis({
                 </Section>
             )}
 
+            <OfferSection listing={listing} evaluation={evaluation} />
             <ListingSection listing={listing} evaluation={evaluation} />
             {evaluation.identity && <IdentitySection identity={evaluation.identity} isSlab={Boolean(evaluation.slab)} />}
             {evaluation.slab && <SlabSection slab={evaluation.slab} pricing={evaluation.slabPricing} />}
@@ -359,6 +362,58 @@ function PathCard({ path, auction }: { path: MoneyPath; auction: boolean }) {
                 </table>
             )}
         </div>
+    );
+}
+
+function OfferSection({ listing, evaluation }: { listing: ListingSummary; evaluation: Evaluation }) {
+    const plan = offerFor(listing, evaluation.underwriting?.best?.maxBid);
+    const [note, setNote] = useState<string | null>(null);
+    const [writing, setWriting] = useState(false);
+    const [copied, setCopied] = useState(false);
+
+    if (!plan || listing.currentPrice === null) return null;
+
+    async function write() {
+        setWriting(true);
+        setCopied(false);
+
+        try {
+            setNote(await writeOfferNote(listing.title));
+        } catch {
+            setNote("Couldn't write a note just now. Try again in a moment.");
+        } finally {
+            setWriting(false);
+        }
+    }
+
+    async function copy() {
+        if (!note) return;
+        await navigator.clipboard.writeText(note);
+        setCopied(true);
+    }
+
+    return (
+        <Section title="Best offer">
+            <Pairs
+                rows={[
+                    ["Offer", <strong>{dollars(plan.offer)}</strong>],
+                    ["Walk away above", dollars(plan.walkAway)],
+                ]}
+            />
+            <p className={styles.small}>{describeOffer(plan, listing.currentPrice)}</p>
+
+            <div className={styles.noteActions}>
+                <button type="button" className={styles.secondary} onClick={write} disabled={writing}>
+                    {writing ? "Writing..." : note ? "Write another note" : "Write a note for the seller"}
+                </button>
+                {note && (
+                    <button type="button" className={styles.secondary} onClick={copy}>
+                        {copied ? "Copied" : "Copy"}
+                    </button>
+                )}
+            </div>
+            {note && <p className={styles.note}>{note}</p>}
+        </Section>
     );
 }
 

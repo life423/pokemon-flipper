@@ -328,3 +328,20 @@
     padding-top: var(--space-4);
     border-top: 1px solid var(--border);
 }
+
+.noteActions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+}
+
+/* The note to send the seller, ready to copy. */
+.note {
+    margin-top: var(--space-2);
+    padding: var(--space-3);
+    background: var(--surface-alt);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius-control);
+    font-size: var(--text-sm);
+}

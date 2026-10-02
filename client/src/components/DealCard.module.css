@@ -54,6 +54,16 @@
     font-size: var(--text-xs);
 }
 
+/* A listing worth an offer: the interactive color, not a verdict color. */
+.offerTag {
+    padding: 0.15rem 0.6rem;
+    border-radius: var(--radius-pill);
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    color: #93c5fd;
+    font-size: var(--text-xs);
+    font-weight: 700;
+}
+
 .name {
     font-size: var(--text-sm);
     font-weight: 600;

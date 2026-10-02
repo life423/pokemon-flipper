@@ -121,6 +121,7 @@ function toListing(item: EbayItem): ListingSummary {
         currentPrice: price,
         ...rest,
         isGraded: item.conditionId === GRADED,
+        bestOffer: item.buyingOptions?.includes("BEST_OFFER") ?? false,
         seller: toSeller(item.seller),
         images: photosOf(item),
         url: item.itemWebUrl,

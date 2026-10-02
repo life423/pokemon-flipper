@@ -99,6 +99,8 @@ export interface ListingSummary {
     images: string[];
     url: string;
     seller: Seller | null;
+    // A Buy It Now that takes Best Offers.
+    bestOffer?: boolean;
     cardCondition?: string | null;
     conditionNotes?: string[];
     screen?: Screen;
