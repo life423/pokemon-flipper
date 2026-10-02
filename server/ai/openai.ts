@@ -16,7 +16,7 @@ interface ListingText {
 export const MODEL = process.env.OPENAI_MODEL ?? "gpt-5.6-luna";
 
 // Bump when a prompt or schema changes, so saved answers get redone.
-const PROMPT_VERSION = 3;
+const PROMPT_VERSION = 4;
 
 export const ANALYSIS_VERSION = MODEL + "/prompts-" + PROMPT_VERSION;
 
@@ -163,9 +163,21 @@ const PHOTO_CHECK_SCHEMA = {
                     type: "string",
                     enum: ["PRESENT", "ABSENT", "CANT_TELL"],
                 },
+                reprintMark: {
+                    type: "string",
+                    enum: [
+                        "NONE_SEEN",
+                        "CELEBRATIONS_25TH",
+                        "ANNIVERSARY_30TH",
+                        "BASE_SET_2",
+                        "WORLD_CHAMPIONSHIPS",
+                        "OTHER_STAMP",
+                        "CANT_TELL",
+                    ],
+                },
                 evidence: STRING_LIST,
             },
-            required: ["firstEditionStamp", "artBoxShadow", "evidence"],
+            required: ["firstEditionStamp", "artBoxShadow", "reprintMark", "evidence"],
             additionalProperties: false,
         },
         printedName: { type: ["string", "null"] },
@@ -241,7 +253,8 @@ Also report:
 Printing marks and card text, from clear photos of the front only. Never use the title for these:
 - firstEditionStamp: VISIBLE if the "1st Edition" stamp is printed on the card. NOT_PRESENT only if the area just below the artwork, where the stamp would be printed, is clearly visible and empty. Otherwise CANT_TELL.
 - artBoxShadow: PRESENT if the artwork frame has a dark drop shadow along its right edge, ABSENT if it has none, otherwise CANT_TELL.
-- evidence: what you saw that supports each of those two answers.
+- reprintMark: a mark that makes the card a reprint or a special printing. CELEBRATIONS_25TH: a small Pikachu logo with "25" on the artwork (the 2021 Celebrations reprints). ANNIVERSARY_30TH: a 30th anniversary logo. BASE_SET_2: Base Set 2's set symbol, a Poke Ball with a "2", at the artwork's lower right. WORLD_CHAMPIONSHIPS: a gold border or a printed player signature (World Championship decks). OTHER_STAMP: any other stamp on the artwork, such as Prerelease, Staff, or a store logo. NONE_SEEN only if the artwork is clearly visible and has none of these; otherwise CANT_TELL.
+- evidence: what you saw that supports each of those answers.
 - printedName and printedNumber: the card name and collector number exactly as printed, such as "9/111", or null if not legible.
 
 If the card is sealed in a grading company's case (a slab), read the label exactly as printed:

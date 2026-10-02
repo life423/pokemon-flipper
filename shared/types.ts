@@ -133,6 +133,8 @@ export interface PhotoCheck {
 export interface PrintingMarks {
     firstEditionStamp: string;
     artBoxShadow: string;
+    // A reprint's or special printing's mark on the artwork, if any.
+    reprintMark?: string;
     evidence?: string[];
 }
 
@@ -198,6 +200,8 @@ export interface Identity {
     printingLabel: string | null;
     finish: string;
     language: string;
+    // The photos show a reprint's mark: this isn't the card searched for.
+    reprint?: string | null;
     evidence: {
         title: string;
         itemSpecifics: string;

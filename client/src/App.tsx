@@ -340,8 +340,9 @@ export function App() {
         const limit = maxPrice === "" ? Infinity : Number(maxPrice);
 
         return listings
-            // Another set, card, or printing than the one searched for.
-            .filter((listing) => !listing.match)
+            // Another set, card, or printing than the one searched for, including
+            // a reprint the photos gave away.
+            .filter((listing) => !listing.match && !evaluationOf(analyses[listing.id])?.identity?.reprint)
             .filter((listing) => typeFilter === "all" || listing.buyingOption === typeFilter)
             .filter((listing) => kindFilter === "all" || listing.isGraded === (kindFilter === "graded"))
             .filter((listing) => (listing.currentPrice ?? 0) <= limit)
@@ -397,7 +398,10 @@ export function App() {
             candidates: listings.filter((listing) => listing.screen?.status === "CANDIDATE" && !listing.screen.longShot).length,
             dropped: count("DROPPED"),
             unchecked: listings.filter((listing) => listing.screen?.status === "UNSCREENED" && !listing.match).length,
-            mismatched: listings.filter((listing) => listing.match && listing.match !== "JUNK").length,
+            mismatched: listings.filter(
+                (listing) =>
+                    (listing.match && listing.match !== "JUNK") || Boolean(evaluationOf(analyses[listing.id])?.identity?.reprint)
+            ).length,
             // Junk the AI spotted in titles; the free rules' count comes with the search.
             junk: listings.filter((listing) => listing.match === "JUNK").length,
             analyzing,

@@ -513,6 +513,29 @@ export function lookAlikeProblem(
     return null;
 }
 
+// Marks on the artwork that make a card a reprint or a special printing,
+// and the sets they belong to. Anywhere else, the mark means the listing
+// isn't the card its title says.
+const REPRINT_MARKS: Record<string, { name: string; sets: string[] }> = {
+    CELEBRATIONS_25TH: { name: "the 2021 Celebrations reprint", sets: ["celebration"] },
+    ANNIVERSARY_30TH: { name: "the 2026 30th Celebration reprint", sets: ["30th"] },
+    BASE_SET_2: { name: "Base Set 2", sets: ["base set 2"] },
+    WORLD_CHAMPIONSHIPS: { name: "a World Championships deck", sets: ["world championship"] },
+    OTHER_STAMP: { name: "a stamped special printing", sets: ["promo"] },
+};
+
+// The reprint a photographed mark shows, or null when there is none or the
+// listed set is that reprint.
+export function reprintShown(mark: string | null | undefined, setName: unknown): string | null {
+    const known = mark ? REPRINT_MARKS[mark] : undefined;
+
+    if (!known) return null;
+
+    const set = normalizeWords(setName);
+
+    return known.sets.some((word) => set.includes(word)) ? null : known.name;
+}
+
 // Not cards from a set at all: novelty metal cards (the Ultra Premium
 // Collection's metal cards, which PSA labels "Ultra-Prem Coll"), Topps
 // cards, reprints, and fakes.
@@ -721,6 +744,14 @@ export async function identifyCard(
         finishClaimFromText(aspectText(aspects, /finish|feature/i)),
         finishClaimFromText(listing.title)
     );
+
+    // A reprint's mark on the artwork outranks anything the seller wrote.
+    const reprint = reprintShown(photoCheck.printingMarks?.reprintMark, card.records[0]?.setName ?? identity.set);
+
+    if (reprint) {
+        identity.reprint = reprint;
+        return needsReview(`The photos show a mark from ${reprint}, so this isn't the ${identity.set} card.`, card);
+    }
 
     const printing = resolvePrinting(evidence, {
         hasEditions: identity.hasEditions,

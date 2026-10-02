@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
     titleContradiction,
+    reprintShown,
     lookAlikeProblem,
     noveltyIn,
     normalizeCardNumber,
@@ -599,4 +600,24 @@ test("metal cards are novelties, including PSA's Ultra Premium label", () => {
     assert.ok(noveltyIn("2021 POKEMON CELEBRATIONS ULTRA-PREM COLL #4 CHARIZARD PSA 6"));
     assert.ok(noveltyIn("Charizard Gold Metal Card Celebrations"));
     assert.equal(noveltyIn("2021 Pokemon Celebrations Classic Collection Charizard 4/102"), null);
+});
+
+test("a reprint's mark in the photos means it isn't the card the title says", () => {
+    assert.match(reprintShown("CELEBRATIONS_25TH", "Base Set") ?? "", /Celebrations/);
+    assert.equal(reprintShown("CELEBRATIONS_25TH", "Celebrations: Classic Collection"), null);
+    assert.match(reprintShown("BASE_SET_2", "Base Set") ?? "", /Base Set 2/);
+    assert.equal(reprintShown("NONE_SEEN", "Base Set"), null);
+    assert.equal(reprintShown("CANT_TELL", "Base Set"), null);
+});
+
+test("a Celebrations logo in the photos sends a Base Set listing to review as a reprint", async () => {
+    const listing = charizardListing("Nintendo Pokemon TCG Charizard Base Set 4/102 Holo Rare 3rd Print EN 1999");
+    const photos = charizardPhotos();
+    photos.printingMarks = { ...photos.printingMarks, reprintMark: "CELEBRATIONS_25TH" };
+
+    const { identity } = await identifyCard(listing, photos, { lookupCards: BASE_FAMILY });
+
+    assert.equal(identity.status, "NEEDS_REVIEW");
+    assert.match(identity.reprint, /Celebrations/);
+    assert.match(identity.reasons[0], /isn't the Base Set card/);
 });
