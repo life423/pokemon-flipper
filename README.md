@@ -163,7 +163,7 @@ Everything is TypeScript. The server runs through [tsx](https://tsx.is), and the
 
 eBay raises the limit through its free [Application Growth Check](https://developer.ebay.com/grow/application-growth-check).
 
-**OpenAI.** Reading a search is one call, saved for a month. Titles are read 25 per call and saved for good. Comp checks are batched per card and grade and saved per sale. A full photo analysis is a few vision calls; its answers are saved per listing and reused until the photos change. The **AI per search** setting caps how many listings are analyzed automatically.
+**OpenAI.** Reading a search is one call, saved for a month. Titles are read 25 per call and saved for good. Comp checks are batched per card and grade and saved per sale. A full photo analysis is a few vision calls; its answers are saved per listing and reused until the photos change. Every candidate that lands in **Waiting** is analyzed automatically, best first, three at a time; long-shot auctions are skipped. The **AI per search** setting can cap that, or turn it off.
 
 **pkmnprices.** Credits are charged per row returned. Responses are saved for a day.
 

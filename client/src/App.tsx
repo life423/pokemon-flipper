@@ -21,9 +21,14 @@ type TypeFilter = "all" | "AUCTION" | "FIXED_PRICE";
 type KindFilter = "all" | "raw" | "graded";
 
 // AI analyses at once, and per search unless you ask for more.
-const PARALLEL_ANALYSES = 2;
-const AUTO_OPTIONS = [0, 5, 10, 20];
-const DEFAULT_AUTO = 5;
+const PARALLEL_ANALYSES = 3;
+// How many candidates the AI analyzes on its own per search: every one
+// that lands in Waiting by default, best first, or a cap, or none.
+const ALL = Number.POSITIVE_INFINITY;
+const AUTO_OPTIONS = [ALL, 20, 10, 5, 0];
+const DEFAULT_AUTO = ALL;
+// Saved under a new name, so an old cap doesn't hold over the new default.
+const AUTO_KEY = "aiPerSearch";
 
 // "1st Edition Charizard from Base Set, graded": how the search was read.
 function describeIntent(intent: SearchIntent): string {
@@ -104,7 +109,7 @@ function describeUsage(usage: EbayUsage): string {
 
 function readAutoSetting(): number {
     try {
-        const saved = localStorage.getItem("autoAnalyze");
+        const saved = localStorage.getItem(AUTO_KEY);
         return saved !== null && AUTO_OPTIONS.includes(Number(saved)) ? Number(saved) : DEFAULT_AUTO;
     } catch {
         return DEFAULT_AUTO;
@@ -346,10 +351,11 @@ export function App() {
 
     function changeAutoSetting(value: number) {
         setAutoSetting(value);
-        setBudget((current) => Math.max(current, value));
+        // Takes effect mid-search too: Off or a lower cap stops new analyses now.
+        setBudget(value === ALL ? ALL : Math.max(autoQueued.current.size, value));
 
         try {
-            localStorage.setItem("autoAnalyze", String(value));
+            localStorage.setItem(AUTO_KEY, String(value));
         } catch {
             // Without storage the setting lasts for this visit.
         }
@@ -619,7 +625,7 @@ export function App() {
                                                 >
                                                     {AUTO_OPTIONS.map((option) => (
                                                         <option key={option} value={option}>
-                                                            {option === 0 ? "Off" : `Top ${option}`}
+                                                            {option === ALL ? "All waiting" : option === 0 ? "Off" : `Top ${option}`}
                                                         </option>
                                                     ))}
                                                 </select>
