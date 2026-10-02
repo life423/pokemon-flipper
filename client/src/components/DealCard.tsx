@@ -3,6 +3,7 @@ import type { ListingSummary } from "../types";
 import { dollars, percent, timeLeft } from "../format";
 import { RatingBadge, VerdictBadge } from "./VerdictBadge";
 import { describeOutlook } from "../../../shared/money/auction.ts";
+import { ceilingLabel } from "../../../shared/format.ts";
 import styles from "./DealCard.module.css";
 
 interface Props {
@@ -29,6 +30,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen }: Props) {
 
     const left = timeLeft(listing.endTime, now);
     const auction = listing.buyingOption === "AUCTION";
+    const ceiling = ceilingLabel(listing.buyingOption);
 
     const action =
         analysis?.status === "loading" ? "Analyzing..." : analysis ? "View analysis" : "Analyze";
@@ -77,7 +79,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen }: Props) {
                         {deal && best ? (
                             <>
                                 <div className={styles.maxBid}>
-                                    <dt>Max bid</dt>
+                                    <dt>{ceiling}</dt>
                                     <dd>{dollars(best.maxBid)}</dd>
                                 </div>
                                 <div className={styles.profit}>
@@ -99,7 +101,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen }: Props) {
                                 </div>
                                 {rating?.room != null && (
                                     <div>
-                                        <dt>Under max bid</dt>
+                                        <dt>Under {ceiling.toLowerCase()}</dt>
                                         <dd>{percent(rating.room)}</dd>
                                     </div>
                                 )}
@@ -112,13 +114,13 @@ export function DealCard({ listing, analysis, selected, now, onOpen }: Props) {
                                 </div>
                                 {best ? (
                                     <div>
-                                        <dt>Max bid</dt>
+                                        <dt>{ceiling}</dt>
                                         <dd>{dollars(best.maxBid)}</dd>
                                     </div>
                                 ) : (
                                     screen?.bestCase && (
                                         <div className={styles.muted}>
-                                            <dt>Max bid at best</dt>
+                                            <dt>{ceiling} at best</dt>
                                             <dd>{dollars(screen.bestCase.maxBid)}</dd>
                                         </div>
                                     )

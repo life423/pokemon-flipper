@@ -389,7 +389,7 @@ function underwriteSlab(
         verdict: "PASS",
         reasons: [
             path.maxBid > 0
-                ? `At ${dollars(listing.price)}, reselling it as is doesn't clear your targets. The max bid is ${dollars(path.maxBid)}.`
+                ? `At ${dollars(listing.price)}, reselling it as is doesn't clear your targets. The most it's worth paying is ${dollars(path.maxBid)}.`
                 : "Reselling it as is doesn't clear your targets at any price.",
         ],
         best: path,
@@ -464,7 +464,7 @@ export function underwrite(input: UnderwritingInput, config: MoneyConfig = MONEY
             verdict: "PASS",
             reasons: [
                 best.maxBid > 0
-                    ? `At ${dollars(listing.price)}, no path clears your targets. The best max bid is ${dollars(best.maxBid)} (${best.label.toLowerCase()}).`
+                    ? `At ${dollars(listing.price)}, no path clears your targets. The most it's worth paying is ${dollars(best.maxBid)} (${best.label.toLowerCase()}).`
                     : "No path clears your targets at any price.",
             ],
             best,

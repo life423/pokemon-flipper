@@ -167,7 +167,7 @@ test("when no path clears, it's a pass that still names the best max bid", () =>
 
     assert.equal(result.verdict, "PASS");
     assert.equal(result.best.maxBid, 442);
-    assert.match(result.reasons[0], /best max bid is \$442\.00/);
+    assert.match(result.reasons[0], /most it.s worth paying is \$442\.00/);
 });
 
 test("raw prices fall back to a worse condition, never a better one", () => {
@@ -269,7 +269,7 @@ test("the same slab at $2,000 is a pass that names the max bid", () => {
     const result = underwrite(slabEvaluation({ listing: { price: 2000, shipping: 10 } }), CONFIG);
 
     assert.equal(result.verdict, "PASS");
-    assert.match(result.reasons[0], /max bid is \$1,628\.00/);
+    assert.match(result.reasons[0], /most it's worth paying is \$1,628\.00/);
 });
 
 test("a slab that needs review, or looks fake, isn't priced", () => {

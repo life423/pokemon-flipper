@@ -68,9 +68,9 @@ export function rateDeal(evaluation: RatingInput): Rating | null {
         room = (best.maxBid - listing.price) / best.maxBid;
 
         if (room >= MIN_ROOM) {
-            strengths.push(`The price is ${percent(room)} under the max bid.`);
+            strengths.push(`The price is ${percent(room)} under the max price.`);
         } else {
-            concerns.push(`The price is only ${percent(room)} under the max bid.`);
+            concerns.push(`The price is only ${percent(room)} under the max price.`);
         }
     }
 

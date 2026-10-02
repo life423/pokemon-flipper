@@ -17,6 +17,7 @@ import type {
 import { describeRange, dollars, name, percent, timeLeft } from "../format";
 import { useNow } from "../useNow";
 import { CONDITION_AREAS } from "../../../shared/conditions.ts";
+import { ceilingLabel } from "../../../shared/format.ts";
 import { RatingBadge, VerdictBadge } from "./VerdictBadge";
 import styles from "./DetailPanel.module.css";
 
@@ -169,7 +170,7 @@ function Analysis({
                 <Section title="Every path">
                     <div className={styles.paths}>
                         {evaluation.underwriting.paths.map((path) => (
-                            <PathCard key={path.label} path={path} />
+                            <PathCard key={path.label} path={path} auction={evaluation.listing.buyingOption === "AUCTION"} />
                         ))}
                     </div>
                 </Section>
@@ -221,7 +222,10 @@ function VerdictSection({
     ];
 
     if (room !== null) {
-        rows.push(["Room to bid", <span className={room >= 0 ? styles.good : styles.bad}>{dollars(room)}</span>]);
+        rows.push([
+            listing.buyingOption === "AUCTION" ? "Room to bid" : "Under your max price",
+            <span className={room >= 0 ? styles.good : styles.bad}>{dollars(room)}</span>,
+        ]);
     }
     if (best && underwriting.verdict.startsWith("BUY")) {
         // An auction's bid will rise, so its profit is shown at the max bid.
@@ -260,7 +264,7 @@ function VerdictSection({
 
             {best?.maxBid !== undefined && (
                 <div className={styles.hero}>
-                    <span className={styles.heroLabel}>Max bid</span>
+                    <span className={styles.heroLabel}>{ceilingLabel(listing.buyingOption)}</span>
                     <span className={`${styles.heroValue} ${room !== null && room >= 0 ? styles.good : ""}`}>
                         {dollars(best.maxBid)}
                     </span>
@@ -282,7 +286,7 @@ function VerdictSection({
     );
 }
 
-function PathCard({ path }: { path: MoneyPath }) {
+function PathCard({ path, auction }: { path: MoneyPath; auction: boolean }) {
     if (path.status !== "PRICED") {
         return (
             <div className={styles.path}>
@@ -319,8 +323,11 @@ function PathCard({ path }: { path: MoneyPath }) {
                         </span>,
                     ],
                     ["Worst case", dollars(path.downside)],
-                    ["Profit at max bid", `${dollars(path.profitAtMaxBid)} (${percent(path.roiAtMaxBid)})`],
-                    ["Max bid", <strong>{dollars(path.maxBid)}</strong>],
+                    // Only an auction's price moves; a Buy It Now's profit is at its price.
+                    ...(auction
+                        ? ([["Profit at max bid", `${dollars(path.profitAtMaxBid)} (${percent(path.roiAtMaxBid)})`]] as [string, ReactNode][])
+                        : []),
+                    [auction ? "Max bid" : "Max price", <strong>{dollars(path.maxBid)}</strong>],
                 ]}
             />
 
@@ -375,7 +382,10 @@ function ListingSection({ listing, evaluation }: { listing: ListingSummary; eval
         rows.push(["Read from the title", screen.filledFromTitle.join(", ").toLowerCase()]);
     }
     if (screen?.bestCase) {
-        rows.push(["Free check, at best", `${dollars(screen.bestCase.maxBid)} max bid (${screen.assumed})`]);
+        rows.push([
+            "Free check, at best",
+            `${dollars(screen.bestCase.maxBid)} ${ceilingLabel(listing.buyingOption).toLowerCase()} (${screen.assumed})`,
+        ]);
     }
 
     if (rows.length === 0) return null;
