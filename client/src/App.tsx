@@ -10,6 +10,21 @@ import { name } from "./format";
 import { evaluateListing, fetchEbayUsage, streamDeals, streamDig, type DealsMessage } from "./api";
 import { DealCard } from "./components/DealCard";
 import { Drawer } from "./components/Drawer";
+import { Dropdown } from "./components/Dropdown";
+import {
+    ChevronIcon,
+    ClockIcon,
+    CloseIcon,
+    DollarIcon,
+    GridIcon,
+    LogoMark,
+    ReviewIcon,
+    SearchIcon,
+    SlidersIcon,
+    SparkleIcon,
+    TagIcon,
+    TrendIcon,
+} from "./components/Icons";
 import { DetailPanel } from "./components/DetailPanel";
 import { useNow } from "./useNow";
 import styles from "./App.module.css";
@@ -23,6 +38,24 @@ type View = "deals" | "candidates" | "longShots" | "review" | "hidden" | "all";
 
 // The views, in order, and what each is called everywhere it appears.
 const VIEWS: View[] = ["deals", "candidates", "longShots", "review", "hidden", "all"];
+const VIEW_ICONS: Record<View, ReactNode> = {
+    deals: <TagIcon />,
+    candidates: <ClockIcon />,
+    longShots: <TrendIcon />,
+    review: <ReviewIcon />,
+    hidden: <SparkleIcon />,
+    all: <GridIcon />,
+};
+
+// Quick picks in each target's dropdown: [box text, label]. Empty is Any.
+const TARGET_PRESETS: Record<"minProfit" | "minRoi", [string, string][]> = {
+    minProfit: [["", "Any"], ["25", "$25"], ["50", "$50"], ["100", "$100"], ["200", "$200"]],
+    minRoi: [["", "Any"], ["10", "10%"], ["25", "25%"], ["50", "50%"], ["100", "100%"]],
+};
+
+// The search shortcut, as this keyboard writes it.
+const SHORTCUT = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘ K" : "Ctrl K";
+
 const VIEW_NAMES: Record<View, string> = {
     deals: "Deals",
     candidates: "Waiting",
@@ -298,14 +331,17 @@ export function App() {
         // Half-typed or negative: keep the last good target.
         if (!Number.isFinite(value) || value < 0) return;
 
-        const next = { ...targets, [field]: field === "minRoi" ? value / 100 : value };
-        setTargets(next);
+        setTargets((previous) => {
+            const next = { ...previous, [field]: field === "minRoi" ? value / 100 : value };
 
-        try {
-            localStorage.setItem("targets", JSON.stringify(next));
-        } catch {
-            // Without storage the targets last for this visit.
-        }
+            try {
+                localStorage.setItem("targets", JSON.stringify(next));
+            } catch {
+                // Without storage the targets last for this visit.
+            }
+
+            return next;
+        });
     }
 
     const runAnalysis = useCallback(async (listing: ListingSummary, fresh = false) => {
@@ -577,7 +613,97 @@ export function App() {
     };
     const viewCount = (key: View) => {
         const count = groups[key].length;
-        return <span className={count > 0 ? (COUNT_TONES[key] ?? styles.count) : styles.count}>{count}</span>;
+        return <span className={`${styles.countPill} ${count > 0 ? (COUNT_TONES[key] ?? styles.count) : styles.count}`}>{count}</span>;
+    };
+
+    // ⌘K (Ctrl+K elsewhere) jumps to search from anywhere.
+    const searchInput = useRef<HTMLInputElement>(null);
+
+    useEffect(() => {
+        const onKey = (event: KeyboardEvent) => {
+            if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+                event.preventDefault();
+                searchInput.current?.focus();
+                searchInput.current?.select();
+            }
+        };
+
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, []);
+
+    // Each target's dropdown: quick picks, and a custom amount.
+    const targetMenu = (field: keyof Targets, close: () => void) => (
+        <div className={styles.targetMenu}>
+            <div className={styles.presets}>
+                {TARGET_PRESETS[field].map(([text, label]) => (
+                    <button
+                        key={label}
+                        type="button"
+                        aria-pressed={targetInputs[field] === text}
+                        onClick={() => {
+                            changeTarget(field, text);
+                            close();
+                        }}
+                    >
+                        {label}
+                    </button>
+                ))}
+            </div>
+            <label className={styles.field}>
+                <span>Custom</span>
+                <span className={styles.affix}>
+                    {field === "minProfit" && <span>$</span>}
+                    <input
+                        type="number"
+                        inputMode="decimal"
+                        min="0"
+                        step="5"
+                        placeholder="Any"
+                        value={targetInputs[field]}
+                        onChange={(event) => changeTarget(field, event.target.value)}
+                    />
+                    {field === "minRoi" && <span>%</span>}
+                </span>
+            </label>
+        </div>
+    );
+
+    // Everything narrowing the results, as removable chips under the toolbar.
+    const activeChips = [
+        targets.minProfit > 0 && {
+            key: "profit",
+            label: `Min profit ≥ $${targets.minProfit}`,
+            clear: () => changeTarget("minProfit", ""),
+        },
+        targets.minRoi > 0 && {
+            key: "roi",
+            label: `ROI ≥ ${Math.round(targets.minRoi * 100)}%`,
+            clear: () => changeTarget("minRoi", ""),
+        },
+        typeFilter !== "all" && {
+            key: "type",
+            label: typeFilter === "AUCTION" ? "Auctions only" : "Buy It Now only",
+            clear: () => withViewTransition(() => setTypeFilter("all")),
+        },
+        kindFilter !== "all" && {
+            key: "kind",
+            label: kindFilter === "raw" ? "Raw only" : "Graded only",
+            clear: () => withViewTransition(() => setKindFilter("all")),
+        },
+        minPrice !== "" && { key: "min", label: `Buy It Now ≥ $${minPrice}`, clear: () => changeMinPrice("") },
+        maxPrice !== "" && { key: "max", label: `Price ≤ $${maxPrice}`, clear: () => setMaxPrice("") },
+    ].filter((chip): chip is { key: string; label: string; clear: () => void } => Boolean(chip));
+
+    const clearAll = () => {
+        changeTarget("minProfit", "");
+        changeTarget("minRoi", "");
+        changeMinPrice("");
+        setMaxPrice("");
+        withViewTransition(() => {
+            setTypeFilter("all");
+            setKindFilter("all");
+        });
     };
 
     // Min profit and min ROI: in the toolbar on wide screens, in the drawer always.
@@ -619,7 +745,15 @@ export function App() {
                 <main className={styles.main}>
                     <header className={styles.toolbar}>
                         <div className={styles.topRow}>
-                            <h1 className={styles.title}>Pokemon Flipper</h1>
+                            <div className={styles.brand}>
+                                <LogoMark className={styles.logo} />
+                                <div>
+                                    <h1 className={styles.title}>
+                                        Pokemon <span>Flipper</span>
+                                    </h1>
+                                    <p className={styles.tagline}>Find undervalued cards. Flip for profit.</p>
+                                </div>
+                            </div>
 
                             {/* Phones: the menu where everyone expects it, top right. */}
                             <button
@@ -635,57 +769,114 @@ export function App() {
                                 {activeFilters > 0 && <span className={styles.menuBadge}>{activeFilters}</span>}
                             </button>
 
-                        <form className={styles.searchRow} role="search" onSubmit={search}>
-                            <input
-                                type="search"
-                                value={query}
-                                onChange={(event) => setQuery(event.target.value)}
-                                placeholder="Charizard, Lugia 9/111, Neo Genesis PSA 8"
-                                aria-label="Search cards"
-                            />
-                            <button type="submit" className={styles.primary}>
-                                Find deals
-                            </button>
-                        </form>
+                            <form className={styles.searchRow} role="search" onSubmit={search}>
+                                <label className={styles.searchField}>
+                                    <SearchIcon className={styles.searchIcon} />
+                                    <input
+                                        ref={searchInput}
+                                        type="search"
+                                        value={query}
+                                        onChange={(event) => setQuery(event.target.value)}
+                                        placeholder="Search cards, sets, grades, or keywords"
+                                        aria-label="Search cards"
+                                        aria-keyshortcuts="Meta+K Control+K"
+                                    />
+                                    <kbd className={styles.shortcut} aria-hidden="true">
+                                        {SHORTCUT}
+                                    </kbd>
+                                </label>
+                                {/* On phones, just the icon, so search keeps its row. */}
+                                <button type="submit" className={styles.primary} aria-label="Find deals">
+                                    <SearchIcon className={styles.buttonIcon} />
+                                    <span className={styles.wideOnly}>Find deals</span>
+                                </button>
+                            </form>
                         </div>
 
-                        <div className={styles.controlRow}>
-                            {/* Wide screens: every view at a glance. */}
-                            <div className={styles.wideOnly}>
-                                <Segmented
-                                    label="Show"
-                                    value={view}
-                                    onChange={setView}
-                                    options={VIEWS.map((key) => [key, <>{VIEW_NAMES[key]} {viewCount(key)}</>])}
-                                />
-                            </div>
+                        <div className={styles.controlPanel}>
+                            <div className={styles.controlRow}>
+                                {/* Wide screens: every view at a glance. */}
+                                <div className={styles.wideOnly}>
+                                    <Segmented
+                                        label="Show"
+                                        value={view}
+                                        onChange={setView}
+                                        options={VIEWS.map((key) => [
+                                            key,
+                                            <span className={styles.tabLabel}>
+                                                {VIEW_ICONS[key]}
+                                                {VIEW_NAMES[key]}
+                                                {viewCount(key)}
+                                            </span>,
+                                        ])}
+                                    />
+                                </div>
 
-                            {/* Phones: the view you're on; tap for the rest. */}
-                            <button
-                                type="button"
-                                className={`${styles.viewButton} ${styles.narrowOnly}`}
-                                aria-haspopup="dialog"
-                                onClick={() => setDrawerOpen(true)}
-                            >
-                                {VIEW_NAMES[view]} {viewCount(view)}
-                                <span aria-hidden="true">▾</span>
-                            </button>
-
-                            <div className={styles.criteria}>
-                                {/* Your deal criteria, in view on wide screens, since they decide what's a deal. */}
-                                <div className={`${styles.targets} ${styles.wideOnly}`}>{targetFields}</div>
-
+                                {/* Phones: the view you're on; tap for the rest. */}
                                 <button
                                     type="button"
-                                    className={`${styles.filtersButton} ${styles.wideOnly}`}
+                                    className={`${styles.viewButton} ${styles.narrowOnly}`}
                                     aria-haspopup="dialog"
-                                    aria-label="Views, targets, and filters"
                                     onClick={() => setDrawerOpen(true)}
                                 >
-                                    Filters
-                                    {activeFilters > 0 && <span className={styles.filterCount}>{activeFilters}</span>}
+                                    {VIEW_ICONS[view]}
+                                    {VIEW_NAMES[view]} {viewCount(view)}
+                                    <ChevronIcon className={styles.viewChevron} />
                                 </button>
+
+                                <div className={`${styles.criteria} ${styles.wideOnly}`}>
+                                    {/* Your deal criteria, in view, since they decide what's a deal. */}
+                                    <Dropdown
+                                        icon={<DollarIcon />}
+                                        label="Min profit"
+                                        value={targets.minProfit > 0 ? `$${targets.minProfit}` : "Any"}
+                                    >
+                                        {(close) => targetMenu("minProfit", close)}
+                                    </Dropdown>
+                                    <Dropdown
+                                        icon={<TrendIcon />}
+                                        label="ROI"
+                                        value={targets.minRoi > 0 ? `${Math.round(targets.minRoi * 100)}%` : "Any"}
+                                    >
+                                        {(close) => targetMenu("minRoi", close)}
+                                    </Dropdown>
+                                    <button
+                                        type="button"
+                                        className={styles.filtersButton}
+                                        aria-haspopup="dialog"
+                                        aria-label="Views, targets, and filters"
+                                        onClick={() => setDrawerOpen(true)}
+                                    >
+                                        <SlidersIcon className={styles.buttonIcon} />
+                                        Filters
+                                        {activeFilters > 0 && <span className={styles.filterCount}>{activeFilters}</span>}
+                                    </button>
+                                </div>
                             </div>
+
+                            {/* What's narrowing the results, each one a click to remove. */}
+                            {activeChips.length > 0 && (
+                                <div className={styles.activeFilters}>
+                                    <span className={styles.activeLabel}>Active filters:</span>
+                                    {activeChips.map((chip) => (
+                                        <button
+                                            key={chip.key}
+                                            type="button"
+                                            className={styles.chip}
+                                            onClick={chip.clear}
+                                            aria-label={`Remove ${chip.label}`}
+                                        >
+                                            {chip.label}
+                                            <CloseIcon className={styles.chipIcon} />
+                                        </button>
+                                    ))}
+                                    {activeChips.length > 1 && (
+                                        <button type="button" className={styles.clearAll} onClick={clearAll}>
+                                            Clear all
+                                        </button>
+                                    )}
+                                </div>
+                            )}
                         </div>
 
                         <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} title="Views and filters">

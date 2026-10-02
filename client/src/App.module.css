@@ -20,13 +20,12 @@
     display: grid;
     /* Never wider than the screen: the tabs scroll instead. */
     grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-2);
+    gap: var(--space-3);
     margin-bottom: var(--space-3);
     /* Below the notch, matching the drawer, so the menu and its X line up. */
     padding-top: calc(env(safe-area-inset-top, 0px) + var(--space-3));
     padding-bottom: var(--space-3);
     background: var(--bg);
-    border-bottom: 1px solid var(--border);
 }
 
 /* Pinned while you scroll, where there's room for it. */
@@ -51,16 +50,6 @@
     font-weight: 750;
     letter-spacing: -0.02em;
     white-space: nowrap;
-}
-
-.searchRow input {
-    flex: 1 1 12rem;
-    min-width: 0;
-    min-height: 40px;
-    padding: 0 var(--space-3);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-control);
 }
 
 .primary {
@@ -305,7 +294,7 @@
 }
 
 /* Where typing goes: the field lights up. */
-.searchRow input:focus-visible,
+.searchField:focus-within,
 .target:focus-within,
 .affix:focus-within {
     border-color: var(--accent);
@@ -488,7 +477,7 @@
     gap: var(--space-2) var(--space-3);
 }
 
-.topRow .title {
+.topRow .brand {
     grid-area: title;
 }
 
@@ -573,6 +562,313 @@
 .countAction {
     color: var(--action-text);
     font-weight: 750;
+}
+
+/* The brand: an original mark, the name, and what it's for. */
+.brand {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: 0;
+}
+
+.logo {
+    flex: none;
+    width: 2.75rem;
+    height: 2.75rem;
+}
+
+.brand .title {
+    font-size: clamp(1.15rem, 1rem + 0.6vw, 1.5rem);
+    line-height: 1.1;
+}
+
+.brand .title span {
+    color: var(--accent);
+}
+
+.tagline {
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    white-space: nowrap;
+}
+
+/* The search field: icon, input, and the shortcut that jumps to it. */
+.searchField {
+    flex: 1 1 10rem;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    min-height: 50px;
+    padding: 0 0.6rem 0 0.9rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    cursor: text;
+    transition:
+        border-color var(--dur-fast) var(--ease-out),
+        box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.searchIcon {
+    flex: none;
+    color: var(--text-muted);
+    font-size: 1.25rem;
+}
+
+.searchField input {
+    flex: 1;
+    min-width: 0;
+    min-height: 44px;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    outline: none;
+}
+
+.shortcut {
+    flex: none;
+    padding: 2px 8px;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-muted);
+    font: 600 var(--text-xs) / 1.5 var(--font);
+}
+
+/* The main action: solid, with a soft glow. */
+.primary {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: 50px;
+    padding: 0 var(--space-4);
+    border-radius: var(--radius-card);
+    font-size: var(--text-md);
+    font-weight: 700;
+    box-shadow:
+        inset 0 1px 0 rgb(255 255 255 / 0.18),
+        0 6px 20px color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+.buttonIcon {
+    flex: none;
+    font-size: 1.15em;
+}
+
+/* Views, targets, and filters in one panel; active filters below them. */
+.controlPanel {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    background: color-mix(in srgb, var(--surface) 70%, transparent);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius-card) + 4px);
+}
+
+.controlPanel .segmented {
+    gap: 4px;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+}
+
+.controlPanel .segmented button {
+    min-height: 48px;
+    padding: 0 0.85rem;
+    border-radius: var(--radius-control);
+    font-size: var(--text-md);
+    font-weight: 600;
+}
+
+/* The chosen view: a tinted tab with an underline, sliding between them. */
+.controlPanel .indicator {
+    top: 0;
+    bottom: 0;
+    border-radius: var(--radius-control);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.tabLabel {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.tabLabel svg {
+    font-size: 1.15rem;
+    transition: color var(--dur-fast) var(--ease-out);
+}
+
+.segmented button[aria-pressed="true"] .tabLabel svg {
+    color: var(--accent);
+}
+
+.countPill {
+    display: inline-grid;
+    place-items: center;
+    min-width: 1.7rem;
+    height: 1.45rem;
+    padding: 0 6px;
+    border-radius: var(--radius-pill);
+    background: var(--surface-alt);
+    font-size: var(--text-xs);
+}
+
+.controlPanel .criteria {
+    padding-left: var(--space-3);
+    border-left: 1px solid var(--border);
+}
+
+.controlPanel .filtersButton {
+    gap: 8px;
+    min-height: 48px;
+    border-radius: var(--radius-control);
+    font-size: var(--text-md);
+    font-weight: 600;
+}
+
+.viewButton svg {
+    font-size: 1.1rem;
+}
+
+.viewChevron {
+    color: var(--text-muted);
+}
+
+/* Each target's dropdown: quick picks, then a custom amount. */
+.targetMenu {
+    display: grid;
+    gap: var(--space-3);
+}
+
+.targetMenu .affix input {
+    width: 100%;
+}
+
+.presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.presets button {
+    min-height: 36px;
+    padding: 0 0.8rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.presets button[aria-pressed="true"] {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    color: var(--action-text);
+}
+
+@media (hover: hover) {
+    .presets button:hover {
+        border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+    }
+}
+
+/* Active filters: each a chip that removes itself. */
+.activeFilters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-2) 2px;
+    border-top: 1px solid var(--border);
+}
+
+.activeLabel {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+}
+
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 34px;
+    padding: 0 10px 0 12px;
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+    border-radius: var(--radius-control);
+    color: var(--action-text);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    cursor: pointer;
+    animation: chip-in var(--dur-fast) var(--ease-out) backwards;
+}
+
+.chipIcon {
+    opacity: 0.75;
+    transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.clearAll {
+    padding: 6px;
+    background: none;
+    border: 0;
+    color: var(--action-text);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+@media (hover: hover) {
+    .chip:hover {
+        background: color-mix(in srgb, var(--accent) 20%, transparent);
+    }
+
+    .chip:hover .chipIcon {
+        opacity: 1;
+    }
+
+    .clearAll:hover {
+        text-decoration: underline;
+    }
+}
+
+@keyframes chip-in {
+    from {
+        opacity: 0;
+        transform: scale(0.94);
+    }
+}
+
+/* Phones: no panel chrome or tagline, and no keyboard shortcut to show. */
+@media (max-width: 39.99rem) {
+    .controlPanel {
+        padding: 0;
+        background: none;
+        border: 0;
+    }
+
+    .tagline {
+        display: none;
+    }
+
+    .logo {
+        width: 2.25rem;
+        height: 2.25rem;
+    }
+
+    .primary {
+        padding: 0 var(--space-3);
+    }
+}
+
+@media (hover: none), (max-width: 39.99rem) {
+    .shortcut {
+        display: none;
+    }
 }
 
 /* Which controls show where: tabs and targets need a wide screen. */

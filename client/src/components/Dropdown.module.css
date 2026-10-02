@@ -1,0 +1,87 @@
+.root {
+    position: relative;
+}
+
+.trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: 48px;
+    padding: 0 0.7rem 0 0.75rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    text-align: left;
+    cursor: pointer;
+}
+
+.trigger[aria-expanded="true"] {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+@media (hover: hover) {
+    .trigger:hover {
+        border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+    }
+}
+
+.icon {
+    display: grid;
+    place-items: center;
+    color: var(--text-muted);
+    font-size: 1.2rem;
+}
+
+.text {
+    display: grid;
+    min-width: 3.25rem;
+    line-height: 1.15;
+}
+
+.label {
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+}
+
+.value {
+    font-weight: 750;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Flips when the menu opens. */
+.chevron {
+    color: var(--text-muted);
+    transition: transform var(--dur-base) var(--ease-out);
+}
+
+.trigger[aria-expanded="true"] .chevron {
+    transform: rotate(180deg);
+}
+
+/* Fades and drops into place below the control. */
+.menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 20;
+    min-width: 15rem;
+    padding: var(--space-3);
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    box-shadow: 0 16px 40px rgb(0 0 0 / 0.45);
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+    transform-origin: top right;
+    pointer-events: none;
+    transition:
+        opacity var(--dur-fast) var(--ease-out),
+        transform var(--dur-fast) var(--ease-out);
+}
+
+.open {
+    opacity: 1;
+    transform: none;
+    pointer-events: auto;
+}
