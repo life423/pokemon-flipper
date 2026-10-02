@@ -92,18 +92,12 @@ test("weak photos on an identified card, and a new seller", () => {
     assert.deepEqual(ids(signals), ["WEAK_PHOTOS", "NEW_SELLER"]);
 });
 
-test("a listing Dig deeper found says how it was hidden, and a lot counts most", () => {
+test("a listing Dig deeper found says how it was hidden", () => {
     const misspelled = bargainSignals(
         listing("Charzard 4/102 Holo WOTC", { found: { how: "MISSPELLED", note: "one card: Charizard 4/102" } }),
         evaluation({})
     );
-    const lot = bargainSignals(
-        listing("Vintage Pokemon Holo Lot", { found: { how: "LOT", note: "about 30 cards, including Charizard" } }),
-        null
-    );
 
     assert.equal(misspelled[0].label, "Misspelled title");
     assert.ok(!misspelled.some((signal) => signal.id === "NAME_OFF"));
-    assert.equal(lot[0].label, "Inside a lot");
-    assert.equal(lot[0].weight, 35);
 });

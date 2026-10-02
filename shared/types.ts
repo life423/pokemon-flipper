@@ -87,7 +87,7 @@ export interface SearchIntent {
 }
 
 // How Dig deeper turned a listing up.
-export type FoundHow = "MISSPELLED" | "NUMBER_ONLY" | "WRONG_CATEGORY" | "PHOTO_SHOWS_IT" | "LOT";
+export type FoundHow = "MISSPELLED" | "NUMBER_ONLY" | "WRONG_CATEGORY" | "PHOTO_SHOWS_IT";
 
 // One search result, with the free check once it's run.
 export interface ListingSummary {

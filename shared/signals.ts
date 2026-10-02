@@ -17,7 +17,6 @@ const FOUND_LABELS: Record<FoundHow, string> = {
     NUMBER_ONLY: "Title gives only the number",
     WRONG_CATEGORY: "Listed in the wrong category",
     PHOTO_SHOWS_IT: "Title hides it; the photo shows it",
-    LOT: "Inside a lot",
 };
 
 const PRINTING_NAMES: Record<string, string> = { FIRST_EDITION: "1st Edition", SHADOWLESS: "Shadowless" };
@@ -75,7 +74,7 @@ export function bargainSignals(
             id: "FOUND",
             label: FOUND_LABELS[listing.found.how],
             detail: `Found by Dig deeper: ${listing.found.note}`,
-            weight: listing.found.how === "LOT" ? 35 : 30,
+            weight: 30,
         });
     }
 

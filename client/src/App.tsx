@@ -436,8 +436,20 @@ export function App() {
             }
         }
 
-        // Turned up by Dig deeper, whatever their verdict.
-        const hidden = filtered.filter((listing) => listing.found);
+        // Turned up by Dig deeper, shown only while genuine profit still exists:
+        // a verified deal or offer, or a candidate still being checked.
+        const hidden = filtered.filter((listing) => {
+            if (!listing.found) return false;
+
+            const evaluation = evaluationOf(analyses[listing.id]);
+
+            if (evaluation) {
+                const verdict = evaluation.underwriting?.verdict;
+                return isDeal(evaluation) || (verdict === "PASS" && offerWorthMaking(offerFor(listing, evaluation.underwriting?.best?.maxBid)));
+            }
+
+            return listing.screen?.status === "CANDIDATE";
+        });
 
         return { deals, candidates, longShots, review, hidden, all: filtered };
     }, [filtered, analyses]);
@@ -758,7 +770,7 @@ export function App() {
                                             {digError
                                                 ? digError
                                                 : digStatus === "digging"
-                                                  ? `Digging: misspelled titles, number-only titles, other categories, and lots${digTotal ? ` (${digTotal} more listings)` : ""}. The photos decide.`
+                                                  ? `Digging: misspelled titles, number-only titles, and other categories${digTotal ? ` (${digTotal} more listings)` : ""}. The photos decide.`
                                                   : `Dig deeper checked ${digTotal} more listings and found ${groups.hidden.length} hidden ${groups.hidden.length === 1 ? "one" : "ones"}: see Hidden finds.`}
                                         </p>
                                     )}

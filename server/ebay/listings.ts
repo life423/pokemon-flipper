@@ -135,10 +135,9 @@ export async function searchListings(
     {
         maxResults = PAGE_SIZE,
         anyCategory = false,
-        keepLots = false,
-    }: { maxResults?: number; anyCategory?: boolean; keepLots?: boolean } = {}
+    }: { maxResults?: number; anyCategory?: boolean } = {}
 ): Promise<{ listings: ListingSummary[]; total: number; skipped: number }> {
-    const scope = `${anyCategory ? "any" : "cards"}${keepLots ? "+lots" : ""}`;
+    const scope = anyCategory ? "any" : "cards";
     const key = `ebay:search:${maxResults}:${scope}:${normalizeText(search).trim()}`;
     const saved = await readCache<{ listings: ListingSummary[]; total: number; skipped: number }>(key, SEARCH_MAX_AGE_HOURS);
 
@@ -177,7 +176,7 @@ export async function searchListings(
         for (const item of items) {
             if (seen.has(item.itemId)) continue;
 
-            if (exclusionReason(item, { keepLots }) !== null) {
+            if (exclusionReason(item) !== null) {
                 skipped += 1;
                 continue;
             }

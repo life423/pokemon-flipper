@@ -2,9 +2,9 @@ import { runStructured, MODEL } from "../ai/openai.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import type { FoundHow, SearchIntent } from "../../shared/types.ts";
 
-// The extra eBay searches Dig deeper runs, aimed at listings the plain
-// search misses: misspelled names, number-only titles, the wrong category,
-// and lots. One page each.
+// The extra eBay searches Dig deeper runs, aimed at single cards the plain
+// search misses: misspelled names, number-only titles, and the wrong
+// category. One page each.
 
 const PLAN_VERSION = 1;
 const MONTH_HOURS = 24 * 30;
@@ -13,7 +13,6 @@ export interface DigQuery {
     query: string;
     how: FoundHow;
     anyCategory?: boolean;
-    keepLots?: boolean;
 }
 
 interface Variants {
@@ -70,7 +69,5 @@ export async function digQueries(search: string, intent: SearchIntent): Promise<
         ...misspellings.map((word) => ({ query: `${word} ${set}`.trim(), how: "MISSPELLED" as const })),
         ...numbers.map((number) => ({ query: `${number} holo`, how: "NUMBER_ONLY" as const })),
         { query: search, how: "WRONG_CATEGORY", anyCategory: true },
-        { query: `${intent.cardName} lot`, how: "LOT", keepLots: true },
-        ...(set ? [{ query: `${set} holo lot`, how: "LOT" as const, keepLots: true }] : []),
     ];
 }
