@@ -850,14 +850,6 @@
         border-bottom: 1px solid var(--border);
     }
 
-    /* Min profit on the left, Filters on the right. */
-    .controlPanel .criteria {
-        flex: 1 1 100%;
-        justify-content: space-between;
-        padding-left: 0;
-        border-left: 0;
-    }
-
     /* Active filters live behind the Filters count on phones. */
     .activeFilters {
         display: none;

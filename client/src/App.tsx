@@ -808,8 +808,9 @@ export function App() {
                                     />
                                 </div>
 
-                                <div className={styles.criteria}>
-                                    {/* Your deal criteria, in view, since they decide what's a deal. */}
+                                {/* Wide screens: your deal criteria in view, and the way into the drawer.
+                                    Phones reach both through the menu. */}
+                                <div className={`${styles.criteria} ${styles.wideOnly}`}>
                                     <Dropdown
                                         icon={<DollarIcon />}
                                         label="Min profit"
@@ -817,16 +818,13 @@ export function App() {
                                     >
                                         {(close) => targetMenu("minProfit", close)}
                                     </Dropdown>
-                                    {/* ROI on wide screens; on phones it's in the drawer. */}
-                                    <div className={styles.wideOnly}>
-                                        <Dropdown
-                                            icon={<TrendIcon />}
-                                            label="ROI"
-                                            value={targets.minRoi > 0 ? `${Math.round(targets.minRoi * 100)}%` : "Any"}
-                                        >
-                                            {(close) => targetMenu("minRoi", close)}
-                                        </Dropdown>
-                                    </div>
+                                    <Dropdown
+                                        icon={<TrendIcon />}
+                                        label="ROI"
+                                        value={targets.minRoi > 0 ? `${Math.round(targets.minRoi * 100)}%` : "Any"}
+                                    >
+                                        {(close) => targetMenu("minRoi", close)}
+                                    </Dropdown>
                                     <button
                                         type="button"
                                         className={styles.filtersButton}
