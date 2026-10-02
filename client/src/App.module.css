@@ -135,10 +135,6 @@
     font-weight: 650;
 }
 
-.filtersMenu {
-    position: relative;
-}
-
 .filtersButton {
     display: inline-flex;
     align-items: center;
@@ -166,22 +162,6 @@
     font-size: var(--text-xs);
     font-weight: 700;
     text-align: center;
-}
-
-.popover {
-    position: absolute;
-    top: calc(100% + 6px);
-    right: 0;
-    z-index: 20;
-    display: grid;
-    gap: var(--space-3);
-    width: max-content;
-    max-width: min(22rem, calc(100vw - 2rem));
-    padding: var(--space-3);
-    background: var(--surface-alt);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-card);
-    box-shadow: 0 16px 40px rgb(0 0 0 / 0.45);
 }
 
 .secondary {
@@ -358,5 +338,99 @@
     .field input,
     .field select {
         min-height: var(--tap);
+    }
+}
+
+/* The min profit and min ROI pair, in the toolbar or the drawer. */
+.targets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+/* Phones: the view you're on, opening the drawer for the rest. */
+.viewButton {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: var(--tap);
+    padding: 0 var(--space-3);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-pill);
+    font-weight: 650;
+    cursor: pointer;
+}
+
+.viewButton span {
+    color: var(--text-muted);
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+
+.drawerSection {
+    display: grid;
+    gap: var(--space-3);
+}
+
+.drawerSection h3 {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    font-weight: 600;
+}
+
+.viewList {
+    display: grid;
+    gap: 4px;
+}
+
+.viewList button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: var(--tap);
+    padding: 0 var(--space-3);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-control);
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+}
+
+.viewList button[aria-current="true"] {
+    background: var(--surface-alt);
+    border-color: var(--accent);
+}
+
+.viewList span {
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.priceRange {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-3);
+}
+
+.priceRange .affix input {
+    width: 100%;
+}
+
+/* Which controls show where: tabs and targets need a wide screen. */
+@media (max-width: 39.99rem) {
+    .wideOnly {
+        display: none;
+    }
+
+    .controlRow {
+        flex-wrap: nowrap;
+    }
+}
+
+@media (min-width: 40rem) {
+    .narrowOnly {
+        display: none;
     }
 }

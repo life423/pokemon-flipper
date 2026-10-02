@@ -1,0 +1,77 @@
+.root {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    pointer-events: none;
+}
+
+.open {
+    pointer-events: auto;
+}
+
+.backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgb(0 0 0 / 0.55);
+    opacity: 0;
+    transition: opacity 180ms ease;
+}
+
+.open .backdrop {
+    opacity: 1;
+}
+
+/* Slides in from the right; clear of the notch and the home bar. */
+.panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    width: min(24rem, 88vw);
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    box-shadow: -16px 0 40px rgb(0 0 0 / 0.45);
+    transform: translateX(100%);
+    transition: transform 220ms ease;
+}
+
+.open .panel {
+    transform: none;
+}
+
+.head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--border);
+}
+
+.head h2 {
+    font-size: var(--text-lg);
+}
+
+.close {
+    width: var(--tap);
+    height: var(--tap);
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: var(--surface-alt);
+    font-size: 1.4rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.body {
+    flex: 1;
+    display: grid;
+    align-content: start;
+    gap: var(--space-4);
+    padding: var(--space-4);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}

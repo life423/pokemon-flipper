@@ -7,6 +7,7 @@ import { bargainScore, bargainSignals } from "../../shared/signals.ts";
 import { name } from "./format";
 import { evaluateListing, fetchEbayUsage, streamDeals, streamDig, type DealsMessage } from "./api";
 import { DealCard } from "./components/DealCard";
+import { Drawer } from "./components/Drawer";
 import { DetailPanel } from "./components/DetailPanel";
 import { useNow } from "./useNow";
 import styles from "./App.module.css";
@@ -17,6 +18,17 @@ export type AnalysisState =
     | { status: "error"; message: string };
 
 type View = "deals" | "candidates" | "longShots" | "review" | "hidden" | "all";
+
+// The views, in order, and what each is called everywhere it appears.
+const VIEWS: View[] = ["deals", "candidates", "longShots", "review", "hidden", "all"];
+const VIEW_NAMES: Record<View, string> = {
+    deals: "Deals",
+    candidates: "Waiting",
+    longShots: "Long shots",
+    review: "Review",
+    hidden: "Hidden finds",
+    all: "All",
+};
 type SortKey = "best" | "bargain" | "ending" | "priceLow" | "priceHigh";
 type TypeFilter = "all" | "AUCTION" | "FIXED_PRICE";
 type KindFilter = "all" | "raw" | "graded";
@@ -206,26 +218,8 @@ export function App() {
 
     const [selectedId, setSelectedId] = useState<string | null>(null);
 
-    // The filters popover, closed by a click outside it or Escape.
-    const [filtersOpen, setFiltersOpen] = useState(false);
-    const filtersRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        if (!filtersOpen) return;
-
-        const close = (event: MouseEvent | KeyboardEvent) => {
-            const outside = event instanceof MouseEvent && !filtersRef.current?.contains(event.target as Node);
-            if (outside || (event instanceof KeyboardEvent && event.key === "Escape")) setFiltersOpen(false);
-        };
-
-        document.addEventListener("mousedown", close);
-        document.addEventListener("keydown", close);
-
-        return () => {
-            document.removeEventListener("mousedown", close);
-            document.removeEventListener("keydown", close);
-        };
-    }, [filtersOpen]);
+    // Views, targets, filters, and settings, in a drawer from the side.
+    const [drawerOpen, setDrawerOpen] = useState(false);
 
     // The intro line shows until the first search.
     const [searchedBefore] = useState(() => {
@@ -522,6 +516,39 @@ export function App() {
         all: "No listings match the filters.",
     };
 
+    // Min profit and min ROI: in the toolbar on wide screens, in the drawer always.
+    const targetFields = (
+        <>
+            <label className={styles.target} title="Minimum profit after every cost">
+                {targetInputs.minProfit !== "" && <span>$</span>}
+                <input
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="5"
+                    placeholder="Any"
+                    value={targetInputs.minProfit}
+                    onChange={(event) => changeTarget("minProfit", event.target.value)}
+                    aria-label="Minimum profit, dollars"
+                />
+                <span>profit</span>
+            </label>
+            <label className={styles.target} title="Minimum return on everything you put in">
+                <input
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="5"
+                    placeholder="Any"
+                    value={targetInputs.minRoi}
+                    onChange={(event) => changeTarget("minRoi", event.target.value)}
+                    aria-label="Minimum return, percent"
+                />
+                <span>{targetInputs.minRoi === "" ? "ROI" : "% ROI"}</span>
+            </label>
+        </>
+    );
+
     return (
         <div className={styles.shell}>
             <div className={styles.layout}>
@@ -542,160 +569,166 @@ export function App() {
                         </form>
 
                         <div className={styles.controlRow}>
-                            <Segmented
-                                label="Show"
-                                value={view}
-                                onChange={setView}
-                                options={[
-                                    ["deals", `Deals ${groups.deals.length}`],
-                                    ["candidates", `Waiting ${groups.candidates.length}`],
-                                    ["longShots", `Long shots ${groups.longShots.length}`],
-                                    ["review", `Review ${groups.review.length}`],
-                                    ["hidden", `Hidden finds ${groups.hidden.length}`],
-                                    ["all", `All ${groups.all.length}`],
-                                ]}
-                            />
+                            {/* Wide screens: every view at a glance. */}
+                            <div className={styles.wideOnly}>
+                                <Segmented
+                                    label="Show"
+                                    value={view}
+                                    onChange={setView}
+                                    options={VIEWS.map((key) => [key, `${VIEW_NAMES[key]} ${groups[key].length}`])}
+                                />
+                            </div>
 
-                            {/* Your deal criteria: always in view, since they decide what's a deal. */}
+                            {/* Phones: the view you're on; tap for the rest. */}
+                            <button
+                                type="button"
+                                className={`${styles.viewButton} ${styles.narrowOnly}`}
+                                aria-haspopup="dialog"
+                                onClick={() => setDrawerOpen(true)}
+                            >
+                                {VIEW_NAMES[view]} <span>{groups[view].length}</span>
+                                <span aria-hidden="true">▾</span>
+                            </button>
+
                             <div className={styles.criteria}>
-                                <label className={styles.target} title="Minimum profit after every cost">
-                                    {targetInputs.minProfit !== "" && <span>$</span>}
-                                    <input
-                                        type="number"
-                                        inputMode="decimal"
-                                        min="0"
-                                        step="5"
-                                        placeholder="Any"
-                                        value={targetInputs.minProfit}
-                                        onChange={(event) => changeTarget("minProfit", event.target.value)}
-                                        aria-label="Minimum profit, dollars"
-                                    />
-                                    <span>profit</span>
-                                </label>
-                                <label className={styles.target} title="Minimum return on everything you put in">
-                                    <input
-                                        type="number"
-                                        inputMode="decimal"
-                                        min="0"
-                                        step="5"
-                                        placeholder="Any"
-                                        value={targetInputs.minRoi}
-                                        onChange={(event) => changeTarget("minRoi", event.target.value)}
-                                        aria-label="Minimum return, percent"
-                                    />
-                                    <span>{targetInputs.minRoi === "" ? "ROI" : "% ROI"}</span>
-                                </label>
+                                {/* Your deal criteria, in view on wide screens, since they decide what's a deal. */}
+                                <div className={`${styles.targets} ${styles.wideOnly}`}>{targetFields}</div>
 
-                                <div className={styles.filtersMenu} ref={filtersRef}>
-                                    <button
-                                        type="button"
-                                        className={styles.filtersButton}
-                                        aria-expanded={filtersOpen}
-                                        aria-controls="filters"
-                                        onClick={() => setFiltersOpen((open) => !open)}
-                                    >
-                                        Filters
-                                        {activeFilters > 0 && <span className={styles.filterCount}>{activeFilters}</span>}
-                                    </button>
-
-                                    {filtersOpen && (
-                                        <div id="filters" className={styles.popover} role="dialog" aria-label="Filters">
-                                            <div className={styles.field}>
-                                                <span>Listing</span>
-                                                <Segmented
-                                                    label="Listing type"
-                                                    value={typeFilter}
-                                                    onChange={setTypeFilter}
-                                                    options={[
-                                                        ["all", "Any"],
-                                                        ["AUCTION", "Auctions"],
-                                                        ["FIXED_PRICE", "Buy It Now"],
-                                                    ]}
-                                                />
-                                            </div>
-                                            <div className={styles.field}>
-                                                <span>Card</span>
-                                                <Segmented
-                                                    label="Raw or graded"
-                                                    value={kindFilter}
-                                                    onChange={setKindFilter}
-                                                    options={[
-                                                        ["all", "Any"],
-                                                        ["raw", "Raw"],
-                                                        ["graded", "Graded"],
-                                                    ]}
-                                                />
-                                            </div>
-                                            <label className={styles.field}>
-                                                <span>Min price, Buy It Now only</span>
-                                                <span className={styles.affix}>
-                                                    <span>$</span>
-                                                    <input
-                                                        type="number"
-                                                        inputMode="decimal"
-                                                        min="0"
-                                                        value={minPrice}
-                                                        onChange={(event) => changeMinPrice(event.target.value)}
-                                                        placeholder="Any"
-                                                    />
-                                                </span>
-                                            </label>
-                                            <label className={styles.field}>
-                                                <span>Max price</span>
-                                                <span className={styles.affix}>
-                                                    <span>$</span>
-                                                    <input
-                                                        type="number"
-                                                        inputMode="decimal"
-                                                        min="0"
-                                                        value={maxPrice}
-                                                        onChange={(event) => setMaxPrice(event.target.value)}
-                                                        placeholder="Any"
-                                                    />
-                                                </span>
-                                            </label>
-                                            <label className={styles.field}>
-                                                <span>Sort</span>
-                                                <select value={sort} onChange={(event) => setSort(event.target.value as SortKey)}>
-                                                    <option value="best">Best deal first</option>
-                                                    <option value="ending">Ending soonest</option>
-                                                    <option value="priceLow">Price, low to high</option>
-                                                    <option value="priceHigh">Price, high to low</option>
-                                                    <option value="bargain">Most overlooked first</option>
-                                                </select>
-                                            </label>
-                                            <label className={styles.field}>
-                                                <span>Results per search</span>
-                                                <select
-                                                    value={resultsSetting}
-                                                    onChange={(event) => changeResultsSetting(Number(event.target.value))}
-                                                >
-                                                    {RESULT_OPTIONS.map((option) => (
-                                                        <option key={option} value={option}>
-                                                            {option === 1000 ? "1,000 (more eBay requests)" : option}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                            </label>
-                                            <label className={styles.field}>
-                                                <span>AI per search</span>
-                                                <select
-                                                    value={autoSetting}
-                                                    onChange={(event) => changeAutoSetting(Number(event.target.value))}
-                                                >
-                                                    {AUTO_OPTIONS.map((option) => (
-                                                        <option key={option} value={option}>
-                                                            {option === ALL ? "All waiting" : option === 0 ? "Off" : `Top ${option}`}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                            </label>
-                                            {usage && <p className={styles.usage}>{describeUsage(usage)}</p>}
-                                        </div>
-                                    )}
-                                </div>
+                                <button
+                                    type="button"
+                                    className={styles.filtersButton}
+                                    aria-haspopup="dialog"
+                                    aria-label="Views, targets, and filters"
+                                    onClick={() => setDrawerOpen(true)}
+                                >
+                                    <span className={styles.wideOnly}>Filters</span>
+                                    <span className={styles.narrowOnly} aria-hidden="true">☰</span>
+                                    {activeFilters > 0 && <span className={styles.filterCount}>{activeFilters}</span>}
+                                </button>
                             </div>
                         </div>
+
+                        <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} title="Views and filters">
+                            <section className={styles.drawerSection}>
+                                <h3>Show</h3>
+                                <div className={styles.viewList}>
+                                    {VIEWS.map((key) => (
+                                        <button
+                                            key={key}
+                                            type="button"
+                                            aria-current={view === key}
+                                            onClick={() => {
+                                                setView(key);
+                                                setDrawerOpen(false);
+                                            }}
+                                        >
+                                            {VIEW_NAMES[key]}
+                                            <span>{groups[key].length}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </section>
+
+                            <section className={styles.drawerSection}>
+                                <h3>Your targets</h3>
+                                <div className={styles.targets}>{targetFields}</div>
+                            </section>
+
+                            <section className={styles.drawerSection}>
+                                <h3>Filters</h3>
+                                <div className={styles.field}>
+                                    <span>Listing</span>
+                                    <Segmented
+                                        label="Listing type"
+                                        value={typeFilter}
+                                        onChange={setTypeFilter}
+                                        options={[
+                                            ["all", "Any"],
+                                            ["AUCTION", "Auctions"],
+                                            ["FIXED_PRICE", "Buy It Now"],
+                                        ]}
+                                    />
+                                </div>
+                                <div className={styles.field}>
+                                    <span>Card</span>
+                                    <Segmented
+                                        label="Raw or graded"
+                                        value={kindFilter}
+                                        onChange={setKindFilter}
+                                        options={[
+                                            ["all", "Any"],
+                                            ["raw", "Raw"],
+                                            ["graded", "Graded"],
+                                        ]}
+                                    />
+                                </div>
+                                <div className={styles.priceRange}>
+                                    <label className={styles.field}>
+                                        <span>Min price, Buy It Now</span>
+                                        <span className={styles.affix}>
+                                            <span>$</span>
+                                            <input
+                                                type="number"
+                                                inputMode="decimal"
+                                                min="0"
+                                                value={minPrice}
+                                                onChange={(event) => changeMinPrice(event.target.value)}
+                                                placeholder="Any"
+                                            />
+                                        </span>
+                                    </label>
+                                    <label className={styles.field}>
+                                        <span>Max price</span>
+                                        <span className={styles.affix}>
+                                            <span>$</span>
+                                            <input
+                                                type="number"
+                                                inputMode="decimal"
+                                                min="0"
+                                                value={maxPrice}
+                                                onChange={(event) => setMaxPrice(event.target.value)}
+                                                placeholder="Any"
+                                            />
+                                        </span>
+                                    </label>
+                                </div>
+                                <label className={styles.field}>
+                                    <span>Sort</span>
+                                    <select value={sort} onChange={(event) => setSort(event.target.value as SortKey)}>
+                                        <option value="best">Best deal first</option>
+                                        <option value="ending">Ending soonest</option>
+                                        <option value="priceLow">Price, low to high</option>
+                                        <option value="priceHigh">Price, high to low</option>
+                                        <option value="bargain">Most overlooked first</option>
+                                    </select>
+                                </label>
+                            </section>
+
+                            <section className={styles.drawerSection}>
+                                <h3>Each search</h3>
+                                <label className={styles.field}>
+                                    <span>Results per search</span>
+                                    <select value={resultsSetting} onChange={(event) => changeResultsSetting(Number(event.target.value))}>
+                                        {RESULT_OPTIONS.map((option) => (
+                                            <option key={option} value={option}>
+                                                {option === 1000 ? "1,000 (more eBay requests)" : option}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+                                <label className={styles.field}>
+                                    <span>AI per search</span>
+                                    <select value={autoSetting} onChange={(event) => changeAutoSetting(Number(event.target.value))}>
+                                        {AUTO_OPTIONS.map((option) => (
+                                            <option key={option} value={option}>
+                                                {option === ALL ? "All waiting" : option === 0 ? "Off" : `Top ${option}`}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+                                {usage && <p className={styles.usage}>{describeUsage(usage)}</p>}
+                            </section>
+                        </Drawer>
                     </header>
 
                     {searchStatus !== "idle" && (
