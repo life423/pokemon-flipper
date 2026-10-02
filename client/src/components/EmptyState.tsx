@@ -17,12 +17,12 @@ export function EmptyState() {
                 </defs>
                 {/* The card behind, mid-flip. */}
                 <rect x="104" y="30" width="74" height="104" rx="10" fill="#171a21" stroke="#2a3140" strokeWidth="2" transform="rotate(14 141 82)" />
-                {/* The card in front: a gradient edge and a rising line. */}
+                {/* The card in front: a gradient edge, and the Poke Ball at its center. */}
                 <g transform="rotate(-8 100 86)">
                     <rect x="62" y="28" width="78" height="110" rx="11" fill="url(#empty-edge)" />
                     <rect x="67" y="33" width="68" height="100" rx="8" fill="url(#empty-face)" />
-                    <path d="m80 108 16-16 10 10 18-22" fill="none" stroke="url(#empty-edge)" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
-                    <path d="M112 80h12v12" fill="none" stroke="url(#empty-edge)" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+                    <circle cx="101" cy="83" r="30" fill="#3b82f6" opacity="0.14" />
+                    <image href="/pokeball.png" x="77" y="59" width="48" height="48" />
                 </g>
                 {/* Sparkles. */}
                 <path d="M40 52l3 8 8 3-8 3-3 8-3-8-8-3 8-3z" fill="#3b82f6" />
