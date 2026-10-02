@@ -113,7 +113,7 @@ Open **http://localhost:3000** and search for a card.
 
 **Money settings, in [`shared/money/config.ts`](shared/money/config.ts)**
 
-eBay fees, sales tax, shipping costs, PSA and CGC service levels, and default targets all live in one file. They ship as `verified: false`: check them against your own accounts, then set it to `true`, and the page stops showing the reminder.
+eBay fees, sales tax, shipping costs, PSA and CGC service levels, and default targets all live in one file. Each part (selling, buying, grading) is marked verified once it's checked against your own accounts; until then, every analysis notes what's still unchecked.
 
 ## Scripts
 
@@ -178,7 +178,7 @@ The tests cover identity and printing rules, comp filtering, the money math, rat
 
 ## Known gaps
 
-- **Money settings aren't verified yet.** Max bids use default fees and shipping until [`shared/money/config.ts`](shared/money/config.ts) is checked.
+- **Grading prices and purchase sales tax aren't verified yet.** eBay fees (13.6% plus $0.40, matched to real sales) and shipping costs are; PSA and CGC prices and the 8.25% purchase tax in [`shared/money/config.ts`](shared/money/config.ts) still need checking.
 - **Printings named only in item details.** The free check reads titles, so a slab whose seller writes *Shadowless* or *1st Edition* only in the item details is checked as Unlimited at first.
 - **BGS and SGC slabs** aren't priced yet, and **non-English cards** are skipped.
 - **Grade odds are a fixed rule:** the likely grade counts most and each grade away counts less. It isn't yet measured against real grading results.

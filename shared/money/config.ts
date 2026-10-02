@@ -28,8 +28,15 @@ export interface SellingConfig {
 
 export type GradingConfig = { shippingPerCard: number } & Record<Grader, GradingTier[]>;
 
+// Which parts have been checked against your own accounts.
+export interface Verified {
+    selling: boolean;
+    buying: boolean;
+    grading: boolean;
+}
+
 export interface MoneyConfig {
-    verified: boolean;
+    verified: Verified;
     // Defaults; the page lets you change them.
     targets: Targets;
     prescreen: { bestGrade: Record<RawCondition, number> };
@@ -39,11 +46,18 @@ export interface MoneyConfig {
 }
 
 // Every number the money math uses, in one place. Fees change often,
-// so check these against your own accounts and set verified to true.
+// so check each part against your own accounts and mark it verified.
 // A service level with maxDeclaredValue null is never used until you
 // fill it in.
 export const MONEY_CONFIG: MoneyConfig = {
-    verified: false,
+    verified: {
+        // Fees and shipping match your eBay transactions, Aug to Oct 2026.
+        selling: true,
+        // Texas sales tax; not yet checked against an eBay purchase receipt.
+        buying: false,
+        // PSA and CGC prices; not yet checked against psacard.com or an invoice.
+        grading: false,
+    },
 
     // What a deal has to clear: profit after every cost, and return on
     // everything you put in.
@@ -75,8 +89,10 @@ export const MONEY_CONFIG: MoneyConfig = {
     },
 
     selling: {
-        // eBay final value fee for trading cards, without a Store.
-        finalValueRate: 0.1325,
+        // eBay publishes 13.25% for trading cards, but your actual fees
+        // (Chansey, Alakazam, Meowth, Mewtwo, Clefairy) match 13.6% to the
+        // cent, so 13.6% it is. No Store subscription.
+        finalValueRate: 0.136,
         finalValueTierLimit: 7500,
         finalValueRateAboveLimit: 0.0235,
         perOrderFee: 0.4,
@@ -87,10 +103,11 @@ export const MONEY_CONFIG: MoneyConfig = {
         typicalBuyerTaxRate: 0.08,
         // Promoted Listings ad rate, if you use it (0.05 is 5%).
         promotedRate: 0,
-        // What shipping a sold card costs you.
+        // What shipping a sold card costs you: your labels ran $5.28 to $5.72
+        // for raw cards and $6.99 for a slab, plus supplies.
         shipping: {
-            raw: 5,
-            graded: 10,
+            raw: 6,
+            graded: 8,
         },
     },
 

@@ -422,8 +422,15 @@ export function underwrite(input: UnderwritingInput, config: MoneyConfig = MONEY
         assumptions.push(`The listing doesn't quote shipping, so ${dollars(shipping)} is assumed.`);
     }
 
-    if (config.verified !== true) {
-        assumptions.push("The fees in the money config haven't been checked against your accounts yet.");
+    // Name only what hasn't been checked against your accounts.
+    const unchecked = [
+        config.verified.selling ? null : "eBay fees and shipping",
+        config.verified.buying ? null : "sales tax on purchases",
+        config.verified.grading ? null : "PSA and CGC prices",
+    ].filter(Boolean);
+
+    if (unchecked.length > 0) {
+        assumptions.push(`Not yet checked against your accounts: ${unchecked.join(", ")}.`);
     }
 
     if (input.slab) {

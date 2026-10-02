@@ -91,7 +91,7 @@ test("the seller's own condition call caps the best case", async () => {
 
     assert.equal(result.status, "DROPPED");
     assert.equal(result.bestCase.label, "Resell raw");
-    assert.equal(result.bestCase.maxBid, 273);
+    assert.equal(result.bestCase.maxBid, 271);
 });
 
 test("a card number in the title stands in when the item details skip it", async () => {
