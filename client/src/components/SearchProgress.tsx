@@ -152,7 +152,13 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
                 </div>
 
                 {running && (
-                    <button type="button" className={styles.iconButton} onClick={onStop} aria-label="Stop search" title="Stop search">
+                    <button
+                        type="button"
+                        className={`${styles.iconButton} ${styles.stop}`}
+                        onClick={onStop}
+                        aria-label="Stop search"
+                        title="Stop search"
+                    >
                         <StopIcon />
                     </button>
                 )}

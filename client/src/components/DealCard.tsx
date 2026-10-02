@@ -31,12 +31,21 @@ const FOUND: Record<string, string> = {
     PHOTO_SHOWS_IT: "Photo shows it",
 };
 
-// Feedback counts, short: 1,234 is 1.2K.
-const COMPACT = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+// Feedback counts, short: 1,234 is 1.2K and 71,100 is 71K; under 1,000, exact.
+const COMPACT = new Intl.NumberFormat("en-US", { notation: "compact", maximumSignificantDigits: 2 });
+
+function feedbackCount(count: number): string {
+    return count < 1000 ? count.toLocaleString() : COMPACT.format(count);
+}
 
 // Whole dollars, for the line under the price: $1,139.
 function wholeDollars(value: number): string {
     return `$${Math.round(value).toLocaleString()}`;
+}
+
+// The number as printed on the card: 004/102 is 4/102.
+function printedNumber(number: string | null | undefined): string | null {
+    return number ? number.replace(/^0+(?=\d)/, "") : null;
 }
 
 // Money with its sign: +$68.40 or -$120.30.
@@ -87,9 +96,12 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
 
     // The card itself, once identified; the eBay title until then.
     const card = evaluation?.identity ?? screen?.card ?? null;
-    const name = card?.name ? [card.name, card.cardNumber].filter(Boolean).join(" ") : listing.title;
+    const name = card?.name ? [card.name, printedNumber(card.cardNumber)].filter(Boolean).join(" ") : listing.title;
     const subtitle = card?.name
-        ? [card.set, yearOf(years, card.set), card.printingLabel].filter(Boolean).join(" \u00b7 ")
+        ? // Unlimited is the usual printing; 1st Edition and Shadowless are worth saying.
+          [card.set, yearOf(years, card.set), card.printing === "UNLIMITED" ? null : card.printingLabel]
+              .filter(Boolean)
+              .join(" \u00b7 ")
         : listing.isGraded
           ? "Graded"
           : "Raw";
@@ -125,7 +137,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
         seller?.feedbackScore === 0
             ? "New seller"
             : seller?.feedbackPercentage != null
-              ? `${seller.feedbackPercentage}% (${COMPACT.format(seller.feedbackScore ?? 0)})`
+              ? `${seller.feedbackPercentage}% (${feedbackCount(seller.feedbackScore ?? 0)})`
               : "\u2014";
 
     // The line under the price: the most you'd pay, and how it's sold.
@@ -139,6 +151,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
         auction ? left : null,
         listing.shipping === null ? "ship not quoted" : listing.shipping === 0 ? "free ship" : `${dollars(listing.shipping)} ship`,
     ].filter(Boolean);
+    const metaShort = [meta[0], auction ? left : "Buy It Now"].filter(Boolean);
 
     return (
         <article
@@ -178,7 +191,9 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
 
                 <p className={styles.meta}>
                     {listing.found && <span className={styles.found}>{FOUND[listing.found.how] ?? "Hidden find"}</span>}
-                    {meta.join(" \u00b7 ")}
+                    {/* A narrow card keeps just the max price and time left. */}
+                    <span className={styles.metaFull}>{meta.join(" \u00b7 ")}</span>
+                    <span className={styles.metaShort}>{metaShort.join(" \u00b7 ")}</span>
                     {signals.length > 0 && tone !== "quiet" && (
                         <span className={styles.bargain} title={signals.map((signal) => signal.label).join(", ")}>
                             Bargain {bargainScore(signals)}
@@ -195,7 +210,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
                     </div>
                     <div>
                         <dt>Comp value</dt>
-                        <dd>{comp != null ? dollars(comp) : "\u2014"}</dd>
+                        <dd>{comp != null ? wholeDollars(comp) : "\u2014"}</dd>
                     </div>
                     <div>
                         <dt>Seller</dt>

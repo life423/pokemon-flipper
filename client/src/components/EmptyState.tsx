@@ -4,12 +4,15 @@ import styles from "./EmptyState.module.css";
 export function EmptyState({
     title = "Find your next flip",
     text = "Search for a card above to scan eBay for profitable listings.",
+    framed = false,
 }: {
     title?: string;
     text?: string;
+    // In a card of its own, among other cards.
+    framed?: boolean;
 }) {
     return (
-        <div className={styles.empty}>
+        <div className={`${styles.empty} ${framed ? styles.framed : ""}`}>
             <svg className={styles.art} viewBox="0 0 220 170" aria-hidden="true">
                 <defs>
                     <linearGradient id="empty-edge" x1="0" y1="0" x2="1" y2="1">

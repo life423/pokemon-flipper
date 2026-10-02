@@ -4,7 +4,7 @@
     position: relative;
     container: card / inline-size;
     display: grid;
-    grid-template-columns: 5.5rem minmax(0, 1fr);
+    grid-template-columns: auto minmax(0, 1fr);
     gap: var(--space-3);
     padding: var(--space-3);
     background: var(--surface);
@@ -103,6 +103,8 @@
 
 /* A neutral backdrop, so the card's own colors read true. */
 .photo {
+    grid-row: 1 / span 2;
+    width: 5rem;
     align-self: start;
     aspect-ratio: 5 / 7;
     overflow: hidden;
@@ -240,13 +242,12 @@
     color: var(--warning);
 }
 
-/* Three facts behind the verdict, divided by hairlines, and the way in.
-   Full width under the photo on a narrow card, beside it on a wide one. */
+/* Three facts behind the verdict, divided by hairlines, and the way in. */
 .stats {
-    grid-column: 1 / -1;
+    grid-column: 2;
     display: grid;
-    /* The seller column gets a little more room for its percent and count. */
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.35fr) auto;
+    /* Grade and comp value fit their content; the seller takes the rest. */
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
     align-items: center;
     margin: 4px 0 0;
     padding-top: var(--space-2);
@@ -308,12 +309,53 @@
     opacity: 0.6;
 }
 
-@container card (min-width: 28rem) {
-    .photo {
-        grid-row: 1 / span 2;
+/* The full line under the price on a wide card; the short one on a narrow card. */
+.metaShort {
+    display: none;
+}
+
+@container card (max-width: 26rem) {
+    .metaFull,
+    .bargain {
+        display: none;
     }
 
-    .stats {
-        grid-column: 2;
+    .metaShort {
+        display: inline;
+    }
+
+    .meta {
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+    }
+
+    .badge {
+        padding: 3px 8px;
+        font-size: 0.6875rem;
+    }
+
+    .photo {
+        width: 4.75rem;
+    }
+
+    .stats > div {
+        padding: 0 6px;
+    }
+
+    .stats > div:last-of-type {
+        padding-right: 0;
+    }
+
+    .chevron {
+        font-size: 1rem;
+    }
+
+    .stats dt {
+        font-size: 0.6875rem;
+    }
+
+    .stats dd {
+        font-size: var(--text-xs);
     }
 }

@@ -36,7 +36,11 @@ export type AnalysisState =
 type View = "deals" | "candidates" | "longShots" | "review" | "hidden" | "all";
 
 // The views, in order, and what each is called everywhere it appears.
-const VIEWS: View[] = ["deals", "candidates", "longShots", "review", "hidden", "all"];
+// Long shots come late: auctions unlikely to end at a profitable price.
+const VIEWS: View[] = ["deals", "candidates", "review", "hidden", "longShots", "all"];
+
+// Shorter tab names where phones need the room.
+const VIEW_SHORT: Partial<Record<View, string>> = { hidden: "Hidden" };
 const VIEW_ICONS: Record<View, ReactNode> = {
     deals: <TagIcon />,
     candidates: <ClockIcon />,
@@ -919,7 +923,14 @@ export function App() {
                                             key,
                                             <span className={styles.tabLabel}>
                                                 {VIEW_ICONS[key]}
-                                                {VIEW_NAMES[key]}
+                                                {VIEW_SHORT[key] ? (
+                                                    <>
+                                                        <span className={styles.wideOnly}>{VIEW_NAMES[key]}</span>
+                                                        <span className={styles.narrowOnly}>{VIEW_SHORT[key]}</span>
+                                                    </>
+                                                ) : (
+                                                    VIEW_NAMES[key]
+                                                )}
                                                 {viewCount(key)}
                                             </span>,
                                         ])}
@@ -1135,6 +1146,7 @@ export function App() {
                         !(searchStatus === "checking" && listings.length === 0) &&
                         (searchStatus === "checking" && view === "deals" ? (
                             <EmptyState
+                                framed
                                 title="No deals yet"
                                 text="Results will appear here as they're found. The search is still running."
                             />

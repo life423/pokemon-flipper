@@ -1,4 +1,5 @@
 .card {
+    container: progress / inline-size;
     margin-bottom: var(--space-4);
     background: var(--surface);
     border: 1px solid var(--border);
@@ -95,7 +96,20 @@
     }
 }
 
-/* The chevron points up when expanded, down when collapsed. */
+/* Stop: the action color, ringed. */
+.stop {
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+    color: var(--action-text);
+}
+
+/* The chevron is plain, and points up when expanded, down when collapsed. */
+.toggle {
+    background: transparent;
+    border-color: transparent;
+}
+
+
 .toggle svg {
     transform: rotate(180deg);
     transition: transform var(--dur-base) var(--ease-out);
@@ -421,5 +435,36 @@
     }
     50% {
         opacity: 1;
+    }
+}
+
+/* A narrow panel (a phone): tighter type, captions on one line, and the
+   requests chip beside the status line. */
+@container progress (max-width: 30rem) {
+    .captions {
+        flex-wrap: nowrap;
+        font-size: 0.6875rem;
+        white-space: nowrap;
+    }
+
+    .stats > div {
+        padding: 0 var(--space-2);
+    }
+
+    .stats dd {
+        font-size: var(--text-lg);
+    }
+
+    .activity {
+        flex-wrap: nowrap;
+    }
+
+    .activity p {
+        min-width: 0;
+    }
+
+    .usage {
+        max-width: 9rem;
+        line-height: 1.25;
     }
 }

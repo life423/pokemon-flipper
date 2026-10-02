@@ -30,3 +30,9 @@
         transform: translateY(8px);
     }
 }
+
+.framed {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius-card) + 4px);
+}

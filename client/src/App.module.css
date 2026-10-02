@@ -759,6 +759,27 @@
         border: 0;
     }
 
+    /* Compact tabs, so four fit across a phone. */
+    .controlPanel .segmented button {
+        min-height: 42px;
+        padding: 0 0.6rem;
+        font-size: var(--text-sm);
+    }
+
+    .tabLabel {
+        gap: 6px;
+    }
+
+    .tabLabel svg {
+        font-size: 1rem;
+    }
+
+    .countPill {
+        min-width: 1.4rem;
+        height: 1.3rem;
+        padding: 0 5px;
+    }
+
     /* The tab strip says it scrolls: the next tab peeks in under a fade,
        swipes settle on a tab, the last tab can scroll clear of the fade,
        and a sideways swipe moves only the tabs. */
