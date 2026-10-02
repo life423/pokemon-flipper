@@ -22,7 +22,9 @@
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-2);
     margin-bottom: var(--space-3);
-    padding-block: var(--space-3);
+    /* Below the notch, matching the drawer, so the menu and its X line up. */
+    padding-top: calc(env(safe-area-inset-top, 0px) + var(--space-3));
+    padding-bottom: var(--space-3);
     background: var(--bg);
     border-bottom: 1px solid var(--border);
 }
@@ -429,6 +431,8 @@
     grid-area: search;
 }
 
+/* The same round button, in the same spot, as the drawer's close button,
+   so opening the drawer reads as the menu turning into an X. */
 .menuButton {
     grid-area: menu;
     position: relative;
@@ -436,9 +440,9 @@
     place-items: center;
     width: var(--tap);
     height: var(--tap);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-control);
+    background: var(--surface-alt);
+    border: 0;
+    border-radius: var(--radius-pill);
     color: var(--text);
     cursor: pointer;
 }
