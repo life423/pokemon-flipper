@@ -94,7 +94,12 @@ export function DealCard({ listing, analysis, selected, now, onOpen }: Props) {
                                     <dd>{dollars(best.maxBid)}</dd>
                                 </div>
                                 <div className={styles.profit}>
-                                    {auction ? (
+                                    {auction && rating?.auction?.profitAtUsual != null ? (
+                                        <>
+                                            <dt>Profit near usual price</dt>
+                                            <dd>{dollars(rating.auction.profitAtUsual)}</dd>
+                                        </>
+                                    ) : auction ? (
                                         <>
                                             <dt>Profit at max bid</dt>
                                             <dd>

@@ -67,7 +67,11 @@ export function describeOutlook(outlook: AuctionOutlook, maxBid: number): string
             ? `; ${outlook.salesAtOrUnder} of ${outlook.salesTotal} recent sales went for ${dollars(maxBid)} or less`
             : "";
 
-    if (outlook.chance === "LIKELY") return `${usual}, and even that clears your targets.`;
+    if (outlook.chance === "LIKELY") {
+        return outlook.profitAtUsual != null
+            ? `${usual}; winning there would make about ${dollars(outlook.profitAtUsual)}.`
+            : `${usual}, and even that clears your targets.`;
+    }
     if (outlook.chance === "POSSIBLE") return `${usual}${sales}, so winning at your max bid is possible, not likely.`;
 
     return `${usual}${sales}, so this auction will very likely end above your max bid.`;

@@ -336,6 +336,9 @@ export interface PricedPath {
     // an auction, whose current bid will rise.
     profitAtMaxBid: number | null;
     roiAtMaxBid: number | null;
+    // What you put in, and the low-end outcome, if you win at the max bid.
+    costAtMaxBid: number | null;
+    downsideAtMaxBid: number | null;
     grader?: Grader;
     salePrice?: number;
     priceCondition?: RawCondition;
@@ -368,6 +371,8 @@ export interface AuctionOutlook {
     usualPrice: number;
     salesAtOrUnder: number | null;
     salesTotal: number | null;
+    // Profit if the auction ends at the usual price: the realistic outcome.
+    profitAtUsual?: number | null;
 }
 
 // LONG_SHOT: an auction that will very likely end above the max bid.

@@ -47,3 +47,24 @@ test("a long-shot auction is rated a long shot, not a strong deal", () => {
     assert.equal(rating.level, "LONG_SHOT");
     assert.equal(rating.auction.chance, "LONG_SHOT");
 });
+
+test("a likely auction shows the profit if it ends at its usual price, not at today's bid", () => {
+    // The 1st Edition Neo Genesis Lugia, MP, at 87 cents with 6 days left.
+    const raw = { path: "RAW", status: "PRICED", label: "Resell raw", salePrice: 1134.84 };
+    const best = {
+        path: "GRADE", status: "PRICED", label: "Grade with PSA", grader: "PSA",
+        maxBid: 1209, expectedNet: 1695.9, fixedCosts: 364, shipping: 10, downside: 900, profit: 1300, outlook: [],
+    };
+    const rating = rateDeal({
+        listing: { price: 0.87, buyingOption: "AUCTION", seller: null, cardCondition: null },
+        underwriting: { verdict: "BUY_AND_GRADE", best, paths: [raw, best], reasons: [], assumptions: [] },
+        condition: { confidence: "MEDIUM", rawCondition: "MODERATELY_PLAYED" },
+        gradingMode: "FULL",
+        gradedPricing: null,
+        slabPricing: null,
+    });
+
+    assert.equal(rating.auction.chance, "LIKELY");
+    assert.equal(rating.auction.profitAtUsual, 92.61);
+    assert.match(describeOutlook(rating.auction, best.maxBid), /winning there would make about \$92\.61/);
+});

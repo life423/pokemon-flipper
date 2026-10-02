@@ -1,6 +1,8 @@
 import { CONDITION_NAMES, conditionGap, isRawCondition, sellerCondition } from "../conditions.ts";
 import { dollars, percent } from "../format.ts";
 import { auctionOutlook, describeOutlook, usualPrice } from "./auction.ts";
+import { pathNumbers } from "./underwriting.ts";
+import { MONEY_CONFIG } from "./config.ts";
 import type { AuctionOutlook, CompSummary, Confidence, Evaluation, PricedPath, Rating, RatingLevel } from "../types.ts";
 
 // How good a deal is, beyond clearing your targets. Plain rules on what
@@ -62,6 +64,11 @@ export function rateDeal(evaluation: RatingInput): Rating | null {
 
         if (usual) {
             outlook = auctionOutlook(best.maxBid, usual);
+            // Where an auction usually ends, not where it stands days early.
+            outlook.profitAtUsual = pathNumbers(
+                { expectedNet: best.expectedNet, fixedCosts: best.fixedCosts, shipping: best.shipping, price: usual.price },
+                MONEY_CONFIG
+            ).profit;
             (outlook.chance === "LIKELY" ? strengths : concerns).push(describeOutlook(outlook, best.maxBid));
         }
     } else if (listing.price !== null && best.maxBid > 0) {

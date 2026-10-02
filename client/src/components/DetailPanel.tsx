@@ -253,6 +253,13 @@ function VerdictSection({
     if (outlook) {
         rows.push(["Usually sells for", dollars(outlook.usualPrice)]);
 
+        if (outlook.profitAtUsual != null) {
+            rows.push([
+                "Profit if it ends there",
+                <span className={outlook.profitAtUsual >= 0 ? styles.good : styles.bad}>{dollars(outlook.profitAtUsual)}</span>,
+            ]);
+        }
+
         if (outlook.salesTotal !== null) {
             rows.push(["Recent sales at or under max bid", `${outlook.salesAtOrUnder} of ${outlook.salesTotal}`]);
         }
@@ -318,18 +325,24 @@ function PathCard({ path, auction }: { path: MoneyPath; auction: boolean }) {
                 rows={[
                     ...sale,
                     ["You keep", dollars(path.expectedNet)],
-                    ["All-in cost", dollars(path.cost)],
-                    [
-                        "Profit",
-                        <span className={(path.profit ?? 0) >= 0 ? styles.good : styles.bad}>
-                            {dollars(path.profit)} ({percent(path.roi)})
-                        </span>,
-                    ],
-                    ["Worst case", dollars(path.downside)],
-                    // Only an auction's price moves; a Buy It Now's profit is at its price.
-                    ...(auction
-                        ? ([["Profit at max bid", `${dollars(path.profitAtMaxBid)} (${percent(path.roiAtMaxBid)})`]] as [string, ReactNode][])
-                        : []),
+                    // An auction's bid days before the end means nothing, so its
+                    // numbers are at the max bid; a Buy It Now's are at its price.
+                    ...((auction
+                        ? [
+                              ["Cost at your max bid", dollars(path.costAtMaxBid)],
+                              ["Profit at your max bid", `${dollars(path.profitAtMaxBid)} (${percent(path.roiAtMaxBid)})`],
+                              ["Worst case at your max bid", dollars(path.downsideAtMaxBid)],
+                          ]
+                        : [
+                              ["All-in cost", dollars(path.cost)],
+                              [
+                                  "Profit",
+                                  <span className={(path.profit ?? 0) >= 0 ? styles.good : styles.bad}>
+                                      {dollars(path.profit)} ({percent(path.roi)})
+                                  </span>,
+                              ],
+                              ["Worst case", dollars(path.downside)],
+                          ]) as [string, ReactNode][]),
                     [auction ? "Max bid" : "Max price", <strong>{dollars(path.maxBid)}</strong>],
                 ]}
             />

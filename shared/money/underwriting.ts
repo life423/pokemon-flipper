@@ -190,6 +190,8 @@ export function pathNumbers(
         clears: limit > 0 && price <= limit,
         profitAtMaxBid,
         roiAtMaxBid: costAtLimit && profitAtMaxBid !== null ? round2(profitAtMaxBid / costAtLimit) : null,
+        costAtMaxBid: costAtLimit,
+        downsideAtMaxBid: costAtLimit === null ? null : round2(downsideNet - costAtLimit),
     };
 }
 
