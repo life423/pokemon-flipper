@@ -85,3 +85,16 @@
     transform: none;
     pointer-events: auto;
 }
+
+@media (max-width: 39.99rem) {
+    .text {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+    }
+
+    .label {
+        color: var(--text);
+        font-size: var(--text-sm);
+    }
+}

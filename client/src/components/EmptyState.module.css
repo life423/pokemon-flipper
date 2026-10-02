@@ -1,0 +1,32 @@
+.empty {
+    display: grid;
+    justify-items: center;
+    gap: var(--space-2);
+    padding: var(--space-5) var(--space-4);
+    text-align: center;
+    animation: rise var(--dur-slow) var(--ease-out) backwards;
+}
+
+.art {
+    width: min(15rem, 62vw);
+    height: auto;
+    margin-bottom: var(--space-3);
+}
+
+.empty h2 {
+    font-size: var(--text-xl);
+    font-weight: 800;
+    letter-spacing: -0.01em;
+}
+
+.empty p {
+    max-width: 22rem;
+    color: var(--text-muted);
+}
+
+@keyframes rise {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+}

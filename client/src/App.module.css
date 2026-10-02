@@ -282,7 +282,6 @@
 
     .secondary:hover,
     .filtersButton:hover,
-    .viewButton:hover,
     .menuButton:hover {
         border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
         background: color-mix(in srgb, var(--surface-alt) 92%, white);
@@ -400,24 +399,6 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-2);
-}
-
-/* Phones: the view you're on, opening the drawer for the rest. */
-.viewButton {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    min-height: var(--tap);
-    padding: 0 var(--space-3);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-pill);
-    font-weight: 650;
-    cursor: pointer;
-}
-
-.viewButton span[aria-hidden] {
-    color: var(--text-muted);
 }
 
 .drawerSection {
@@ -660,6 +641,8 @@
 /* Views, targets, and filters in one panel; active filters below them. */
 .controlPanel {
     display: grid;
+    /* Never wider than the screen: the tabs scroll instead. */
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-2);
     padding: var(--space-2);
     background: color-mix(in srgb, var(--surface) 70%, transparent);
@@ -690,6 +673,23 @@
     border-radius: var(--radius-control);
     background: color-mix(in srgb, var(--accent) 14%, transparent);
     box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+/* Wide screens: one row. The tabs take the room left over and scroll if
+   it runs out; the targets and Filters keep their place on the right. */
+@media (min-width: 40rem) {
+    .controlPanel .controlRow {
+        flex-wrap: nowrap;
+    }
+
+    .tabs {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    .controlPanel .criteria {
+        flex: none;
+    }
 }
 
 .tabLabel {
@@ -729,14 +729,6 @@
     border-radius: var(--radius-control);
     font-size: var(--text-md);
     font-weight: 600;
-}
-
-.viewButton svg {
-    font-size: 1.1rem;
-}
-
-.viewChevron {
-    color: var(--text-muted);
 }
 
 /* Each target's dropdown: quick picks, then a custom amount. */
@@ -845,50 +837,39 @@
 
 /* Phones: no panel chrome or tagline, and no keyboard shortcut to show. */
 @media (max-width: 39.99rem) {
-    /* One row: the view picker, then the active filters scrolling beside it. */
     .controlPanel {
-        display: flex;
-        align-items: center;
-        gap: var(--space-2);
         padding: 0;
         background: none;
         border: 0;
     }
 
-    .controlPanel .controlRow {
-        flex: none;
-    }
-
-    .activeFilters {
-        flex: 1;
-        flex-wrap: nowrap;
+    /* Every view in a scrolling strip, with a hairline under it. */
+    .tabs {
+        flex: 1 1 100%;
         min-width: 0;
-        /* Room to scroll the last chip clear of the fade. */
-        padding: 0 24px 0 0;
-        border-top: 0;
-        overflow-x: auto;
-        scrollbar-width: none;
-        /* A fade at the edge says there's more to scroll to. */
-        mask-image: linear-gradient(to right, black calc(100% - 24px), transparent);
+        border-bottom: 1px solid var(--border);
     }
 
-    .activeFilters::-webkit-scrollbar {
+    /* Min profit on the left, Filters on the right. */
+    .controlPanel .criteria {
+        flex: 1 1 100%;
+        justify-content: space-between;
+        padding-left: 0;
+        border-left: 0;
+    }
+
+    /* Active filters live behind the Filters count on phones. */
+    .activeFilters {
         display: none;
     }
 
-    .activeLabel {
-        display: none;
+    /* A plain menu icon, in the same spot as the drawer's close button. */
+    .menuButton {
+        background: transparent;
     }
 
-    .chip,
-    .clearAll {
-        flex: none;
-        white-space: nowrap;
-    }
-
-    .chip {
-        min-height: var(--tap);
-        font-size: var(--text-xs);
+    .searchField {
+        padding-right: 4px;
     }
 
     .tagline {
@@ -911,15 +892,28 @@
     }
 }
 
+/* The search button inside the field, on phones. */
+.searchSubmit {
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 44px;
+    height: 44px;
+    border: 0;
+    border-radius: calc(var(--radius-card) - 4px);
+    background: var(--accent-strong);
+    color: #fff;
+    font-size: 1.25rem;
+    box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 35%, transparent);
+    cursor: pointer;
+}
+
 /* Which controls show where: tabs and targets need a wide screen. */
 @media (max-width: 39.99rem) {
     .wideOnly {
         display: none;
     }
 
-    .controlRow {
-        flex-wrap: nowrap;
-    }
 }
 
 @media (min-width: 40rem) {

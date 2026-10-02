@@ -117,3 +117,9 @@ export function LogoMark({ className }: IconProps) {
         </svg>
     );
 }
+
+export const ArrowIcon = (props: IconProps) => (
+    <Icon {...props}>
+        <path d="M5 12h14M13 6l6 6-6 6" />
+    </Icon>
+);

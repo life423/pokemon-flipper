@@ -10,9 +10,10 @@ import { name } from "./format";
 import { evaluateListing, fetchEbayUsage, streamDeals, streamDig, type DealsMessage } from "./api";
 import { DealCard } from "./components/DealCard";
 import { Drawer } from "./components/Drawer";
+import { EmptyState } from "./components/EmptyState";
 import { Dropdown } from "./components/Dropdown";
 import {
-    ChevronIcon,
+    ArrowIcon,
     ClockIcon,
     CloseIcon,
     DollarIcon,
@@ -185,6 +186,8 @@ function Segmented<T extends string>({
 
             if (!active) return;
 
+            active.scrollIntoView({ block: "nearest", inline: "nearest" });
+
             const next = { left: active.offsetLeft, width: active.offsetWidth };
             setIndicator((previous) =>
                 previous && previous.left === next.left && previous.width === next.width ? previous : next
@@ -287,14 +290,6 @@ export function App() {
     // Views, targets, filters, and settings, in a drawer from the side.
     const [drawerOpen, setDrawerOpen] = useState(false);
 
-    // The intro line shows until the first search.
-    const [searchedBefore] = useState(() => {
-        try {
-            return localStorage.getItem("searched") === "1";
-        } catch {
-            return false;
-        }
-    });
     const [rawAnalyses, setAnalyses] = useState<Record<string, AnalysisState>>({});
 
     const [targets, setTargets] = useState<Targets>(readTargets);
@@ -392,11 +387,6 @@ export function App() {
         setDigTotal(0);
         setDigError(null);
 
-        try {
-            localStorage.setItem("searched", "1");
-        } catch {
-            // Without storage the intro line just shows again next visit.
-        }
         autoQueued.current = new Set();
         setListings([]);
         setTotal(null);
@@ -784,19 +774,26 @@ export function App() {
                                     <kbd className={styles.shortcut} aria-hidden="true">
                                         {SHORTCUT}
                                     </kbd>
+                                    {/* Phones: the search button sits inside the field. */}
+                                    <button
+                                        type="submit"
+                                        className={`${styles.searchSubmit} ${styles.narrowOnly}`}
+                                        aria-label="Find deals"
+                                    >
+                                        <ArrowIcon />
+                                    </button>
                                 </label>
-                                {/* On phones, just the icon, so search keeps its row. */}
-                                <button type="submit" className={styles.primary} aria-label="Find deals">
+                                <button type="submit" className={`${styles.primary} ${styles.wideOnly}`}>
                                     <SearchIcon className={styles.buttonIcon} />
-                                    <span className={styles.wideOnly}>Find deals</span>
+                                    Find deals
                                 </button>
                             </form>
                         </div>
 
                         <div className={styles.controlPanel}>
                             <div className={styles.controlRow}>
-                                {/* Wide screens: every view at a glance. */}
-                                <div className={styles.wideOnly}>
+                                {/* Every view: tabs on wide screens, a scrolling strip on phones. */}
+                                <div className={styles.tabs}>
                                     <Segmented
                                         label="Show"
                                         value={view}
@@ -812,19 +809,7 @@ export function App() {
                                     />
                                 </div>
 
-                                {/* Phones: the view you're on; tap for the rest. */}
-                                <button
-                                    type="button"
-                                    className={`${styles.viewButton} ${styles.narrowOnly}`}
-                                    aria-haspopup="dialog"
-                                    onClick={() => setDrawerOpen(true)}
-                                >
-                                    {VIEW_ICONS[view]}
-                                    {VIEW_NAMES[view]} {viewCount(view)}
-                                    <ChevronIcon className={styles.viewChevron} />
-                                </button>
-
-                                <div className={`${styles.criteria} ${styles.wideOnly}`}>
+                                <div className={styles.criteria}>
                                     {/* Your deal criteria, in view, since they decide what's a deal. */}
                                     <Dropdown
                                         icon={<DollarIcon />}
@@ -833,13 +818,16 @@ export function App() {
                                     >
                                         {(close) => targetMenu("minProfit", close)}
                                     </Dropdown>
-                                    <Dropdown
-                                        icon={<TrendIcon />}
-                                        label="ROI"
-                                        value={targets.minRoi > 0 ? `${Math.round(targets.minRoi * 100)}%` : "Any"}
-                                    >
-                                        {(close) => targetMenu("minRoi", close)}
-                                    </Dropdown>
+                                    {/* ROI on wide screens; on phones it's in the drawer. */}
+                                    <div className={styles.wideOnly}>
+                                        <Dropdown
+                                            icon={<TrendIcon />}
+                                            label="ROI"
+                                            value={targets.minRoi > 0 ? `${Math.round(targets.minRoi * 100)}%` : "Any"}
+                                        >
+                                            {(close) => targetMenu("minRoi", close)}
+                                        </Dropdown>
+                                    </div>
                                     <button
                                         type="button"
                                         className={styles.filtersButton}
@@ -872,7 +860,7 @@ export function App() {
                                     ))}
                                     {activeChips.length > 1 && (
                                         <button type="button" className={styles.clearAll} onClick={clearAll}>
-                                            Clear<span className={styles.wideOnly}> all</span>
+                                            Clear all
                                         </button>
                                     )}
                                 </div>
@@ -1099,12 +1087,7 @@ export function App() {
                         </section>
                     )}
 
-                    {searchStatus === "idle" && !searchedBefore && (
-                        <p className={styles.status}>
-                            Search for a card. Every listing gets a free check first; only the ones that could
-                            be profitable go to the AI.
-                        </p>
-                    )}
+                    {searchStatus === "idle" && <EmptyState />}
 
                     {searchStatus !== "idle" && searchStatus !== "error" && visible.length === 0 && (
                         <p className={styles.status}>{emptyText[view]}</p>
