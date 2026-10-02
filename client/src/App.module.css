@@ -224,7 +224,7 @@
 }
 
 .error {
-    color: #f87171;
+    color: var(--pass-text);
 }
 
 /* On a narrow screen, the tabs scroll sideways instead of wrapping. */
@@ -357,10 +357,8 @@
     cursor: pointer;
 }
 
-.viewButton span {
+.viewButton span[aria-hidden] {
     color: var(--text-muted);
-    font-weight: 500;
-    font-variant-numeric: tabular-nums;
 }
 
 .drawerSection {
@@ -398,10 +396,7 @@
     border-color: var(--accent);
 }
 
-.viewList span {
-    color: var(--text-muted);
-    font-variant-numeric: tabular-nums;
-}
+
 
 .priceRange {
     display: grid;
@@ -480,6 +475,34 @@
             "title menu"
             "search search";
     }
+}
+
+/* View counts: muted when empty or routine; in their color when they hold
+   something worth a look. */
+.count,
+.countBuy,
+.countWatch,
+.countAction {
+    font-variant-numeric: tabular-nums;
+}
+
+.count {
+    color: var(--text-muted);
+}
+
+.countBuy {
+    color: var(--tone-buy);
+    font-weight: 750;
+}
+
+.countWatch {
+    color: var(--tone-watch);
+    font-weight: 750;
+}
+
+.countAction {
+    color: var(--action-text);
+    font-weight: 750;
 }
 
 /* Which controls show where: tabs and targets need a wide screen. */

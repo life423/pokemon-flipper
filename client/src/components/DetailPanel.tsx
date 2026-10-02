@@ -227,8 +227,9 @@ function VerdictSection({
     ];
 
     if (room !== null) {
-        rows.push([
-            listing.buyingOption === "AUCTION" ? "Room to bid" : "Under your max price",
+        // An auction's bid days before the end says nothing about the outcome.
+        if (listing.buyingOption !== "AUCTION") rows.push([
+            "Under your max price",
             <span className={room >= 0 ? styles.good : styles.bad}>{dollars(room)}</span>,
         ]);
     }
@@ -277,7 +278,16 @@ function VerdictSection({
             {best?.maxBid !== undefined && (
                 <div className={styles.hero}>
                     <span className={styles.heroLabel}>{ceilingLabel(listing.buyingOption)}</span>
-                    <span className={`${styles.heroValue} ${room !== null && room >= 0 ? styles.good : ""}`}>
+                    {/* Green to buy, purple to grade: the verdict's color, not today's bid. */}
+                    <span
+                        className={`${styles.heroValue} ${
+                            underwriting.verdict === "BUY_AND_GRADE"
+                                ? styles.gradeText
+                                : underwriting.verdict.startsWith("BUY")
+                                  ? styles.good
+                                  : ""
+                        }`}
+                    >
                         {dollars(best.maxBid)}
                     </span>
                     <span className={styles.heroLabel}>{best.label}</span>

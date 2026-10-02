@@ -17,6 +17,17 @@
     --accent-strong: #2563eb;
     --grade: #8b5cf6;
 
+    /* What each color means, everywhere it appears. */
+    --tone-buy: var(--success);
+    --tone-grade: var(--grade);
+    --tone-watch: var(--warning);
+    --tone-pass: var(--danger);
+    --tone-action: var(--accent);
+    /* The same colors as text on dark surfaces, light enough to read. */
+    --grade-text: #b9a2fb;
+    --action-text: #93c5fd;
+    --pass-text: #f87171;
+
     --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
     /* Fluid type and space, from a 360px phone to a 1440px desktop. */

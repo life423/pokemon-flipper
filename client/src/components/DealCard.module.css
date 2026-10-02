@@ -4,12 +4,55 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-card);
     overflow: hidden;
+    /* The priority edge, plus the selection ring when selected. */
+    box-shadow:
+        inset 4px 0 0 var(--tone, transparent),
+        0 0 0 var(--ring, 0px) var(--accent);
 }
 
 /* Selection is the interactive color, never a verdict color. */
 .selected {
+    --ring: 1px;
     border-color: var(--accent);
-    box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* Priority at a glance, in the palette's meanings. */
+.card[data-tone="buy"] {
+    --tone: var(--tone-buy);
+    --tone-text: var(--tone-buy);
+}
+
+.card[data-tone="grade"] {
+    --tone: var(--tone-grade);
+    --tone-text: var(--grade-text);
+}
+
+.card[data-tone="offer"] {
+    --tone: var(--tone-action);
+    --tone-text: var(--action-text);
+}
+
+.card[data-tone="watch"] {
+    --tone: var(--tone-watch);
+    --tone-text: var(--tone-watch);
+}
+
+/* Passes, drops, and long shots recede, so the deals stand out. */
+.card[data-tone="quiet"] .name,
+.card[data-tone="quiet"] .numbers dd {
+    color: var(--text-muted);
+}
+
+.card[data-tone="quiet"] .photo {
+    opacity: 0.6;
+}
+
+/* On a card that receded, its bargain signal recedes too: amber is for
+   listings still worth a closer look. */
+.card[data-tone="quiet"] .bargainTag {
+    background: transparent;
+    box-shadow: inset 0 0 0 1px var(--border);
+    color: var(--text-muted);
 }
 
 .inner {
@@ -59,7 +102,7 @@
     padding: 0.15rem 0.6rem;
     border-radius: var(--radius-pill);
     background: color-mix(in srgb, var(--accent) 18%, transparent);
-    color: #93c5fd;
+    color: var(--action-text);
     font-size: var(--text-xs);
     font-weight: 700;
 }
@@ -106,7 +149,8 @@
 .maxBid dd,
 .profit dd {
     font-size: var(--text-lg);
-    color: var(--success);
+    /* The deal's own color: green to buy, purple to grade, amber for a thin deal. */
+    color: var(--tone-text, var(--success));
 }
 
 .profit dd span {

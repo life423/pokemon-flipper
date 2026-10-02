@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type { EbayUsage, Evaluation, ListingSummary, RatingLevel, SearchIntent, Targets } from "./types";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.ts";
@@ -137,7 +137,7 @@ function Segmented<T extends string>({
 }: {
     label: string;
     value: T;
-    options: [T, string][];
+    options: [T, ReactNode][];
     onChange: (value: T) => void;
 }) {
     return (
@@ -516,6 +516,18 @@ export function App() {
         all: "No listings match the filters.",
     };
 
+    // A view's count, in its color when it holds something worth a look:
+    // deals green, review amber, hidden finds blue.
+    const COUNT_TONES: Partial<Record<View, string>> = {
+        deals: styles.countBuy,
+        review: styles.countWatch,
+        hidden: styles.countAction,
+    };
+    const viewCount = (key: View) => {
+        const count = groups[key].length;
+        return <span className={count > 0 ? (COUNT_TONES[key] ?? styles.count) : styles.count}>{count}</span>;
+    };
+
     // Min profit and min ROI: in the toolbar on wide screens, in the drawer always.
     const targetFields = (
         <>
@@ -592,7 +604,7 @@ export function App() {
                                     label="Show"
                                     value={view}
                                     onChange={setView}
-                                    options={VIEWS.map((key) => [key, `${VIEW_NAMES[key]} ${groups[key].length}`])}
+                                    options={VIEWS.map((key) => [key, <>{VIEW_NAMES[key]} {viewCount(key)}</>])}
                                 />
                             </div>
 
@@ -603,7 +615,7 @@ export function App() {
                                 aria-haspopup="dialog"
                                 onClick={() => setDrawerOpen(true)}
                             >
-                                {VIEW_NAMES[view]} <span>{groups[view].length}</span>
+                                {VIEW_NAMES[view]} {viewCount(view)}
                                 <span aria-hidden="true">▾</span>
                             </button>
 
@@ -639,7 +651,7 @@ export function App() {
                                             }}
                                         >
                                             {VIEW_NAMES[key]}
-                                            <span>{groups[key].length}</span>
+                                            {viewCount(key)}
                                         </button>
                                     ))}
                                 </div>

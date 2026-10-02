@@ -99,7 +99,11 @@
 }
 
 .bad {
-    color: #f87171;
+    color: var(--pass-text);
+}
+
+.gradeText {
+    color: var(--grade-text);
 }
 
 .cta {

@@ -26,7 +26,7 @@
 
 .grade {
     background: color-mix(in srgb, var(--grade) 20%, transparent);
-    color: #b9a2fb;
+    color: var(--grade-text);
 }
 
 .review {
@@ -36,7 +36,7 @@
 
 .pass {
     background: color-mix(in srgb, var(--danger) 16%, transparent);
-    color: #f87171;
+    color: var(--pass-text);
 }
 
 .neutral {

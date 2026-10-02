@@ -39,6 +39,26 @@ export function DealCard({ listing, analysis, selected, now, onOpen }: Props) {
     // Signs it's overlooked because of how it was listed. Not a buy signal.
     const signals = bargainSignals(listing, evaluation, now);
 
+    // The card's priority, in the palette's meanings: a deal in its path's
+    // color, an offer in the interactive color, a closer look in amber, and
+    // passes, drops, and long shots receding. Unverified stays neutral.
+    const tone =
+        rating?.level === "LONG_SHOT" || screen?.longShot
+            ? "quiet"
+            : deal
+              ? rating?.level === "THIN"
+                  ? "watch"
+                  : best?.path === "GRADE"
+                    ? "grade"
+                    : "buy"
+              : offer
+                ? "offer"
+                : underwriting?.verdict === "NEEDS_REVIEW" || underwriting?.verdict === "CANT_PRICE"
+                  ? "watch"
+                  : underwriting?.verdict === "PASS" || (screen && screen.status !== "CANDIDATE")
+                    ? "quiet"
+                    : "pending";
+
     const action =
         analysis?.status === "loading" ? "Analyzing..." : analysis ? "View analysis" : "Analyze";
 
@@ -60,7 +80,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen }: Props) {
     }
 
     return (
-        <article className={`${styles.card} ${selected ? styles.selected : ""}`}>
+        <article className={`${styles.card} ${selected ? styles.selected : ""}`} data-tone={tone}>
             <div className={styles.inner}>
                 <div className={styles.photo}>
                     {listing.images[0] && <img src={listing.images[0]} alt="" loading="lazy" />}
