@@ -53,8 +53,8 @@ export const MONEY_CONFIG: MoneyConfig = {
     verified: {
         // Fees and shipping match your eBay transactions, Aug to Oct 2026.
         selling: true,
-        // Texas sales tax; not yet checked against an eBay purchase receipt.
-        buying: false,
+        // Matches an eBay purchase: $26.49 tax on $315 plus $6.07 shipping, Oct 2026.
+        buying: true,
         // PSA and CGC prices; not yet checked against psacard.com or an invoice.
         grading: false,
     },
@@ -81,11 +81,12 @@ export const MONEY_CONFIG: MoneyConfig = {
     },
 
     buying: {
-        // Sales tax eBay charges you on a purchase (price plus shipping).
+        // Sales tax eBay charges you on a purchase, on price plus shipping.
         salesTaxRate: 0.0825,
         // Used when a listing doesn't quote shipping. Setting
         // EBAY_SHIP_TO_ZIP in .env gets real quotes instead.
-        assumedShippingWhenUnknown: 10,
+        // A real card purchase shipped for $6.07; this stays a little above.
+        assumedShippingWhenUnknown: 7,
     },
 
     selling: {

@@ -178,7 +178,7 @@ The tests cover identity and printing rules, comp filtering, the money math, rat
 
 ## Known gaps
 
-- **Grading prices and purchase sales tax aren't verified yet.** eBay fees (13.6% plus $0.40, matched to real sales) and shipping costs are; PSA and CGC prices and the 8.25% purchase tax in [`shared/money/config.ts`](shared/money/config.ts) still need checking.
+- **Grading prices aren't verified yet.** eBay fees (13.6% plus $0.40), shipping costs, and the 8.25% purchase tax are matched to real orders; PSA and CGC prices in [`shared/money/config.ts`](shared/money/config.ts) still need checking.
 - **Printings named only in item details.** The free check reads titles, so a slab whose seller writes *Shadowless* or *1st Edition* only in the item details is checked as Unlimited at first.
 - **BGS and SGC slabs** aren't priced yet, and **non-English cards** are skipped.
 - **Grade odds are a fixed rule:** the likely grade counts most and each grade away counts less. It isn't yet measured against real grading results.
