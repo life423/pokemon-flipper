@@ -1,7 +1,16 @@
 import type { Evaluation, ListingSummary, SearchIntent } from "./types";
 
+// fetch, with a plain message when the server can't be reached at all.
+async function reach(url: string, init?: RequestInit): Promise<Response> {
+    try {
+        return await fetch(url, init);
+    } catch {
+        throw new Error("Can't reach the app's server. Is npm run dev running?");
+    }
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-    const response = await fetch(url, init);
+    const response = await reach(url, init);
     const body = await response.json().catch(() => null);
 
     if (!response.ok) {
@@ -20,7 +29,7 @@ export type DealsMessage =
 // A search with every listing screened for free, streamed one listing at
 // a time so the page fills in while the first, slower search runs.
 export async function streamDeals(query: string, onMessage: (message: DealsMessage) => void): Promise<void> {
-    const response = await fetch(`/api/deals?q=${encodeURIComponent(query)}`);
+    const response = await reach(`/api/deals?q=${encodeURIComponent(query)}`);
 
     if (!response.ok || !response.body) {
         throw new Error(`Search failed (${response.status})`);

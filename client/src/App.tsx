@@ -593,7 +593,7 @@ export function App() {
                         </p>
                     )}
 
-                    {searchStatus !== "idle" && visible.length === 0 && (
+                    {searchStatus !== "idle" && searchStatus !== "error" && visible.length === 0 && (
                         <p className={styles.status}>{emptyText[view]}</p>
                     )}
 
