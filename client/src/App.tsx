@@ -554,8 +554,24 @@ export function App() {
             <div className={styles.layout}>
                 <main className={styles.main}>
                     <header className={styles.toolbar}>
-                        <form className={styles.searchRow} role="search" onSubmit={search}>
+                        <div className={styles.topRow}>
                             <h1 className={styles.title}>Pokemon Flipper</h1>
+
+                            {/* Phones: the menu where everyone expects it, top right. */}
+                            <button
+                                type="button"
+                                className={`${styles.menuButton} ${styles.narrowOnly}`}
+                                aria-haspopup="dialog"
+                                aria-label={activeFilters > 0 ? `Menu, ${activeFilters} filters on` : "Menu"}
+                                onClick={() => setDrawerOpen(true)}
+                            >
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                    <path d="M4 7h16M4 12h16M4 17h16" />
+                                </svg>
+                                {activeFilters > 0 && <span className={styles.menuBadge}>{activeFilters}</span>}
+                            </button>
+
+                        <form className={styles.searchRow} role="search" onSubmit={search}>
                             <input
                                 type="search"
                                 value={query}
@@ -567,6 +583,7 @@ export function App() {
                                 Find deals
                             </button>
                         </form>
+                        </div>
 
                         <div className={styles.controlRow}>
                             {/* Wide screens: every view at a glance. */}
@@ -596,13 +613,12 @@ export function App() {
 
                                 <button
                                     type="button"
-                                    className={styles.filtersButton}
+                                    className={`${styles.filtersButton} ${styles.wideOnly}`}
                                     aria-haspopup="dialog"
                                     aria-label="Views, targets, and filters"
                                     onClick={() => setDrawerOpen(true)}
                                 >
-                                    <span className={styles.wideOnly}>Filters</span>
-                                    <span className={styles.narrowOnly} aria-hidden="true">☰</span>
+                                    Filters
                                     {activeFilters > 0 && <span className={styles.filterCount}>{activeFilters}</span>}
                                 </button>
                             </div>

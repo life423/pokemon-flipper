@@ -61,13 +61,6 @@
     border-radius: var(--radius-control);
 }
 
-/* On a phone, the title takes its own line so search and button share one. */
-@media (max-width: 40rem) {
-    .title {
-        flex-basis: 100%;
-    }
-}
-
 .primary {
     min-height: 40px;
     padding: 0 var(--space-3);
@@ -416,6 +409,73 @@
 
 .priceRange .affix input {
     width: 100%;
+}
+
+/* The title and search: one row on wide screens; on phones the title shares
+   the top row with the menu, and search gets the full row below. */
+.topRow {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas: "title search";
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+}
+
+.topRow .title {
+    grid-area: title;
+}
+
+.topRow .searchRow {
+    grid-area: search;
+}
+
+.menuButton {
+    grid-area: menu;
+    position: relative;
+    display: inline-grid;
+    place-items: center;
+    width: var(--tap);
+    height: var(--tap);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    color: var(--text);
+    cursor: pointer;
+}
+
+.menuButton svg {
+    width: 26px;
+    height: 26px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.25;
+    stroke-linecap: round;
+}
+
+/* How many filters are on, on the menu's corner. */
+.menuBadge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    display: grid;
+    place-items: center;
+    min-width: 1.25rem;
+    height: 1.25rem;
+    padding: 0 5px;
+    border-radius: var(--radius-pill);
+    background: var(--accent-strong);
+    color: #fff;
+    font-size: var(--text-xs);
+    font-weight: 700;
+}
+
+@media (max-width: 39.99rem) {
+    .topRow {
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+            "title menu"
+            "search search";
+    }
 }
 
 /* Which controls show where: tabs and targets need a wide screen. */
