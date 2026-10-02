@@ -118,7 +118,7 @@ eBay fees, sales tax, shipping costs, PSA and CGC service levels, and default ta
 
 | Command | What it does |
 | --- | --- |
-| `npm run dev` | Runs the app on port 3000 with live reload |
+| `npm run dev` | Stops any dev server already running, frees port 3000, then runs the app with live reload |
 | `npm test` | Runs the test suite; no paid API calls |
 | `npm run typecheck` | Type-checks the server and the page |
 | `npm run build` | Builds the page for production |
