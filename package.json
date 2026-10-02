@@ -4,8 +4,8 @@
   "description": "Find eBay Pokémon card listings worth flipping, priced to the exact printing, with a max bid for every one.",
   "main": "server/app.ts",
   "scripts": {
-    "predev": "pkill -f '[t]sx watch.*server/app.ts'; sleep 0.5; kill-port ${PORT:-3000}",
-    "dev": "tsx watch --clear-screen=false server/app.ts",
+    "dev": "npm run kill-ports && tsx watch --clear-screen=false server/app.ts",
+    "kill-ports": "kill-port 3000 || true",
     "start": "NODE_ENV=production tsx server/app.ts",
     "test": "node --import tsx --test \"test/**/*.test.*\"",
     "evaluate": "tsx scripts/evaluate.ts",
