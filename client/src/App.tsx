@@ -872,7 +872,7 @@ export function App() {
                                     ))}
                                     {activeChips.length > 1 && (
                                         <button type="button" className={styles.clearAll} onClick={clearAll}>
-                                            Clear all
+                                            Clear<span className={styles.wideOnly}> all</span>
                                         </button>
                                     )}
                                 </div>

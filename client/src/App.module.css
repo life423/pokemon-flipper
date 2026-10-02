@@ -845,10 +845,50 @@
 
 /* Phones: no panel chrome or tagline, and no keyboard shortcut to show. */
 @media (max-width: 39.99rem) {
+    /* One row: the view picker, then the active filters scrolling beside it. */
     .controlPanel {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
         padding: 0;
         background: none;
         border: 0;
+    }
+
+    .controlPanel .controlRow {
+        flex: none;
+    }
+
+    .activeFilters {
+        flex: 1;
+        flex-wrap: nowrap;
+        min-width: 0;
+        /* Room to scroll the last chip clear of the fade. */
+        padding: 0 24px 0 0;
+        border-top: 0;
+        overflow-x: auto;
+        scrollbar-width: none;
+        /* A fade at the edge says there's more to scroll to. */
+        mask-image: linear-gradient(to right, black calc(100% - 24px), transparent);
+    }
+
+    .activeFilters::-webkit-scrollbar {
+        display: none;
+    }
+
+    .activeLabel {
+        display: none;
+    }
+
+    .chip,
+    .clearAll {
+        flex: none;
+        white-space: nowrap;
+    }
+
+    .chip {
+        min-height: var(--tap);
+        font-size: var(--text-xs);
     }
 
     .tagline {
