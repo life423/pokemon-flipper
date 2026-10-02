@@ -355,6 +355,9 @@ function review(reason: string): PrintingDecision {
 
 // The title, the item details, and the photos have to agree. There is
 // no majority vote: any disagreement goes to review.
+// Cheapest to priciest, for settling a seller's claim against the photos.
+const PRINTING_RANK: Record<Printing, number> = { UNLIMITED: 0, SHADOWLESS: 1, FIRST_EDITION: 2 };
+
 export function resolvePrinting(
     {
         title,
@@ -393,6 +396,17 @@ export function resolvePrinting(
         return review("The photos don't clearly show which printing this is.");
     }
     if (claim && claim !== photo) {
+        // A pricier claim the photos clearly don't support: priced as what the
+        // photos show. That can only lower the max price. A pricier printing
+        // than claimed still needs both the seller and the photos (below).
+        if (isPrinting(claim) && PRINTING_RANK[photo] < PRINTING_RANK[claim]) {
+            return {
+                status: "ACCEPTED",
+                printing: photo,
+                reason: `The seller says ${printingName(claim)}, but the photos show ${printingName(photo)}, so it's priced as ${printingName(photo)}.`,
+            };
+        }
+
         return review(
             `The seller says ${printingName(claim)}, but the photos show ${printingName(photo)}.`
         );
@@ -769,6 +783,9 @@ export async function identifyCard(
     if (printing.status !== "ACCEPTED") {
         return needsReview(printing.reason ?? "The printing couldn't be settled.", card);
     }
+
+    // Priced as a cheaper printing than the seller claims: say so.
+    if (printing.reason) identity.reasons.push(printing.reason);
 
     if (labelNamesNone && printing.printing === "FIRST_EDITION") {
         return needsReview("The listing says 1st Edition, but the slab label doesn't.", card);

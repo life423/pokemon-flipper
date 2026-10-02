@@ -632,3 +632,23 @@ test("anything else in the photos that shows another card sends it to review", a
     assert.equal(identity.status, "NEEDS_REVIEW");
     assert.equal(identity.notThisCard, "the set total reads 4/132");
 });
+
+test("a pricier claim the photos clearly don't support is priced as what the photos show", () => {
+    const decision = resolvePrinting(
+        { title: "NOT_STATED", itemSpecifics: "FIRST_EDITION", photo: "UNLIMITED" },
+        { hasEditions: true, setName: "Neo Genesis" }
+    );
+
+    assert.equal(decision.status, "ACCEPTED");
+    assert.equal(decision.printing, "UNLIMITED");
+    assert.match(decision.reason, /seller says 1st Edition, but the photos show Unlimited/);
+});
+
+test("a pricier printing than the seller claims still needs both: no settling upward", () => {
+    const decision = resolvePrinting(
+        { title: "UNLIMITED", itemSpecifics: "NOT_STATED", photo: "FIRST_EDITION" },
+        { hasEditions: true, setName: "Neo Genesis" }
+    );
+
+    assert.equal(decision.status, "NEEDS_REVIEW");
+});

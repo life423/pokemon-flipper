@@ -151,3 +151,21 @@ test("a Buy It Now priced far below the card in any condition is junk; an auctio
     assert.equal(auction.junk, undefined);
     assert.equal(cheapButReal.junk, undefined);
 });
+
+test("a 1st Edition claim in the item details only is priced as what the main photo shows", async () => {
+    // A real listing: "Features: 1st Edition" on an Unlimited Lugia.
+    const aspects = { Set: "Neo Genesis", "Card Number": "9/111", "Card Name": "Lugia", Language: "English", Features: "1st Edition" };
+    const claimed = await prescreen(rawLugia({ title: "Pokemon TCG Lugia 9/111 Neo Genesis Holo Rare English 2000 90HP", aspects, price: 250 }), deps);
+    const seen = await prescreen(
+        rawLugia({
+            title: "Pokemon TCG Lugia 9/111 Neo Genesis Holo Rare English 2000 90HP",
+            aspects,
+            price: 250,
+            photoMarks: { firstEditionStamp: "NOT_PRESENT", artBoxShadow: "PRESENT" },
+        }),
+        deps
+    );
+
+    assert.equal(claimed.card.printingLabel, "1st Edition");
+    assert.equal(seen.card.printingLabel, "Unlimited");
+});

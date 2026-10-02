@@ -7,7 +7,7 @@ import type { Screen } from "../../shared/types.ts";
 // or full analysis: is the card in it the card the listing claims? Reprints,
 // other cards, and fakes often hide behind a clean title.
 
-const MATCH_VERSION = 1;
+const MATCH_VERSION = 2;
 const YEAR_HOURS = 24 * 365;
 
 // Main photos are checked alongside a whole search's free checks.
@@ -18,15 +18,20 @@ export type ClaimedCard = NonNullable<Screen["card"]>;
 export interface PhotoMatch {
     verdict: "MATCH" | "MISMATCH" | "CANT_TELL";
     problems: string[];
+    // The printing marks, as the photo shows them.
+    firstEditionStamp: "VISIBLE" | "NOT_PRESENT" | "CANT_TELL";
+    artBoxShadow: "PRESENT" | "ABSENT" | "CANT_TELL";
 }
 
 const SCHEMA = {
     type: "object",
     additionalProperties: false,
-    required: ["verdict", "problems"],
+    required: ["verdict", "problems", "firstEditionStamp", "artBoxShadow"],
     properties: {
         verdict: { type: "string", enum: ["MATCH", "MISMATCH", "CANT_TELL"] },
         problems: { type: "array", items: { type: "string" } },
+        firstEditionStamp: { type: "string", enum: ["VISIBLE", "NOT_PRESENT", "CANT_TELL"] },
+        artBoxShadow: { type: "string", enum: ["PRESENT", "ABSENT", "CANT_TELL"] },
     },
 };
 
@@ -48,7 +53,11 @@ Is the card in the photo that card? Look at the whole card: the name, the number
 - MATCH when everything you can see fits that card.
 - CANT_TELL when the photo is too small or blurry, or shows only the back, a slab label, or packaging.
 
-Don't judge the printing (a 1st Edition stamp or the artwork's shadow) or the condition. problems lists each difference you can see, plainly; it's empty for MATCH.`;
+Don't count the printing (a 1st Edition stamp or the artwork's shadow) or the condition as a mismatch. problems lists each difference you can see, plainly; it's empty for MATCH.
+
+Separately, report the printing marks as the photo shows them, never from the listing's words:
+- firstEditionStamp: VISIBLE if the "1st Edition" stamp is printed on the card; NOT_PRESENT only if the area just below the artwork, where it would be, is clearly visible and empty; otherwise CANT_TELL.
+- artBoxShadow: PRESENT if the artwork frame has a dark drop shadow along its right edge, ABSENT if it has none, otherwise CANT_TELL.`;
 }
 
 export async function matchMainPhoto(imageUrl: string, card: ClaimedCard): Promise<PhotoMatch | null> {

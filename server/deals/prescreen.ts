@@ -26,6 +26,8 @@ export interface ScreenInput {
     isGraded: boolean;
     cardCondition: string | null;
     buyingOption?: BuyingOption;
+    // Printing marks the main photo showed, where it could tell.
+    photoMarks?: { firstEditionStamp: string; artBoxShadow: string };
 }
 
 export interface ScreenDeps {
@@ -71,6 +73,20 @@ function sellerPrinting(listing: ScreenInput): keyof typeof SELLER_MARKS | null 
     return claim in SELLER_MARKS ? (claim as keyof typeof SELLER_MARKS) : null;
 }
 
+// The photo's printing marks where it could tell, the seller's otherwise, so a
+// claim the photo clearly contradicts gets settled by identity.
+function withPhotoMarks(
+    seller: { firstEditionStamp: string; artBoxShadow: string },
+    photo: ScreenInput["photoMarks"]
+): { firstEditionStamp: string; artBoxShadow: string } {
+    if (!photo) return seller;
+
+    return {
+        firstEditionStamp: photo.firstEditionStamp !== "CANT_TELL" ? photo.firstEditionStamp : seller.firstEditionStamp,
+        artBoxShadow: photo.artBoxShadow !== "CANT_TELL" ? photo.artBoxShadow : seller.artBoxShadow,
+    };
+}
+
 function screen(status: Screen["status"], reason: string | null, extra: Partial<Screen> = {}): Screen {
     return { status, reason, card: null, bestCase: null, assumed: null, ...extra };
 }
@@ -87,7 +103,7 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
 
     // The identity code, run on the seller's word instead of photos.
     const sellerView = {
-        printingMarks: printing ? SELLER_MARKS[printing] : undefined,
+        printingMarks: printing ? withPhotoMarks(SELLER_MARKS[printing], listing.photoMarks) : undefined,
         printedName: null,
         printedNumber: aspects["Card Number"] ? null : (listing.title.match(TITLE_NUMBER)?.[1].replace(/\s/g, "") ?? null),
         slab: null,

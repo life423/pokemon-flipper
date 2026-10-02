@@ -102,8 +102,10 @@ export async function screenListing(
 
     // A candidate's main photo, checked against the card it claims before any
     // eBay request or full analysis. Long-shot auctions aren't worth it.
+    let seen: PhotoMatch | null = null;
+
     if (first.status === "CANDIDATE" && !first.longShot && first.card && listing.images[0]) {
-        const seen = await steps.matchPhoto(listing.images[0], first.card);
+        seen = await steps.matchPhoto(listing.images[0], first.card);
 
         if (seen?.verdict === "MISMATCH") {
             const reason = `The main photo doesn't match: ${seen.problems.join("; ") || "another card"}.`;
@@ -139,6 +141,8 @@ export async function screenListing(
             aspects,
             shipping: listing.shipping ?? details.shipping,
             cardCondition: details.cardCondition,
+            // The main photo's printing marks settle claims it clearly contradicts.
+            photoMarks: seen ? { firstEditionStamp: seen.firstEditionStamp, artBoxShadow: seen.artBoxShadow } : undefined,
         }),
         filled
     );
