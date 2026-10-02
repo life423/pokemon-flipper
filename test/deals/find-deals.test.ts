@@ -20,7 +20,7 @@ const listing = (title, extra = {}) => ({
 const screen = (status, extra = {}) => ({ status, reason: null, card: null, bestCase: null, assumed: null, ...extra });
 
 // Steps that record what they were asked, with the check's answers in order.
-function steps(answers, { detailsFail = false } = {}) {
+function steps(answers, { detailsFail = false, photoAnswer = null } = {}) {
     const calls = { details: 0, checks: [] };
 
     return {
@@ -30,6 +30,10 @@ function steps(answers, { detailsFail = false } = {}) {
             calls.details += 1;
             if (detailsFail) throw new Error("eBay request failed (429): Too many requests");
             return { title: "Charizard 4/102", aspects: { Set: "Base Set" }, shipping: 5, cardCondition: "Lightly played (Excellent)", conditionNotes: [], seller: null };
+        },
+        matchPhoto: async (imageUrl, card) => {
+            calls.photos = (calls.photos ?? 0) + 1;
+            return photoAnswer;
         },
         check: async (input) => {
             calls.checks.push(input);
@@ -110,4 +114,28 @@ test("a title naming another set than the one searched is set aside before any c
     assert.equal(result.match, "OTHER_SET");
     assert.equal(s.calls.checks.length, 0);
     assert.equal(s.calls.details, 0);
+});
+
+test("a candidate whose main photo shows another card is set aside before any eBay request", async () => {
+    const card = { name: "Charizard", set: "Base Set", cardNumber: "004/102", printing: "UNLIMITED", printingLabel: "Unlimited" };
+    const s = steps([screen("CANDIDATE", { card })], {
+        photoAnswer: { verdict: "MISMATCH", problems: ["a Pikachu 30th anniversary logo on the artwork"] },
+    });
+    const result = await screenListing(listing("Charizard Base Set 4/102 Holo", { images: ["https://i.ebayimg.com/images/g/x/s-l225.jpg"] }), s);
+
+    assert.equal(result.match, "OTHER_CARD");
+    assert.match(result.screen.reason, /30th anniversary/);
+    assert.equal(s.calls.details, 0);
+});
+
+test("a main photo that matches, or can't be judged, lets the candidate go on", async () => {
+    const card = { name: "Charizard", set: "Base Set", cardNumber: "004/102", printing: "UNLIMITED", printingLabel: "Unlimited" };
+    const s = steps([screen("CANDIDATE", { card }), screen("CANDIDATE", { card })], {
+        photoAnswer: { verdict: "CANT_TELL", problems: [] },
+    });
+    const result = await screenListing(listing("Charizard Base Set 4/102 Holo", { images: ["https://i.ebayimg.com/images/g/x/s-l225.jpg"] }), s);
+
+    assert.equal(result.match, undefined);
+    assert.equal(s.calls.photos, 1);
+    assert.equal(s.calls.details, 1);
 });

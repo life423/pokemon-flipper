@@ -5,6 +5,7 @@ import { readSearch } from "../search/intent.ts";
 import { cardMismatch, gradingMatches, isEnglish, setMatches, titleMatches } from "../search/relevance.ts";
 import { fillFromTitle, readTitle } from "../ai/title-reader.ts";
 import { checkComps } from "../ai/comp-checker.ts";
+import { matchMainPhoto, type ClaimedCard, type PhotoMatch } from "../ai/photo-match.ts";
 import { prescreen, type ScreenInput } from "./prescreen.ts";
 import type { ListingSummary, Screen, SearchIntent } from "../../shared/types.ts";
 
@@ -37,6 +38,7 @@ export interface ScreenSteps {
     readTitle: typeof fillFromTitle;
     loadDetails: (itemId: string) => Promise<ListingDetails>;
     check: (input: ScreenInput) => Promise<Screen>;
+    matchPhoto: (imageUrl: string, card: ClaimedCard) => Promise<PhotoMatch | null>;
 }
 
 const REAL_STEPS: ScreenSteps = {
@@ -47,6 +49,7 @@ const REAL_STEPS: ScreenSteps = {
         prescreen(input, { lookupCards, fetchComps, checkComps }).catch((error: Error) =>
             unscreened(`The free check failed: ${error.message}`)
         ),
+    matchPhoto: matchMainPhoto,
 };
 
 function unscreened(reason: string): Screen {
@@ -96,6 +99,17 @@ export async function screenListing(
 
     // Priced too low to be the real card: junk, before any eBay request.
     if (first.junk) return { ...listing, match: "JUNK", screen: first };
+
+    // A candidate's main photo, checked against the card it claims before any
+    // eBay request or full analysis. Long-shot auctions aren't worth it.
+    if (first.status === "CANDIDATE" && !first.longShot && first.card && listing.images[0]) {
+        const seen = await steps.matchPhoto(listing.images[0], first.card);
+
+        if (seen?.verdict === "MISMATCH") {
+            const reason = `The main photo doesn't match: ${seen.problems.join("; ") || "another card"}.`;
+            return { ...listing, match: "OTHER_CARD", screen: { ...first, reason } };
+        }
+    }
 
     // Dropped on its title alone: no eBay detail request.
     if (first.status !== "CANDIDATE" && !first.incomplete) {

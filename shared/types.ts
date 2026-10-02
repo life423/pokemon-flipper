@@ -127,6 +127,8 @@ export interface PhotoCheck {
     printedName?: string | null;
     printedNumber?: string | null;
     printingMarks?: PrintingMarks;
+    // Whether the photographed card is the card the listing claims.
+    cardMatch?: { verdict: "MATCH" | "MISMATCH" | "CANT_TELL"; problems: string[] };
     slab?: SlabReading | null;
 }
 
@@ -200,8 +202,9 @@ export interface Identity {
     printingLabel: string | null;
     finish: string;
     language: string;
-    // The photos show a reprint's mark: this isn't the card searched for.
-    reprint?: string | null;
+    // Why the photos show this isn't the card the listing claims: a
+    // reprint's mark, another set's symbol, a fake. Set aside on the page.
+    notThisCard?: string | null;
     evidence: {
         title: string;
         itemSpecifics: string;

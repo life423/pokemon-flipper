@@ -18,7 +18,7 @@ export interface IdentityListing {
 }
 
 // What identity reads from the photo check.
-export type IdentityPhotos = Pick<PhotoCheck, "printedName" | "printedNumber" | "printingMarks" | "slab">;
+export type IdentityPhotos = Pick<PhotoCheck, "printedName" | "printedNumber" | "printingMarks" | "cardMatch" | "slab">;
 
 // The identity as it's built: the public fields plus a few the pricing
 // code reads.
@@ -749,8 +749,16 @@ export async function identifyCard(
     const reprint = reprintShown(photoCheck.printingMarks?.reprintMark, card.records[0]?.setName ?? identity.set);
 
     if (reprint) {
-        identity.reprint = reprint;
+        identity.notThisCard = `it shows a mark from ${reprint}`;
         return needsReview(`The photos show a mark from ${reprint}, so this isn't the ${identity.set} card.`, card);
+    }
+
+    // Anything else on the card that shows it isn't what the listing claims.
+    if (photoCheck.cardMatch?.verdict === "MISMATCH") {
+        const problems = photoCheck.cardMatch.problems.join("; ") || "the card differs from the listing";
+
+        identity.notThisCard = problems;
+        return needsReview(`The photos don't match the listing: ${problems}.`, card);
     }
 
     const printing = resolvePrinting(evidence, {

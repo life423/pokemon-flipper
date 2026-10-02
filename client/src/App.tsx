@@ -342,7 +342,7 @@ export function App() {
         return listings
             // Another set, card, or printing than the one searched for, including
             // a reprint the photos gave away.
-            .filter((listing) => !listing.match && !evaluationOf(analyses[listing.id])?.identity?.reprint)
+            .filter((listing) => !listing.match && !evaluationOf(analyses[listing.id])?.identity?.notThisCard)
             .filter((listing) => typeFilter === "all" || listing.buyingOption === typeFilter)
             .filter((listing) => kindFilter === "all" || listing.isGraded === (kindFilter === "graded"))
             .filter((listing) => (listing.currentPrice ?? 0) <= limit)
@@ -400,7 +400,7 @@ export function App() {
             unchecked: listings.filter((listing) => listing.screen?.status === "UNSCREENED" && !listing.match).length,
             mismatched: listings.filter(
                 (listing) =>
-                    (listing.match && listing.match !== "JUNK") || Boolean(evaluationOf(analyses[listing.id])?.identity?.reprint)
+                    (listing.match && listing.match !== "JUNK") || Boolean(evaluationOf(analyses[listing.id])?.identity?.notThisCard)
             ).length,
             // Junk the AI spotted in titles; the free rules' count comes with the search.
             junk: listings.filter((listing) => listing.match === "JUNK").length,

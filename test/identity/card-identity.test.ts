@@ -618,6 +618,17 @@ test("a Celebrations logo in the photos sends a Base Set listing to review as a 
     const { identity } = await identifyCard(listing, photos, { lookupCards: BASE_FAMILY });
 
     assert.equal(identity.status, "NEEDS_REVIEW");
-    assert.match(identity.reprint, /Celebrations/);
+    assert.match(identity.notThisCard, /Celebrations/);
     assert.match(identity.reasons[0], /isn't the Base Set card/);
+});
+
+test("anything else in the photos that shows another card sends it to review", async () => {
+    const listing = charizardListing("PSA 8 Charizard 4/102 Base Set Holo");
+    const photos = charizardPhotos();
+    photos.cardMatch = { verdict: "MISMATCH", problems: ["the set total reads 4/132"] };
+
+    const { identity } = await identifyCard(listing, photos, { lookupCards: BASE_FAMILY });
+
+    assert.equal(identity.status, "NEEDS_REVIEW");
+    assert.equal(identity.notThisCard, "the set total reads 4/132");
 });
