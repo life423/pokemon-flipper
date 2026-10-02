@@ -68,8 +68,13 @@ app.get("/api/deals", async (req, res) => {
 
     const send = (message: object) => res.write(`${JSON.stringify(message)}\n`);
 
+    // A stopped search (the page closed the connection) stops the work too.
+    const stopped = new AbortController();
+    res.on("close", () => stopped.abort());
+
     try {
         await findDeals(searchText(req), {
+            signal: stopped.signal,
             maxResults: Number(req.query.max) || undefined,
             minPrice: Number(req.query.min) || 0,
             onStart: (summary) => send({ type: "start", ...summary }),

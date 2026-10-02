@@ -169,12 +169,16 @@ export async function findDeals(
         onListing = () => {},
         maxResults = DEFAULT_RESULTS,
         minPrice = 0,
+        signal,
     }: {
         onStart?: (summary: SearchSummary) => void;
         onListing?: (listing: ListingSummary) => void;
         maxResults?: number;
         // Buy It Now listings under this are skipped; auctions aren't affected.
         minPrice?: number;
+        // A stopped search: the listings not yet checked are skipped, so no
+        // more eBay requests or AI calls go out.
+        signal?: AbortSignal;
     } = {}
 ): Promise<ListingSummary[]> {
     const intent = await readSearch(search);
@@ -199,6 +203,8 @@ export async function findDeals(
     for (const listing of matching) void readTitle(listing.title);
 
     const results = await mapLimit(matching, PARALLEL_LISTINGS, async (listing) => {
+        if (signal?.aborted) return null;
+
         const screened = await screenListing(listing, REAL_STEPS, intent);
         const mismatch = screened.match ?? cardMismatch(screened.screen, intent);
         const result = mismatch ? { ...screened, match: mismatch } : screened;
@@ -212,5 +218,5 @@ export async function findDeals(
         `Search ${JSON.stringify(search)}: ${matching.length} listings checked with ${detailRequestCount() - requestsBefore} eBay detail requests`
     );
 
-    return results;
+    return results.filter((result): result is ListingSummary => result !== null);
 }

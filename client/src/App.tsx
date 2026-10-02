@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { prefersReducedMotion, transitionName, withViewTransition } from "./motion";
-import { Tween, wholeNumber } from "./components/Tween";
 import type { EbayUsage, Evaluation, ListingSummary, RatingLevel, SearchIntent, Targets } from "./types";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.ts";
@@ -11,6 +10,7 @@ import { evaluateListing, fetchEbayUsage, streamDeals, streamDig, type DealsMess
 import { DealCard } from "./components/DealCard";
 import { Drawer } from "./components/Drawer";
 import { EmptyState } from "./components/EmptyState";
+import { SearchProgress, type SearchPhase } from "./components/SearchProgress";
 import { Dropdown } from "./components/Dropdown";
 import {
     ArrowIcon,
@@ -234,6 +234,9 @@ export function App() {
     const [searchStatus, setSearchStatus] = useState<"idle" | "checking" | "done" | "error">("idle");
     const [searchError, setSearchError] = useState("");
     const searchId = useRef(0);
+    // Stops the running search's stream; the server stops checking with it.
+    const searchAbort = useRef<AbortController | null>(null);
+    const [stopped, setStopped] = useState(false);
 
     const [view, setView] = useState<View>("deals");
     const [sort, setSort] = useState<SortKey>("best");
@@ -380,6 +383,10 @@ export function App() {
         event.preventDefault();
 
         const id = ++searchId.current;
+        searchAbort.current?.abort();
+        const controller = new AbortController();
+        searchAbort.current = controller;
+        setStopped(false);
         lastQuery.current = query;
         setDigStatus("idle");
         setDigTotal(0);
@@ -395,7 +402,7 @@ export function App() {
         setSearchStatus("checking");
 
         try {
-            await streamDeals(query, { maxResults: resultsSetting, minPrice: Number(minPrice) || 0 }, (message) => {
+            await streamDeals(query, { maxResults: resultsSetting, minPrice: Number(minPrice) || 0, signal: controller.signal }, (message) => {
                 if (searchId.current !== id) return;
                 if (message.type === "start") {
                     setTotal(message.count);
@@ -412,6 +419,16 @@ export function App() {
             setSearchError(error instanceof Error ? error.message : "Search failed");
             setSearchStatus("error");
         }
+    }
+
+    // Stop: the server stops checking (no more eBay requests), and nothing
+    // new goes to the AI. Analyses already running finish; results stay.
+    function stopSearch() {
+        searchAbort.current?.abort();
+        searchId.current += 1;
+        setBudget(autoQueued.current.size);
+        setStopped(true);
+        setSearchStatus("done");
     }
 
     // The AI looks at the most promising candidates on its own, a couple
@@ -694,6 +711,79 @@ export function App() {
         });
     };
 
+    // Where the search is, for the progress panel: the free check, then the
+    // AI on the best candidates, up to this search's budget.
+    const aiTarget = Math.min(counts.candidates, budget);
+    const aiDone = Math.min(
+        aiTarget,
+        listings.filter(
+            (listing) =>
+                listing.screen?.status === "CANDIDATE" &&
+                !listing.screen.longShot &&
+                analyses[listing.id] &&
+                analyses[listing.id].status !== "loading"
+        ).length
+    );
+    const aiBusy = counts.analyzing > 0 || (counts.waiting > 0 && budgetLeft > 0);
+    const phase: SearchPhase =
+        searchStatus === "error"
+            ? "error"
+            : stopped
+              ? "stopped"
+              : searchStatus === "checking"
+                ? summary
+                    ? "filtering"
+                    : "finding"
+                : aiBusy
+                  ? "ai"
+                  : "done";
+
+    // The panel's buttons, when they apply, and how a dig went.
+    const showMoreAi = counts.waiting > 0 && budgetLeft <= 0;
+    const showDig = searchStatus === "done" && Boolean(summary?.intent.cardName) && digStatus !== "digging";
+    const progressActions = (showMoreAi || showDig || digStatus !== "idle") && (
+        <div className={styles.progressActions}>
+            {(showMoreAi || showDig) && (
+                <div className={styles.progressButtons}>
+                    {showMoreAi && (
+                        <button type="button" className={styles.secondary} onClick={() => setBudget((current) => current + 5)}>
+                            Analyze 5 more (paid)
+                        </button>
+                    )}
+                    {showDig && (
+                        <button type="button" className={styles.secondary} onClick={dig}>
+                            {digStatus === "done" ? "Dig again" : "Dig deeper"}
+                        </button>
+                    )}
+                </div>
+            )}
+            {digStatus !== "idle" && (
+                <p className={digError ? styles.warning : undefined}>
+                    {digError
+                        ? digError
+                        : digStatus === "digging"
+                          ? `Digging: misspelled titles, number-only titles, and other categories${digTotal ? ` (${digTotal} more listings)` : ""}. The photos decide.`
+                          : `Dig deeper checked ${digTotal} more listings and found ${groups.hidden.length} hidden ${groups.hidden.length === 1 ? "one" : "ones"}: see Hidden finds.`}
+                </p>
+            )}
+        </div>
+    );
+
+    // One tap down: what eBay returned, and the counts behind the four shown.
+    const progressDetails = summary && (
+        <>
+            <p>
+                eBay has {summary.total.toLocaleString()} results. Of the first {summary.found.toLocaleString()},{" "}
+                {summary.count.toLocaleString()} are {describeIntent(summary.intent)}.
+            </p>
+            <p>
+                {counts.candidates} could be profitable at best; {counts.mismatched} set aside as other sets, cards, or
+                languages.
+            </p>
+            <p>A new search takes a few minutes; repeats are quick.</p>
+        </>
+    );
+
     // Min profit and min ROI: in the toolbar on wide screens, in the drawer always.
     const targetFields = (
         <>
@@ -769,6 +859,19 @@ export function App() {
                                         aria-label="Search cards"
                                         aria-keyshortcuts="Meta+K Control+K"
                                     />
+                                    {query && (
+                                        <button
+                                            type="button"
+                                            className={styles.clearSearch}
+                                            onClick={() => {
+                                                setQuery("");
+                                                searchInput.current?.focus();
+                                            }}
+                                            aria-label="Clear search"
+                                        >
+                                            <CloseIcon />
+                                        </button>
+                                    )}
                                     <kbd className={styles.shortcut} aria-hidden="true">
                                         {SHORTCUT}
                                     </kbd>
@@ -777,12 +880,17 @@ export function App() {
                                         type="submit"
                                         className={`${styles.searchSubmit} ${styles.narrowOnly}`}
                                         aria-label="Find deals"
+                                        aria-busy={searchStatus === "checking"}
                                     >
-                                        <ArrowIcon />
+                                        {searchStatus === "checking" ? <span className={styles.spinner} /> : <ArrowIcon />}
                                     </button>
                                 </label>
                                 <button type="submit" className={`${styles.primary} ${styles.wideOnly}`}>
-                                    <SearchIcon className={styles.buttonIcon} />
+                                    {searchStatus === "checking" ? (
+                                        <span className={styles.spinner} aria-hidden="true" />
+                                    ) : (
+                                        <SearchIcon className={styles.buttonIcon} />
+                                    )}
                                     Find deals
                                 </button>
                             </form>
@@ -981,101 +1089,47 @@ export function App() {
                     </header>
 
                     {searchStatus !== "idle" && (
-                        <section className={styles.funnel} aria-live="polite">
-                            {searchStatus === "error" ? (
-                                <p className={styles.error}>{searchError}</p>
-                            ) : (
-                                <>
-                                    <p>
-                                        {summary &&
-                                            `eBay has ${summary.total.toLocaleString()} results. Of the first ${summary.found.toLocaleString()}, ${summary.count.toLocaleString()} are ${describeIntent(summary.intent)}. `}
-                                        {searchStatus === "checking"
-                                            ? `Checking them for free: ${listings.length} of ${total ?? "..."}. A new search takes a few minutes; repeats are quick.`
-                                            : `All ${listings.length} checked for free.`}
-                                    </p>
-                                    {usage && (
-                                        <p className={usage.braking ? styles.warning : undefined}>{describeUsage(usage)}</p>
-                                    )}
-                                    <dl className={styles.funnelNumbers}>
-                                        <div>
-                                            <dt>Could be profitable</dt>
-                                            <dd>
-                                                <Tween value={counts.candidates} format={wholeNumber} />
-                                            </dd>
-                                        </div>
-                                        <div>
-                                            <dt>Too pricey even at best</dt>
-                                            <dd>
-                                                <Tween value={counts.dropped} format={wholeNumber} />
-                                            </dd>
-                                        </div>
-                                        <div>
-                                            <dt>Couldn't check</dt>
-                                            <dd>
-                                                <Tween value={counts.unchecked} format={wholeNumber} />
-                                            </dd>
-                                        </div>
-                                        <div>
-                                            <dt>Set aside: other sets, cards, languages</dt>
-                                            <dd>
-                                                <Tween value={counts.mismatched} format={wholeNumber} />
-                                            </dd>
-                                        </div>
-                                        <div>
-                                            <dt>Junk skipped</dt>
-                                            <dd>
-                                                <Tween value={(summary?.skipped ?? 0) + counts.junk} format={wholeNumber} />
-                                            </dd>
-                                        </div>
-                                        <div>
-                                            <dt>Deals</dt>
-                                            <dd className={styles.dealCount}>{groups.deals.length}</dd>
-                                        </div>
-                                    </dl>
-                                    <div className={styles.aiRow}>
-                                        <p>
-                                            {counts.analyzing > 0
-                                                ? `AI is analyzing ${counts.analyzing} now.`
-                                                : counts.waiting > 0
-                                                  ? `${counts.waiting} ${counts.waiting === 1 ? "candidate is" : "candidates are"} waiting for the AI.`
-                                                  : searchStatus === "checking"
-                                                    ? "Candidates go to the AI as they turn up."
-                                                    : "The AI has looked at every candidate."}
-                                        </p>
-                                        {counts.waiting > 0 && budgetLeft <= 0 && (
-                                            <button
-                                                type="button"
-                                                className={styles.secondary}
-                                                onClick={() => setBudget((current) => current + 5)}
-                                            >
-                                                Analyze 5 more (paid)
-                                            </button>
-                                        )}
-                                        {searchStatus === "done" && summary?.intent.cardName && digStatus !== "digging" && (
-                                            <button type="button" className={styles.secondary} onClick={dig}>
-                                                {digStatus === "done" ? "Dig again" : "Dig deeper"}
-                                            </button>
-                                        )}
-                                    </div>
-                                    {digStatus !== "idle" && (
-                                        <p className={digError ? styles.warning : undefined}>
-                                            {digError
-                                                ? digError
-                                                : digStatus === "digging"
-                                                  ? `Digging: misspelled titles, number-only titles, and other categories${digTotal ? ` (${digTotal} more listings)` : ""}. The photos decide.`
-                                                  : `Dig deeper checked ${digTotal} more listings and found ${groups.hidden.length} hidden ${groups.hidden.length === 1 ? "one" : "ones"}: see Hidden finds.`}
-                                        </p>
-                                    )}
-                                </>
-                            )}
-                        </section>
+                        <SearchProgress
+                            phase={phase}
+                            query={lastQuery.current}
+                            error={searchError}
+                            ebayTotal={summary?.total ?? null}
+                            checked={listings.length}
+                            total={total}
+                            ai={{ done: aiDone, target: aiTarget, analyzing: counts.analyzing, waiting: counts.waiting }}
+                            stats={{
+                                junk: (summary?.skipped ?? 0) + counts.junk,
+                                dropped: counts.dropped,
+                                unchecked: counts.unchecked,
+                                deals: groups.deals.length,
+                            }}
+                            usage={
+                                usage && {
+                                    text: `${usage.remaining.toLocaleString()} of ${usage.limit.toLocaleString()} requests left`,
+                                    note: describeUsage(usage),
+                                    braking: usage.braking,
+                                }
+                            }
+                            onStop={stopSearch}
+                            actions={progressActions}
+                            details={progressDetails}
+                        />
                     )}
 
                     {searchStatus === "idle" && <EmptyState />}
 
-                    {searchStatus !== "idle" && searchStatus !== "error" && visible.length === 0 && (
-                        <p className={styles.status}>{emptyText[view]}</p>
-                    )}
+                    {searchStatus !== "idle" &&
+                        searchStatus !== "error" &&
+                        visible.length === 0 &&
+                        !(searchStatus === "checking" && listings.length === 0) &&
+                        (searchStatus === "checking" && view === "deals" ? (
+                            <EmptyState
+                                title="No deals yet"
+                                text="Results will appear here as they're found. The search is still running."
+                            />
+                        ) : (
+                            <p className={styles.status}>{emptyText[view]}</p>
+                        ))}
 
                     <div className={styles.results}>
                         {/* Before the first results: placeholders in the shape of cards. */}

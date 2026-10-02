@@ -29,8 +29,12 @@ export type DealsMessage =
 // A search with every listing screened for free, streamed one listing at
 // a time so the page fills in while the first, slower search runs.
 // Reads a stream of JSON lines, handing each message on as it arrives.
-async function streamLines<T extends { type: string }>(url: string, onMessage: (message: T) => void): Promise<void> {
-    const response = await reach(url);
+async function streamLines<T extends { type: string }>(
+    url: string,
+    onMessage: (message: T) => void,
+    signal?: AbortSignal
+): Promise<void> {
+    const response = await reach(url, { signal });
 
     if (!response.ok || !response.body) {
         throw new Error(`Search failed (${response.status})`);
@@ -61,10 +65,10 @@ async function streamLines<T extends { type: string }>(url: string, onMessage: (
 
 export function streamDeals(
     query: string,
-    { maxResults, minPrice }: { maxResults: number; minPrice: number },
+    { maxResults, minPrice, signal }: { maxResults: number; minPrice: number; signal?: AbortSignal },
     onMessage: (message: DealsMessage) => void
 ): Promise<void> {
-    return streamLines(`/api/deals?q=${encodeURIComponent(query)}&max=${maxResults}&min=${minPrice}`, onMessage);
+    return streamLines(`/api/deals?q=${encodeURIComponent(query)}&max=${maxResults}&min=${minPrice}`, onMessage, signal);
 }
 
 export type DigMessage =

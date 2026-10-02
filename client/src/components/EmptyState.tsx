@@ -1,7 +1,13 @@
 import styles from "./EmptyState.module.css";
 
 // Before the first search: what the app is for, and where to start.
-export function EmptyState() {
+export function EmptyState({
+    title = "Find your next flip",
+    text = "Search for a card above to scan eBay for profitable listings.",
+}: {
+    title?: string;
+    text?: string;
+}) {
     return (
         <div className={styles.empty}>
             <svg className={styles.art} viewBox="0 0 220 170" aria-hidden="true">
@@ -29,8 +35,8 @@ export function EmptyState() {
                 <path d="M188 112l2 5 5 2-5 2-2 5-2-5-5-2 5-2z" fill="#3b82f6" opacity="0.8" />
                 <path d="M52 120l1.5 4 4 1.5-4 1.5-1.5 4-1.5-4-4-1.5 4-1.5z" fill="#22c55e" opacity="0.7" />
             </svg>
-            <h2>Find your next flip</h2>
-            <p>Search for a card above to scan eBay for profitable listings.</p>
+            <h2>{title}</h2>
+            <p>{text}</p>
         </div>
     );
 }

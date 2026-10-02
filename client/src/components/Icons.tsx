@@ -97,3 +97,29 @@ export const ArrowIcon = (props: IconProps) => (
         <path d="M5 12h14M13 6l6 6-6 6" />
     </Icon>
 );
+
+export const CheckIcon = (props: IconProps) => (
+    <Icon {...props}>
+        <path d="m5 12.5 4.5 4.5L19 7.5" />
+    </Icon>
+);
+
+export const StopIcon = (props: IconProps) => (
+    <Icon {...props}>
+        <rect x="7" y="7" width="10" height="10" rx="2" />
+    </Icon>
+);
+
+export const InfoIcon = (props: IconProps) => (
+    <Icon {...props}>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 11v5M12 8h.01" />
+    </Icon>
+);
+
+export const StackIcon = (props: IconProps) => (
+    <Icon {...props}>
+        <ellipse cx="12" cy="6" rx="7" ry="3" />
+        <path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3" />
+    </Icon>
+);
