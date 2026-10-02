@@ -18,7 +18,6 @@ import {
     CloseIcon,
     DollarIcon,
     GridIcon,
-    LogoMark,
     ReviewIcon,
     SearchIcon,
     SlidersIcon,
@@ -736,7 +735,7 @@ export function App() {
                     <header className={styles.toolbar}>
                         <div className={styles.topRow}>
                             <div className={styles.brand}>
-                                <LogoMark className={styles.logo} />
+                                <img className={styles.logo} src="/pokeball.png" alt="" width={44} height={44} />
                                 <div>
                                     <h1 className={styles.title}>
                                         Pokemon <span>Flipper</span>

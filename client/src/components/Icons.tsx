@@ -100,24 +100,6 @@ export const CloseIcon = (props: IconProps) => (
     </Icon>
 );
 
-// The app's mark: two cards mid-flip, the front one with a rising line.
-export function LogoMark({ className }: IconProps) {
-    return (
-        <svg className={className} viewBox="0 0 40 40" aria-hidden="true">
-            <defs>
-                <linearGradient id="logo-front" x1="0" y1="0" x2="1" y2="1">
-                    <stop offset="0" stopColor="#3b82f6" />
-                    <stop offset="1" stopColor="#22c55e" />
-                </linearGradient>
-            </defs>
-            <rect x="7" y="6" width="19" height="27" rx="4" fill="#202531" stroke="#2a3140" strokeWidth="1.5" transform="rotate(-12 16.5 19.5)" />
-            <rect x="13" y="7" width="19" height="27" rx="4" fill="url(#logo-front)" transform="rotate(8 22.5 20.5)" />
-            <path d="m17 26 4.5-4.5 3 3 5-5.5" fill="none" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-            <path d="M26 19h3.5v3.5" fill="none" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-    );
-}
-
 export const ArrowIcon = (props: IconProps) => (
     <Icon {...props}>
         <path d="M5 12h14M13 6l6 6-6 6" />
