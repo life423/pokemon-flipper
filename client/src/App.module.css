@@ -119,35 +119,7 @@
     font-weight: 650;
 }
 
-.filtersButton {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    min-height: 34px;
-    padding: 0 0.85rem;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-pill);
-    font-size: var(--text-sm);
-    cursor: pointer;
-}
-
-.filtersButton[aria-expanded="true"] {
-    border-color: var(--accent);
-}
-
 /* How many filters are narrowing the results. */
-.filterCount {
-    min-width: 1.25rem;
-    padding: 0 5px;
-    border-radius: var(--radius-pill);
-    background: var(--accent-strong);
-    color: #fff;
-    font-size: var(--text-xs);
-    font-weight: 700;
-    text-align: center;
-}
-
 .secondary {
     min-height: 40px;
     padding: 0 var(--space-3);
@@ -281,7 +253,6 @@
     }
 
     .secondary:hover,
-    .filtersButton:hover,
     .menuButton:hover {
         border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
         background: color-mix(in srgb, var(--surface-alt) 92%, white);
@@ -452,8 +423,8 @@
    the top row with the menu, and search gets the full row below. */
 .topRow {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    grid-template-areas: "title search";
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: "title search menu";
     align-items: center;
     gap: var(--space-2) var(--space-3);
 }
@@ -723,14 +694,6 @@
     border-left: 1px solid var(--border);
 }
 
-.controlPanel .filtersButton {
-    gap: 8px;
-    min-height: 48px;
-    border-radius: var(--radius-control);
-    font-size: var(--text-md);
-    font-weight: 600;
-}
-
 /* Each target's dropdown: quick picks, then a custom amount. */
 .targetMenu {
     display: grid;
@@ -841,6 +804,20 @@
         padding: 0;
         background: none;
         border: 0;
+    }
+
+    /* The tab strip says it scrolls: the next tab peeks in under a fade,
+       swipes settle on a tab, the last tab can scroll clear of the fade,
+       and a sideways swipe moves only the tabs. */
+    .controlPanel .segmented {
+        padding-right: 40px;
+        scroll-snap-type: x proximity;
+        overscroll-behavior-x: contain;
+        mask-image: linear-gradient(to right, black calc(100% - 40px), transparent);
+    }
+
+    .controlPanel .segmented button {
+        scroll-snap-align: start;
     }
 
     /* Every view in a scrolling strip, with a hairline under it. */

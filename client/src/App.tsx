@@ -20,7 +20,6 @@ import {
     GridIcon,
     ReviewIcon,
     SearchIcon,
-    SlidersIcon,
     SparkleIcon,
     TagIcon,
     TrendIcon,
@@ -744,10 +743,10 @@ export function App() {
                                 </div>
                             </div>
 
-                            {/* Phones: the menu where everyone expects it, top right. */}
+                            {/* The menu, top right where everyone expects it: views, targets, filters, settings. */}
                             <button
                                 type="button"
-                                className={`${styles.menuButton} ${styles.narrowOnly}`}
+                                className={styles.menuButton}
                                 aria-haspopup="dialog"
                                 aria-label={activeFilters > 0 ? `Menu, ${activeFilters} filters on` : "Menu"}
                                 onClick={() => setDrawerOpen(true)}
@@ -808,8 +807,7 @@ export function App() {
                                     />
                                 </div>
 
-                                {/* Wide screens: your deal criteria in view, and the way into the drawer.
-                                    Phones reach both through the menu. */}
+                                {/* Wide screens: your deal criteria in view. Phones reach them through the menu. */}
                                 <div className={`${styles.criteria} ${styles.wideOnly}`}>
                                     <Dropdown
                                         icon={<DollarIcon />}
@@ -825,17 +823,6 @@ export function App() {
                                     >
                                         {(close) => targetMenu("minRoi", close)}
                                     </Dropdown>
-                                    <button
-                                        type="button"
-                                        className={styles.filtersButton}
-                                        aria-haspopup="dialog"
-                                        aria-label="Views, targets, and filters"
-                                        onClick={() => setDrawerOpen(true)}
-                                    >
-                                        <SlidersIcon className={styles.buttonIcon} />
-                                        Filters
-                                        {activeFilters > 0 && <span className={styles.filterCount}>{activeFilters}</span>}
-                                    </button>
                                 </div>
                             </div>
 
