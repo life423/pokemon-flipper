@@ -64,6 +64,16 @@
     font-weight: 700;
 }
 
+/* A bargain signal: worth a closer look, not a verdict. */
+.bargainTag {
+    padding: 0.15rem 0.6rem;
+    border-radius: var(--radius-pill);
+    background: color-mix(in srgb, var(--warning) 16%, transparent);
+    color: var(--warning);
+    font-size: var(--text-xs);
+    font-weight: 700;
+}
+
 .name {
     font-size: var(--text-sm);
     font-weight: 600;

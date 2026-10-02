@@ -3,6 +3,7 @@ import type { EbayUsage, Evaluation, ListingSummary, RatingLevel, SearchIntent, 
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.ts";
 import { offerFor, offerWorthMaking } from "../../shared/money/offer.ts";
+import { bargainScore, bargainSignals } from "../../shared/signals.ts";
 import { name } from "./format";
 import { evaluateListing, fetchEbayUsage, streamDeals, type DealsMessage } from "./api";
 import { DealCard } from "./components/DealCard";
@@ -16,7 +17,7 @@ export type AnalysisState =
     | { status: "error"; message: string };
 
 type View = "deals" | "candidates" | "longShots" | "review" | "all";
-type SortKey = "best" | "ending" | "priceLow" | "priceHigh";
+type SortKey = "best" | "bargain" | "ending" | "priceLow" | "priceHigh";
 type TypeFilter = "all" | "AUCTION" | "FIXED_PRICE";
 type KindFilter = "all" | "raw" | "graded";
 
@@ -59,7 +60,7 @@ function bestCaseRoom(listing: ListingSummary): number {
     return (best.maxBid - listing.currentPrice) / best.maxBid;
 }
 
-const SORTS: Record<Exclude<SortKey, "best">, (a: ListingSummary, b: ListingSummary) => number> = {
+const SORTS: Record<Exclude<SortKey, "best" | "bargain">, (a: ListingSummary, b: ListingSummary) => number> = {
     // Listings without an end date (most Buy It Now) go last.
     ending: (a, b) =>
         (a.endTime ? Date.parse(a.endTime) : Infinity) - (b.endTime ? Date.parse(b.endTime) : Infinity),
@@ -418,7 +419,11 @@ export function App() {
             return bestCaseRoom(b) - bestCaseRoom(a);
         };
 
-        return [...groups[view]].sort(sort === "best" ? compareBest : SORTS[sort]);
+        // The listings with the strongest signs of being overlooked first.
+        const bargain = (listing: ListingSummary) => bargainScore(bargainSignals(listing, evaluationOf(analyses[listing.id]), now));
+        const compareBargain = (a: ListingSummary, b: ListingSummary) => bargain(b) - bargain(a);
+
+        return [...groups[view]].sort(sort === "best" ? compareBest : sort === "bargain" ? compareBargain : SORTS[sort]);
     }, [groups, view, sort, analyses]);
 
     const counts = useMemo(() => {
@@ -602,6 +607,7 @@ export function App() {
                                                     <option value="ending">Ending soonest</option>
                                                     <option value="priceLow">Price, low to high</option>
                                                     <option value="priceHigh">Price, high to low</option>
+                                                    <option value="bargain">Most overlooked first</option>
                                                 </select>
                                             </label>
                                             <label className={styles.field}>

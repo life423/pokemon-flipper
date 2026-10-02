@@ -5,6 +5,7 @@ import { RatingBadge, VerdictBadge } from "./VerdictBadge";
 import { describeOutlook } from "../../../shared/money/auction.ts";
 import { ceilingLabel } from "../../../shared/format.ts";
 import { describeOffer, offerFor, offerWorthMaking } from "../../../shared/money/offer.ts";
+import { bargainScore, bargainSignals } from "../../../shared/signals.ts";
 import styles from "./DealCard.module.css";
 
 interface Props {
@@ -35,6 +36,8 @@ export function DealCard({ listing, analysis, selected, now, onOpen }: Props) {
     const plan = offerFor(listing, best?.maxBid);
     // Doesn't clear at its asking price, but would at a realistic offer.
     const offer = underwriting?.verdict === "PASS" && offerWorthMaking(plan) ? plan : null;
+    // Signs it's overlooked because of how it was listed. Not a buy signal.
+    const signals = bargainSignals(listing, evaluation, now);
 
     const action =
         analysis?.status === "loading" ? "Analyzing..." : analysis ? "View analysis" : "Analyze";
@@ -72,6 +75,12 @@ export function DealCard({ listing, analysis, selected, now, onOpen }: Props) {
                             underwriting && <VerdictBadge verdict={underwriting.verdict} />
                         )}
                         {deal && plan && <span className={styles.tag}>Accepts offers</span>}
+                        {signals.length > 0 && (
+                            <span className={styles.bargainTag} title={signals.map((signal) => signal.label).join(", ")}>
+                                Bargain {bargainScore(signals)}: {signals[0].label}
+                                {signals.length > 1 ? ` +${signals.length - 1}` : ""}
+                            </span>
+                        )}
                         {!underwriting && screen && (
                             <span className={styles.tag}>{screen.longShot ? "Long-shot auction" : SCREEN_TAGS[screen.status]}</span>
                         )}

@@ -19,6 +19,7 @@ import { useNow } from "../useNow";
 import { CONDITION_AREAS } from "../../../shared/conditions.ts";
 import { ceilingLabel } from "../../../shared/format.ts";
 import { describeOffer, offerFor } from "../../../shared/money/offer.ts";
+import { bargainScore, bargainSignals } from "../../../shared/signals.ts";
 import { writeOfferNote } from "../api";
 import { RatingBadge, VerdictBadge } from "./VerdictBadge";
 import styles from "./DetailPanel.module.css";
@@ -178,6 +179,7 @@ function Analysis({
                 </Section>
             )}
 
+            <BargainSection listing={listing} evaluation={evaluation} />
             <OfferSection listing={listing} evaluation={evaluation} />
             <ListingSection listing={listing} evaluation={evaluation} />
             {evaluation.identity && <IdentitySection identity={evaluation.identity} isSlab={Boolean(evaluation.slab)} />}
@@ -375,6 +377,28 @@ function PathCard({ path, auction }: { path: MoneyPath; auction: boolean }) {
                 </table>
             )}
         </div>
+    );
+}
+
+function BargainSection({ listing, evaluation }: { listing: ListingSummary; evaluation: Evaluation }) {
+    const signals = bargainSignals(listing, evaluation);
+
+    if (signals.length === 0) return null;
+
+    return (
+        <Section title={`Bargain signals: ${bargainScore(signals)}`}>
+            <p className={styles.small}>
+                Signs it's overlooked or mispriced because of how it was listed. None of them means buy: the photos and
+                the money math above still decide.
+            </p>
+            <ul className={styles.notes}>
+                {signals.map((signal) => (
+                    <li key={signal.id}>
+                        <strong>{signal.label}.</strong> {signal.detail}
+                    </li>
+                ))}
+            </ul>
+        </Section>
     );
 }
 
