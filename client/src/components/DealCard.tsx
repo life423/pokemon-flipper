@@ -1,13 +1,12 @@
+import type { CSSProperties } from "react";
 import type { AnalysisState } from "../App";
 import type { ListingSummary } from "../types";
-import { dollars, percent, timeLeft } from "../format";
-import { RatingBadge, VerdictBadge } from "./VerdictBadge";
-import { describeOutlook } from "../../../shared/money/auction.ts";
+import { dollars, timeLeft } from "../format";
 import { ceilingLabel } from "../../../shared/format.ts";
-import { describeOffer, offerFor, offerWorthMaking } from "../../../shared/money/offer.ts";
+import { offerFor, offerWorthMaking } from "../../../shared/money/offer.ts";
 import { bargainScore, bargainSignals } from "../../../shared/signals.ts";
+import { ChevronIcon } from "./Icons";
 import { Tween } from "./Tween";
-import type { CSSProperties } from "react";
 import styles from "./DealCard.module.css";
 
 interface Props {
@@ -21,11 +20,27 @@ interface Props {
     onOpen: () => void;
 }
 
-const SCREEN_TAGS = {
-    CANDIDATE: "Could be profitable",
-    DROPPED: "Too pricey even at best",
-    UNSCREENED: "Couldn't check",
+// How Dig deeper found it, in a word or two.
+const FOUND: Record<string, string> = {
+    MISSPELLED: "Misspelled title",
+    NUMBER_ONLY: "Number-only title",
+    WRONG_CATEGORY: "Wrong category",
+    PHOTO_SHOWS_IT: "Photo shows it",
 };
+
+// Feedback counts, short: 1,234 is 1.2K.
+const COMPACT = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+
+// Whole dollars, for the line under the price: $1,139.
+function wholeDollars(value: number): string {
+    return `$${Math.round(value).toLocaleString()}`;
+}
+
+// Money with its sign: +$68.40 or -$120.30.
+function signed(value: number | null): string {
+    if (value === null) return "";
+    return value < 0 ? `\u2212${dollars(-value)}` : `+${dollars(value)}`;
+}
 
 export function DealCard({ listing, analysis, selected, now, onOpen, index = 0, transitionName }: Props) {
     const evaluation = analysis?.status === "done" ? analysis.evaluation : null;
@@ -34,55 +49,93 @@ export function DealCard({ listing, analysis, selected, now, onOpen, index = 0, 
     const rating = evaluation?.rating ?? null;
     const deal = underwriting?.verdict.startsWith("BUY") ?? false;
     const screen = listing.screen;
-
-    const left = timeLeft(listing.endTime, now);
     const auction = listing.buyingOption === "AUCTION";
-    const ceiling = ceilingLabel(listing.buyingOption);
+    const left = timeLeft(listing.endTime, now);
     const plan = offerFor(listing, best?.maxBid);
     // Doesn't clear at its asking price, but would at a realistic offer.
     const offer = underwriting?.verdict === "PASS" && offerWorthMaking(plan) ? plan : null;
-    // Signs it's overlooked because of how it was listed. Not a buy signal.
+    const longShot = rating?.level === "LONG_SHOT" || Boolean(screen?.longShot);
+
+    // The verdict, in the palette's meanings.
+    const [badge, tone] =
+        analysis?.status === "loading"
+            ? ["Analyzing", "pending"]
+            : longShot
+              ? ["Long shot", "quiet"]
+              : deal
+                ? rating?.level === "THIN"
+                    ? ["Thin", "watch"]
+                    : best?.path === "GRADE"
+                      ? ["Buy + grade", "grade"]
+                      : ["Buy", "buy"]
+                : offer
+                  ? ["Offer", "offer"]
+                  : underwriting?.verdict === "NEEDS_REVIEW"
+                    ? ["Review", "watch"]
+                    : underwriting?.verdict === "CANT_PRICE"
+                      ? ["Can't price", "watch"]
+                      : underwriting?.verdict === "PASS"
+                        ? ["Pass", "pass"]
+                        : screen?.status === "CANDIDATE"
+                          ? ["Possible", "pending"]
+                          : screen?.status === "DROPPED"
+                            ? ["Too pricey", "quiet"]
+                            : ["Unverified", "quiet"];
+
+    // The card itself, once identified; the eBay title until then.
+    const card = evaluation?.identity ?? screen?.card ?? null;
+    const name = card?.name ? [card.name, card.cardNumber].filter(Boolean).join(" ") : listing.title;
+    const subtitle = card?.name
+        ? [card.set, card.printingLabel].filter(Boolean).join(" \u00b7 ")
+        : listing.isGraded
+          ? "Graded"
+          : "Raw";
+
+    // Profit at this price: for an auction, near its usual price or at the max bid.
+    const profit =
+        best && auction
+            ? rating?.auction?.profitAtUsual != null
+                ? { value: rating.auction.profitAtUsual, roi: null }
+                : { value: best.profitAtMaxBid ?? null, roi: best.roiAtMaxBid ?? null }
+            : best
+              ? { value: best.profit ?? null, roi: best.roi ?? null }
+              : null;
+    const gain = (profit?.value ?? 0) >= 0;
+
+    // Likely grade: the slab's own, or the AI's likely grade for a raw card.
+    const range = evaluation?.condition?.gradeRange;
+    const grader = best?.grader ?? "PSA";
+    const grade = evaluation?.slab?.grade
+        ? `${evaluation.slab.grader ?? ""} ${evaluation.slab.grade}`.trim()
+        : range
+          ? range.likely !== null
+              ? `${grader} ${range.likely}`
+              : `${grader} ${range.low}\u2013${range.high}`
+          : "\u2014";
+
+    // What it sells for on the path that pays best.
+    const comp = best ? (best.path === "GRADE" ? best.expectedSale : best.salePrice) : null;
+
+    const seller = listing.seller;
+    // No feedback yet reads as new, not as a 0% rating.
+    const sellerText =
+        seller?.feedbackScore === 0
+            ? "New seller"
+            : seller?.feedbackPercentage != null
+              ? `${seller.feedbackPercentage}% (${COMPACT.format(seller.feedbackScore ?? 0)})`
+              : "\u2014";
+
+    // The line under the price: the most you'd pay, and how it's sold.
     const signals = bargainSignals(listing, evaluation, now);
-
-    // The card's priority, in the palette's meanings: a deal in its path's
-    // color, an offer in the interactive color, a closer look in amber, and
-    // passes, drops, and long shots receding. Unverified stays neutral.
-    const tone =
-        rating?.level === "LONG_SHOT" || screen?.longShot
-            ? "quiet"
-            : deal
-              ? rating?.level === "THIN"
-                  ? "watch"
-                  : best?.path === "GRADE"
-                    ? "grade"
-                    : "buy"
-              : offer
-                ? "offer"
-                : underwriting?.verdict === "NEEDS_REVIEW" || underwriting?.verdict === "CANT_PRICE"
-                  ? "watch"
-                  : underwriting?.verdict === "PASS" || (screen && screen.status !== "CANDIDATE")
-                    ? "quiet"
-                    : "pending";
-
-    const action =
-        analysis?.status === "loading" ? "Analyzing..." : analysis ? "View analysis" : "Analyze";
-
-    // One line under the title: why it's a deal, or what the free check found.
-    let line: string | null = null;
-
-    if (deal && best) {
-        // For an auction, how often the card sells as low as the max bid.
-        const why = rating?.auction ? describeOutlook(rating.auction, best.maxBid) : (rating?.concerns[0] ?? rating?.strengths[0]);
-        line = why ? `${best.label}. ${why}` : best.label;
-    } else if (!evaluation && screen?.status === "CANDIDATE") {
-        line = `At best (${screen.assumed}): ${screen.bestCase?.label.toLowerCase()}.`;
-    } else if (!evaluation && screen?.status === "UNSCREENED") {
-        line = screen.reason;
-    } else if (offer && listing.currentPrice !== null) {
-        line = describeOffer(offer, listing.currentPrice);
-    } else if (underwriting && !deal) {
-        line = underwriting.reasons[0] ?? null;
-    }
+    const ceiling = best?.maxBid ?? screen?.bestCase?.maxBid ?? null;
+    const meta = [
+        ceiling !== null
+            ? `${ceilingLabel(listing.buyingOption)} ${wholeDollars(ceiling)}${best ? "" : " at best"}`
+            : null,
+        auction ? `${listing.bids} ${listing.bids === 1 ? "bid" : "bids"}` : "Buy It Now",
+        auction ? left : null,
+        listing.shipping === null ? "ship not quoted" : listing.shipping === 0 ? "free ship" : `${dollars(listing.shipping)} ship`,
+    ].filter(Boolean);
 
     return (
         <article
@@ -91,118 +144,62 @@ export function DealCard({ listing, analysis, selected, now, onOpen, index = 0, 
             // A short stagger as results arrive; a name to glide by when sorted.
             style={{ "--i": Math.min(index, 10), viewTransitionName: transitionName } as CSSProperties}
         >
-            <div className={styles.inner}>
-                <div className={styles.photo}>
-                    {listing.images[0] && <img src={listing.images[0]} alt="" loading="lazy" />}
-                </div>
+            {/* The whole card opens the analysis. */}
+            <button type="button" className={styles.hit} onClick={onOpen} aria-label={`Open ${name}`} />
 
-                <div className={styles.body}>
-                    <div className={styles.tags}>
-                        {deal && rating && <RatingBadge level={rating.level} />}
-                        {offer ? (
-                            <span className={styles.offerTag}>Make an offer: {dollars(offer.offer)}</span>
-                        ) : (
-                            underwriting && <VerdictBadge verdict={underwriting.verdict} />
-                        )}
-                        {deal && plan && <span className={styles.tag}>Accepts offers</span>}
-                        {signals.length > 0 && (
-                            <span className={styles.bargainTag} title={signals.map((signal) => signal.label).join(", ")}>
-                                Bargain {bargainScore(signals)}: {signals[0].label}
-                                {signals.length > 1 ? ` +${signals.length - 1}` : ""}
-                            </span>
-                        )}
-                        {!underwriting && screen && (
-                            <span className={styles.tag}>{screen.longShot ? "Long-shot auction" : SCREEN_TAGS[screen.status]}</span>
-                        )}
-                        <span className={styles.tag}>{auction ? `Auction, ${listing.bids} bids` : "Buy It Now"}</span>
-                        <span className={styles.tag}>{listing.isGraded ? "Graded" : "Raw"}</span>
-                    </div>
-
-                    <h2 className={styles.name}>{listing.title}</h2>
-
-                    <dl className={styles.numbers}>
-                        <div>
-                            <dt>{auction ? "Current bid" : "Price"}</dt>
-                            <dd>{dollars(listing.currentPrice)}</dd>
-                        </div>
-
-                        {deal && best ? (
-                            <>
-                                <div className={styles.maxBid}>
-                                    <dt>{ceiling}</dt>
-                                    <dd><Tween value={best.maxBid} format={dollars} /></dd>
-                                </div>
-                                <div className={styles.profit}>
-                                    {auction && rating?.auction?.profitAtUsual != null ? (
-                                        <>
-                                            <dt>Profit near usual price</dt>
-                                            <dd><Tween value={rating.auction.profitAtUsual} format={dollars} /></dd>
-                                        </>
-                                    ) : auction ? (
-                                        <>
-                                            <dt>Profit at max bid</dt>
-                                            <dd>
-                                                <Tween value={best.profitAtMaxBid} format={dollars} /> <span>{percent(best.roiAtMaxBid)}</span>
-                                            </dd>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <dt>Profit</dt>
-                                            <dd>
-                                                <Tween value={best.profit} format={dollars} /> <span>{percent(best.roi)}</span>
-                                            </dd>
-                                        </>
-                                    )}
-                                </div>
-                                {rating?.room != null && (
-                                    <div>
-                                        <dt>Under {ceiling.toLowerCase()}</dt>
-                                        <dd>{percent(rating.room)}</dd>
-                                    </div>
-                                )}
-                            </>
-                        ) : (
-                            <>
-                                <div>
-                                    <dt>Shipping</dt>
-                                    <dd>{listing.shipping === null ? "Not quoted" : dollars(listing.shipping)}</dd>
-                                </div>
-                                {best ? (
-                                    <div>
-                                        <dt>{ceiling}</dt>
-                                        <dd><Tween value={best.maxBid} format={dollars} /></dd>
-                                    </div>
-                                ) : (
-                                    screen?.bestCase && (
-                                        <div className={styles.muted}>
-                                            <dt>{ceiling} at best</dt>
-                                            <dd><Tween value={screen.bestCase.maxBid} format={dollars} /></dd>
-                                        </div>
-                                    )
-                                )}
-                            </>
-                        )}
-
-                        {left && (
-                            <div>
-                                <dt>Ends in</dt>
-                                <dd>{left}</dd>
-                            </div>
-                        )}
-                    </dl>
-
-                    {line && <p className={styles.line}>{line}</p>}
-
-                    <div className={styles.actions}>
-                        <button type="button" className={styles.open} onClick={onOpen}>
-                            {action}
-                        </button>
-                        <a href={listing.url} target="_blank" rel="noopener noreferrer">
-                            eBay
-                        </a>
-                    </div>
-                </div>
+            <div className={styles.photo}>
+                {listing.images[0] && <img src={listing.images[0]} alt="" loading="lazy" />}
             </div>
+
+            <div className={styles.body}>
+                <div className={styles.head}>
+                    <h2 className={styles.name}>{name}</h2>
+                    <span className={styles.badge}>{badge}</span>
+                </div>
+                <p className={styles.set}>{subtitle}</p>
+
+                <div className={styles.priceRow}>
+                    <span className={styles.price}>
+                        {dollars(listing.currentPrice)}
+                        {auction && <small> bid</small>}
+                    </span>
+                    {profit?.value != null && (
+                        <span className={gain ? styles.gain : styles.loss}>
+                            <Tween value={profit.value} format={signed} />
+                        </span>
+                    )}
+                    {profit?.roi != null && (
+                        <span className={gain ? styles.gain : styles.loss}>{Math.round(profit.roi * 100)}% ROI</span>
+                    )}
+                </div>
+
+                <p className={styles.meta}>
+                    {listing.found && <span className={styles.found}>{FOUND[listing.found.how] ?? "Hidden find"}</span>}
+                    {meta.join(" \u00b7 ")}
+                    {signals.length > 0 && tone !== "quiet" && (
+                        <span className={styles.bargain} title={signals.map((signal) => signal.label).join(", ")}>
+                            Bargain {bargainScore(signals)}
+                        </span>
+                    )}
+                </p>
+            </div>
+
+            {/* Beside the photo on a wide card; full width under it on a narrow one. */}
+            <dl className={styles.stats}>
+                    <div>
+                        <dt>Est. grade</dt>
+                        <dd>{grade}</dd>
+                    </div>
+                    <div>
+                        <dt>Comp value</dt>
+                        <dd>{comp != null ? dollars(comp) : "\u2014"}</dd>
+                    </div>
+                    <div>
+                        <dt>Seller</dt>
+                        <dd>{sellerText}</dd>
+                    </div>
+                    <ChevronIcon className={styles.chevron} />
+                </dl>
         </article>
     );
 }
