@@ -15,8 +15,10 @@ import type { ListingSummary, Screen, SearchIntent } from "../../shared/types.ts
 // left something out, get their full eBay details and a second check.
 // Only candidates are worth the paid AI analysis.
 
-// eBay returns 200 a page; past this many, results are mostly loose matches.
-const MAX_RESULTS = 1000;
+// eBay returns 200 a page in best-match order; later pages are mostly loose
+// matches, so 400 by default, and up to 1,000 when asked.
+const DEFAULT_RESULTS = 400;
+const MOST_RESULTS = 1000;
 const PARALLEL_LISTINGS = 6;
 
 export interface SearchSummary {
@@ -37,7 +39,8 @@ export interface ScreenSteps {
 
 const REAL_STEPS: ScreenSteps = {
     readTitle: fillFromTitle,
-    loadDetails: (itemId) => getListingDetails(itemId),
+    // Past the day's reserve, eBay refuses and the title's check stands.
+    loadDetails: (itemId) => getListingDetails(itemId, { keepReserve: true }),
     check: (input) =>
         prescreen(input, { lookupCards, fetchComps, checkComps }).catch((error: Error) =>
             unscreened(`The free check failed: ${error.message}`)
@@ -123,10 +126,16 @@ export async function findDeals(
     {
         onStart = () => {},
         onListing = () => {},
-    }: { onStart?: (summary: SearchSummary) => void; onListing?: (listing: ListingSummary) => void } = {}
+        maxResults = DEFAULT_RESULTS,
+    }: {
+        onStart?: (summary: SearchSummary) => void;
+        onListing?: (listing: ListingSummary) => void;
+        maxResults?: number;
+    } = {}
 ): Promise<ListingSummary[]> {
     const intent = await readSearch(search);
-    const { listings, total } = await searchListings(search, { maxResults: MAX_RESULTS });
+    const limit = Math.min(MOST_RESULTS, Math.max(200, Math.round(maxResults / 200) * 200));
+    const { listings, total } = await searchListings(search, { maxResults: limit });
     const now = Date.now();
     const requestsBefore = detailRequestCount();
 

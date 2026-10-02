@@ -59,6 +59,16 @@ export interface Screen {
     filledFromTitle?: string[];
 }
 
+// Today's eBay Browse allowance, from eBay's own count.
+export interface EbayUsage {
+    used: number;
+    limit: number;
+    remaining: number;
+    resetsAt: string | null;
+    // In the last of the day's allowance: listings are checked from titles only.
+    braking: boolean;
+}
+
 // What a search means: the card it's for, and anything it narrows to.
 // Empty or null fields mean any.
 export interface SearchIntent {

@@ -1,4 +1,4 @@
-import type { Evaluation, ListingSummary, SearchIntent } from "./types";
+import type { EbayUsage, Evaluation, ListingSummary, SearchIntent } from "./types";
 
 // fetch, with a plain message when the server can't be reached at all.
 async function reach(url: string, init?: RequestInit): Promise<Response> {
@@ -28,8 +28,12 @@ export type DealsMessage =
 
 // A search with every listing screened for free, streamed one listing at
 // a time so the page fills in while the first, slower search runs.
-export async function streamDeals(query: string, onMessage: (message: DealsMessage) => void): Promise<void> {
-    const response = await reach(`/api/deals?q=${encodeURIComponent(query)}`);
+export async function streamDeals(
+    query: string,
+    maxResults: number,
+    onMessage: (message: DealsMessage) => void
+): Promise<void> {
+    const response = await reach(`/api/deals?q=${encodeURIComponent(query)}&max=${maxResults}`);
 
     if (!response.ok || !response.body) {
         throw new Error(`Search failed (${response.status})`);
@@ -58,6 +62,11 @@ export async function streamDeals(query: string, onMessage: (message: DealsMessa
 
         if (done) return;
     }
+}
+
+// How much of today's eBay allowance is left, or null if eBay won't say.
+export function fetchEbayUsage(): Promise<EbayUsage | null> {
+    return request("/api/ebay-usage");
 }
 
 // Paid the first time for a listing; the server reuses saved answers

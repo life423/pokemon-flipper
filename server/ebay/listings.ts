@@ -1,6 +1,7 @@
 import { ebayGet } from "./api.ts";
 import { exclusionReason, normalizeText } from "./filters.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
+import { countRequest, ebayUsage, EbayBudgetError } from "./usage.ts";
 import type { BuyingOption, ListingSummary, Seller } from "../../shared/types.ts";
 
 // Toys & Hobbies > Collectible Card Games > CCG Individual Cards
@@ -135,6 +136,13 @@ export async function searchListings(
 
     if (saved) return saved;
 
+    // The few search requests are refused only when the day's allowance is gone.
+    const usage = await ebayUsage();
+
+    if (usage && usage.remaining < Math.ceil(maxResults / PAGE_SIZE)) {
+        throw new EbayBudgetError("eBay's daily limit is used up. It resets at midnight Pacific.");
+    }
+
     const listings: ListingSummary[] = [];
     const seen = new Set<string>();
     let total = 0;
@@ -148,6 +156,7 @@ export async function searchListings(
             offset: String(offset),
         });
 
+        countRequest();
         const page = await ebayGet<{ itemSummaries?: EbayItem[]; total?: number }>(
             `/buy/browse/v1/item_summary/search?${params}`
         );
@@ -172,9 +181,11 @@ export async function searchListings(
 }
 
 // A listing's details, saved for a week. maxAgeHours: 0 always asks eBay.
+// keepReserve: refuse to ask eBay once the day's allowance is in reserve
+// (the free check's bulk lookups); a deliberate analysis still asks.
 export async function getListingDetails(
     itemId: string,
-    { maxAgeHours = DETAILS_MAX_AGE_HOURS }: { maxAgeHours?: number } = {}
+    { maxAgeHours = DETAILS_MAX_AGE_HOURS, keepReserve = false }: { maxAgeHours?: number; keepReserve?: boolean } = {}
 ): Promise<ListingDetails> {
     const key = `ebay:item:${itemId}`;
 
@@ -183,7 +194,12 @@ export async function getListingDetails(
         if (saved) return saved;
     }
 
+    if (keepReserve && (await ebayUsage())?.braking) {
+        throw new EbayBudgetError("Saving the rest of today's eBay allowance.");
+    }
+
     detailRequests += 1;
+    countRequest();
     const details = await fetchListingDetails(itemId);
     await writeCache(key, details);
 

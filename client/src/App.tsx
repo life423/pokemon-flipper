@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import type { Evaluation, ListingSummary, RatingLevel, SearchIntent, Targets } from "./types";
+import type { EbayUsage, Evaluation, ListingSummary, RatingLevel, SearchIntent, Targets } from "./types";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.ts";
 import { name } from "./format";
-import { evaluateListing, streamDeals } from "./api";
+import { evaluateListing, fetchEbayUsage, streamDeals, type DealsMessage } from "./api";
 import { DealCard } from "./components/DealCard";
 import { DetailPanel } from "./components/DetailPanel";
 import { useNow } from "./useNow";
@@ -37,7 +37,7 @@ function describeIntent(intent: SearchIntent): string {
     return text;
 }
 
-type SearchSummary = Extract<Parameters<Parameters<typeof streamDeals>[1]>[0], { type: "start" }>;
+type SearchSummary = Extract<DealsMessage, { type: "start" }>;
 
 const LEVEL_ORDER: Record<RatingLevel, number> = { STRONG: 0, GOOD: 1, THIN: 2, LONG_SHOT: 3 };
 
@@ -78,6 +78,28 @@ const targetText = (targets: Targets) => ({
     minProfit: targets.minProfit === 0 ? "" : String(targets.minProfit),
     minRoi: targets.minRoi === 0 ? "" : String(Math.round(targets.minRoi * 100)),
 });
+
+// eBay results per search: later pages are mostly loose matches, and each
+// result can cost an eBay request, so 400 unless you ask for more.
+const RESULT_OPTIONS = [200, 400, 1000];
+const DEFAULT_RESULTS = 400;
+
+function readResultsSetting(): number {
+    try {
+        const saved = Number(localStorage.getItem("results"));
+        return RESULT_OPTIONS.includes(saved) ? saved : DEFAULT_RESULTS;
+    } catch {
+        return DEFAULT_RESULTS;
+    }
+}
+
+function describeUsage(usage: EbayUsage): string {
+    const left = `eBay today: ${usage.remaining.toLocaleString()} of ${usage.limit.toLocaleString()} requests left`;
+
+    return usage.braking
+        ? `${left}. Listings are checked from their titles only until it resets at midnight Pacific.`
+        : `${left}.`;
+}
 
 function readAutoSetting(): number {
     try {
@@ -128,6 +150,25 @@ export function App() {
     const [maxPrice, setMaxPrice] = useState("");
 
     const [autoSetting, setAutoSetting] = useState(readAutoSetting);
+    const [resultsSetting, setResultsSetting] = useState(readResultsSetting);
+
+    // Today's eBay allowance, checked on load and after each search.
+    const [usage, setUsage] = useState<EbayUsage | null>(null);
+    const refreshUsage = useCallback(() => {
+        fetchEbayUsage().then(setUsage, () => {});
+    }, []);
+
+    useEffect(refreshUsage, [refreshUsage]);
+
+    function changeResultsSetting(value: number) {
+        setResultsSetting(value);
+
+        try {
+            localStorage.setItem("results", String(value));
+        } catch {
+            // Without storage the setting lasts for this visit.
+        }
+    }
     // How many automatic analyses this search may still start.
     const [budget, setBudget] = useState(0);
     const autoQueued = useRef(new Set<string>());
@@ -241,7 +282,7 @@ export function App() {
         setSearchStatus("checking");
 
         try {
-            await streamDeals(query, (message) => {
+            await streamDeals(query, resultsSetting, (message) => {
                 if (searchId.current !== id) return;
                 if (message.type === "start") {
                     setTotal(message.count);
@@ -251,7 +292,9 @@ export function App() {
             });
 
             if (searchId.current === id) setSearchStatus("done");
+            refreshUsage();
         } catch (error) {
+            refreshUsage();
             if (searchId.current !== id) return;
             setSearchError(error instanceof Error ? error.message : "Search failed");
             setSearchStatus("error");
@@ -509,6 +552,19 @@ export function App() {
                                                 </select>
                                             </label>
                                             <label className={styles.field}>
+                                                <span>Results per search</span>
+                                                <select
+                                                    value={resultsSetting}
+                                                    onChange={(event) => changeResultsSetting(Number(event.target.value))}
+                                                >
+                                                    {RESULT_OPTIONS.map((option) => (
+                                                        <option key={option} value={option}>
+                                                            {option === 1000 ? "1,000 (more eBay requests)" : option}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </label>
+                                            <label className={styles.field}>
                                                 <span>AI per search</span>
                                                 <select
                                                     value={autoSetting}
@@ -521,6 +577,7 @@ export function App() {
                                                     ))}
                                                 </select>
                                             </label>
+                                            {usage && <p className={styles.usage}>{describeUsage(usage)}</p>}
                                         </div>
                                     )}
                                 </div>
@@ -541,6 +598,9 @@ export function App() {
                                             ? `Checking them for free: ${listings.length} of ${total ?? "..."}. A new search takes a few minutes; repeats are quick.`
                                             : `All ${listings.length} checked for free.`}
                                     </p>
+                                    {usage && (
+                                        <p className={usage.braking ? styles.warning : undefined}>{describeUsage(usage)}</p>
+                                    )}
                                     <dl className={styles.funnelNumbers}>
                                         <div>
                                             <dt>Could be profitable</dt>

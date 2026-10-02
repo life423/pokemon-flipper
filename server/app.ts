@@ -6,6 +6,7 @@ import { CLIENT_ROOT } from "./lib/paths.ts";
 import { findDeals } from "./deals/find-deals.ts";
 import { evaluateListing } from "./analysis/evaluate.ts";
 import { EbayError } from "./ebay/api.ts";
+import { ebayUsage, EbayBudgetError } from "./ebay/usage.ts";
 import type { CurrentState } from "./analysis/evaluate.ts";
 
 const app = express();
@@ -34,6 +35,11 @@ const isProduction = process.env.NODE_ENV === "production";
 
 app.use(express.json());
 
+// How much of today's eBay allowance is left.
+app.get("/api/ebay-usage", async (req, res) => {
+    res.json(await ebayUsage());
+});
+
 // Every listing in a search, screened for free (no AI): what each one
 // is worth at its best, and whether it could clear your targets.
 // Streamed as one JSON object per line, so the page fills in as listings
@@ -45,13 +51,14 @@ app.get("/api/deals", async (req, res) => {
 
     try {
         await findDeals(searchText(req), {
+            maxResults: Number(req.query.max) || undefined,
             onStart: (summary) => send({ type: "start", ...summary }),
             onListing: (listing) => send({ type: "listing", listing }),
         });
         send({ type: "done" });
     } catch (error) {
         console.error(error);
-        send({ type: "error", error: "Failed to screen listings" });
+        send({ type: "error", error: error instanceof EbayBudgetError ? error.message : "Failed to screen listings" });
     }
 
     res.end();
