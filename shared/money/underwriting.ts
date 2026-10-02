@@ -423,10 +423,17 @@ export function underwrite(input: UnderwritingInput, config: MoneyConfig = MONEY
     }
 
     // Name only what hasn't been checked against your accounts.
+    const uncheckedGraders = ({ verified }: MoneyConfig) => {
+        const graders = Object.entries(verified.grading)
+            .filter(([, checked]) => !checked)
+            .map(([grader]) => grader);
+
+        return graders.length > 0 ? `${graders.join(" and ")} prices` : null;
+    };
     const unchecked = [
         config.verified.selling ? null : "eBay fees and shipping",
         config.verified.buying ? null : "sales tax on purchases",
-        config.verified.grading ? null : "PSA and CGC prices",
+        uncheckedGraders(config),
     ].filter(Boolean);
 
     if (unchecked.length > 0) {

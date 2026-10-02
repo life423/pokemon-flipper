@@ -32,7 +32,7 @@ export type GradingConfig = { shippingPerCard: number } & Record<Grader, Grading
 export interface Verified {
     selling: boolean;
     buying: boolean;
-    grading: boolean;
+    grading: Record<Grader, boolean>;
 }
 
 export interface MoneyConfig {
@@ -55,8 +55,12 @@ export const MONEY_CONFIG: MoneyConfig = {
         selling: true,
         // Matches an eBay purchase: $26.49 tax on $315 plus $6.07 shipping, Oct 2026.
         buying: true,
-        // PSA and CGC prices; not yet checked against psacard.com or an invoice.
-        grading: false,
+        grading: {
+            // Not yet checked against psacard.com or an invoice.
+            PSA: false,
+            // Matches cgccards.com Services & Fees, Oct 2026 (no membership discount).
+            CGC: true,
+        },
     },
 
     // What a deal has to clear: profit after every cost, and return on
@@ -132,6 +136,7 @@ export const MONEY_CONFIG: MoneyConfig = {
             { tier: "Economy", fee: 20, maxDeclaredValue: 1000 },
             { tier: "Standard", fee: 55, maxDeclaredValue: 3000 },
             { tier: "Express", fee: 100, maxDeclaredValue: 10000 },
+            { tier: "WalkThrough", fee: 300, maxDeclaredValue: 100000 },
             { tier: "Unlimited Value", fee: 300, percentOfValue: 0.01, maxDeclaredValue: Infinity },
         ],
     },

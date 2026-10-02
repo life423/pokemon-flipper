@@ -14,7 +14,7 @@ import {
 // A fixed copy of the config, so these tests don't move when you edit
 // server/config/money.ts.
 const CONFIG = {
-    verified: { selling: true, buying: true, grading: true },
+    verified: { selling: true, buying: true, grading: { PSA: true, CGC: true } },
     targets: { minProfit: 50, minRoi: 0.25 },
     buying: { salesTaxRate: 0.0825, assumedShippingWhenUnknown: 10 },
     selling: {
@@ -227,7 +227,7 @@ test("nothing is priced for an unidentified card, and a likely fake is a pass", 
 test("unquoted shipping is assumed and said so; unchecked fees are flagged", () => {
     const result = underwrite(
         lugiaEvaluation({ listing: { price: 300, shipping: null } }),
-        { ...CONFIG, verified: { selling: true, buying: true, grading: false } }
+        { ...CONFIG, verified: { selling: true, buying: true, grading: { PSA: false, CGC: false } } }
     );
 
     assert.equal(result.assumptions.length, 2);
