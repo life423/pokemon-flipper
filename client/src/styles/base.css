@@ -55,7 +55,78 @@ p {
     *::before,
     *::after {
         animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
         scroll-behavior: auto !important;
     }
+}
+
+/* Every control responds: color and depth ease in, presses give a little. */
+button,
+a,
+input,
+select {
+    transition:
+        background-color var(--dur-fast) var(--ease-out),
+        border-color var(--dur-fast) var(--ease-out),
+        color var(--dur-fast) var(--ease-out),
+        box-shadow var(--dur-fast) var(--ease-out),
+        transform var(--dur-fast) var(--ease-out),
+        text-decoration-color var(--dur-fast) var(--ease-out);
+}
+
+button:active:not(:disabled) {
+    transform: scale(0.97);
+}
+
+/* Focus settles into place, so it's easy to see where it went. */
+:focus-visible {
+    animation: focus-in var(--dur-fast) var(--ease-out);
+}
+
+@keyframes focus-in {
+    from {
+        outline-offset: 6px;
+        outline-color: transparent;
+    }
+}
+
+/* Links: the underline fills in on hover. */
+a {
+    text-decoration-color: color-mix(in srgb, currentColor 35%, transparent);
+    text-underline-offset: 3px;
+}
+
+@media (hover: hover) {
+    a:hover {
+        text-decoration-color: currentColor;
+    }
+}
+
+/* Placeholders in the shape of what's loading. */
+.shimmer {
+    display: block;
+    background: linear-gradient(100deg, var(--surface-alt) 30%, color-mix(in srgb, var(--surface-alt) 75%, var(--text-muted)) 50%, var(--surface-alt) 70%);
+    background-size: 300% 100%;
+    animation: shimmer 1.4s var(--ease-in-out) infinite;
+}
+
+@keyframes shimmer {
+    from {
+        background-position: 100% 0;
+    }
+    to {
+        background-position: 0 0;
+    }
+}
+
+/* Sorting and filtering: cards glide to their new places. */
+::view-transition-group(*) {
+    animation-duration: var(--dur-base);
+    animation-timing-function: var(--ease-in-out);
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+    animation-duration: var(--dur-fast);
 }

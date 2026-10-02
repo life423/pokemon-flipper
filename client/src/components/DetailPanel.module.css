@@ -349,3 +349,111 @@
     border-radius: var(--radius-control);
     font-size: var(--text-sm);
 }
+
+/* Phones: the sheet rises from the bottom and sinks back on close. */
+.panel {
+    animation: sheet-in var(--dur-base) var(--ease-out) backwards;
+}
+
+.backdrop {
+    animation: fade-in var(--dur-base) var(--ease-out) backwards;
+}
+
+.panel.closing {
+    animation: sheet-out 200ms var(--ease-in-out) forwards;
+}
+
+.backdrop.closing {
+    animation: fade-out 200ms var(--ease-in-out) forwards;
+}
+
+/* Wide screens: the panel slides in from the side. */
+@media (min-width: 64rem) {
+    .panel {
+        animation-name: panel-in;
+    }
+
+    .panel.closing {
+        animation-name: panel-out;
+    }
+}
+
+/* Switching listings: the content crossfades in place. */
+.content {
+    animation: fade-up var(--dur-base) var(--ease-out) backwards;
+}
+
+/* A finished analysis settles into place. */
+.verdict {
+    animation: fade-up var(--dur-slow) var(--ease-out) backwards;
+}
+
+@media (hover: hover) {
+    .close:hover {
+        background: color-mix(in srgb, var(--surface-alt) 88%, white);
+    }
+}
+
+@keyframes sheet-in {
+    from {
+        opacity: 0;
+        transform: translateY(48px);
+    }
+}
+
+@keyframes sheet-out {
+    to {
+        opacity: 0;
+        transform: translateY(48px);
+    }
+}
+
+@keyframes panel-in {
+    from {
+        opacity: 0;
+        transform: translateX(24px);
+    }
+}
+
+@keyframes panel-out {
+    to {
+        opacity: 0;
+        transform: translateX(24px);
+    }
+}
+
+@keyframes fade-in {
+    from {
+        opacity: 0;
+    }
+}
+
+@keyframes fade-out {
+    to {
+        opacity: 0;
+    }
+}
+
+@keyframes fade-up {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+}
+
+/* While the AI works: the shape of the answer that's coming. */
+.skeleton {
+    display: grid;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+}
+
+.skeleton span {
+    height: 14px;
+    border-radius: 6px;
+}
+
+.skeleton .skeletonHero {
+    width: 55%;
+    height: 40px;
+}

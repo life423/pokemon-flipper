@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Tween } from "./Tween";
 import type { AnalysisState } from "../App";
 import type {
     CompSummary,
@@ -25,6 +26,8 @@ import { RatingBadge, VerdictBadge } from "./VerdictBadge";
 import styles from "./DetailPanel.module.css";
 
 interface Props {
+    // Sliding away, just before the panel goes.
+    closing?: boolean;
     listing: ListingSummary;
     analysis?: AnalysisState;
     now: number;
@@ -32,7 +35,14 @@ interface Props {
     onAnalyze: (fresh: boolean) => void;
 }
 
-export function DetailPanel({ listing, analysis, now, onClose, onAnalyze }: Props) {
+export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closing = false }: Props) {
+    // A new listing opens at the top of the panel.
+    const panel = useRef<HTMLElement>(null);
+
+    useEffect(() => {
+        panel.current?.scrollTo({ top: 0 });
+    }, [listing.id]);
+
     useEffect(() => {
         const onKey = (event: KeyboardEvent) => {
             if (event.key === "Escape") onClose();
@@ -44,9 +54,11 @@ export function DetailPanel({ listing, analysis, now, onClose, onAnalyze }: Prop
 
     return (
         <>
-            <div className={styles.backdrop} onClick={onClose} />
+            <div className={`${styles.backdrop} ${closing ? styles.closing : ""}`} onClick={onClose} />
 
-            <aside className={styles.panel} aria-label="Listing analysis">
+            <aside ref={panel} className={`${styles.panel} ${closing ? styles.closing : ""}`} aria-label="Listing analysis">
+                {/* Switching listings crossfades the content; the panel stays put. */}
+                <div key={listing.id} className={styles.content}>
                 <header className={styles.head}>
                     <h2 className={styles.title}>{listing.title}</h2>
                     <button type="button" className={styles.close} onClick={onClose} aria-label="Close">
@@ -97,6 +109,7 @@ export function DetailPanel({ listing, analysis, now, onClose, onAnalyze }: Prop
                         onReanalyze={() => onAnalyze(true)}
                     />
                 )}
+                </div>
             </aside>
         </>
     );
@@ -106,10 +119,18 @@ function Loading({ startedAt }: { startedAt: number }) {
     const now = useNow(1000);
     const seconds = Math.max(0, Math.round((now - startedAt) / 1000));
 
+    // The shape of the answer that's coming, while the AI works.
     return (
-        <p className={styles.loading} aria-live="polite">
-            Checking photos, identifying the printing, and pulling sold comps... {seconds}s
-        </p>
+        <div className={styles.loading} aria-live="polite">
+            <div className={styles.skeleton} aria-hidden="true">
+                <span className="shimmer" style={{ width: "35%" }} />
+                <span className={`${styles.skeletonHero} shimmer`} />
+                <span className="shimmer" />
+                <span className="shimmer" style={{ width: "80%" }} />
+                <span className="shimmer" style={{ width: "60%" }} />
+            </div>
+            <p>Checking photos, identifying the printing, and pulling sold comps... {seconds}s</p>
+        </div>
     );
 }
 
@@ -288,7 +309,7 @@ function VerdictSection({
                                   : ""
                         }`}
                     >
-                        {dollars(best.maxBid)}
+                        <Tween value={best.maxBid} format={dollars} />
                     </span>
                     <span className={styles.heroLabel}>{best.label}</span>
                 </div>

@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { prefersReducedMotion, transitionName, withViewTransition } from "./motion";
+import { Tween, wholeNumber } from "./components/Tween";
 import type { EbayUsage, Evaluation, ListingSummary, RatingLevel, SearchIntent, Targets } from "./types";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.ts";
@@ -140,8 +142,39 @@ function Segmented<T extends string>({
     options: [T, ReactNode][];
     onChange: (value: T) => void;
 }) {
+    // A pill that slides to the chosen option, so a switch shows where it went.
+    const group = useRef<HTMLDivElement>(null);
+    const [indicator, setIndicator] = useState<{ left: number; width: number } | null>(null);
+
+    useLayoutEffect(() => {
+        const measure = () => {
+            const active = group.current?.querySelector<HTMLElement>('[aria-pressed="true"]');
+
+            if (!active) return;
+
+            const next = { left: active.offsetLeft, width: active.offsetWidth };
+            setIndicator((previous) =>
+                previous && previous.left === next.left && previous.width === next.width ? previous : next
+            );
+        };
+
+        measure();
+
+        const observer = new ResizeObserver(measure);
+        if (group.current) observer.observe(group.current);
+
+        return () => observer.disconnect();
+    }, [value]);
+
     return (
-        <div className={styles.segmented} role="group" aria-label={label}>
+        <div ref={group} className={styles.segmented} role="group" aria-label={label}>
+            {indicator && (
+                <span
+                    className={styles.indicator}
+                    style={{ transform: `translateX(${indicator.left}px)`, width: indicator.width }}
+                    aria-hidden="true"
+                />
+            )}
             {options.map(([option, text]) => (
                 <button key={option} type="button" aria-pressed={value === option} onClick={() => onChange(option)}>
                     {text}
@@ -499,7 +532,26 @@ export function App() {
     const activeFilters = [typeFilter !== "all", kindFilter !== "all", maxPrice !== "", minPrice !== "", sort !== "best"].filter(
         Boolean
     ).length;
-    const close = useCallback(() => setSelectedId(null), []);
+    // The panel slides away before it goes; with reduced motion, it just goes.
+    const [panelClosing, setPanelClosing] = useState(false);
+    const closeTimer = useRef(0);
+    const close = useCallback(() => {
+        if (prefersReducedMotion()) {
+            setSelectedId(null);
+            return;
+        }
+
+        setPanelClosing(true);
+        closeTimer.current = window.setTimeout(() => {
+            setSelectedId(null);
+            setPanelClosing(false);
+        }, 200);
+    }, []);
+    const openPanel = (id: string) => {
+        window.clearTimeout(closeTimer.current);
+        setPanelClosing(false);
+        setSelectedId(id);
+    };
     const budgetLeft = budget - autoQueued.current.size;
 
     const emptyText: Record<View, string> = {
@@ -669,7 +721,7 @@ export function App() {
                                     <Segmented
                                         label="Listing type"
                                         value={typeFilter}
-                                        onChange={setTypeFilter}
+                                        onChange={(next) => withViewTransition(() => setTypeFilter(next))}
                                         options={[
                                             ["all", "Any"],
                                             ["AUCTION", "Auctions"],
@@ -682,7 +734,7 @@ export function App() {
                                     <Segmented
                                         label="Raw or graded"
                                         value={kindFilter}
-                                        onChange={setKindFilter}
+                                        onChange={(next) => withViewTransition(() => setKindFilter(next))}
                                         options={[
                                             ["all", "Any"],
                                             ["raw", "Raw"],
@@ -722,7 +774,13 @@ export function App() {
                                 </div>
                                 <label className={styles.field}>
                                     <span>Sort</span>
-                                    <select value={sort} onChange={(event) => setSort(event.target.value as SortKey)}>
+                                    <select
+                                        value={sort}
+                                        onChange={(event) => {
+                                            const next = event.target.value as SortKey;
+                                            withViewTransition(() => setSort(next));
+                                        }}
+                                    >
                                         <option value="best">Best deal first</option>
                                         <option value="ending">Ending soonest</option>
                                         <option value="priceLow">Price, low to high</option>
@@ -778,23 +836,33 @@ export function App() {
                                     <dl className={styles.funnelNumbers}>
                                         <div>
                                             <dt>Could be profitable</dt>
-                                            <dd>{counts.candidates}</dd>
+                                            <dd>
+                                                <Tween value={counts.candidates} format={wholeNumber} />
+                                            </dd>
                                         </div>
                                         <div>
                                             <dt>Too pricey even at best</dt>
-                                            <dd>{counts.dropped}</dd>
+                                            <dd>
+                                                <Tween value={counts.dropped} format={wholeNumber} />
+                                            </dd>
                                         </div>
                                         <div>
                                             <dt>Couldn't check</dt>
-                                            <dd>{counts.unchecked}</dd>
+                                            <dd>
+                                                <Tween value={counts.unchecked} format={wholeNumber} />
+                                            </dd>
                                         </div>
                                         <div>
                                             <dt>Set aside: other sets, cards, languages</dt>
-                                            <dd>{counts.mismatched}</dd>
+                                            <dd>
+                                                <Tween value={counts.mismatched} format={wholeNumber} />
+                                            </dd>
                                         </div>
                                         <div>
                                             <dt>Junk skipped</dt>
-                                            <dd>{(summary?.skipped ?? 0) + counts.junk}</dd>
+                                            <dd>
+                                                <Tween value={(summary?.skipped ?? 0) + counts.junk} format={wholeNumber} />
+                                            </dd>
                                         </div>
                                         <div>
                                             <dt>Deals</dt>
@@ -852,15 +920,24 @@ export function App() {
                     )}
 
                     <div className={styles.results}>
-                        {visible.map((listing) => (
+                        {/* Before the first results: placeholders in the shape of cards. */}
+                        {searchStatus === "checking" &&
+                            listings.length === 0 &&
+                            Array.from({ length: 6 }, (_, index) => (
+                                <div key={index} className={`${styles.cardSkeleton} shimmer`} aria-hidden="true" />
+                            ))}
+                        {visible.map((listing, index) => (
                             <DealCard
                                 key={listing.id}
                                 listing={listing}
+                                index={index}
+                                // The first screenfuls glide when you sort or filter.
+                                transitionName={index < 24 ? transitionName(listing.id) : undefined}
                                 analysis={analyses[listing.id]}
                                 selected={listing.id === selectedId}
                                 now={now}
                                 onOpen={() => {
-                                    setSelectedId(listing.id);
+                                    openPanel(listing.id);
                                     if (!analyses[listing.id]) void runAnalysis(listing);
                                 }}
                             />
@@ -870,9 +947,8 @@ export function App() {
 
                 {selected && (
                     <DetailPanel
-                        // A new listing opens at the top of the panel.
-                        key={selected.id}
                         listing={selected}
+                        closing={panelClosing}
                         analysis={analyses[selected.id]}
                         now={now}
                         onClose={close}

@@ -4,10 +4,38 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-card);
     overflow: hidden;
-    /* The priority edge, plus the selection ring when selected. */
+    /* The priority edge, the selection ring, and the hover lift. */
     box-shadow:
         inset 4px 0 0 var(--tone, transparent),
-        0 0 0 var(--ring, 0px) var(--accent);
+        0 0 0 var(--ring, 0px) var(--accent),
+        var(--elevation, 0 0 0 transparent);
+    transition:
+        transform var(--dur-fast) var(--ease-out),
+        box-shadow var(--dur-slow) var(--ease-out),
+        border-color var(--dur-slow) var(--ease-out);
+    /* Results arrive in a short stagger. */
+    animation: card-in var(--dur-slow) var(--ease-out) backwards;
+    animation-delay: calc(var(--i, 0) * 30ms);
+}
+
+@keyframes card-in {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+}
+
+/* A card under the pointer lifts, and its edge brightens in its own color. */
+@media (hover: hover) {
+    .card:hover {
+        transform: translateY(-2px);
+        border-color: color-mix(in srgb, var(--tone, var(--text-muted)) 45%, var(--border));
+        --elevation: var(--lift);
+    }
+}
+
+.card:focus-within {
+    border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
 }
 
 /* Selection is the interactive color, never a verdict color. */
@@ -141,6 +169,8 @@
 
 .numbers dd {
     margin: 0;
+    /* A verdict change shifts the colors, rather than snapping them. */
+    transition: color var(--dur-slow) var(--ease-out);
     font-weight: 650;
     font-variant-numeric: tabular-nums;
 }

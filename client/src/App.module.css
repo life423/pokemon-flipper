@@ -252,9 +252,79 @@
     cursor: pointer;
 }
 
+.segmented {
+    position: relative;
+}
+
+.segmented button {
+    position: relative;
+    z-index: 1;
+}
+
 .segmented button[aria-pressed="true"] {
-    background: var(--surface-alt);
     color: var(--text);
+}
+
+/* Slides to the chosen option. */
+.indicator {
+    position: absolute;
+    top: 3px;
+    bottom: 3px;
+    left: 0;
+    border-radius: var(--radius-pill);
+    background: var(--surface-alt);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+    transition:
+        transform var(--dur-base) var(--ease-in-out),
+        width var(--dur-base) var(--ease-in-out);
+    pointer-events: none;
+}
+
+@media (hover: hover) {
+    .segmented button:hover {
+        color: var(--text);
+    }
+
+    /* The main action glows; the rest brighten their edge. */
+    .primary:hover {
+        background: color-mix(in srgb, var(--accent-strong) 88%, white);
+        box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent);
+    }
+
+    .secondary:hover,
+    .filtersButton:hover,
+    .viewButton:hover,
+    .menuButton:hover {
+        border-color: color-mix(in srgb, var(--accent) 50%, var(--border));
+        background: color-mix(in srgb, var(--surface-alt) 92%, white);
+    }
+
+    .viewList button:hover {
+        background: var(--surface-alt);
+    }
+}
+
+/* Where typing goes: the field lights up. */
+.searchRow input:focus-visible,
+.target:focus-within,
+.affix:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent);
+    outline: none;
+}
+
+.target,
+.affix {
+    transition:
+        border-color var(--dur-fast) var(--ease-out),
+        box-shadow var(--dur-fast) var(--ease-out);
+}
+
+/* A card's shape, while the first results load. */
+.cardSkeleton {
+    min-height: 13rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
 }
 
 .field {
