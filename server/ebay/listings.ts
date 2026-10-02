@@ -130,9 +130,9 @@ function toListing(item: EbayItem): ListingSummary {
 export async function searchListings(
     search: string,
     { maxResults = PAGE_SIZE }: { maxResults?: number } = {}
-): Promise<{ listings: ListingSummary[]; total: number }> {
+): Promise<{ listings: ListingSummary[]; total: number; skipped: number }> {
     const key = `ebay:search:${maxResults}:${normalizeText(search).trim()}`;
-    const saved = await readCache<{ listings: ListingSummary[]; total: number }>(key, SEARCH_MAX_AGE_HOURS);
+    const saved = await readCache<{ listings: ListingSummary[]; total: number; skipped: number }>(key, SEARCH_MAX_AGE_HOURS);
 
     if (saved) return saved;
 
@@ -146,6 +146,8 @@ export async function searchListings(
     const listings: ListingSummary[] = [];
     const seen = new Set<string>();
     let total = 0;
+    // Junk the free rules dropped: lots, sealed product, merch, fakes.
+    let skipped = 0;
 
     for (let offset = 0; offset < maxResults; offset += PAGE_SIZE) {
         const params = new URLSearchParams({
@@ -164,7 +166,12 @@ export async function searchListings(
         total = page.total ?? total;
 
         for (const item of items) {
-            if (seen.has(item.itemId) || exclusionReason(item) !== null) continue;
+            if (seen.has(item.itemId)) continue;
+
+            if (exclusionReason(item) !== null) {
+                skipped += 1;
+                continue;
+            }
 
             seen.add(item.itemId);
             listings.push(toListing(item));
@@ -175,9 +182,9 @@ export async function searchListings(
 
     console.log(`Search ${JSON.stringify(search)}: eBay has ${total}; kept ${listings.length} single cards`);
 
-    await writeCache(key, { listings, total });
+    await writeCache(key, { listings, total, skipped });
 
-    return { listings, total };
+    return { listings, total, skipped };
 }
 
 // A listing's details, saved for a week. maxAgeHours: 0 always asks eBay.

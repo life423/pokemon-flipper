@@ -100,7 +100,7 @@ export interface ListingSummary {
     conditionNotes?: string[];
     screen?: Screen;
     // Set when the free check shows it isn't the card searched for.
-    match?: "OTHER_SET" | "OTHER_CARD" | "OTHER_PRINTING" | "OTHER_LANGUAGE";
+    match?: "OTHER_SET" | "OTHER_CARD" | "OTHER_PRINTING" | "OTHER_LANGUAGE" | "JUNK";
 }
 
 // ---- Photos and condition (the AI's findings, after the code rules) ----

@@ -21,7 +21,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export type DealsMessage =
-    | { type: "start"; total: number; found: number; count: number; intent: SearchIntent }
+    | { type: "start"; total: number; found: number; count: number; skipped: number; intent: SearchIntent }
     | { type: "listing"; listing: ListingSummary }
     | { type: "done" }
     | { type: "error"; error: string };

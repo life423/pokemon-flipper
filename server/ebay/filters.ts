@@ -2,10 +2,15 @@
 // Each rule returns a plain-language reason, so exclusions can be
 // explained and tested.
 
-const LOT = /\b(lots?|bundles?|bulk)\b|\b\d+\s*cards\b/i;
+// "x2" and "3x" are several copies; "Mega Charizard X" and "X 2016" aren't.
+const LOT = /\b(lots?|bundles?|bulk)\b|\b\d+\s*cards\b|\b[2-9]\s?x\b|\bx\s?[2-9]\b/i;
 const DIGITAL = /\btcg\s*pocket\b|\b(code cards?|online codes?|digital)\b/i;
 const FAKE = /\b(proxy|proxies|custom|replica|fan[\s-]?(made|art)|orica|novelty)\b/i;
-const PICK_OR_MYSTERY = /\b(mystery|repack|you pick|pick your|choose your|select your)\b/i;
+const PICK_OR_MYSTERY = /\b(mystery|repack|grab bag|random|surprise|you pick|pick your|choose your|select your)\b/i;
+const SEALED = /\b(booster (packs?|box(es)?)|elite trainer box(es)?|etb|sealed (packs?|box(es)?|product))\b/i;
+// Not "sleeve" or "toploader": real single-card listings ship in them.
+const MERCH = /\b(plush(ie)?|stickers?|figures?|figurines?|funko|keychains?|posters?|art prints?|binders?|playmats?|deck box(es)?|coins?|pins?)\b/i;
+const NOT_A_CARD = /\b(empty (slab|case|box)|(slab|case|label|flip) only|no card)\b/i;
 
 // Lowercase and strip accents, so "Pokémon" matches "pokemon".
 export function normalizeText(text: unknown): string {
@@ -30,6 +35,10 @@ export function exclusionReason(item: { title: string; itemId: string; itemGroup
     if (DIGITAL.test(title)) return "Digital item";
     if (FAKE.test(title)) return "Proxy, custom, or replica";
     if (PICK_OR_MYSTERY.test(title)) return "Mystery or pick-your-card listing";
+    // "Champions Path ETB promo" is the single card that came in the box.
+    if (SEALED.test(title) && !/\bpromo\b/.test(title)) return "Sealed product";
+    if (MERCH.test(title)) return "Merchandise, not a card";
+    if (NOT_A_CARD.test(title)) return "Empty slab, case, or label";
 
     return null;
 }

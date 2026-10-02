@@ -10,11 +10,15 @@ import { normalizeSetName } from "../identity/card-identity.ts";
 // The AI reads those titles, 25 at a time. What it reads is still only
 // the seller's claim: the identity rules and the photos check it.
 
-const READER_VERSION = 3;
+const READER_VERSION = 4;
 const MONTH_HOURS = 24 * 30;
 const BATCH_SIZE = 25;
 
+export const LISTING_KINDS = ["SINGLE_CARD", "LOT", "SEALED", "MERCH", "MYSTERY", "FAKE", "NOT_A_CARD"] as const;
+
 export interface TitleReading {
+    // What the listing sells: one card, or something else (junk here).
+    kind: (typeof LISTING_KINDS)[number] | null;
     cardName: string | null;
     set: string | null;
     cardNumber: string | null;
@@ -37,9 +41,10 @@ const SCHEMA = {
             items: {
                 type: "object",
                 additionalProperties: false,
-                required: ["line", "cardName", "set", "cardNumber", "language", "grader", "grade", "condition"],
+                required: ["line", "kind", "cardName", "set", "cardNumber", "language", "grader", "grade", "condition"],
                 properties: {
                     line: { type: "integer" },
+                    kind: { type: "string", enum: [...LISTING_KINDS] },
                     cardName: NULLABLE,
                     set: NULLABLE,
                     cardNumber: NULLABLE,
@@ -54,7 +59,9 @@ const SCHEMA = {
 };
 
 function prompt(titles: string[]): string {
-    return `Each numbered line is an eBay listing title for one Pokemon trading card, written by the seller. Report what each title says, one entry per line:
+    return `Each numbered line is an eBay listing title, written by the seller. Report what each title says, one entry per line:
+
+- kind: what the listing sells. SINGLE_CARD for one card, raw or graded, even when the title mentions its sleeve, toploader, or case. Otherwise LOT (several cards), SEALED (packs, boxes), MERCH (plush, figures, stickers, binders), MYSTERY (mystery, repack, or random), FAKE (proxy, custom, or replica), or NOT_A_CARD (an empty slab or case, a label, anything else).
 
 - cardName: the card's name as printed, like "Charizard" or "Dark Charizard".
 - set: the English set's official name, like "Base Set" or "Neo Genesis", only if the title names the set (a grading label's wording counts: PSA calls Base Set "Pokemon Game"), or the title's card number and name fit exactly one English set.
@@ -150,17 +157,22 @@ function isRealSet(value: string | undefined): value is string {
 export async function fillFromTitle(
     listing: { title: string; aspects: Record<string, string> },
     read: (title: string) => Promise<TitleReading | null> = readTitle
-): Promise<{ aspects: Record<string, string>; filled: string[]; condition: string | null }> {
+): Promise<{
+    aspects: Record<string, string>;
+    filled: string[];
+    condition: string | null;
+    kind: TitleReading["kind"];
+}> {
     const { aspects } = listing;
     const hasName = Boolean(aspects["Card Name"] ?? aspects.Character);
 
     if (isRealSet(aspects.Set) && aspects["Card Number"] && hasName) {
-        return { aspects, filled: [], condition: null };
+        return { aspects, filled: [], condition: null, kind: null };
     }
 
     const reading = await read(listing.title);
 
-    if (!reading) return { aspects, filled: [], condition: null };
+    if (!reading) return { aspects, filled: [], condition: null, kind: null };
 
     const filled: string[] = [];
     const result = { ...aspects };
@@ -178,5 +190,5 @@ export async function fillFromTitle(
         }
     }
 
-    return { aspects: result, filled, condition: reading.condition ?? null };
+    return { aspects: result, filled, condition: reading.condition ?? null, kind: reading.kind ?? null };
 }

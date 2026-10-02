@@ -40,3 +40,23 @@ test("drops proxies and customs", () => {
 test("keeps any clean single card", () => {
     assert.equal(exclusionReason(single("Lugia Neo Genesis 9/111 Holo")), null);
 });
+
+test("drops sealed product, merch, empty slabs, and multiples", () => {
+    const reason = (title) => exclusionReason(single(title));
+
+    assert.equal(reason("Pokemon Base Set Booster Pack Charizard Art"), "Sealed product");
+    assert.equal(reason("Charizard Elite Trainer Box ETB"), "Sealed product");
+    assert.equal(reason("Charizard Plush 12 inch Pokemon Center"), "Merchandise, not a card");
+    assert.equal(reason("Charizard Pokemon Keychain"), "Merchandise, not a card");
+    assert.equal(reason("PSA 10 Empty Slab Charizard Label"), "Empty slab, case, or label");
+    assert.equal(reason("Charizard 4/102 Base Set Holo x2"), "Lot or bundle");
+    assert.match(reason("Charizard Grab Bag Vintage"), /Mystery/);
+});
+
+test("keeps single cards that mention how they ship, or an X in the name", () => {
+    assert.equal(exclusionReason(single("Charizard 4/102 Base Set Holo PSA 9 ships in toploader")), null);
+    assert.equal(exclusionReason(single("Charizard 4/102 Base Set Holo NM in sleeve")), null);
+    assert.equal(exclusionReason(single("Mega Charizard X ex 125/094 Phantasmal Flames")), null);
+    assert.equal(exclusionReason(single("Charizard X 2016 Promo")), null);
+    assert.equal(exclusionReason(single("2020 Pokemon SWSH Black Star Promo Champions Path ETB #SWSH050 Charizard V")), null);
+});

@@ -82,3 +82,13 @@ test("a title in another language is set aside without any checks", async () => 
     assert.equal(s.calls.details, 0);
     assert.equal(s.calls.checks.length, 0);
 });
+
+test("a title the AI reads as junk is skipped before any check or eBay request", async () => {
+    const s = steps([]);
+    s.readTitle = async () => ({ aspects: {}, filled: [], condition: null, kind: "LOT" });
+    const result = await screenListing(listing("Vintage Pokemon Cards WOTC Holo Collection"), s);
+
+    assert.equal(result.match, "JUNK");
+    assert.equal(s.calls.checks.length, 0);
+    assert.equal(s.calls.details, 0);
+});

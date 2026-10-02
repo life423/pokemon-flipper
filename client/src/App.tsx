@@ -397,7 +397,9 @@ export function App() {
             candidates: listings.filter((listing) => listing.screen?.status === "CANDIDATE" && !listing.screen.longShot).length,
             dropped: count("DROPPED"),
             unchecked: listings.filter((listing) => listing.screen?.status === "UNSCREENED" && !listing.match).length,
-            mismatched: listings.filter((listing) => listing.match).length,
+            mismatched: listings.filter((listing) => listing.match && listing.match !== "JUNK").length,
+            // Junk the AI spotted in titles; the free rules' count comes with the search.
+            junk: listings.filter((listing) => listing.match === "JUNK").length,
             analyzing,
             waiting: listings.filter(
                 (listing) => listing.screen?.status === "CANDIDATE" && !listing.screen.longShot && !analyses[listing.id]
@@ -617,6 +619,10 @@ export function App() {
                                         <div>
                                             <dt>Set aside: other sets, cards, languages</dt>
                                             <dd>{counts.mismatched}</dd>
+                                        </div>
+                                        <div>
+                                            <dt>Junk skipped</dt>
+                                            <dd>{(summary?.skipped ?? 0) + counts.junk}</dd>
                                         </div>
                                         <div>
                                             <dt>Deals</dt>

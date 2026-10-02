@@ -27,6 +27,8 @@ export interface SearchSummary {
     found: number;
     // The ones whose title names the card searched for.
     count: number;
+    // Junk the free rules dropped before anything was spent.
+    skipped: number;
     intent: SearchIntent;
 }
 
@@ -66,6 +68,12 @@ export async function screenListing(listing: ListingSummary, steps: ScreenSteps 
     // First from the search result alone: the title, read by the AI. The
     // condition is the one the title claims; with none, it's assumed best.
     const fromTitle = await steps.readTitle({ title: listing.title, aspects: {} });
+
+    // Not a single card: a lot, sealed product, merch, a mystery pack, a
+    // fake. Skipped before any price lookup or eBay request.
+    if (fromTitle.kind && fromTitle.kind !== "SINGLE_CARD") {
+        return { ...listing, match: "JUNK" };
+    }
 
     if (!isEnglish(fromTitle.aspects.Language)) {
         return { ...listing, match: "OTHER_LANGUAGE" };
@@ -135,7 +143,7 @@ export async function findDeals(
 ): Promise<ListingSummary[]> {
     const intent = await readSearch(search);
     const limit = Math.min(MOST_RESULTS, Math.max(200, Math.round(maxResults / 200) * 200));
-    const { listings, total } = await searchListings(search, { maxResults: limit });
+    const { listings, total, skipped } = await searchListings(search, { maxResults: limit });
     const now = Date.now();
     const requestsBefore = detailRequestCount();
 
@@ -144,7 +152,7 @@ export async function findDeals(
         (listing) => titleMatches(listing.title, intent) && gradingMatches(listing.isGraded, intent)
     );
 
-    onStart({ total, found: live.length, count: matching.length, intent });
+    onStart({ total, found: live.length, count: matching.length, skipped, intent });
 
     // Every title queued for reading at once, so the AI gets full batches
     // of 25, but not waited on: each listing is checked as soon as its own
