@@ -139,3 +139,15 @@ test("a 1st Edition claim is screened at 1st Edition prices", async () => {
     assert.equal(result.card.printingLabel, "1st Edition");
     assert.equal(result.status, "CANDIDATE");
 });
+
+test("a Buy It Now priced far below the card in any condition is junk; an auction isn't", async () => {
+    // Lugia's cheapest raw price here is $315 (Moderately Played).
+    const junk = await prescreen(rawLugia({ price: 5, buyingOption: "FIXED_PRICE" }), deps);
+    const auction = await prescreen(rawLugia({ price: 5, buyingOption: "AUCTION" }), deps);
+    const cheapButReal = await prescreen(rawLugia({ price: 100, buyingOption: "FIXED_PRICE" }), deps);
+
+    assert.equal(junk.junk, true);
+    assert.match(junk.reason, /far below the \$315\.00/);
+    assert.equal(auction.junk, undefined);
+    assert.equal(cheapButReal.junk, undefined);
+});

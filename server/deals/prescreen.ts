@@ -7,6 +7,7 @@ import { sellerCondition } from "../../shared/conditions.ts";
 import { GRADERS, underwrite, type UnderwritingInput } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG, type MoneyConfig } from "../../shared/money/config.ts";
 import { CONDITION_NAMES } from "../../shared/conditions.ts";
+import { dollars } from "../../shared/format.ts";
 import type { BuyingOption, Grader, Screen, Underwriting } from "../../shared/types.ts";
 import { usualPrice } from "../../shared/money/auction.ts";
 import { retargetScreen } from "../../shared/money/targets.ts";
@@ -43,6 +44,11 @@ const SELLER_MARKS = {
     SHADOWLESS: { firstEditionStamp: "NOT_PRESENT", artBoxShadow: "ABSENT" },
     UNLIMITED: { firstEditionStamp: "NOT_PRESENT", artBoxShadow: "PRESENT" },
 } as const;
+
+// A Buy It Now under this share of the card's cheapest price in any
+// condition is junk: a $5 "Base Set Charizard" is never the real card.
+// Auctions are exempt; a 99-cent starting bid is normal.
+const TOO_CHEAP_SHARE = 0.2;
 
 // "4/102" in a title, for listings whose item details skip the number.
 const TITLE_NUMBER = /\b(\d{1,3}\s*\/\s*\d{1,3})\b/;
@@ -115,6 +121,19 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
         printingLabel: identity.printingLabel,
     };
 
+    // The card's cheapest price in any condition, from the lookup already made.
+    const rawPrices = rawPricesFor(card, identity);
+    const floor =
+        rawPrices.status === "PRICED" && rawPrices.prices?.length ? Math.min(...rawPrices.prices.map((p) => p.price)) : null;
+
+    if (listing.buyingOption === "FIXED_PRICE" && floor !== null && listing.price < floor * TOO_CHEAP_SHARE) {
+        return screen(
+            "UNSCREENED",
+            `At ${dollars(listing.price)}, it's far below the ${dollars(floor)} this card sells for in any condition: likely a fake, a reprint, or not the card.`,
+            { card: cardInfo, junk: true }
+        );
+    }
+
     const input: UnderwritingInput = {
         listing: { price: listing.price, shipping: listing.shipping },
         identity,
@@ -153,7 +172,7 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
             const gradeRange = { low: grade, likely: grade, high: grade };
 
             input.condition = { rawCondition, gradeRange, authenticity: { concern: "NONE_SEEN", reasons: [] } };
-            input.rawPricing = rawPricesFor(card, identity);
+            input.rawPricing = rawPrices;
             input.gradedPricing = {};
 
             // Every path is priced, so the page can redo the verdict for

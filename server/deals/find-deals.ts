@@ -2,7 +2,7 @@ import { detailRequestCount, getListingDetails, searchListings, type ListingDeta
 import { lookupCards, fetchComps } from "../pricing/pkmnprices.ts";
 import { mapLimit } from "../lib/concurrency.ts";
 import { readSearch } from "../search/intent.ts";
-import { cardMismatch, gradingMatches, isEnglish, titleMatches } from "../search/relevance.ts";
+import { cardMismatch, gradingMatches, isEnglish, setMatches, titleMatches } from "../search/relevance.ts";
 import { fillFromTitle, readTitle } from "../ai/title-reader.ts";
 import { checkComps } from "../ai/comp-checker.ts";
 import { prescreen, type ScreenInput } from "./prescreen.ts";
@@ -57,7 +57,11 @@ function withFilled(screen: Screen, filled: string[]): Screen {
     return filled.length > 0 ? { ...screen, filledFromTitle: filled } : screen;
 }
 
-export async function screenListing(listing: ListingSummary, steps: ScreenSteps = REAL_STEPS): Promise<ListingSummary> {
+export async function screenListing(
+    listing: ListingSummary,
+    steps: ScreenSteps = REAL_STEPS,
+    intent: SearchIntent | null = null
+): Promise<ListingSummary> {
     const base = {
         price: listing.currentPrice,
         shipping: listing.shipping,
@@ -79,10 +83,19 @@ export async function screenListing(listing: ListingSummary, steps: ScreenSteps 
         return { ...listing, match: "OTHER_LANGUAGE" };
     }
 
+    // The title names another set than the one searched: set aside before
+    // any price lookup.
+    if (intent && !setMatches(fromTitle.aspects.Set, intent)) {
+        return { ...listing, match: "OTHER_SET" };
+    }
+
     const first = withFilled(
         await steps.check({ ...base, title: listing.title, aspects: fromTitle.aspects, cardCondition: fromTitle.condition ?? null }),
         fromTitle.filled
     );
+
+    // Priced too low to be the real card: junk, before any eBay request.
+    if (first.junk) return { ...listing, match: "JUNK", screen: first };
 
     // Dropped on its title alone: no eBay detail request.
     if (first.status !== "CANDIDATE" && !first.incomplete) {
@@ -115,6 +128,8 @@ export async function screenListing(listing: ListingSummary, steps: ScreenSteps 
         }),
         filled
     );
+
+    if (screen.junk) return { ...listing, match: "JUNK", screen };
 
     return {
         ...listing,
@@ -160,7 +175,7 @@ export async function findDeals(
     for (const listing of matching) void readTitle(listing.title);
 
     const results = await mapLimit(matching, PARALLEL_LISTINGS, async (listing) => {
-        const screened = await screenListing(listing);
+        const screened = await screenListing(listing, REAL_STEPS, intent);
         const mismatch = screened.match ?? cardMismatch(screened.screen, intent);
         const result = mismatch ? { ...screened, match: mismatch } : screened;
 

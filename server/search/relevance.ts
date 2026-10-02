@@ -27,6 +27,12 @@ export function gradingMatches(isGraded: boolean, intent: SearchIntent): boolean
     return intent.graded === null || intent.graded === isGraded;
 }
 
+// Whether a set (as read from a title, say) fits the search. An unknown
+// set fits: the free check decides.
+export function setMatches(setName: string | null | undefined, intent: SearchIntent): boolean {
+    return !setName || intent.sets.length === 0 || intent.sets.some((wanted) => sameSetFamily(setName, wanted));
+}
+
 // Why an identified listing isn't the card searched for, or null when it
 // is (or when it isn't identified well enough to tell).
 export function cardMismatch(screen: Screen | undefined, intent: SearchIntent): Match | null {
@@ -34,7 +40,7 @@ export function cardMismatch(screen: Screen | undefined, intent: SearchIntent): 
 
     if (!card) return null;
 
-    if (card.set && intent.sets.length > 0 && !intent.sets.some((wanted) => sameSetFamily(card.set, wanted))) {
+    if (!setMatches(card.set, intent)) {
         return "OTHER_SET";
     }
 

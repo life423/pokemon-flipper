@@ -60,3 +60,13 @@ test("keeps single cards that mention how they ship, or an X in the name", () =>
     assert.equal(exclusionReason(single("Charizard X 2016 Promo")), null);
     assert.equal(exclusionReason(single("2020 Pokemon SWSH Black Star Promo Champions Path ETB #SWSH050 Charizard V")), null);
 });
+
+test("drops random-card fillers and novelty cards", () => {
+    const reason = (title) => exclusionReason(single(title));
+
+    assert.match(reason("Pokemon (1) Card 100% Vintage WOTC Guaranteed Authentic 1999 Base Set"), /Mystery/);
+    assert.match(reason("Pokemon TCG assorted cards Vintage Only - WOTC Base set / Jungle"), /Mystery/);
+    assert.equal(reason("Charizard #6 VTG Pokemon Burger King PokeTrivia Movie Card 1999"), "Merchandise, not a card");
+    assert.equal(reason("Topps 1999 Charizard #06E6 of 12 Vintage Pokemon Trading Cards"), "Merchandise, not a card");
+    assert.equal(reason("Pokemon Sticker - Charizard Original Base Set Card Artwork, Vinyl Decal"), "Merchandise, not a card");
+});

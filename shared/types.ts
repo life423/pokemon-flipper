@@ -52,6 +52,9 @@ export interface Screen {
     // An auction that will very likely end above even its best-case max
     // bid. Not worth the AI.
     longShot?: boolean;
+    // Priced far below anything the card sells for: a fake, a reprint, or
+    // not the card at all. Skipped like other junk.
+    junk?: boolean;
     // The check was missing the set, number, name, grader, or grade: the
     // listing's own item details might settle it.
     incomplete?: boolean;

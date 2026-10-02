@@ -92,3 +92,22 @@ test("a title the AI reads as junk is skipped before any check or eBay request",
     assert.equal(s.calls.checks.length, 0);
     assert.equal(s.calls.details, 0);
 });
+
+test("a listing the check calls junk is skipped before any eBay request", async () => {
+    const s = steps([screen("UNSCREENED", { junk: true })]);
+    const result = await screenListing(listing("Charizard 4/102 Base Set Holo", { currentPrice: 5 }), s);
+
+    assert.equal(result.match, "JUNK");
+    assert.equal(s.calls.details, 0);
+});
+
+test("a title naming another set than the one searched is set aside before any check", async () => {
+    const s = steps([]);
+    s.readTitle = async () => ({ aspects: { Set: "Scarlet & Violet 151" }, filled: ["Set"], condition: null, kind: "SINGLE_CARD" });
+    const intent = { cardName: "Charizard", sets: ["Base Set"], cardNumber: null, printing: null, graded: null, titleWords: ["charizard"], source: "ai" };
+    const result = await screenListing(listing("Charizard ex 199/165 151 SIR", { currentPrice: 5 }), s, intent);
+
+    assert.equal(result.match, "OTHER_SET");
+    assert.equal(s.calls.checks.length, 0);
+    assert.equal(s.calls.details, 0);
+});
