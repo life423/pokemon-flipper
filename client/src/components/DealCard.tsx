@@ -1,19 +1,20 @@
 import type { CSSProperties } from "react";
 import type { AnalysisState } from "../App";
-import type { ListingSummary } from "../types";
-import { dollars, timeLeft } from "../format";
+import type { ListingSummary, Targets } from "../types";
+import { dollars, timeLeft, name } from "../format";
 import { ceilingLabel } from "../../../shared/format.ts";
 import { numbersAtOffer, offerFor, offerWorthMaking } from "../../../shared/money/offer.ts";
+import { MONEY_CONFIG } from "../../../shared/money/config.ts";
+import { auctionDecision, returnText } from "../../../shared/card-presentation.ts";
 import { yearOf } from "../../../shared/sets.ts";
 import { resaleActivity } from "../../../shared/liquidity.ts";
 import { photoEvidence } from "../../../shared/photo-evidence.ts";
 import { currentSellerMistakes } from "../../../shared/seller-mistakes.ts";
-import { ChevronIcon } from "./Icons";
-import { Tween } from "./Tween";
+import { AuctionSummary } from "./AuctionSummary";
+import { GradingComparison } from "./GradingComparison";
 import styles from "./DealCard.module.css";
 
 interface Props {
-    // Place in the list, for the arrival stagger.
     index?: number;
     transitionName?: string;
     listing: ListingSummary;
@@ -21,231 +22,79 @@ interface Props {
     selected: boolean;
     now: number;
     onOpen: () => void;
-    // Release years by set, for the subtitle.
     years: Record<string, number>;
     minGrade?: number;
+    targets?: Targets;
 }
-
-// How Dig deeper found it, in a word or two.
-const FOUND: Record<string, string> = {
-    MISSPELLED: "Misspelled title",
-    NUMBER_ONLY: "Number-only title",
-    WRONG_CATEGORY: "Wrong category",
-    PHOTO_SHOWS_IT: "Photo shows it",
-};
-
-// Feedback counts, short: 1,234 is 1.2K and 71,100 is 71K; under 1,000, exact.
 const COMPACT = new Intl.NumberFormat("en-US", { notation: "compact", maximumSignificantDigits: 2 });
+const signed = (value: number) => `${value < 0 ? "−" : "+"}${dollars(Math.abs(value))}`;
 
-function feedbackCount(count: number): string {
-    return count < 1000 ? count.toLocaleString() : COMPACT.format(count);
-}
-
-// Whole dollars, for the line under the price: $1,139.
-function wholeDollars(value: number): string {
-    return `$${Math.round(value).toLocaleString()}`;
-}
-
-// The number as printed on the card: 004/102 is 4/102.
-function printedNumber(number: string | null | undefined): string | null {
-    return number ? number.replace(/^0+(?=\d)/, "") : null;
-}
-
-// Money with its sign: +$68.40 or -$120.30.
-function signed(value: number | null): string {
-    if (value === null) return "";
-    return value < 0 ? `\u2212${dollars(-value)}` : `+${dollars(value)}`;
-}
-
-export function DealCard({ listing, analysis, selected, now, onOpen, years, index = 0, transitionName, minGrade = 0 }: Props) {
+export function DealCard({ listing, analysis, selected, now, onOpen, years, index = 0, transitionName, minGrade = 0, targets = MONEY_CONFIG.targets }: Props) {
     const evaluation = analysis?.status === "done" ? analysis.evaluation : null;
-    const underwriting = evaluation?.underwriting ?? null;
-    const best = underwriting?.best ?? null;
-    const rating = evaluation?.rating ?? null;
-    const deal = underwriting?.verdict.startsWith("BUY") ?? false;
-    const screen = listing.screen;
+    const best = evaluation?.underwriting?.best;
+    const verdict = evaluation?.underwriting?.verdict;
+    const deal = verdict?.startsWith("BUY");
     const auction = listing.buyingOption === "AUCTION";
-    const left = timeLeft(listing.endTime, now);
+    const decision = auction && evaluation ? auctionDecision(evaluation, targets, now) : null;
+    const screen = listing.screen;
+    const pricePending = !evaluation && screen?.priceAnomaly && !screen.priceAnomaly.photoChecked;
     const plan = offerFor(listing, best?.maxBid);
-    // Doesn't clear at its asking price, but would at a realistic offer.
-    const offer = underwriting?.verdict === "PASS" && offerWorthMaking(plan) ? plan : null;
+    const offer = verdict === "PASS" && offerWorthMaking(plan) ? plan : null;
     const offerNumbers = offer && best ? numbersAtOffer(best, offer) : null;
-    const activity = resaleActivity(evaluation, now);
     const evidence = evaluation ? photoEvidence(evaluation, minGrade) : null;
     const mistakes = currentSellerMistakes(listing, evaluation);
-    const pricePending = !evaluation && listing.screen?.priceAnomaly && !listing.screen.priceAnomaly.photoChecked;
-    const longShot = rating?.level === "LONG_SHOT" || Boolean(screen?.longShot);
-
-    // The verdict, in the palette's meanings.
-    const [badge, tone] =
-        analysis?.status === "loading"
-            ? ["Analyzing", "pending"]
-            : longShot
-              ? ["Long shot", "quiet"]
-              : deal
-                ? rating?.level === "THIN"
-                    ? ["Thin", "watch"]
-                    : best?.path === "GRADE"
-                      ? ["Buy + grade", "grade"]
-                      : ["Buy", "buy"]
-                : offer
-                  ? ["Offer", "offer"]
-                  : underwriting?.verdict === "NEEDS_REVIEW"
-                    ? ["Review", "watch"]
-                    : underwriting?.verdict === "CANT_PRICE"
-                      ? ["Can't price", "watch"]
-                      : underwriting?.verdict === "PASS"
-                        ? ["Pass", "pass"]
-                        : pricePending
-                          ? ["Verify price", "watch"]
-                        : listing.mistakes?.length
-                          ? ["Photo lead", "watch"]
-                        : screen?.status === "CANDIDATE"
-                          ? ["Possible", "pending"]
-                          : screen?.status === "DROPPED"
-                            ? ["Too pricey", "quiet"]
-                            : ["Unverified", "quiet"];
-
-    // The card itself, once identified; the eBay title until then.
-    const card = evaluation?.identity ?? screen?.card ?? null;
-    const name = card?.name ? [card.name, printedNumber(card.cardNumber)].filter(Boolean).join(" ") : listing.title;
-    const subtitle = card?.name
-        ? // Unlimited is the usual printing; 1st Edition and Shadowless are worth saying.
-          [card.set, yearOf(years, card.set), card.printing === "UNLIMITED" ? null : card.printingLabel]
-              .filter(Boolean)
-              .join(" \u00b7 ")
-        : listing.isGraded
-          ? "Graded"
-          : "Raw";
-
-    // Profit at this price: for an auction, near its usual price or at the max bid.
-    const profit =
-        best && auction
-            ? rating?.auction?.profitAtUsual != null
-                ? { value: rating.auction.profitAtUsual, roi: null }
-                : { value: best.profitAtMaxBid ?? null, roi: best.roiAtMaxBid ?? null }
-            : best
-              ? { value: best.profit ?? null, roi: best.roi ?? null }
-              : null;
-    const gain = (profit?.value ?? 0) >= 0;
-
-    // Likely grade: the slab's own, or the AI's likely grade for a raw card.
-    const range = evaluation?.condition?.gradeRange;
-    const grader = best?.grader ?? "PSA";
-    const grade = evaluation?.slab?.grade
-        ? `${evaluation.slab.grader ?? ""} ${evaluation.slab.grade}`.trim()
-        : range && minGrade > 0
-          ? `${grader} ${range.low}–${range.high}`
-        : range
-          ? range.likely !== null
-              ? `${grader} ${range.likely}`
-              : `${grader} ${range.low}\u2013${range.high}`
-          : "\u2014";
-
-    // What it sells for on the path that pays best.
-    const comp = best ? (best.path === "GRADE" ? best.expectedSale : best.salePrice) : null;
-
+    const activity = resaleActivity(evaluation, now);
+    const card = evaluation?.identity ?? screen?.card;
+    const number = card?.cardNumber?.replace(/^0+(?=\d)/, "");
+    const title = card?.name ? [card.name, number].filter(Boolean).join(" ") : listing.title;
+    const subtitle = card?.name ? [card.set, yearOf(years, card.set), card.printing !== "UNLIMITED" ? card.printingLabel : null].filter(Boolean).join(" · ") : listing.isGraded ? "Graded card" : "Raw card";
+    const longShot = evaluation?.rating?.level === "LONG_SHOT" || screen?.longShot;
+    const [badge, tone] = analysis?.status === "loading" ? ["Analyzing", "pending"]
+        : decision?.status === "ENDED" ? ["Ended", "quiet"]
+        : decision?.status === "OVER_LIMIT" ? ["Over limit", "pass"]
+        : decision?.status === "PROVISIONAL" ? ["Review photos", "watch"]
+        : longShot ? ["Long shot", "quiet"]
+        : deal && auction ? [decision?.breakEven ? "Break-even" : "Within limit", decision?.breakEven ? "watch" : "buy"]
+        : deal ? [evaluation?.rating?.level === "THIN" ? "Thin margin" : best?.path === "GRADE" ? "Buy + grade" : "Buy", best?.path === "GRADE" ? "grade" : "buy"]
+        : offer ? ["Offer", "offer"]
+        : verdict === "NEEDS_REVIEW" || verdict === "CANT_PRICE" ? ["Review", "watch"]
+        : verdict === "PASS" ? ["Pass", "pass"]
+        : pricePending ? ["Verify price", "watch"]
+        : mistakes.length ? ["Photo lead", "watch"]
+        : screen?.status === "CANDIDATE" ? [auction ? "Auction watch" : "Possible", "pending"]
+        : screen?.status === "DROPPED" ? ["Above limit", "quiet"] : ["Unverified", "quiet"];
     const seller = listing.seller;
-    // No feedback yet reads as new, not as a 0% rating.
-    const sellerText =
-        seller?.feedbackScore === 0
-            ? "New seller"
-            : seller?.feedbackPercentage != null
-              ? `${seller.feedbackPercentage}% (${feedbackCount(seller.feedbackScore ?? 0)})`
-              : "\u2014";
-
-    // The line under the price: the most you'd pay, and how it's sold.
-    const ceiling = best?.maxBid ?? screen?.bestCase?.maxBid ?? null;
-    const meta = [
-        ceiling !== null
-            ? `${ceilingLabel(listing.buyingOption)} ${wholeDollars(ceiling)}${best ? "" : " at best"}`
-            : null,
-        auction ? `${listing.bids} ${listing.bids === 1 ? "bid" : "bids"}` : "Buy It Now",
-        auction ? left : null,
-        listing.shipping === null ? "ship not quoted" : listing.shipping === 0 ? "free ship" : `${dollars(listing.shipping)} ship`,
-    ].filter(Boolean);
-    const metaShort = [ceiling !== null ? meta[0] : null, auction ? left : "Buy It Now"].filter(Boolean);
-
-    return (
-        <article
-            className={`${styles.card} ${selected ? styles.selected : ""}`}
-            data-tone={tone}
-            // A short stagger as results arrive; a name to glide by when sorted.
-            style={{ "--i": Math.min(index, 10), viewTransitionName: transitionName } as CSSProperties}
-        >
-            {/* The whole card opens the analysis. */}
-            <button type="button" className={styles.hit} onClick={onOpen} aria-label={`Open ${name}`} />
-
-            <div className={styles.photo}>
-                {listing.images[0] && <img src={listing.images[0]} alt="" loading="lazy" />}
+    const sellerText = seller?.feedbackScore === 0 ? "New seller" : seller?.feedbackPercentage != null
+        ? `${seller.feedbackPercentage}% · ${seller.feedbackScore == null ? "rating count unavailable" : `${seller.feedbackScore < 1000 ? seller.feedbackScore.toLocaleString() : COMPACT.format(seller.feedbackScore)} ratings`}` : "Not available";
+    const ceiling = best?.maxBid ?? (!evaluation ? screen?.bestCase?.maxBid : null);
+    return <article className={`${styles.card} ${selected ? styles.selected : ""}`} data-tone={tone}
+        style={{ "--i": Math.min(index, 10), viewTransitionName: transitionName } as CSSProperties}>
+        <button type="button" className={styles.hit} onClick={onOpen} aria-label={`Open ${title}`} />
+        <header className={styles.head}>
+            <div className={styles.photo}>{listing.images[0] && <img src={listing.images[0]} alt="" loading="lazy" />}</div>
+            <div className={styles.identity}><h2>{title}</h2><p>{subtitle}</p></div>
+            <span className={styles.badge}>{badge}</span>
+        </header>
+        {auction && evaluation ? <AuctionSummary evaluation={evaluation} targets={targets} now={now} /> : <>
+            <div className={styles.money}>
+                <div><span className={styles.label}>{auction ? "Current bid" : "Asking price"}</span><strong className={styles.price}>{dollars(listing.currentPrice)}</strong></div>
+                {best && <div><span className={styles.label}>Est. net {best.profit < 0 ? "loss" : "profit"} at asking</span><strong className={best.profit >= 0 ? styles.gain : styles.loss}>{dollars(Math.abs(best.profit))}</strong><span className={styles.label}>{returnText(best.cost > 0 ? best.profit / best.cost : null)} return on total cost</span></div>}
             </div>
-
-            <div className={styles.body}>
-                <div className={styles.head}>
-                    <h2 className={styles.name}>{name}</h2>
-                    <span className={styles.badge}>{badge}</span>
-                </div>
-                <p className={styles.set}>{subtitle}</p>
-
-                <div className={styles.priceRow}>
-                    <span className={styles.price}>
-                        <small>{auction ? "Current bid" : "Asking price"}</small>{" "}
-                        {dollars(listing.currentPrice)}
-                        {auction && <small> bid</small>}
-                    </span>
-                    {profit?.value != null && (
-                        <span className={gain ? styles.gain : styles.loss}>
-                            <small>{auction ? "Est. profit at auction outcome" : gain ? "Est. profit at asking" : "Est. loss at asking"}</small>{" "}
-                            <Tween value={profit.value} format={signed} />
-                        </span>
-                    )}
-                    {profit?.roi != null && (
-                        <span className={gain ? styles.gain : styles.loss}>{Math.round(profit.roi * 100)}% return on total cost</span>
-                    )}
-                </div>
-
-                {best && <p className={styles.activity}>Est. total invested {dollars(best.cost)}. Profit includes fees, tax, shipping{best.path === "GRADE" ? " and grading" : ""}.</p>}
-                {pricePending && <p className={styles.activity}>Unusually low price. Awaiting photo verification; this is not a confirmed deal.</p>}
-                {mistakes.map((mistake) => <p className={styles.activity} key={mistake.kind}>{mistake.detail}</p>)}
-                {evaluation?.condition && evidence && <p className={styles.activity}>AI condition: {nameCondition(evaluation.condition.rawCondition)} · {evidence.confidence.toLowerCase()} photo confidence. {evidence.coverage}.</p>}
-                {minGrade > 0 && evidence && <p className={styles.activity}>{evidence.target}</p>}
-
-                {offer && offerNumbers && (
-                    <p className={styles.meta}>
-                        Offer {dollars(offer.offer)}: estimated profit {signed(offerNumbers.profit)} if accepted. Seller acceptance unknown.
-                    </p>
-                )}
-                {evaluation && <p className={styles.activity} title={activity.detail}>{activity.label}{activity.recentSales !== null ? ` · ${activity.recentSales} observed sales / 30 days` : ""}</p>}
-
-                <p className={styles.meta}>
-                    {listing.found && <span className={styles.found}>{FOUND[listing.found.how] ?? "Hidden find"}</span>}
-                    {/* A narrow card keeps just the max price and time left. */}
-                    <span className={styles.metaFull}>{meta.join(" \u00b7 ")}</span>
-                    <span className={styles.metaShort}>{metaShort.join(" \u00b7 ")}</span>
-
-                </p>
-            </div>
-
-            {/* Beside the photo on a wide card; full width under it on a narrow one. */}
-            <dl className={styles.stats}>
-                    <div>
-                        <dt>Est. grade</dt>
-                        <dd>{grade}</dd>
-                    </div>
-                    <div>
-                        <dt>Est. resale before costs</dt>
-                        <dd>{comp != null ? wholeDollars(comp) : "\u2014"}</dd>
-                    </div>
-                    <div>
-                        <dt>Seller</dt>
-                        <dd>{sellerText}</dd>
-                    </div>
-                    <ChevronIcon className={styles.chevron} />
-                </dl>
-        </article>
-    );
-}
-
-function nameCondition(value: string): string {
-    return value.toLowerCase().replaceAll("_", " ");
+            {best && <p className={styles.note}>{best.label} · total invested {dollars(best.cost)} · includes tax, shipping{best.path === "GRADE" ? " and grading" : ""}. Sale fees are included in net profit.</p>}
+            {ceiling != null && <p className={styles.limit}>{best ? ceilingLabel(listing.buyingOption) : "Unverified screening ceiling"}: {dollars(ceiling)}</p>}
+            <p className={styles.note}>{auction ? `${timeLeft(listing.endTime, now) ?? "End time unavailable"} · ${listing.bids} bids · ` : ""}{listing.shipping === null ? "Shipping not quoted" : listing.shipping === 0 ? "Free shipping" : `${dollars(listing.shipping)} shipping`}</p>
+        </>}
+        {pricePending && <p className={styles.notice}>Unusually low price. Awaiting photo verification.</p>}
+        {offer && offerNumbers && <p className={styles.notice}>Offer {dollars(offer.offer)} · est. profit {signed(offerNumbers.profit)} if accepted. Acceptance is unknown.</p>}
+        {mistakes[0] && <p className={styles.note}>{mistakes[0].detail}</p>}
+        {evaluation?.condition && <GradingComparison evaluation={evaluation} />}
+        {evaluation?.slab && <p className={styles.certified}>Certified label: {evaluation.slab.grader ?? "Unknown grader"} {evaluation.slab.grade ?? "Unreadable"}</p>}
+        {minGrade > 0 && evidence && <p className={styles.note}>{evidence.target}</p>}
+        <dl className={styles.facts}>
+            <div><dt>Seller</dt><dd>{sellerText}</dd></div>
+            <div><dt>Photo assessment</dt><dd>{evidence ? `${evaluation?.condition ? `${name(evaluation.condition.rawCondition)} · ` : ""}${evidence.confidence.toLowerCase()} confidence · ${evaluation?.photoCheck?.images.filter((image) => image.usable && !image.isStockImage).length ?? 0} usable views` : "Awaiting analysis"}</dd></div>
+        </dl>
+        {evaluation && <p className={styles.note} title={activity.detail}>{activity.label}{activity.recentSales !== null ? ` · ${activity.recentSales} observed ${activity.recentSales === 1 ? "sale" : "sales"} / 30 days` : ""}</p>}
+        <p className={styles.openHint}>View analysis <span aria-hidden="true">↗</span></p>
+    </article>;
 }

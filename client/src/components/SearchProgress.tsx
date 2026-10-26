@@ -32,9 +32,9 @@ interface Props {
 
 function readCollapsed(): boolean {
     try {
-        return localStorage.getItem(COLLAPSED_KEY) === "1";
+        return localStorage.getItem(COLLAPSED_KEY) !== "0";
     } catch {
-        return false;
+        return true;
     }
 }
 

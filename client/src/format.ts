@@ -8,6 +8,7 @@ export function timeLeft(endTime: string | null, now: number): string | null {
 
     const ms = Date.parse(endTime) - now;
 
+    if (!Number.isFinite(ms)) return null;
     if (ms <= 0) return "Ended";
 
     const minutes = Math.floor(ms / 60000);

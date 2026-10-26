@@ -433,6 +433,7 @@ export interface Evaluation {
         buyingOption: BuyingOption;
         bids: number;
         endTime: string | null;
+        photos?: string[];
         photosInListing: number;
         photosAnalyzed: number;
         cardCondition: string | null;

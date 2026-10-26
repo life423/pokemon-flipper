@@ -1,6 +1,6 @@
 # Project memory and user preferences
 
-Updated October 25, 2026. This file records the user's agreed requirements so
+Updated October 26, 2026. This file records the user's agreed requirements so
 future work can continue without losing the conversation context.
 
 ## Working agreement
@@ -194,8 +194,8 @@ and then no further work. Commit locally on `faster-real-deals`; no merge or
 GitHub push was requested for this stopping point. All 239 tests, type checking,
 production build and diff checks pass before the commit.
 
-The following later requests are saved for the next session and are NOT yet
-implemented:
+The following requests were saved at that checkpoint and implemented when the
+user resumed UI work on October 26, 2026 (see validation below):
 
 - Auction cards currently mix the current bid with profit at another winning
   price and total investment at the current bid. Show an explicit max snipe/bid
@@ -215,6 +215,44 @@ implemented:
   bars, inconsistent type and spacing scales, and dense card content. Test
   desktop and phone layouts with offline fixtures, including auctions, missing
   photos/prices, long titles, side panels, filters and grading comparisons.
+
+## October 26 UI and auction update
+
+The user resumed work on `faster-real-deals`, authorizing UI cleanup, both
+PSA/CGC routes and clearer snipe instructions. After offline validation, the user
+authorized committing the work, merging into `main` and pushing to GitHub on
+October 26. Consult Git for the resulting commit and synchronization status.
+
+- Auction cards and analysis share a prominent current bid / max snipe ceiling.
+  The profit, ROI and total investment all use the explicitly stated winning
+  price. Above-limit auctions show the current-bid loss/outcome and a pass
+  message rather than hypothetical green profit at an unattainable lower bid.
+- Any profit / Any ROI is labeled a break-even ceiling. Weak photo/grade evidence
+  marks a limit provisional; missing pricing supplies no numerical snipe advice.
+  The app still does not place bids or offers.
+- Closing-price guides use the existing condition-matched raw quote, or dated
+  slab comps from the past 180 days with sample size and observed range. Unknown
+  condition/weak photos do not supply a raw guide. After-grading resale values
+  never substitute for the raw auction price. References are not calibrated
+  auction forecasts; outlook copy now describes the comparison honestly.
+- Raw cards display both PSA and CGC with the existing shared photo range and
+  separate resale evidence/costs. The chosen route is labeled. Missing prices
+  remain unavailable; slabs display their actual certified label only.
+- Fixed type/spacing scales, wrapping tabs, wider readable cards and a modal
+  analysis panel prevent results from being squeezed by the panel. Settings and
+  analysis lock the background scroll, trap Tab and restore focus on Escape.
+  Photo navigation uses a collapsed gallery and wrapping thumbnails. Its URLs
+  come from details already fetched for analysis; no extra eBay/photo AI call.
+- Search progress starts compact unless the user saved an expanded preference.
+  All original analysis reasons, cost assumptions and auction concerns remain
+  available in the panel. No prompts, provider concurrency, caching, reserves,
+  pricing models or discovery budgets were changed.
+- All 247 tests, both TypeScript projects, typed new test fixtures, production
+  build and diff checks pass. Offline browser checks covered 320/375/768/1280/
+  1440px layouts, auctions, BIN, slabs, unknown photos/prices, long titles,
+  over-limit losses, Any/Any repricing, gallery navigation, filter settings and
+  keyboard/focus behavior. No AI or eBay calls were used. See
+  `docs/ui-review-2026-10-26.md` for the scope and limits of this verification.
 
 ## Validation commands
 

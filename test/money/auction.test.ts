@@ -11,7 +11,7 @@ test("a slab auction that never sells near the max bid is a long shot", () => {
 
     assert.equal(outlook.chance, "LONG_SHOT");
     assert.equal(outlook.salesAtOrUnder, 0);
-    assert.match(describeOutlook(outlook, 10), /usually sells for about \$62\.00; 0 of 5 recent sales went for \$10\.00 or less/);
+    assert.match(describeOutlook(outlook, 10), /market reference is about \$62\.00; 0 of 5 recent sales went for \$10\.00 or less/);
 });
 
 test("a slab auction is possible when some recent sales went that low", () => {

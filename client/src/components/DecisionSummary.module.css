@@ -1,0 +1,144 @@
+.auction  {
+    display: grid;
+    gap: var(--space-3);
+    min-width: 0;
+}
+
+.amounts  {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-4);
+}
+
+.amounts > div  {
+    display: grid;
+    gap: var(--space-1);
+    min-width: 0;
+}
+
+.amounts strong  {
+    font-size: var(--text-xl);
+    line-height: 1.15;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+}
+
+.label  {
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    display: block;
+}
+
+.limit  {
+    color: var(--action-text);
+}
+
+.status  {
+    font-size: var(--text-sm);
+    color: var(--warning);
+}
+
+.scenario  {
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    background: var(--surface-alt);
+    border-radius: var(--radius-control);
+}
+
+.facts  {
+    display: grid;
+    gap: var(--space-2);
+    margin: 0;
+}
+
+.facts > div  {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: var(--space-1) var(--space-3);
+}
+
+.facts dt  {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+}
+
+.facts dd  {
+    margin: 0;
+    font-size: var(--text-sm);
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+}
+
+.gain  {
+    color: var(--success);
+}
+
+.loss  {
+    color: var(--pass-text);
+}
+
+.caution  {
+    color: var(--warning);
+}
+
+.market  {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-1) var(--space-2);
+    font-size: var(--text-sm);
+}
+
+.market p  {
+    grid-column: 1 / -1;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+}
+
+.terms, .note  {
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+}
+
+.grading  {
+    min-width: 0;
+    display: grid;
+    gap: var(--space-2);
+}
+
+.gradeRows  {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-2);
+}
+
+.gradeRoute  {
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    display: grid;
+    align-content: start;
+    gap: var(--space-1);
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.gradeHead  {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: var(--space-1);
+    font-size: var(--text-sm);
+}
+
+.gradeHead span  {
+    font-weight: 700;
+    color: var(--grade-text);
+}
+
+.routeValue  {
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+}

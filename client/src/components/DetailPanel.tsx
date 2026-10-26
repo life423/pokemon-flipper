@@ -14,10 +14,17 @@ import type {
     Slab,
     SlabPricing,
     Underwriting,
+    Targets,
 } from "../types";
 import { describeRange, dollars, name, percent, timeLeft } from "../format";
 import { useNow } from "../useNow";
+import { useDialog } from "../useDialog";
+import { MONEY_CONFIG } from "../../../shared/money/config.ts";
+import { AuctionSummary } from "./AuctionSummary";
+import { GradingComparison } from "./GradingComparison";
+import { PhotoGallery } from "./PhotoGallery";
 import { CONDITION_AREAS } from "../../../shared/conditions.ts";
+import { returnText } from "../../../shared/card-presentation.ts";
 import { ceilingLabel } from "../../../shared/format.ts";
 import { describeOffer, numbersAtOffer, offerFor } from "../../../shared/money/offer.ts";
 import { resaleActivity } from "../../../shared/liquidity.ts";
@@ -36,9 +43,10 @@ interface Props {
     onClose: () => void;
     onAnalyze: (fresh: boolean) => void;
     minGrade?: number;
+    targets?: Targets;
 }
 
-export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closing = false, minGrade = 0 }: Props) {
+export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closing = false, minGrade = 0, targets = MONEY_CONFIG.targets }: Props) {
     // A new listing opens at the top of the panel.
     const panel = useRef<HTMLElement>(null);
 
@@ -46,20 +54,13 @@ export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closin
         panel.current?.scrollTo({ top: 0 });
     }, [listing.id]);
 
-    useEffect(() => {
-        const onKey = (event: KeyboardEvent) => {
-            if (event.key === "Escape") onClose();
-        };
-
-        window.addEventListener("keydown", onKey);
-        return () => window.removeEventListener("keydown", onKey);
-    }, [onClose]);
+    useDialog(true, panel, onClose);
 
     return (
         <>
             <div className={`${styles.backdrop} ${closing ? styles.closing : ""}`} onClick={onClose} />
 
-            <aside ref={panel} className={`${styles.panel} ${closing ? styles.closing : ""}`} aria-label="Listing analysis">
+            <aside ref={panel} className={`${styles.panel} ${closing ? styles.closing : ""}`} aria-label="Listing analysis" role="dialog" aria-modal="true">
                 {/* Switching listings crossfades the content; the panel stays put. */}
                 <div key={listing.id} className={styles.content}>
                 <header className={styles.head}>
@@ -69,11 +70,7 @@ export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closin
                     </button>
                 </header>
 
-                <div className={styles.photos}>
-                    {listing.images.map((src, index) => (
-                        <img key={src} src={src} alt={`Listing photo ${index + 1}`} loading="lazy" />
-                    ))}
-                </div>
+                <PhotoGallery images={analysis?.status === "done" ? analysis.evaluation.listing.photos ?? listing.images : listing.images} />
 
                 <p className={styles.small}>
                     <a href={listing.url} target="_blank" rel="noopener noreferrer">
@@ -110,6 +107,7 @@ export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closin
                         evaluation={analysis.evaluation}
                         now={now}
                         minGrade={minGrade}
+                        targets={targets}
                         onReanalyze={() => onAnalyze(true)}
                     />
                 )}
@@ -178,12 +176,14 @@ function Analysis({
     now,
     onReanalyze,
     minGrade,
+    targets,
 }: {
     listing: ListingSummary;
     evaluation: Evaluation;
     now: number;
     onReanalyze: () => void;
     minGrade: number;
+    targets: Targets;
 }) {
     const tokens = evaluation.usage.reduce(
         (total, step) => total + (step.inputTokens ?? 0) + (step.outputTokens ?? 0),
@@ -194,8 +194,16 @@ function Analysis({
     return (
         <>
             {evaluation.underwriting && (
-                <VerdictSection underwriting={evaluation.underwriting} evaluation={evaluation} now={now} />
+                evaluation.listing.buyingOption === "AUCTION" ? (
+                    <Section title="Auction decision">
+                        <AuctionSummary evaluation={evaluation} targets={targets} now={now} />
+                        <Notes items={evaluation.underwriting.reasons} />
+                        <Notes items={evaluation.underwriting.assumptions} tone="muted" />
+                        <Notes items={evaluation.rating?.concerns ?? []} tone="bad" />
+                    </Section>
+                ) : <VerdictSection underwriting={evaluation.underwriting} evaluation={evaluation} now={now} />
             )}
+            {evaluation.condition && <Section title="PSA and CGC comparison"><GradingComparison evaluation={evaluation} expanded /></Section>}
             <Section title="Photo evidence and grading confidence">
                 <p>Assessment confidence: {name(evidence.confidence)}. {evidence.coverage}.</p>
                 <p>{evidence.target}</p>
@@ -381,7 +389,7 @@ function PathCard({ path, auction }: { path: MoneyPath; auction: boolean }) {
                     ...((auction
                         ? [
                               ["Cost at your max bid", dollars(path.costAtMaxBid)],
-                              ["Profit at your max bid", `${dollars(path.profitAtMaxBid)} (${percent(path.roiAtMaxBid)})`],
+                              ["Profit at your max bid", `${dollars(path.profitAtMaxBid)} (${returnText(path.costAtMaxBid && path.profitAtMaxBid != null ? path.profitAtMaxBid / path.costAtMaxBid : null)})`],
                               ["Worst case at your max bid", dollars(path.downsideAtMaxBid)],
                           ]
                         : [
@@ -389,7 +397,7 @@ function PathCard({ path, auction }: { path: MoneyPath; auction: boolean }) {
                               [
                                   "Profit",
                                   <span className={(path.profit ?? 0) >= 0 ? styles.good : styles.bad}>
-                                      {dollars(path.profit)} ({percent(path.roi)})
+                                      {dollars(path.profit)} ({returnText(path.cost > 0 ? path.profit / path.cost : null)})
                                   </span>,
                               ],
                               ["Worst case", dollars(path.downside)],

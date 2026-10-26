@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { prefersReducedMotion, transitionName, withViewTransition } from "./motion";
 import type { EbayUsage, Evaluation, ListingSummary, RatingLevel, SearchIntent, Targets } from "./types";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
@@ -188,41 +188,8 @@ function Segmented<T extends string>({
     options: [T, ReactNode][];
     onChange: (value: T) => void;
 }) {
-    // A pill that slides to the chosen option, so a switch shows where it went.
-    const group = useRef<HTMLDivElement>(null);
-    const [indicator, setIndicator] = useState<{ left: number; width: number } | null>(null);
-
-    useLayoutEffect(() => {
-        const measure = () => {
-            const active = group.current?.querySelector<HTMLElement>('[aria-pressed="true"]');
-
-            if (!active) return;
-
-            active.scrollIntoView({ block: "nearest", inline: "nearest" });
-
-            const next = { left: active.offsetLeft, width: active.offsetWidth };
-            setIndicator((previous) =>
-                previous && previous.left === next.left && previous.width === next.width ? previous : next
-            );
-        };
-
-        measure();
-
-        const observer = new ResizeObserver(measure);
-        if (group.current) observer.observe(group.current);
-
-        return () => observer.disconnect();
-    }, [value]);
-
     return (
-        <div ref={group} className={styles.segmented} role="group" aria-label={label}>
-            {indicator && (
-                <span
-                    className={styles.indicator}
-                    style={{ transform: `translateX(${indicator.left}px)`, width: indicator.width }}
-                    aria-hidden="true"
-                />
-            )}
+        <div className={styles.segmented} role="group" aria-label={label}>
             {options.map(([option, text]) => (
                 <button key={option} type="button" aria-pressed={value === option} onClick={() => onChange(option)}>
                     {text}
@@ -939,7 +906,7 @@ export function App() {
                         {/* Before the first search there's nothing to count, so phones skip the tabs. */}
                         <div className={styles.controlPanel} data-idle={searchStatus === "idle" || undefined}>
                             <div className={styles.controlRow}>
-                                {/* Every view: tabs on wide screens, a scrolling strip on phones. */}
+                                {/* Every view remains visible in wrapping tabs. */}
                                 <div className={styles.tabs}>
                                     <Segmented
                                         label="Show"
@@ -1252,6 +1219,7 @@ export function App() {
                                 analysis={analyses[listing.id]}
                                 years={setYearsByKey}
                                 minGrade={minGrade}
+                                targets={targets}
                                 selected={listing.id === selectedId}
                                 now={now}
                                 onOpen={() => {
@@ -1268,6 +1236,7 @@ export function App() {
                         listing={selected}
                         closing={panelClosing}
                         minGrade={minGrade}
+                        targets={targets}
                         analysis={analyses[selected.id]}
                         now={now}
                         onClose={close}

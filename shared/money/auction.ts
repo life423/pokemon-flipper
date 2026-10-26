@@ -61,7 +61,7 @@ export function isLongShot(auction: boolean, usual: UsualPrice | null | undefine
 
 // One plain sentence for the page.
 export function describeOutlook(outlook: AuctionOutlook, maxBid: number): string {
-    const usual = `It usually sells for about ${dollars(outlook.usualPrice)}`;
+    const usual = `The market reference is about ${dollars(outlook.usualPrice)}`;
     const sales =
         outlook.salesTotal !== null
             ? `; ${outlook.salesAtOrUnder} of ${outlook.salesTotal} recent sales went for ${dollars(maxBid)} or less`
@@ -72,7 +72,7 @@ export function describeOutlook(outlook: AuctionOutlook, maxBid: number): string
             ? `${usual}; winning there would make about ${dollars(outlook.profitAtUsual)}.`
             : `${usual}, and even that clears your targets.`;
     }
-    if (outlook.chance === "POSSIBLE") return `${usual}${sales}, so winning at your max bid is possible, not likely.`;
+    if (outlook.chance === "POSSIBLE") return `${usual}${sales}, your limit is below that reference. This is a comparison, not a measured chance of winning.`;
 
-    return `${usual}${sales}, so this auction will very likely end above your max bid.`;
+    return `${usual}${sales}, your limit is well below that reference. The low current bid does not establish a deal.`;
 }

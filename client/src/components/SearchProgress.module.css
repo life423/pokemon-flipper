@@ -442,9 +442,8 @@
    requests chip beside the status line. */
 @container progress (max-width: 30rem) {
     .captions {
-        flex-wrap: nowrap;
-        font-size: 0.6875rem;
-        white-space: nowrap;
+        flex-wrap: wrap;
+        font-size: var(--text-xs);
     }
 
     .stats > div {
@@ -456,7 +455,7 @@
     }
 
     .activity {
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
     }
 
     .activity p {

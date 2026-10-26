@@ -1,357 +1,214 @@
-/* A listing: the photo, then what it is, the verdict, the money, and the
-   three facts that back it up. The whole card opens the analysis. */
-.card {
+.card  {
     position: relative;
-    container: card / inline-size;
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: var(--space-3);
-    padding: var(--space-3);
-    background: var(--surface);
+    align-content: start;
+    min-width: 0;
+    gap: var(--space-4);
+    padding: var(--space-5);
     border: 1px solid var(--border);
     border-radius: var(--radius-card);
-    /* The selection ring, and the hover lift. */
-    box-shadow:
-        0 0 0 var(--ring, 0px) var(--accent),
-        var(--elevation, 0 0 0 transparent);
-    transition:
-        transform var(--dur-fast) var(--ease-out),
-        box-shadow var(--dur-slow) var(--ease-out),
-        border-color var(--dur-slow) var(--ease-out);
-    /* Results arrive in a short stagger. */
-    animation: card-in var(--dur-slow) var(--ease-out) backwards;
-    animation-delay: calc(var(--i, 0) * 30ms);
+    background: var(--surface);
+    transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
 }
 
-@keyframes card-in {
-    from {
-        opacity: 0;
-        transform: translateY(10px);
-    }
-}
-
-/* Selection is the interactive color, never a verdict color. */
-.selected {
-    --ring: 1px;
+.selected  {
     border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
 }
 
-@media (hover: hover) {
-    .card:hover {
-        transform: translateY(-2px);
-        border-color: color-mix(in srgb, var(--tone) 45%, var(--border));
-        --elevation: var(--lift);
-    }
-
-}
-
-/* Covers the card, so a tap anywhere opens it; its focus ring is the card's. */
-.hit {
+.hit  {
     position: absolute;
     inset: 0;
     z-index: 1;
-    padding: 0;
-    background: transparent;
+    width: 100%;
     border: 0;
     border-radius: inherit;
+    background: transparent;
     cursor: pointer;
 }
 
-.hit:focus-visible {
-    outline-offset: 2px;
+.hit:focus-visible  {
+    outline-offset: 3px;
 }
 
-.hit:active:not(:disabled) {
-    transform: none;
+.head  {
+    display: grid;
+    grid-template-columns: 56px minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-3);
 }
 
-.card:has(.hit:active) {
-    transform: scale(0.99);
-}
-
-/* The verdict's colors, in the palette's meanings. */
-.card[data-tone="buy"] {
-    --tone: var(--tone-buy);
-    --tone-text: var(--tone-buy);
-}
-
-.card[data-tone="grade"] {
-    --tone: var(--tone-grade);
-    --tone-text: var(--grade-text);
-}
-
-.card[data-tone="offer"] {
-    --tone: var(--tone-action);
-    --tone-text: var(--action-text);
-}
-
-.card[data-tone="watch"] {
-    --tone: var(--tone-watch);
-    --tone-text: var(--tone-watch);
-}
-
-.card[data-tone="pass"] {
-    --tone: var(--tone-pass);
-    --tone-text: var(--pass-text);
-}
-
-.card[data-tone="pending"],
-.card[data-tone="quiet"] {
-    --tone: var(--text-muted);
-    --tone-text: var(--text-muted);
-}
-
-/* A neutral backdrop, so the card's own colors read true. */
-.photo {
+.photo  {
     grid-row: 1 / span 2;
-    width: 5rem;
-    align-self: start;
+    width: 56px;
     aspect-ratio: 5 / 7;
     overflow: hidden;
+    border-radius: 6px;
     background: var(--surface-alt);
-    border-radius: 8px;
 }
 
-.photo img {
+.photo img  {
     width: 100%;
     height: 100%;
     object-fit: contain;
 }
 
-.body {
-    display: grid;
-    align-content: start;
-    gap: 6px;
+.identity  {
     min-width: 0;
 }
 
-.head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: var(--space-2);
-}
-
-.name {
+.identity h2  {
+    font-size: var(--text-md);
+    font-weight: 700;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
     display: -webkit-box;
-    overflow: hidden;
-    font-size: var(--text-md);
-    font-weight: 750;
-    line-height: 1.25;
-    -webkit-line-clamp: 2;
+    -webkit-line-clamp: 3;
     -webkit-box-orient: vertical;
-}
-
-.set {
     overflow: hidden;
-    color: var(--text-muted);
-    font-size: var(--text-sm);
-    white-space: nowrap;
-    text-overflow: ellipsis;
 }
 
-.badge {
-    flex: none;
-    padding: 4px 10px;
-    background: color-mix(in srgb, var(--tone) 14%, transparent);
-    border: 1px solid color-mix(in srgb, var(--tone) 55%, transparent);
+.identity p  {
+    margin-top: var(--space-1);
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    overflow-wrap: anywhere;
+}
+
+.badge  {
+    grid-column: 2;
+    justify-self: start;
+    padding: var(--space-1) var(--space-2);
     border-radius: var(--radius-pill);
-    color: var(--tone-text);
-    font-size: var(--text-xs);
-    font-weight: 800;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    white-space: nowrap;
-    transition:
-        background-color var(--dur-slow) var(--ease-out),
-        border-color var(--dur-slow) var(--ease-out),
-        color var(--dur-slow) var(--ease-out);
-    animation: badge-in var(--dur-base) var(--ease-out) backwards;
-}
-
-/* Not verified yet: a dashed badge. */
-.card[data-tone="pending"] .badge {
-    border-style: dashed;
-}
-
-@keyframes badge-in {
-    from {
-        opacity: 0;
-        transform: scale(0.92);
-    }
-}
-
-.priceRow {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 2px var(--space-3);
-    font-variant-numeric: tabular-nums;
-}
-
-.price {
-    font-size: var(--text-xl);
-    font-weight: 800;
-    letter-spacing: -0.01em;
-}
-
-.price small {
+    background: var(--surface-alt);
     color: var(--text-muted);
     font-size: var(--text-xs);
-    font-weight: 600;
-    letter-spacing: 0;
+    font-weight: 650;
 }
 
-.gain,
-.loss {
-    font-size: var(--text-md);
-    font-weight: 750;
-    transition: color var(--dur-slow) var(--ease-out);
-}
-
-.gain {
+.card[data-tone="buy"] .badge  {
     color: var(--success);
 }
 
-.loss {
+.card[data-tone="grade"] .badge  {
+    color: var(--grade-text);
+}
+
+.card[data-tone="watch"] .badge  {
+    color: var(--warning);
+}
+
+.card[data-tone="pass"] .badge  {
     color: var(--pass-text);
 }
 
-.meta {
-    color: var(--text-muted);
-    font-size: var(--text-xs);
-}
-
-.found {
-    display: inline-block;
-    margin-right: 6px;
-    padding: 0 6px;
-    border-radius: var(--radius-pill);
-    font-weight: 700;
-}
-
-.found {
-    background: color-mix(in srgb, var(--accent) 16%, transparent);
+.card[data-tone="offer"] .badge  {
     color: var(--action-text);
 }
 
-
-/* Three facts behind the verdict, divided by hairlines, and the way in. */
-.stats {
-    grid-column: 2;
+.money  {
     display: grid;
-    /* Grade and comp value fit their content; the seller takes the rest. */
-    grid-template-columns: auto auto minmax(0, 1fr) auto;
-    align-items: center;
-    margin: 4px 0 0;
-    padding-top: var(--space-2);
-    border-top: 1px solid var(--border);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    gap: var(--space-4);
 }
 
-.stats > div {
+.money > div  {
     display: grid;
-    gap: 2px;
+    gap: var(--space-1);
     min-width: 0;
-    padding: 0 var(--space-2);
-    border-left: 1px solid var(--border);
 }
 
-.stats > div:first-child {
-    padding-left: 0;
-    border-left: 0;
-}
-
-.stats dt {
+.label, .note  {
     color: var(--text-muted);
     font-size: var(--text-xs);
-    white-space: nowrap;
+    line-height: 1.5;
 }
 
-.stats dd {
-    overflow: hidden;
-    margin: 0;
+.price  {
+    font-size: var(--text-xl);
+    font-weight: 750;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+}
+
+.gain, .loss  {
+    font-size: var(--text-lg);
+    font-weight: 700;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+}
+
+.gain  {
+    color: var(--success);
+}
+
+.loss  {
+    color: var(--pass-text);
+}
+
+.limit  {
     font-size: var(--text-sm);
-    font-weight: 650;
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-    text-overflow: ellipsis;
+    font-weight: 600;
+    color: var(--action-text);
 }
 
-.chevron {
+.notice  {
+    padding: var(--space-3);
+    border-radius: var(--radius-control);
+    background: var(--surface-alt);
+    font-size: var(--text-sm);
+    color: var(--warning);
+}
+
+.facts  {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-3);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--border);
+    margin: 0;
+}
+
+.facts > div  {
+    min-width: 0;
+}
+
+.facts dt  {
+    font-size: var(--text-xs);
     color: var(--text-muted);
-    font-size: 1.2rem;
-    transform: rotate(-90deg);
-    transition:
-        transform var(--dur-fast) var(--ease-out),
-        color var(--dur-fast) var(--ease-out);
 }
 
-@media (hover: hover) {
-    .card:hover .chevron {
-        transform: rotate(-90deg) translateY(3px);
-        color: var(--text);
-    }
+.facts dd  {
+    margin: var(--space-1) 0 0;
+    font-size: var(--text-xs);
+    overflow-wrap: anywhere;
 }
 
-/* Too pricey, unverified, or a long shot: it recedes, so deals stand out. */
-.card[data-tone="quiet"] .name,
-.card[data-tone="quiet"] .price {
-    color: var(--text-muted);
+.certified  {
+    font-size: var(--text-sm);
+    font-weight: 600;
 }
 
-.card[data-tone="quiet"] .photo {
-    opacity: 0.6;
+.openHint  {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-2);
+    font-size: var(--text-xs);
+    color: var(--action-text);
 }
 
-/* The full line under the price on a wide card; the short one on a narrow card. */
-.metaShort {
-    display: none;
+@media (hover:hover)  {
+    .card:hover  {
+        border-color: var(--accent);
+        box-shadow: 0 4px 16px rgb(0 0 0 / .12);
+    }
+
 }
 
-@container card (max-width: 26rem) {
-    .metaFull {
-        display: none;
+@media (max-width: 26rem)  {
+    .card  {
+        padding: var(--space-4);
     }
 
-    .metaShort {
-        display: inline;
-    }
-
-    .meta {
-        overflow: hidden;
-        white-space: nowrap;
-        text-overflow: ellipsis;
-    }
-
-    .badge {
-        padding: 3px 8px;
-        font-size: 0.6875rem;
-    }
-
-    .photo {
-        width: 4.75rem;
-    }
-
-    .stats > div {
-        padding: 0 6px;
-    }
-
-    .stats > div:last-of-type {
-        padding-right: 0;
-    }
-
-    .chevron {
-        font-size: 1rem;
-    }
-
-    .stats dt {
-        font-size: 0.6875rem;
-    }
-
-    .stats dd {
-        font-size: var(--text-xs);
-    }
 }
-
-.priceRow small { display: block; font-size: var(--text-xs); font-weight: 500; color: var(--text-muted); }
-.activity { margin-top: var(--space-2); color: var(--text-muted); font-size: var(--text-xs); }

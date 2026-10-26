@@ -15,10 +15,9 @@
     padding: 0 var(--space-4) calc(var(--space-5) + env(safe-area-inset-bottom));
 }
 
-/* Search, deal criteria, and where you are: the two rows that stay. */
+/* Search and criteria remain in normal flow, clear of the results. */
 .toolbar {
     display: grid;
-    /* Never wider than the screen: the tabs scroll instead. */
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-3);
     margin-bottom: var(--space-3);
@@ -26,15 +25,6 @@
     padding-top: calc(env(safe-area-inset-top, 0px) + var(--space-3));
     padding-bottom: var(--space-3);
     background: var(--bg);
-}
-
-/* Pinned while you scroll, where there's room for it. */
-@media (min-width: 48rem) {
-    .toolbar {
-        position: sticky;
-        top: 0;
-        z-index: 5;
-    }
 }
 
 .searchRow {
@@ -141,12 +131,11 @@
 }
 
 
-/* On a narrow screen, the tabs scroll sideways instead of wrapping. */
+/* Every view stays visible without a horizontal scrolling strip. */
 .segmented {
     max-width: 100%;
-    overflow-x: auto;
-    scrollbar-width: none;
     display: inline-flex;
+    flex-wrap: wrap;
     padding: 3px;
     background: var(--surface);
     border: 1px solid var(--border);
@@ -177,21 +166,8 @@
 
 .segmented button[aria-pressed="true"] {
     color: var(--text);
-}
-
-/* Slides to the chosen option. */
-.indicator {
-    position: absolute;
-    top: 3px;
-    bottom: 3px;
-    left: 0;
-    border-radius: var(--radius-pill);
     background: var(--surface-alt);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
-    transition:
-        transform var(--dur-base) var(--ease-in-out),
-        width var(--dur-base) var(--ease-in-out);
-    pointer-events: none;
+    box-shadow: inset 0 0 0 1px var(--border);
 }
 
 @media (hover: hover) {
@@ -299,15 +275,9 @@
 /* Columns appear as space allows: no breakpoints. */
 .results {
     display: grid;
-    gap: var(--space-3);
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr));
-}
-
-/* Wide enough for the analysis to sit beside the results. */
-@media (min-width: 64rem) {
-    .layout:has(> aside) {
-        grid-template-columns: minmax(0, 1fr) min(34rem, 42%);
-    }
+    gap: var(--space-5);
+    align-items: start;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 28rem), 1fr));
 }
 
 @media (pointer: coarse) {
@@ -565,7 +535,6 @@
 /* Views, targets, and filters in one panel; active filters below them. */
 .controlPanel {
     display: grid;
-    /* Never wider than the screen: the tabs scroll instead. */
     grid-template-columns: minmax(0, 1fr);
     gap: var(--space-2);
     padding: var(--space-2);
@@ -590,31 +559,13 @@
     font-weight: 600;
 }
 
-/* The chosen view: a tinted tab with an underline, sliding between them. */
-.controlPanel .indicator {
-    top: 0;
-    bottom: 0;
-    border-radius: var(--radius-control);
+/* Tabs and targets wrap independently when the available room changes. */
+.controlPanel .segmented button[aria-pressed="true"] {
     background: color-mix(in srgb, var(--accent) 14%, transparent);
     box-shadow: inset 0 -2px 0 var(--accent);
 }
-
-/* Wide screens: one row. The tabs take the room left over and scroll if
-   it runs out; the targets and Filters keep their place on the right. */
-@media (min-width: 40rem) {
-    .controlPanel .controlRow {
-        flex-wrap: nowrap;
-    }
-
-    .tabs {
-        flex: 1 1 auto;
-        min-width: 0;
-    }
-
-    .controlPanel .criteria {
-        flex: none;
-    }
-}
+.tabs { flex: 1 1 40rem; min-width: 0; }
+.controlPanel .criteria { margin-left: auto; }
 
 .tabLabel {
     display: inline-flex;
@@ -784,21 +735,7 @@
         padding: 0 5px;
     }
 
-    /* The tab strip says it scrolls: the next tab peeks in under a fade,
-       swipes settle on a tab, the last tab can scroll clear of the fade,
-       and a sideways swipe moves only the tabs. */
-    .controlPanel .segmented {
-        padding-right: 40px;
-        scroll-snap-type: x proximity;
-        overscroll-behavior-x: contain;
-        mask-image: linear-gradient(to right, black calc(100% - 40px), transparent);
-    }
-
-    .controlPanel .segmented button {
-        scroll-snap-align: start;
-    }
-
-    /* Every view in a scrolling strip, with a hairline under it. */
+    /* Wrap the views above the mobile criteria. */
     .tabs {
         flex: 1 1 100%;
         min-width: 0;
@@ -1005,8 +942,10 @@
 .offerToggle input:checked { background: var(--accent); }
 .offerToggle input:checked::before { transform: translateX(18px); background: white; }
 .offerToggle input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.searchPreferences { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); border-top: 1px solid var(--border); padding-top: var(--space-3); margin-top: var(--space-2); }
-.searchPreferences .field { max-width: 15rem; }
+.searchPreferences { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: var(--space-3); border-top: 1px solid var(--border); padding-top: var(--space-3); margin-top: var(--space-2); }
+.searchPreferences .field { min-width: 0; max-width: none; }
+.searchPreferences .offerToggle { align-self: center; }
+.searchPreferences .preferenceNote { grid-column: 1 / -1; }
 .preferenceNote { color: var(--text-muted); font-size: var(--text-xs); max-width: 24rem; }
 @media (max-width: 39.999rem) {
     .searchPreferences.wideOnly { display: none; }

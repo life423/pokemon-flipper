@@ -144,6 +144,7 @@ export async function evaluateListing(
             buyingOption: listing.buyingOption,
             bids: listing.bids,
             endTime: listing.endTime,
+            photos: photoUrls,
             photosInListing: listing.images.length,
             photosAnalyzed: photoUrls.length,
         },
