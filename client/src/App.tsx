@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { prefersReducedMotion, transitionName, withViewTransition } from "./motion";
 import type { EbayUsage, Evaluation, ListingSummary, RatingLevel, SearchIntent, Targets } from "./types";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
+import { canAutoAnalyze } from "../../shared/analysis.ts";
 import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.ts";
 import { offerFor, offerWorthMaking } from "../../shared/money/offer.ts";
 import { bargainScore, bargainSignals } from "../../shared/signals.ts";
@@ -338,16 +339,17 @@ export function App() {
 
     const analyses = useMemo(() => {
         const repriced: Record<string, AnalysisState> = {};
+        const currentListings = new Map(rawListings.map((listing) => [listing.id, listing]));
 
         for (const [id, analysis] of Object.entries(rawAnalyses)) {
             repriced[id] =
                 analysis.status === "done"
-                    ? { status: "done", evaluation: retargetEvaluation(analysis.evaluation, targets) }
+                    ? { status: "done", evaluation: retargetEvaluation(analysis.evaluation, targets, currentListings.get(id)) }
                     : analysis;
         }
 
         return repriced;
-    }, [rawAnalyses, targets]);
+    }, [rawAnalyses, targets, rawListings]);
 
     function changeTarget(field: keyof Targets, text: string) {
         setTargetInputs((previous) => ({ ...previous, [field]: text }));
@@ -499,7 +501,7 @@ export function App() {
 
         const waiting = listings
             // Long-shot auctions aren't worth the AI.
-            .filter((listing) => listing.screen?.status === "CANDIDATE" && !listing.screen.longShot && !analyses[listing.id])
+            .filter((listing) => canAutoAnalyze(listing) && !analyses[listing.id])
             .sort((a, b) => bestCaseRoom(b) - bestCaseRoom(a));
 
         for (const listing of waiting) {
@@ -537,7 +539,7 @@ export function App() {
             .filter((listing) => (listing.currentPrice ?? 0) <= limit)
             .filter((listing) => listing.buyingOption !== "FIXED_PRICE" || (listing.currentPrice ?? 0) >= floor)
             .filter((listing) => !listing.endTime || Date.parse(listing.endTime) > now);
-    }, [listings, typeFilter, kindFilter, maxPrice, minPrice, now]);
+    }, [listings, analyses, typeFilter, kindFilter, maxPrice, minPrice, now]);
 
     const groups = useMemo(() => {
         const deals: ListingSummary[] = [];
@@ -608,7 +610,7 @@ export function App() {
         const analyzing = Object.values(analyses).filter((analysis) => analysis.status === "loading").length;
 
         return {
-            candidates: listings.filter((listing) => listing.screen?.status === "CANDIDATE" && !listing.screen.longShot).length,
+            candidates: listings.filter(canAutoAnalyze).length,
             dropped: count("DROPPED"),
             unchecked: listings.filter((listing) => listing.screen?.status === "UNSCREENED" && !listing.match).length,
             mismatched: listings.filter(
@@ -619,7 +621,7 @@ export function App() {
             junk: listings.filter((listing) => listing.match === "JUNK").length,
             analyzing,
             waiting: listings.filter(
-                (listing) => listing.screen?.status === "CANDIDATE" && !listing.screen.longShot && !analyses[listing.id]
+                (listing) => canAutoAnalyze(listing) && !analyses[listing.id]
             ).length,
         };
     }, [listings, analyses]);
@@ -775,8 +777,7 @@ export function App() {
         aiTarget,
         listings.filter(
             (listing) =>
-                listing.screen?.status === "CANDIDATE" &&
-                !listing.screen.longShot &&
+                canAutoAnalyze(listing) &&
                 analyses[listing.id] &&
                 analyses[listing.id].status !== "loading"
         ).length

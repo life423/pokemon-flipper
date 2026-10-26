@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { checkSlab, graderCode, normalizeGrade } from "../../server/identity/slab-check.ts";
 
 const slabPhotos = (overrides = {}) => ({
+    photoSufficiency: "SUFFICIENT",
+    images: [{ number: 1, view: "FRONT", usable: true, isStockImage: false, issues: [] }],
     slab: {
         present: true,
         grader: "PSA",
@@ -65,4 +67,25 @@ test("\"None\" written as a qualifier isn't a qualifier", () => {
 
 test("a slab that looks fake is flagged as such", () => {
     assert.equal(checkSlab(slabPhotos({ authenticity: "LIKELY_FAKE" }), ASPECTS).status, "LIKELY_FAKE");
+});
+
+test("stock-only or unusable slab photos require review even with a readable label", () => {
+    const stock = slabPhotos();
+    stock.images[0].isStockImage = true;
+    const unusable = slabPhotos();
+    unusable.images[0].usable = false;
+
+    for (const photos of [stock, unusable, { ...slabPhotos(), images: [] }]) {
+        const result = checkSlab(photos, ASPECTS);
+        assert.equal(result.status, "NEEDS_REVIEW");
+        assert.match(result.reasons.join(" "), /specific slab/);
+    }
+});
+
+test("a real front photo still permits slab resale without raw-card grading views", () => {
+    const photos = slabPhotos();
+    // Sufficiency describes raw condition grading, which slabs skip.
+    photos.photoSufficiency = "INSUFFICIENT";
+    photos.images.push({ number: 2, view: "BACK", usable: false, isStockImage: true, issues: [] });
+    assert.equal(checkSlab(photos, ASPECTS).status, "OK");
 });

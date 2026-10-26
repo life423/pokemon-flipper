@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { screenListing } from "../../server/deals/find-deals.ts";
+import { canAutoAnalyze } from "../../shared/analysis.ts";
 
 const listing = (title, extra = {}) => ({
     id: "v1|1|0",
@@ -124,6 +125,7 @@ test("a candidate whose main photo shows another card is set aside before any eB
     const result = await screenListing(listing("Charizard Base Set 4/102 Holo", { images: ["https://i.ebayimg.com/images/g/x/s-l225.jpg"] }), s);
 
     assert.equal(result.match, "OTHER_CARD");
+    assert.equal(canAutoAnalyze(result), false);
     assert.match(result.screen.reason, /30th anniversary/);
     assert.equal(s.calls.details, 0);
 });
@@ -136,6 +138,33 @@ test("a main photo that matches, or can't be judged, lets the candidate go on", 
     const result = await screenListing(listing("Charizard Base Set 4/102 Holo", { images: ["https://i.ebayimg.com/images/g/x/s-l225.jpg"] }), s);
 
     assert.equal(result.match, undefined);
+    assert.equal(canAutoAnalyze(result), true);
     assert.equal(s.calls.photos, 1);
     assert.equal(s.calls.details, 1);
+});
+
+test("cancelling while a title is being read prevents pricing and eBay details", async () => {
+    const controller = new AbortController();
+    const s = steps([]);
+    s.readTitle = async () => {
+        controller.abort();
+        return { aspects: { Set: "Base Set" }, filled: [] };
+    };
+
+    await assert.rejects(screenListing(listing("Charizard Base Set"), s, null, controller.signal), { name: "AbortError" });
+    assert.equal(s.calls.checks.length, 0);
+    assert.equal(s.calls.details, 0);
+});
+
+test("cancelling during the first check prevents photo and detail requests", async () => {
+    const controller = new AbortController();
+    const s = steps([]);
+    s.check = async () => {
+        controller.abort();
+        return screen("CANDIDATE", { card: { name: "Charizard" } });
+    };
+
+    await assert.rejects(screenListing(listing("Charizard Base Set", { images: ["photo"] }), s, null, controller.signal), { name: "AbortError" });
+    assert.equal(s.calls.photos ?? 0, 0);
+    assert.equal(s.calls.details, 0);
 });

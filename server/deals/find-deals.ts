@@ -63,8 +63,10 @@ function withFilled(screen: Screen, filled: string[]): Screen {
 export async function screenListing(
     listing: ListingSummary,
     steps: ScreenSteps = REAL_STEPS,
-    intent: SearchIntent | null = null
+    intent: SearchIntent | null = null,
+    signal?: AbortSignal
 ): Promise<ListingSummary> {
+    signal?.throwIfAborted();
     const base = {
         price: listing.currentPrice,
         shipping: listing.shipping,
@@ -75,6 +77,7 @@ export async function screenListing(
     // First from the search result alone: the title, read by the AI. The
     // condition is the one the title claims; with none, it's assumed best.
     const fromTitle = await steps.readTitle({ title: listing.title, aspects: {} });
+    signal?.throwIfAborted();
 
     // Not a single card: a lot, sealed product, merch, a mystery pack, a
     // fake. Skipped before any price lookup or eBay request.
@@ -96,6 +99,7 @@ export async function screenListing(
         await steps.check({ ...base, title: listing.title, aspects: fromTitle.aspects, cardCondition: fromTitle.condition ?? null }),
         fromTitle.filled
     );
+    signal?.throwIfAborted();
 
     // Priced too low to be the real card: junk, before any eBay request.
     if (first.junk) return { ...listing, match: "JUNK", screen: first };
@@ -106,6 +110,7 @@ export async function screenListing(
 
     if (first.status === "CANDIDATE" && !first.longShot && first.card && listing.images[0]) {
         seen = await steps.matchPhoto(listing.images[0], first.card);
+        signal?.throwIfAborted();
 
         if (seen?.verdict === "MISMATCH") {
             const reason = `The main photo doesn't match: ${seen.problems.join("; ") || "another card"}.`;
@@ -123,12 +128,15 @@ export async function screenListing(
     try {
         details = await steps.loadDetails(listing.id);
     } catch {
+        signal?.throwIfAborted();
         // Out of eBay requests, or the listing is gone: the title's check stands.
         return { ...listing, screen: first };
     }
+    signal?.throwIfAborted();
 
     // Then with the listing's own details; the title only fills gaps.
     const { aspects, filled } = await steps.readTitle(details);
+    signal?.throwIfAborted();
 
     if (!isEnglish(aspects.Language)) {
         return { ...listing, match: "OTHER_LANGUAGE" };
@@ -181,9 +189,12 @@ export async function findDeals(
         signal?: AbortSignal;
     } = {}
 ): Promise<ListingSummary[]> {
+    if (signal?.aborted) return [];
     const intent = await readSearch(search);
+    if (signal?.aborted) return [];
     const limit = Math.min(MOST_RESULTS, Math.max(200, Math.round(maxResults / 200) * 200));
     const { listings, total, skipped } = await searchListings(search, { maxResults: limit });
+    if (signal?.aborted) return [];
     const now = Date.now();
     const requestsBefore = detailRequestCount();
 
@@ -200,12 +211,25 @@ export async function findDeals(
     // Every title queued for reading at once, so the AI gets full batches
     // of 25, but not waited on: each listing is checked as soon as its own
     // title comes back, so results start arriving within seconds.
-    for (const listing of matching) void readTitle(listing.title);
+    if (signal?.aborted) return [];
+    for (const listing of matching) void readTitle(listing.title, signal);
+
+    const steps: ScreenSteps = {
+        ...REAL_STEPS,
+        readTitle: (listing) => fillFromTitle(listing, (title) => readTitle(title, signal)),
+    };
 
     const results = await mapLimit(matching, PARALLEL_LISTINGS, async (listing) => {
         if (signal?.aborted) return null;
 
-        const screened = await screenListing(listing, REAL_STEPS, intent);
+        let screened: ListingSummary;
+        try {
+            screened = await screenListing(listing, steps, intent, signal);
+        } catch (error) {
+            if (signal?.aborted) return null;
+            throw error;
+        }
+        if (signal?.aborted) return null;
         const mismatch = screened.match ?? cardMismatch(screened.screen, intent);
         const result = mismatch ? { ...screened, match: mismatch } : screened;
 

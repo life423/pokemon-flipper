@@ -2,7 +2,7 @@ import { MONEY_CONFIG, type MoneyConfig } from "./config.ts";
 import { bestPath, pathNumbers, underwrite } from "./underwriting.ts";
 import { rateDeal } from "./rating.ts";
 import { isLongShot } from "./auction.ts";
-import type { Evaluation, Screen, Targets } from "../types.ts";
+import type { Evaluation, ListingSummary, Screen, Targets } from "../types.ts";
 
 // Your profit and return targets change by card, so the page re-prices
 // everything for the targets you set. The same money math runs on the
@@ -13,9 +13,26 @@ export function withTargets(targets: Targets, config: MoneyConfig = MONEY_CONFIG
 }
 
 // An analyzed listing: every path, the verdict, and the rating, redone.
-export function retargetEvaluation(evaluation: Evaluation, targets: Targets): Evaluation {
-    const underwriting = underwrite(evaluation, withTargets(targets));
-    const repriced = { ...evaluation, underwriting };
+export function retargetEvaluation(evaluation: Evaluation, targets: Targets, current?: ListingSummary): Evaluation {
+    // Keep the saved photo assessment, but use the latest search's purchase
+    // terms. A missing shipping quote falls back to the listing details,
+    // just as it does when the server evaluates a search result.
+    const updated = current
+        ? {
+              ...evaluation,
+              listing: {
+                  ...evaluation.listing,
+                  price: current.currentPrice,
+                  shipping: current.shipping ?? evaluation.listing.shipping,
+                  bids: current.bids,
+                  endTime: current.endTime,
+                  buyingOption: current.buyingOption,
+                  seller: current.seller ?? evaluation.listing.seller,
+              },
+          }
+        : evaluation;
+    const underwriting = underwrite(updated, withTargets(targets));
+    const repriced = { ...updated, underwriting };
 
     return { ...repriced, rating: rateDeal(repriced) };
 }

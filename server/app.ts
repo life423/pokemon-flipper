@@ -33,7 +33,7 @@ function currentState(body: unknown): CurrentState | null {
 // The search text from ?q=, or empty.
 const searchText = (req: express.Request) => (typeof req.query.q === "string" ? req.query.q : "");
 const server = http.createServer(app);
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT || 3000);
 const isProduction = process.env.NODE_ENV === "production";
 
 app.use(express.json());
@@ -193,6 +193,7 @@ server.on("error", (error) => {
     process.exit(1);
 });
 
-server.listen(PORT, () => {
+// This is a local app with paid API access, so don't expose it on the LAN.
+server.listen(PORT, "127.0.0.1", () => {
     console.log(`Server listening on http://localhost:${PORT}`);
 });

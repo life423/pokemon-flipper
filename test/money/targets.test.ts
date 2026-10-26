@@ -65,3 +65,26 @@ test("with any profit and any return, the max bid is break-even, never a loss", 
     assert.ok(best.profitAtMaxBid >= 0);
     assert.ok(best.profitAtMaxBid < 2);
 });
+
+test("a repeat search uses the latest price and shipping while preserving the saved assessment", () => {
+    const saved = slabEvaluation();
+    const targets = { minProfit: 50, minRoi: 0.25 };
+    const current = { currentPrice: 2300, shipping: 15, bids: 4, endTime: "2026-12-01T00:00:00Z", buyingOption: "AUCTION", seller: null };
+    const result = retargetEvaluation(saved, targets, current);
+
+    assert.equal(retargetEvaluation(saved, targets).underwriting.verdict, "BUY_GRADED");
+    assert.equal(result.underwriting.verdict, "PASS");
+    assert.equal(result.listing.price, 2300);
+    assert.equal(result.listing.shipping, 15);
+    assert.equal(result.listing.bids, 4);
+    assert.equal(result.listing.endTime, current.endTime);
+    assert.equal(result.listing.buyingOption, "AUCTION");
+    assert.equal(result.slabPricing, saved.slabPricing);
+    assert.equal(saved.listing.price, 1500);
+    assert.equal(saved.listing.shipping, 5);
+
+    const unknown = retargetEvaluation(saved, targets, { ...current, currentPrice: null, shipping: null });
+    assert.equal(unknown.underwriting.verdict, "CANT_PRICE");
+    assert.equal(unknown.listing.shipping, saved.listing.shipping);
+    assert.equal(unknown.rating, null);
+});

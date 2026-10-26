@@ -94,46 +94,67 @@ async function readBatch(titles: string[]): Promise<(TitleReading | null)[]> {
     });
 }
 
-// A search reads hundreds of titles at once: four batches in flight at a time.
-const limit = createLimiter(4);
-const readInBatches = createBatcher((titles: string[]) => limit(() => readBatch(titles)), {
-    maxSize: BATCH_SIZE,
-    maxWaitMs: 300,
-});
-
 const cacheKey = (title: string) => `title-reading:v${READER_VERSION}:${MODEL}:${normalizeText(title).trim()}`;
 
-// Titles being read right now, so a second ask for one waits on the
-// first instead of paying for it twice.
-const inFlight = new Map<string, Promise<TitleReading | null>>();
+// Dependencies are replaceable so batching and cancellation can be tested
+// without paid calls. Production keeps four batches of 25 in flight.
+export function createTitleReader({
+    read = readBatch,
+    load = (key: string) => readCache<TitleReading>(key, MONTH_HOURS),
+    save = writeCache,
+} = {}) {
+    type Request = { title: string; needed: () => boolean };
+    const limit = createLimiter(4);
+    const readInBatches = createBatcher((requests: Request[]) => limit(async () => {
+        // Check after getting a slot: a stopped search may have been waiting
+        // behind several batches. Already-running calls are allowed to finish.
+        const active = requests.filter((request) => request.needed());
+        const results = active.length ? await read(active.map((request) => request.title)) : [];
+        const answers = new Map(active.map((request, index) => [request, results[index] ?? null]));
+        return requests.map((request) => answers.get(request) ?? null);
+    }), { maxSize: BATCH_SIZE, maxWaitMs: 300 });
 
-export function readTitle(title: string): Promise<TitleReading | null> {
-    const key = cacheKey(title);
-    const pending = inFlight.get(key);
+    // A title shared by two searches is still read just once. Cancelling one
+    // search must not cancel a reading the other search still needs.
+    const inFlight = new Map<string, {
+        consumers: Set<AbortSignal | undefined>;
+        promise: Promise<TitleReading | null>;
+    }>();
 
-    if (pending) return pending;
+    return function readTitle(title: string, signal?: AbortSignal): Promise<TitleReading | null> {
+        if (signal?.aborted) return Promise.resolve(null);
 
-    const reading = (async () => {
-        const saved = await readCache<TitleReading>(key, MONTH_HOURS);
+        const key = cacheKey(title);
+        const pending = inFlight.get(key);
 
-        if (saved) return saved;
-
-        try {
-            const answer = await readInBatches(title);
-
-            if (answer) await writeCache(key, answer);
-
-            return answer;
-        } catch (error) {
-            console.error(`Reading a title failed: ${(error as Error).message}`);
-            return null;
+        if (pending) {
+            pending.consumers.add(signal);
+            return pending.promise;
         }
-    })().finally(() => inFlight.delete(key));
 
-    inFlight.set(key, reading);
+        const consumers = new Set([signal]);
+        const needed = () => [...consumers].some((consumer) => !consumer?.aborted);
+        const promise = (async () => {
+            const saved = await load(key);
+            if (saved) return saved;
+            if (!needed()) return null;
 
-    return reading;
+            try {
+                const answer = await readInBatches({ title, needed });
+                if (answer) await save(key, answer);
+                return answer;
+            } catch (error) {
+                console.error(`Reading a title failed: ${(error as Error).message}`);
+                return null;
+            }
+        })().finally(() => inFlight.delete(key));
+
+        inFlight.set(key, { consumers, promise });
+        return promise;
+    };
 }
+
+export const readTitle = createTitleReader();
 
 const FILLABLE: [aspect: string, field: keyof TitleReading][] = [
     ["Set", "set"],

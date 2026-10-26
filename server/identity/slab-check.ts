@@ -1,4 +1,4 @@
-import type { Slab, SlabReading } from "../../shared/types.ts";
+import type { PhotoCheck, Slab } from "../../shared/types.ts";
 import { normalizeText } from "../ebay/filters.ts";
 
 // What the photos show about a slab, checked against the listing's item
@@ -45,7 +45,7 @@ function qualifierOf(text: unknown): string | null {
 }
 
 export function checkSlab(
-    photoCheck: { slab?: SlabReading | null },
+    photoCheck: Pick<PhotoCheck, "slab" | "images">,
     aspects: Record<string, string> = {}
 ): Slab {
     const slab = photoCheck.slab;
@@ -70,6 +70,12 @@ export function checkSlab(
     const gradeQualifier = qualifierOf(slab.gradeQualifier);
     const labelCert = digits(slab.certNumber);
     const reasons: string[] = [];
+
+    // Slabs skip raw-card grading, but still need a real photo of this copy.
+    // A readable label in a stock image cannot establish what is being sold.
+    if (!photoCheck.images.some((photo) => photo.view === "FRONT" && photo.usable && !photo.isStockImage)) {
+        reasons.push("A usable photo of this specific slab's front is needed before it can be priced.");
+    }
 
     if (!grader) reasons.push("The grading company on the label couldn't be read.");
     if (!grade) reasons.push("The grade on the label couldn't be read.");
