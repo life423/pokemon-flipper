@@ -359,7 +359,7 @@ export interface PricedPath {
     cost: number;
     profit: number;
     roi: number | null;
-    // Profit if it sells at the low end.
+    // Lowest modeled resale outcome; not a guaranteed loss limit.
     downside: number;
     // The most you can pay and still clear your targets.
     maxBid: number;
@@ -368,7 +368,7 @@ export interface PricedPath {
     // an auction, whose current bid will rise.
     profitAtMaxBid: number | null;
     roiAtMaxBid: number | null;
-    // What you put in, and the low-end outcome, if you win at the max bid.
+    // What you put in, and the modeled downside, if you win at the max bid.
     costAtMaxBid: number | null;
     downsideAtMaxBid: number | null;
     grader?: Grader;

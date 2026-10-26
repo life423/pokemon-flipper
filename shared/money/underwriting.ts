@@ -282,9 +282,9 @@ export function gradePath(
         return { grade, probability, price, filledFrom, net: netFromSale(price, "graded", config.selling) };
     });
 
-    // Tiers are chosen by the value at the top of the range, so a good
-    // grade can't trigger a surprise upcharge.
-    const declaredValue = byGrade.prices[gradeRange.high].price;
+    // Prices need not rise with grade. Cover every modeled outcome, including
+    // a lower grade that sells at a premium, when choosing the service tier.
+    const declaredValue = Math.max(...outlook.map((outcome) => outcome.price));
     const tier = gradingTier(grader, declaredValue, config.grading);
 
     if (!tier) {
@@ -301,7 +301,7 @@ export function gradePath(
             path: "GRADE",
             label,
             expectedNet: outlook.reduce((sum, o) => sum + o.probability * o.net, 0),
-            downsideNet: outlook[0].net,
+            downsideNet: Math.min(...outlook.map((outcome) => outcome.net)),
             fixedCosts: tier.fee + config.grading.shippingPerCard,
             listing,
             shipping,

@@ -82,3 +82,9 @@ test("only deals get a rating", () => {
 
     assert.equal(rateDeal(passed), null);
 });
+
+test("grading downside copy describes the lowest modeled resale scenario rather than the lowest grade", () => {
+    const rating = rateDeal(evaluation({ best: { downside: -40 } }));
+    assert.match(rating.concerns.join(" "), /Loses \$40\.00 in the lowest modeled resale scenario/);
+    assert.doesNotMatch([...rating.concerns, ...rating.strengths].join(" "), /low end of the grade range/);
+});

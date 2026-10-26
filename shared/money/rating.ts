@@ -82,7 +82,7 @@ export function rateDeal(evaluation: RatingInput): Rating | null {
     }
 
     if (best.path !== "RAW") {
-        const lowEnd = best.path === "GRADE" ? "at the low end of the grade range" : "at the lowest recent sale";
+        const lowEnd = best.path === "GRADE" ? "in the lowest modeled resale scenario" : "at the lowest recent sale";
 
         if (best.downside >= 0) {
             strengths.push(`Still profitable ${lowEnd}.`);

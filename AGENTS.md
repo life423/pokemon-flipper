@@ -254,6 +254,82 @@ October 26. Consult Git for the resulting commit and synchronization status.
   keyboard/focus behavior. No AI or eBay calls were used. See
   `docs/ui-review-2026-10-26.md` for the scope and limits of this verification.
 
+## October 26 ten-search review — follow-up work
+
+The user approved the recommendation to audit ten varied searches on a new
+branch. `search-workflow-review` starts from `8b0574a` on `main`. The initial review
+added diagnostic scripts/tests and reports only. The user subsequently authorized
+the three priority corrections described below.
+The user subsequently authorized committing this review and its corrections,
+merging into `main`, and pushing to GitHub after validation. Consult Git for
+the resulting revision and remote synchronization status.
+
+- Findings and exact sample limitations are saved in
+  `docs/search-review-2026-10-26.md` and its JSON companion. All ten primary
+  phrases were sampled; discovery was capped, and the final two used fresh
+  primary pages with cached-only screening after the resource ceiling.
+- Transport instrumentation recorded 152 Browse, 120 AI and 55 price requests.
+  The account Browse count rose 190; the extra 38 are not attributable from
+  available evidence. Four full evaluations were sampled. Do not describe this
+  as an exhaustive ten-search benchmark or repeat paid searches by default.
+  Actual result snapshots and full evaluations are ignored local files under
+  `data/reviews/2026-10-26/`, available for offline regression work.
+- Highest priority: `gradePath` assumes higher numerical grades have higher
+  prices. The damaged Umbreon sample has grade-1 resale $1,739.04 but grade-5
+  resale $1,395. It chooses the configured Regular fee using grade 5 instead of
+  covering the maximum scenario value with Express. Using the existing config's
+  applicable tier changes modeled profit +$45.64 to -$49.37. PSA fee verification
+  remains separate; no current invoice/fee amount was established by this audit.
+- Same assumption makes `downsideNet: outlook[0].net` unsafe. That sample's
+  reported downside +$291.70 overlooks a -$242.81 scenario before correcting
+  fees (-$337.82 after correction). Use minimum modeled net for financial
+  downside and audit missing-grade price fallback. Lowest grade and lowest
+  financial outcome are different concepts. This also affects the Raichu's
+  unselected grading route. These bugs were reproduced and corrected in the follow-up below.
+- A CGC 8.5 Lugia was incorrectly held because `NM/MINT+` was read as a special
+  qualifier. CGC's official standard scale uses that ordinary description for
+  8.5. The follow-up now recognizes ordinary grader-specific descriptions while
+  preserving genuine qualifiers, special tiers and other slab safeguards.
+  Confirming the label does not establish a profitable listing.
+- Later priorities: enforce explicit search finish/grader/numeric-grade
+  constraints (non-holo cards survived the holo search; PSA 3/5/7 and CGC 8
+  survived a PSA 8 search), and distinguish small-margin/low-confidence leads
+  from stronger opportunities. Any/Any still must not count a loss as a deal.
+- First results in the first eight rows arrived in 0.70–1.74s with warm caches;
+  sampled streams returned in 34–69s. Discovery added 19–44s in the first seven.
+  The serial sampled full analyses are not live UI time-to-first-deal measures.
+- Recorded-result UI replay verified the low-confidence Umbreon under Deals
+  and its misleading low-grade reassurance, without additional provider calls.
+  All 249 tests, type checks, production build and diff checks pass. The added
+  two tests cover diagnostic guard behavior, not fixes to the identified bugs.
+
+## October 26 priority corrections
+
+The user approved fixing the service-tier, modeled-downside and CGC-description
+issues on `search-workflow-review`, then authorized committing them, merging
+into `main` and pushing to GitHub. See `docs/grading-corrections-2026-10-26.md`
+and consult Git for delivery status.
+
+- `gradePath` selects its tier using the maximum resale value among modeled
+  scenarios and uses the minimum net proceeds for modeled downside. Existing
+  fee amounts, grade weights and missing-grade fallback remain unchanged.
+- The shared qualifier normalizer accepts ordinary CGC descriptions only at
+  the matching numeric grade, for slab checks and comp filtering. Real, mixed,
+  unknown, special and legacy designations remain protected. No AI prompt/model
+  changes or cache clearing are needed; saved photo readings remain reusable.
+- Offline replay changes the $999 Umbreon from BUY_AND_GRADE to PASS, with
+  -$49.37 estimated profit and -$337.82 modeled downside. Both sampled raw
+  resale profits remain unchanged. The Lugia slab check now passes but missing
+  cached verified prices correctly remain unavailable rather than inventing a
+  profitable resale estimate. Conditional offers remain separate from Deals.
+- Labels say modeled downside and lowest modeled resale scenario; do not
+  promise that actual losses cannot exceed those figures. Sparse grade-price
+  fallback still needs its own review and is not guaranteed conservative.
+- All 259 tests, type checking, production build, direct typing of the new
+  fixture/test and diff checks pass. Recorded-result browser verification
+  confirmed the corrected loss, Deals removal, tier and downside on desktop
+  and a 375px phone. No AI/eBay/price-provider calls were made for these fixes.
+
 ## Validation commands
 
 `npm test`, `npm run typecheck`, `npm run build`, and `git diff --check`.

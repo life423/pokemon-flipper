@@ -8,6 +8,7 @@ import {
     titleDecidesPrinting,
 } from "../identity/card-identity.ts";
 import { canPrice, variantFor } from "./raw-prices.ts";
+import { gradeQualifier } from "../../shared/grade-qualifier.ts";
 import type { CompSummary, Confidence, GradeRange, GradedPricing, Identity, SlabPricing } from "../../shared/types.ts";
 import type {
     CheckComps,
@@ -95,7 +96,7 @@ export function compProblem(comp: Comp, { printing, setName, grader, grade, now 
     if (lookAlikeProblem(comp.title, setName)) return "title names another product";
     if (noveltyIn(comp.title)) return "metal or novelty card";
     if (comp.grader !== grader || comp.grade !== String(grade)) return "different grade";
-    if (comp.grade_qualifier || PSA_QUALIFIER.test(comp.title ?? "")) return "qualified or special grade";
+    if (gradeQualifier(comp.grade_qualifier, comp.grader, comp.grade) || PSA_QUALIFIER.test(comp.title ?? "")) return "qualified or special grade";
     if (!(typeof comp.price === "number" && comp.price > 0)) return "no sale price";
 
     const ageDays = (now - Date.parse(comp.sold_at)) / DAY_MS;

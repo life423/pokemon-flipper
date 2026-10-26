@@ -390,7 +390,7 @@ function PathCard({ path, auction }: { path: MoneyPath; auction: boolean }) {
                         ? [
                               ["Cost at your max bid", dollars(path.costAtMaxBid)],
                               ["Profit at your max bid", `${dollars(path.profitAtMaxBid)} (${returnText(path.costAtMaxBid && path.profitAtMaxBid != null ? path.profitAtMaxBid / path.costAtMaxBid : null)})`],
-                              ["Worst case at your max bid", dollars(path.downsideAtMaxBid)],
+                              ["Modeled downside at your max bid", dollars(path.downsideAtMaxBid)],
                           ]
                         : [
                               ["All-in cost", dollars(path.cost)],
@@ -400,7 +400,7 @@ function PathCard({ path, auction }: { path: MoneyPath; auction: boolean }) {
                                       {dollars(path.profit)} ({returnText(path.cost > 0 ? path.profit / path.cost : null)})
                                   </span>,
                               ],
-                              ["Worst case", dollars(path.downside)],
+                              ["Modeled downside", dollars(path.downside)],
                           ]) as [string, ReactNode][]),
                     [auction ? "Max bid" : "Max price", <strong>{dollars(path.maxBid)}</strong>],
                 ]}

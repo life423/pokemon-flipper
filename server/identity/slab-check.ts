@@ -1,5 +1,6 @@
 import type { PhotoCheck, Slab } from "../../shared/types.ts";
 import { normalizeText } from "../ebay/filters.ts";
+import { gradeQualifier as qualifierOf } from "../../shared/grade-qualifier.ts";
 
 // What the photos show about a slab, checked against the listing's item
 // details. The label is the grader's own record, so a slab only passes
@@ -39,11 +40,6 @@ function digits(text: unknown): string | null {
     return value || null;
 }
 
-function qualifierOf(text: unknown): string | null {
-    const value = String(text ?? "").trim();
-    return /^(none|n\/a|null)?$/i.test(value) ? null : value;
-}
-
 export function checkSlab(
     photoCheck: Pick<PhotoCheck, "slab" | "images">,
     aspects: Record<string, string> = {}
@@ -67,7 +63,7 @@ export function checkSlab(
 
     const grader = graderCode(slab.grader);
     const grade = normalizeGrade(slab.grade);
-    const gradeQualifier = qualifierOf(slab.gradeQualifier);
+    const gradeQualifier = qualifierOf(slab.gradeQualifier, grader, grade);
     const labelCert = digits(slab.certNumber);
     const reasons: string[] = [];
 

@@ -124,7 +124,7 @@ export const MONEY_CONFIG: MoneyConfig = {
         // Service levels you can use; bulk levels are left out because
         // you send a few cards at a time. For each grader, the money
         // math uses the cheapest level whose cap covers the card's value
-        // at the top of its grade range.
+        // in any modeled grade outcome.
         PSA: [
             { tier: "Standard", fee: 59.99, maxDeclaredValue: null },
             { tier: "Regular", fee: 79.99, maxDeclaredValue: 1499 },

@@ -324,3 +324,22 @@ test("the AI checks only sales that passed the rules, and its drops are counted"
     assert.equal(pricing.summary.dropped["AI: signed or altered"], 1);
     assert.equal(pricing.summary.checkedByAI, true);
 });
+
+test("ordinary CGC descriptions do not exclude otherwise matching exact-grade comps", () => {
+    const target = { ...criteria("UNLIMITED", "Neo Genesis", "8.5"), grader: "CGC" };
+    const ordinary = comp(200, "2026-09-01", "Unlimited Holofoil", "Lugia Neo Genesis CGC 8.5 NM/Mint+", {
+        grader: "CGC", grade: "8.5", grade_qualifier: "NM/MINT+",
+    });
+    const summary = summarizeComps([ordinary], target);
+    assert.equal(summary.count, 1);
+    assert.equal(summary.median, 200);
+
+    for (const grade_qualifier of ["OC", "Pristine", "NM/MINT+ OC", "Authentic Altered", "unknown"]) {
+        const rejected = summarizeComps([{ ...ordinary, grade_qualifier }], target);
+        assert.equal(rejected.count, 0, grade_qualifier);
+        assert.equal(rejected.dropped["qualified or special grade"], 1);
+    }
+    assert.equal(summarizeComps([{ ...ordinary, grade: "8" }], target).count, 0);
+    assert.equal(summarizeComps([{ ...ordinary, grader: "PSA" }], target).count, 0);
+    assert.equal(summarizeComps([{ ...ordinary, title: `${ordinary.title} (OC)` }], target).count, 0);
+});

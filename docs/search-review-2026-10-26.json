@@ -1,0 +1,1240 @@
+{
+  "date": "2026-10-26",
+  "revision": "8b0574a",
+  "branch": "search-workflow-review",
+  "model": "gpt-5.6-luna",
+  "method": "Actual /api/deals orchestration with 200 primary results, Any/Any, offers off, automatic discovery. Sequential diagnostic calls; no UI auto-analysis flood. Fresh normal cache TTLs, no forced refreshes. At most six NEW discovery photo requests per query; cached photo scans still run. At most four selected full analyses overall.",
+  "supplement": "The 150-Browse cap stopped the last two primary pages. Exactly two further primary search pages were authorized within this diagnostic. No further AI or price requests; discovery/detail cache misses stay deferred.",
+  "limits": {
+    "ebayBrowse": 152,
+    "ai": 120,
+    "prices": 100,
+    "newDiscoveryPhotosPerQuery": 6,
+    "fullAnalyses": 4,
+    "searchTimeoutSeconds": 180,
+    "analysisTimeoutSeconds": 150
+  },
+  "actualTransportRequests": {
+    "ebayOther": 20,
+    "ebayBrowse": 152,
+    "ai": 120,
+    "prices": 55
+  },
+  "aiSchemas": {
+    "title_readings": 16,
+    "photo_match": 34,
+    "comp_check": 16,
+    "photo_discovery": 38,
+    "photo_check": 4,
+    "card_condition": 6,
+    "dig_variants": 6
+  },
+  "aiTokens": {
+    "input": 272150,
+    "output": 73638
+  },
+  "ebayUsageBefore": {
+    "used": 0,
+    "limit": 5000,
+    "remaining": 5000,
+    "resetsAt": "2026-10-27T07:00:00.000Z",
+    "braking": false
+  },
+  "ebayUsageAfter": {
+    "used": 190,
+    "limit": 5000,
+    "remaining": 4810,
+    "resetsAt": "2026-10-27T07:00:00.000Z",
+    "braking": false
+  },
+  "accountUsageDelta": 190,
+  "unattributedAccountDelta": 38,
+  "limitations": [
+    "A bounded diagnostic sample, not an exhaustive marketplace scan or a guarantee of profitability.",
+    "Timings include safety-cap effects; discovery completeness and deferred requests are recorded separately.",
+    "Existing independent app activity may contribute to the account-level eBay usage delta.",
+    "All ten primary phrases were sampled, but every query had diagnostic guard deferrals. Seven discovery loops returned done within a sampled cap, not an exhaustive scan; the final three discovery stages were blocked.",
+    "Only four full evaluations were sampled. They were chosen after screening finished, so their durations are not live UI time-to-first-deal measurements.",
+    "The last two searches received exactly two supplemental fresh primary pages after the 150-Browse ceiling, then used cached-only screening. Their measured screening timings exclude primary-page prefetch and are not comparable with rows 1–8.",
+    "The account counter increased by 190 while this process dispatched 152 Browse requests; the remaining 38 cannot be attributed to this process from available evidence.",
+    "Blocked counts are transport attempts, including SDK retries, rather than counts of unique photos or cards. A done stream does not mean every photo check succeeded.",
+    "No production application files, prompts, money config or API limits were changed by the review."
+  ],
+  "queries": [
+    {
+      "query": "1999 base set holo",
+      "startedAt": "2026-10-26T14:21:54.043Z",
+      "scope": null,
+      "firstListingSeconds": 1.05,
+      "startSeconds": 1.01,
+      "primarySeconds": 46.76,
+      "searchSeconds": 65.61,
+      "receivedUnique": 201,
+      "statuses": {
+        "OTHER_CARD": 5,
+        "DROPPED": 144,
+        "UNSCREENED": 21,
+        "CANDIDATE": 16,
+        "JUNK": 2,
+        "OTHER_SET": 13
+      },
+      "eligibleForAutoAnalysis": 12,
+      "strongestCandidates": [
+        {
+          "title": "Raichu Holofoil [Base Set - 14/102] DM",
+          "price": 9.99,
+          "buyingOption": "FIXED_PRICE",
+          "priority": {
+            "band": 3,
+            "evidence": 3,
+            "conservativeProfit": 3.87,
+            "expectedProfit": 4.12,
+            "investment": 10.81,
+            "reason": "Targets fit a lower resale estimate; full photo verification is still required."
+          },
+          "screen": {
+            "label": "Resell raw",
+            "maxBid": 13,
+            "profit": 4.12,
+            "roi": 0.38
+          },
+          "preliminaryMatch": "MATCH"
+        },
+        {
+          "title": "Magneton 1999 Pokemon Unlimited #9/102 Set Rare Holo",
+          "price": 1,
+          "buyingOption": "AUCTION",
+          "priority": {
+            "band": 2,
+            "evidence": 3,
+            "conservativeProfit": -9.23,
+            "expectedProfit": 13.65,
+            "investment": 7.58,
+            "reason": "As-is resale estimate meets targets; photos must confirm the card and condition."
+          },
+          "screen": {
+            "label": "Grade with PSA",
+            "maxBid": 37,
+            "profit": 39.57,
+            "roi": 0.39
+          },
+          "preliminaryMatch": "MATCH"
+        },
+        {
+          "title": "Wizards of the Coast Poliwrath 13/102 Base Set Holo Rare Unlimited EN 1999 90 HP",
+          "price": 17,
+          "buyingOption": "FIXED_PRICE",
+          "priority": {
+            "band": 2,
+            "evidence": 3,
+            "conservativeProfit": -21.23,
+            "expectedProfit": 3.73,
+            "investment": 19.87,
+            "reason": "As-is resale estimate meets targets; photos must confirm the card and condition."
+          },
+          "screen": {
+            "label": "Grade with CGC",
+            "maxBid": 49,
+            "profit": 34.84,
+            "roi": 0.63
+          },
+          "preliminaryMatch": "MATCH"
+        }
+      ],
+      "fullAnalyses": [
+        {
+          "title": "Raichu Holofoil [Base Set - 14/102] DM",
+          "seconds": 25.64,
+          "group": "deals",
+          "verdict": "BUY_RAW",
+          "route": "Resell raw",
+          "profit": 3.87,
+          "downside": 3.87,
+          "maxBid": 13,
+          "condition": "DAMAGED",
+          "range": {
+            "low": 1,
+            "likely": 1,
+            "high": 3
+          },
+          "confidence": "MEDIUM",
+          "reasons": [],
+          "rating": {
+            "level": "STRONG",
+            "room": 0.232,
+            "strengths": [
+              "The price is 23% under the max price."
+            ],
+            "concerns": [],
+            "notes": [],
+            "auction": null
+          },
+          "usage": [
+            {
+              "step": "photoCheck",
+              "inputTokens": 6446,
+              "outputTokens": 939
+            },
+            {
+              "step": "condition",
+              "inputTokens": 5469,
+              "outputTokens": 913
+            },
+            {
+              "step": "condition",
+              "inputTokens": 5469,
+              "outputTokens": 1007
+            }
+          ],
+          "reusedSteps": []
+        }
+      ],
+      "requests": {
+        "ebayBrowse": 21,
+        "ai": 43,
+        "prices": 27
+      },
+      "deferred": {
+        "new discovery photo cap": 28
+      },
+      "errors": [],
+      "summary": {
+        "total": 48271,
+        "found": 196,
+        "count": 195,
+        "skipped": 4,
+        "intent": {
+          "cardName": null,
+          "sets": [
+            "Base Set"
+          ],
+          "cardNumber": null,
+          "printing": null,
+          "graded": null,
+          "titleWords": [],
+          "source": "ai"
+        }
+      },
+      "orchestrationReturned": true,
+      "completeWithoutGuardDeferrals": false,
+      "discoveryFinal": {
+        "status": "done",
+        "checked": 32,
+        "total": 32,
+        "seconds": 65.6
+      }
+    },
+    {
+      "query": "neo genesis lugia",
+      "startedAt": "2026-10-26T14:23:25.297Z",
+      "scope": null,
+      "firstListingSeconds": 1.26,
+      "startSeconds": 1.25,
+      "primarySeconds": 19.11,
+      "searchSeconds": 47.16,
+      "receivedUnique": 135,
+      "statuses": {
+        "UNSCREENED": 26,
+        "DROPPED": 91,
+        "CANDIDATE": 14,
+        "OTHER_CARD": 2,
+        "OTHER_LANGUAGE": 2
+      },
+      "eligibleForAutoAnalysis": 5,
+      "strongestCandidates": [
+        {
+          "title": "2000 Pokemon Neo Genesis Lugia 1st Edition Holo Rare 9/111 CGC 8.5",
+          "price": 3400,
+          "buyingOption": "AUCTION",
+          "priority": {
+            "band": 2,
+            "evidence": 5,
+            "conservativeProfit": -707.85,
+            "expectedProfit": 145.27,
+            "investment": 3685.37,
+            "reason": "As-is resale estimate meets targets; photos must confirm the card and condition."
+          },
+          "screen": {
+            "label": "Resell as CGC 8.5",
+            "maxBid": 3534,
+            "profit": 145.27,
+            "roi": 0.04
+          },
+          "preliminaryMatch": "MATCH"
+        },
+        {
+          "title": "Pokemon 2000 Lugia 9/111 Neo Genesis Holo Rare Card NM - Small Swirl Bottom Left",
+          "price": 719.99,
+          "buyingOption": "FIXED_PRICE",
+          "priority": {
+            "band": 1,
+            "evidence": 7,
+            "conservativeProfit": null,
+            "expectedProfit": 1288.24,
+            "investment": 1150.96,
+            "reason": "Profit depends on the grading estimate; photo assessment comes next."
+          },
+          "screen": {
+            "label": "Grade with PSA",
+            "maxBid": 1910,
+            "profit": 1288.24,
+            "roi": 1.12
+          },
+          "preliminaryMatch": "MATCH"
+        },
+        {
+          "title": "2000 Neo Genesis Lugia #009/111 Holo Rare, Holo, Iconic",
+          "price": 800,
+          "buyingOption": "FIXED_PRICE",
+          "priority": {
+            "band": 1,
+            "evidence": 6,
+            "conservativeProfit": null,
+            "expectedProfit": 1201.62,
+            "investment": 1237.58,
+            "reason": "Profit depends on the grading estimate; photo assessment comes next."
+          },
+          "screen": {
+            "label": "Grade with PSA",
+            "maxBid": 1910,
+            "profit": 1201.62,
+            "roi": 0.97
+          },
+          "preliminaryMatch": "MATCH"
+        }
+      ],
+      "fullAnalyses": [
+        {
+          "title": "2000 Pokemon Neo Genesis Lugia 1st Edition Holo Rare 9/111 CGC 8.5",
+          "seconds": 10.49,
+          "group": "review",
+          "verdict": "NEEDS_REVIEW",
+          "reasons": [
+            "The label has a qualifier (NM/MINT+). Qualified grades sell for less and aren't priced yet."
+          ],
+          "rating": null,
+          "usage": [
+            {
+              "step": "photoCheck",
+              "inputTokens": 5612,
+              "outputTokens": 1020
+            }
+          ],
+          "reusedSteps": []
+        }
+      ],
+      "requests": {
+        "ebayOther": 1,
+        "ebayBrowse": 10,
+        "ai": 12,
+        "prices": 1
+      },
+      "deferred": {
+        "new discovery photo cap": 46
+      },
+      "errors": [],
+      "summary": {
+        "total": 1251,
+        "found": 199,
+        "count": 135,
+        "skipped": 1,
+        "intent": {
+          "cardName": "Lugia",
+          "sets": [
+            "Neo Genesis"
+          ],
+          "cardNumber": null,
+          "printing": null,
+          "graded": null,
+          "titleWords": [
+            "lugia"
+          ],
+          "source": "ai"
+        }
+      },
+      "orchestrationReturned": true,
+      "completeWithoutGuardDeferrals": false,
+      "discoveryFinal": {
+        "status": "done",
+        "checked": 32,
+        "total": 32,
+        "seconds": 47.16
+      }
+    },
+    {
+      "query": "pikachu 151 illustration rare",
+      "startedAt": "2026-10-26T14:24:22.956Z",
+      "scope": null,
+      "firstListingSeconds": 0.95,
+      "startSeconds": 0.93,
+      "primarySeconds": 16,
+      "searchSeconds": 50.05,
+      "receivedUnique": 192,
+      "statuses": {
+        "DROPPED": 157,
+        "UNSCREENED": 21,
+        "OTHER_CARD": 1,
+        "CANDIDATE": 12,
+        "OTHER_LANGUAGE": 1
+      },
+      "eligibleForAutoAnalysis": 0,
+      "strongestCandidates": [],
+      "fullAnalyses": [],
+      "requests": {
+        "ebayBrowse": 14,
+        "ai": 8,
+        "ebayOther": 6,
+        "prices": 1
+      },
+      "deferred": {
+        "new discovery photo cap": 52
+      },
+      "errors": [],
+      "summary": {
+        "total": 1867,
+        "found": 196,
+        "count": 192,
+        "skipped": 4,
+        "intent": {
+          "cardName": "Pikachu",
+          "sets": [
+            "Scarlet & Violet—151"
+          ],
+          "cardNumber": null,
+          "printing": null,
+          "graded": null,
+          "titleWords": [
+            "pikachu"
+          ],
+          "source": "ai"
+        }
+      },
+      "orchestrationReturned": true,
+      "completeWithoutGuardDeferrals": false,
+      "discoveryFinal": {
+        "status": "done",
+        "checked": 32,
+        "total": 32,
+        "seconds": 50.05
+      }
+    },
+    {
+      "query": "umbreon vmax 215/203",
+      "startedAt": "2026-10-26T14:25:13.024Z",
+      "scope": null,
+      "firstListingSeconds": 0.91,
+      "startSeconds": 0.89,
+      "primarySeconds": 17.79,
+      "searchSeconds": 42.84,
+      "receivedUnique": 191,
+      "statuses": {
+        "UNSCREENED": 40,
+        "DROPPED": 133,
+        "CANDIDATE": 14,
+        "OTHER_CARD": 1,
+        "OTHER_LANGUAGE": 2,
+        "JUNK": 1
+      },
+      "eligibleForAutoAnalysis": 5,
+      "strongestCandidates": [
+        {
+          "title": "Pokemon TCG Umbreon VMAX Alternate Art Secret Rare Holo 215/203 EN DMG CREASE",
+          "price": 999,
+          "buyingOption": "FIXED_PRICE",
+          "priority": {
+            "band": 2,
+            "evidence": 3,
+            "conservativeProfit": -277.2,
+            "expectedProfit": 99.44,
+            "investment": 1088.52,
+            "reason": "As-is resale estimate meets targets; photos must confirm the card and condition."
+          },
+          "screen": {
+            "label": "Resell raw",
+            "maxBid": 1090,
+            "profit": 99.44,
+            "roi": 0.09
+          },
+          "preliminaryMatch": "MATCH"
+        },
+        {
+          "title": "Umbreon VMAX 215/203 Evolving Skies Alt Art Pokémon TCG DMG CREASE",
+          "price": 1075,
+          "buyingOption": "FIXED_PRICE",
+          "priority": {
+            "band": 2,
+            "evidence": 3,
+            "conservativeProfit": -358.68,
+            "expectedProfit": 17.96,
+            "investment": 1170,
+            "reason": "As-is resale estimate meets targets; photos must confirm the card and condition."
+          },
+          "screen": {
+            "label": "Resell raw",
+            "maxBid": 1091,
+            "profit": 17.96,
+            "roi": 0.02
+          },
+          "preliminaryMatch": "MATCH"
+        },
+        {
+          "title": "The Pokémon Company Umbreon VMAX 215/203 Evolving Skies Alt Art Secret Holo",
+          "price": 1300,
+          "buyingOption": "FIXED_PRICE",
+          "priority": {
+            "band": 2,
+            "evidence": 3,
+            "conservativeProfit": -602.05,
+            "expectedProfit": 19.86,
+            "investment": 1413.37,
+            "reason": "As-is resale estimate meets targets; photos must confirm the card and condition."
+          },
+          "screen": {
+            "label": "Resell raw",
+            "maxBid": 1318,
+            "profit": 19.86,
+            "roi": 0.01
+          },
+          "preliminaryMatch": "MATCH"
+        }
+      ],
+      "fullAnalyses": [
+        {
+          "title": "Pokemon TCG Umbreon VMAX Alternate Art Secret Rare Holo 215/203 EN DMG CREASE",
+          "seconds": 31.88,
+          "group": "deals",
+          "verdict": "BUY_AND_GRADE",
+          "route": "Grade with PSA",
+          "profit": 45.64,
+          "downside": 291.7,
+          "maxBid": 1041,
+          "condition": "DAMAGED",
+          "range": {
+            "low": 1,
+            "likely": null,
+            "high": 5
+          },
+          "confidence": "LOW",
+          "reasons": [],
+          "rating": {
+            "level": "THIN",
+            "room": 0.04,
+            "strengths": [
+              "Still profitable at the low end of the grade range."
+            ],
+            "concerns": [
+              "The price is only 4% under the max price.",
+              "Only 2 verified PSA 3 sales behind the price.",
+              "The condition read from the photos is low confidence.",
+              "There are no close-up photos, so the condition read is limited."
+            ],
+            "notes": [],
+            "auction": null
+          },
+          "usage": [
+            {
+              "step": "photoCheck",
+              "inputTokens": 11029,
+              "outputTokens": 1530
+            },
+            {
+              "step": "condition",
+              "inputTokens": 10100,
+              "outputTokens": 951
+            },
+            {
+              "step": "condition",
+              "inputTokens": 10100,
+              "outputTokens": 955
+            }
+          ],
+          "reusedSteps": []
+        }
+      ],
+      "requests": {
+        "ebayBrowse": 13,
+        "ai": 15,
+        "ebayOther": 1,
+        "prices": 2
+      },
+      "deferred": {
+        "new discovery photo cap": 84
+      },
+      "errors": [],
+      "summary": {
+        "total": 379,
+        "found": 193,
+        "count": 190,
+        "skipped": 7,
+        "intent": {
+          "cardName": "Umbreon VMAX",
+          "sets": [
+            "Evolving Skies"
+          ],
+          "cardNumber": "215/203",
+          "printing": null,
+          "graded": null,
+          "titleWords": [
+            "umbreon"
+          ],
+          "source": "ai"
+        }
+      },
+      "orchestrationReturned": true,
+      "completeWithoutGuardDeferrals": false,
+      "discoveryFinal": {
+        "status": "done",
+        "checked": 48,
+        "total": 48,
+        "seconds": 42.84
+      }
+    },
+    {
+      "query": "charizard ex obsidian flames",
+      "startedAt": "2026-10-26T14:26:27.753Z",
+      "scope": null,
+      "firstListingSeconds": 0.89,
+      "startSeconds": 0.86,
+      "primarySeconds": 39.82,
+      "searchSeconds": 69.04,
+      "receivedUnique": 200,
+      "statuses": {
+        "DROPPED": 182,
+        "UNSCREENED": 10,
+        "CANDIDATE": 8
+      },
+      "eligibleForAutoAnalysis": 2,
+      "strongestCandidates": [
+        {
+          "title": "Pokémon TCG Charizard EX Sir Obsidian Flames 223/197 Full Art Secret Rare",
+          "price": 29.99,
+          "buyingOption": "FIXED_PRICE",
+          "priority": {
+            "band": 3,
+            "evidence": 3,
+            "conservativeProfit": 8.07,
+            "expectedProfit": 33.85,
+            "investment": 35.71,
+            "reason": "Targets fit a lower resale estimate; full photo verification is still required."
+          },
+          "screen": {
+            "label": "Resell raw",
+            "maxBid": 61,
+            "profit": 33.85,
+            "roi": 0.95
+          },
+          "preliminaryMatch": "MATCH"
+        },
+        {
+          "title": "Pokemon charzard EX 215/197 Ultra rare Obsidian Flames Tera NM",
+          "price": 37.45,
+          "buyingOption": "FIXED_PRICE",
+          "priority": {
+            "band": 0,
+            "evidence": 6,
+            "conservativeProfit": null,
+            "expectedProfit": -114.03,
+            "investment": 142.77,
+            "reason": "Photo lead still needs identity or price confirmation."
+          },
+          "screen": {
+            "label": "Resell raw",
+            "maxBid": 4,
+            "profit": -35.88,
+            "roi": -0.75
+          },
+          "preliminaryMatch": "UNKNOWN"
+        }
+      ],
+      "fullAnalyses": [
+        {
+          "title": "Pokémon TCG Charizard EX Sir Obsidian Flames 223/197 Full Art Secret Rare",
+          "seconds": 46.25,
+          "group": "deals",
+          "verdict": "BUY_RAW",
+          "route": "Resell raw",
+          "profit": 19.89,
+          "downside": 19.89,
+          "maxBid": 48,
+          "condition": "LIGHTLY_PLAYED",
+          "range": {
+            "low": 5,
+            "likely": null,
+            "high": 8
+          },
+          "confidence": "LOW",
+          "reasons": [],
+          "rating": {
+            "level": "THIN",
+            "room": 0.375,
+            "strengths": [
+              "The price is 38% under the max price."
+            ],
+            "concerns": [
+              "The condition read from the photos is low confidence.",
+              "There are no close-up photos, so the condition read is limited.",
+              "The seller has -1 feedback at 0% positive."
+            ],
+            "notes": [],
+            "auction": null
+          },
+          "usage": [
+            {
+              "step": "photoCheck",
+              "inputTokens": 2532,
+              "outputTokens": 1903
+            },
+            {
+              "step": "condition",
+              "inputTokens": 1595,
+              "outputTokens": 1401
+            },
+            {
+              "step": "condition",
+              "inputTokens": 1595,
+              "outputTokens": 1035
+            }
+          ],
+          "reusedSteps": []
+        }
+      ],
+      "requests": {
+        "ebayBrowse": 13,
+        "ai": 18,
+        "prices": 10,
+        "ebayOther": 2
+      },
+      "deferred": {
+        "new discovery photo cap": 84
+      },
+      "errors": [],
+      "summary": {
+        "total": 4102,
+        "found": 198,
+        "count": 198,
+        "skipped": 2,
+        "intent": {
+          "cardName": "Charizard ex",
+          "sets": [
+            "Obsidian Flames"
+          ],
+          "cardNumber": null,
+          "printing": null,
+          "graded": null,
+          "titleWords": [
+            "charizard"
+          ],
+          "source": "ai"
+        }
+      },
+      "orchestrationReturned": true,
+      "completeWithoutGuardDeferrals": false,
+      "discoveryFinal": {
+        "status": "done",
+        "checked": 48,
+        "total": 48,
+        "seconds": 69.04
+      }
+    },
+    {
+      "query": "team rocket dark blastoise",
+      "startedAt": "2026-10-26T14:28:23.006Z",
+      "scope": null,
+      "firstListingSeconds": 1.31,
+      "startSeconds": 1.29,
+      "primarySeconds": 20.87,
+      "searchSeconds": 55.53,
+      "receivedUnique": 179,
+      "statuses": {
+        "UNSCREENED": 24,
+        "DROPPED": 137,
+        "OTHER_CARD": 2,
+        "CANDIDATE": 15,
+        "OTHER_SET": 1
+      },
+      "eligibleForAutoAnalysis": 6,
+      "strongestCandidates": [
+        {
+          "title": "Pokemon Dark Blastoise 3/82 Team Rocket Unlimited Rare LP WOTC ",
+          "price": 80,
+          "buyingOption": "FIXED_PRICE",
+          "priority": {
+            "band": 2,
+            "evidence": 3,
+            "conservativeProfit": -58.48,
+            "expectedProfit": 36.6,
+            "investment": 86.6,
+            "reason": "As-is resale estimate meets targets; photos must confirm the card and condition."
+          },
+          "screen": {
+            "label": "Resell raw",
+            "maxBid": 113,
+            "profit": 36.6,
+            "roi": 0.42
+          },
+          "preliminaryMatch": "MATCH"
+        },
+        {
+          "title": "Dark Blastoise 3/82 Team Rocket Holo Rare",
+          "price": 230,
+          "buyingOption": "FIXED_PRICE",
+          "priority": {
+            "band": 1,
+            "evidence": 7,
+            "conservativeProfit": null,
+            "expectedProfit": 95.43,
+            "investment": 350.46,
+            "reason": "Profit depends on the grading estimate; photo assessment comes next."
+          },
+          "screen": {
+            "label": "Grade with PSA",
+            "maxBid": 318,
+            "profit": 95.43,
+            "roi": 0.27
+          },
+          "preliminaryMatch": "MATCH"
+        },
+        {
+          "title": "Pokemon Team Rocket 1st Edition Dark Blastoise Holo - Near Mint",
+          "price": 450,
+          "buyingOption": "FIXED_PRICE",
+          "priority": {
+            "band": 1,
+            "evidence": 6,
+            "conservativeProfit": null,
+            "expectedProfit": 491.76,
+            "investment": 587.82,
+            "reason": "Profit depends on the grading estimate; photo assessment comes next."
+          },
+          "screen": {
+            "label": "Grade with PSA",
+            "maxBid": 904,
+            "profit": 491.76,
+            "roi": 0.84
+          },
+          "preliminaryMatch": "UNKNOWN"
+        }
+      ],
+      "fullAnalyses": [],
+      "requests": {
+        "ebayOther": 1,
+        "ebayBrowse": 26,
+        "ai": 19
+      },
+      "deferred": {
+        "new discovery photo cap": 78
+      },
+      "errors": [],
+      "summary": {
+        "total": 1940,
+        "found": 200,
+        "count": 176,
+        "skipped": 0,
+        "intent": {
+          "cardName": "Dark Blastoise",
+          "sets": [
+            "Team Rocket"
+          ],
+          "cardNumber": null,
+          "printing": null,
+          "graded": null,
+          "titleWords": [
+            "blastoise"
+          ],
+          "source": "ai"
+        }
+      },
+      "orchestrationReturned": true,
+      "completeWithoutGuardDeferrals": false,
+      "discoveryFinal": {
+        "status": "done",
+        "checked": 48,
+        "total": 48,
+        "seconds": 55.52
+      }
+    },
+    {
+      "query": "gengar fossil psa 8",
+      "startedAt": "2026-10-26T14:29:18.552Z",
+      "scope": null,
+      "firstListingSeconds": 0.7,
+      "startSeconds": 0.69,
+      "primarySeconds": 21.27,
+      "searchSeconds": 64.99,
+      "receivedUnique": 77,
+      "statuses": {
+        "DROPPED": 59,
+        "UNSCREENED": 12,
+        "OTHER_LANGUAGE": 2,
+        "CANDIDATE": 1,
+        "JUNK": 2,
+        "OTHER_SET": 1
+      },
+      "eligibleForAutoAnalysis": 1,
+      "strongestCandidates": [
+        {
+          "title": "First edition, Ganger, PSA 8.5",
+          "price": 300,
+          "buyingOption": "FIXED_PRICE",
+          "priority": {
+            "band": 0,
+            "evidence": 1,
+            "conservativeProfit": null,
+            "expectedProfit": null,
+            "investment": null,
+            "reason": "Photo lead still needs identity or price confirmation."
+          },
+          "screen": null,
+          "preliminaryMatch": "UNKNOWN"
+        }
+      ],
+      "fullAnalyses": [],
+      "requests": {
+        "ebayBrowse": 11,
+        "ai": 5,
+        "ebayOther": 2,
+        "prices": 1
+      },
+      "deferred": {
+        "ai total cap": 86
+      },
+      "errors": [],
+      "summary": {
+        "total": 138,
+        "found": 133,
+        "count": 76,
+        "skipped": 5,
+        "intent": {
+          "cardName": "Gengar",
+          "sets": [
+            "Fossil"
+          ],
+          "cardNumber": null,
+          "printing": null,
+          "graded": true,
+          "titleWords": [
+            "gengar"
+          ],
+          "source": "ai"
+        }
+      },
+      "orchestrationReturned": true,
+      "completeWithoutGuardDeferrals": false,
+      "discoveryFinal": {
+        "status": "done",
+        "checked": 46,
+        "total": 46,
+        "seconds": 64.99
+      }
+    },
+    {
+      "query": "crown zenith mewtwo vstar",
+      "startedAt": "2026-10-26T14:30:23.563Z",
+      "scope": null,
+      "firstListingSeconds": 1.74,
+      "startSeconds": 0.91,
+      "primarySeconds": 31.59,
+      "searchSeconds": 34.18,
+      "receivedUnique": 194,
+      "statuses": {
+        "DROPPED": 155,
+        "UNSCREENED": 24,
+        "CANDIDATE": 13,
+        "JUNK": 1,
+        "OTHER_LANGUAGE": 1
+      },
+      "eligibleForAutoAnalysis": 1,
+      "strongestCandidates": [
+        {
+          "title": "Mewtwo VSTAR GG44/GG70 Crown Zenith: Galarian Gallery Holo",
+          "price": 173,
+          "buyingOption": "FIXED_PRICE",
+          "priority": {
+            "band": 2,
+            "evidence": 0,
+            "conservativeProfit": -75.24,
+            "expectedProfit": 8.39,
+            "investment": 192.69,
+            "reason": "As-is resale estimate meets targets; photos must confirm the card and condition."
+          },
+          "screen": {
+            "label": "Resell raw",
+            "maxBid": 180,
+            "profit": 8.39,
+            "roi": 0.04
+          },
+          "preliminaryMatch": "UNKNOWN"
+        }
+      ],
+      "fullAnalyses": [],
+      "requests": {
+        "ebayBrowse": 42,
+        "prices": 13,
+        "ebayOther": 1
+      },
+      "deferred": {
+        "ai total cap": 536,
+        "ebayBrowse total cap": 1
+      },
+      "errors": [],
+      "summary": {
+        "total": 711,
+        "found": 197,
+        "count": 194,
+        "skipped": 3,
+        "intent": {
+          "cardName": "Mewtwo VSTAR",
+          "sets": [
+            "Crown Zenith"
+          ],
+          "cardNumber": null,
+          "printing": null,
+          "graded": null,
+          "titleWords": [
+            "mewtwo",
+            "vstar"
+          ],
+          "source": "ai"
+        }
+      },
+      "orchestrationReturned": true,
+      "completeWithoutGuardDeferrals": false,
+      "discoveryFinal": {
+        "status": "error",
+        "checked": 0,
+        "total": 0,
+        "note": "Review limit: ebayBrowse total cap; request was not sent.",
+        "seconds": 34.18
+      }
+    },
+    {
+      "query": "pokemon promo swsh050",
+      "startedAt": "2026-10-26T14:33:48.619Z",
+      "scope": "Fresh primary page, cached-only screening; discovery and missing details/prices deferred by transport guard.",
+      "firstListingSeconds": 0.45,
+      "startSeconds": 0,
+      "primarySeconds": 24.39,
+      "searchSeconds": 24.39,
+      "receivedUnique": 194,
+      "statuses": {
+        "UNSCREENED": 193,
+        "OTHER_SET": 1
+      },
+      "eligibleForAutoAnalysis": 0,
+      "strongestCandidates": [],
+      "fullAnalyses": [],
+      "requests": {
+        "ebayOther": 2,
+        "ebayBrowse": 1
+      },
+      "deferred": {
+        "ai total cap": 78,
+        "ebayBrowse total cap": 194
+      },
+      "errors": [],
+      "summary": {
+        "total": 2118,
+        "found": 194,
+        "count": 194,
+        "skipped": 6,
+        "intent": {
+          "cardName": null,
+          "sets": [
+            "Sword & Shield Black Star Promos"
+          ],
+          "cardNumber": "SWSH050",
+          "printing": null,
+          "graded": null,
+          "titleWords": [],
+          "source": "ai"
+        }
+      },
+      "orchestrationReturned": true,
+      "completeWithoutGuardDeferrals": false,
+      "discoveryFinal": {
+        "status": "error",
+        "checked": 0,
+        "total": 0,
+        "note": "Review limit: ebayBrowse total cap; request was not sent.",
+        "seconds": 24.39
+      }
+    },
+    {
+      "query": "vintage pokemon holo raw",
+      "startedAt": "2026-10-26T14:34:13.032Z",
+      "scope": "Fresh primary page, cached-only screening; discovery and missing details/prices deferred by transport guard.",
+      "firstListingSeconds": 0.01,
+      "startSeconds": 0,
+      "primarySeconds": 0.8,
+      "searchSeconds": 0.8,
+      "receivedUnique": 87,
+      "statuses": {
+        "JUNK": 3,
+        "UNSCREENED": 33,
+        "DROPPED": 42,
+        "CANDIDATE": 7,
+        "OTHER_CARD": 1,
+        "OTHER_LANGUAGE": 1
+      },
+      "eligibleForAutoAnalysis": 7,
+      "strongestCandidates": [
+        {
+          "title": "Dark Gyarados Prerelease Holo 8/82 Team Rocket WOTC Vintage Pokemon Card Raw LP",
+          "price": 28.15,
+          "buyingOption": "FIXED_PRICE",
+          "priority": {
+            "band": 2,
+            "evidence": 3,
+            "conservativeProfit": -31.04,
+            "expectedProfit": 1.08,
+            "investment": 38.05,
+            "reason": "As-is resale estimate meets targets; photos must confirm the card and condition."
+          },
+          "screen": {
+            "label": "Resell raw",
+            "maxBid": 29,
+            "profit": 1.08,
+            "roi": 0.03
+          },
+          "preliminaryMatch": "MATCH"
+        },
+        {
+          "title": "2000 Pokemon Base Set 2 Blastoise 2/130 Holo Rare Vintage WOTC NM Raw",
+          "price": 62,
+          "buyingOption": "AUCTION",
+          "priority": {
+            "band": 2,
+            "evidence": 1,
+            "conservativeProfit": -49.9,
+            "expectedProfit": 51.14,
+            "investment": 74.69,
+            "reason": "As-is resale estimate meets targets; photos must confirm the card and condition."
+          },
+          "screen": {
+            "label": "Grade with PSA",
+            "maxBid": 263,
+            "profit": 218.63,
+            "roi": 1.29
+          },
+          "preliminaryMatch": "MATCH"
+        },
+        {
+          "title": "Mewtwo 10/102 Base Set Holo Rare Vintage Raw - Pokemon TCG",
+          "price": 60,
+          "buyingOption": "FIXED_PRICE",
+          "priority": {
+            "band": 2,
+            "evidence": 1,
+            "conservativeProfit": -61.5,
+            "expectedProfit": 0.82,
+            "investment": 64.95,
+            "reason": "As-is resale estimate meets targets; photos must confirm the card and condition."
+          },
+          "screen": {
+            "label": "Grade with PSA",
+            "maxBid": 244,
+            "profit": 199.58,
+            "roi": 1.25
+          },
+          "preliminaryMatch": "UNKNOWN"
+        }
+      ],
+      "fullAnalyses": [],
+      "requests": {
+        "ebayBrowse": 1
+      },
+      "deferred": {
+        "ai total cap": 4,
+        "ebayBrowse total cap": 5,
+        "prices total cap": 15
+      },
+      "errors": [],
+      "summary": {
+        "total": 103,
+        "found": 101,
+        "count": 87,
+        "skipped": 2,
+        "intent": {
+          "cardName": null,
+          "sets": [],
+          "cardNumber": null,
+          "printing": null,
+          "graded": false,
+          "titleWords": [],
+          "source": "ai"
+        }
+      },
+      "orchestrationReturned": true,
+      "completeWithoutGuardDeferrals": false,
+      "discoveryFinal": {
+        "status": "error",
+        "checked": 0,
+        "total": 0,
+        "note": "Review limit: ebayBrowse total cap; request was not sent.",
+        "seconds": 0.8
+      }
+    }
+  ],
+  "offlineReproductions": [
+    {
+      "issue": "Grade-order assumption in downside and service-tier selection",
+      "query": "1999 base set holo",
+      "title": "Raichu Holofoil [Base Set - 14/102] DM",
+      "asking": 9.99,
+      "route": "Grade with PSA",
+      "displayedProfit": -67.83,
+      "displayedDownside": -63.02,
+      "minimumScenarioGrade": 3,
+      "minimumScenarioProfit": -89.46,
+      "highestGradeResale": 29,
+      "maximumScenarioResale": 59.99,
+      "usedTier": "Regular",
+      "usedFee": 79.99,
+      "tierForMaximumValue": "Regular",
+      "feeForMaximumValue": 79.99,
+      "profitUsingMaximumValueTier": -67.83,
+      "minimumScenarioProfitWithMaximumValueTier": -89.46
+    },
+    {
+      "issue": "Standard CGC grade description treated as a qualifier",
+      "query": "neo genesis lugia",
+      "qualifier": "NM/MINT+",
+      "originalStatus": "NEEDS_REVIEW",
+      "statusWithDescriptionExcluded": "OK"
+    },
+    {
+      "issue": "Grade-order assumption in downside and service-tier selection",
+      "query": "umbreon vmax 215/203",
+      "title": "Pokemon TCG Umbreon VMAX Alternate Art Secret Rare Holo 215/203 EN DMG CREASE",
+      "asking": 999,
+      "route": "Grade with PSA",
+      "displayedProfit": 45.64,
+      "displayedDownside": 291.7,
+      "minimumScenarioGrade": 3,
+      "minimumScenarioProfit": -242.81,
+      "highestGradeResale": 1395,
+      "maximumScenarioResale": 1739.04,
+      "usedTier": "Regular",
+      "usedFee": 79.99,
+      "tierForMaximumValue": "Express",
+      "feeForMaximumValue": 175,
+      "profitUsingMaximumValueTier": -49.37,
+      "minimumScenarioProfitWithMaximumValueTier": -337.82
+    }
+  ],
+  "sources": [
+    "https://www.cgccards.uk/card-grading/grading-scale/"
+  ],
+  "observedRelevanceExamples": {
+    "1999 base set holo": [
+      "1999 Pokemon WOTC Base Set Ivysaur 30/102 Uncommon Non-Holo 60 HP English",
+      "Pokemon - Pidgey - 057/102 - Base Set (Shadowless) - Common - Non-Holo"
+    ],
+    "gengar fossil psa 8": [
+      "1999 Pokemon Fossil Gengar 5/62 Holo PSA 5",
+      "Pokemon 1999 Fossil Gengar #5 Holographic Card PSA 3",
+      "1999 Pokemon Fossil Gengar 5/62 Holo PSA 7",
+      "Pokémon Gengar 1st Edition Holo Fossil Card 5/62 CGC 8, similar to PSA grade"
+    ]
+  }
+}

@@ -89,3 +89,36 @@ test("a real front photo still permits slab resale without raw-card grading view
     photos.images.push({ number: 2, view: "BACK", usable: false, isStockImage: true, issues: [] });
     assert.equal(checkSlab(photos, ASPECTS).status, "OK");
 });
+
+test("ordinary CGC grade descriptions are accepted only at their corresponding numeric grade", () => {
+    for (const [grade, description] of [["8.5", "NM/MINT+"], ["8.5", "near mint / mint +"], ["8", "NM/Mint"], ["9.5", "Mint+"], ["9", "Mint"], ["10", "Gem Mint"], ["6.5", "Ex/NM+"], ["1", "Poor"]]) {
+        const slab = checkSlab(slabPhotos({ grader: "CGC", grade, gradeQualifier: description }));
+        assert.equal(slab.status, "OK", `${grade}: ${description}`);
+        assert.equal(slab.gradeQualifier, null);
+    }
+    for (const overrides of [{ grader: "CGC", grade: "8", gradeQualifier: "NM/MINT+" }, { grader: "PSA", grade: "8.5", gradeQualifier: "NM/MINT+" }]) {
+        assert.equal(checkSlab(slabPhotos(overrides)).status, "NEEDS_REVIEW");
+    }
+});
+
+test("CGC special labels, mixed qualifiers and unknown designations still require review", () => {
+    for (const gradeQualifier of ["Pristine", "Perfect", "Black Label", "OC", "Authentic Altered", "NM/MINT+ OC", "Mint (MC)", "unrecognized label"]) {
+        const slab = checkSlab(slabPhotos({ grader: "CGC", grade: "8.5", gradeQualifier }));
+        assert.equal(slab.status, "NEEDS_REVIEW", gradeQualifier);
+        assert.equal(slab.gradeQualifier, gradeQualifier);
+    }
+    assert.equal(checkSlab(slabPhotos({ grader: "CGC", grade: "10", gradeQualifier: "Pristine" })).status, "NEEDS_REVIEW");
+    assert.equal(checkSlab(slabPhotos({ grader: "CGC", grade: "9.5", gradeQualifier: "Gem Mint" })).status, "NEEDS_REVIEW", "legacy Gem Mint 9.5 is not silently pooled with current Mint+ 9.5");
+});
+
+test("accepting an ordinary CGC description does not bypass photo, label, case or authenticity checks", () => {
+    const valid = { grader: "CGC", grade: "8.5", gradeQualifier: "NM/MINT+" };
+    for (const overrides of [{ caseCondition: "CRACKED" }, { authenticity: "POSSIBLE" }]) {
+        assert.equal(checkSlab(slabPhotos({ ...valid, ...overrides })).status, "NEEDS_REVIEW");
+    }
+    assert.equal(checkSlab(slabPhotos({ ...valid, authenticity: "LIKELY_FAKE" })).status, "LIKELY_FAKE");
+    assert.equal(checkSlab(slabPhotos(valid), { Grade: "9" }).status, "NEEDS_REVIEW");
+    assert.equal(checkSlab(slabPhotos(valid), { "Certification Number": "wrong123" }).status, "NEEDS_REVIEW");
+    const stock = slabPhotos(valid); stock.images[0].isStockImage = true;
+    assert.equal(checkSlab(stock).status, "NEEDS_REVIEW");
+});
