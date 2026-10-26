@@ -4,11 +4,11 @@ import { rawPricesFor } from "../pricing/raw-prices.ts";
 import { gradedPricesFor, compsForGrade } from "../pricing/graded-comps.ts";
 import type { CheckComps, FetchComps, LookupCards } from "../pricing/types.ts";
 import { sellerCondition } from "../../shared/conditions.ts";
-import { GRADERS, underwrite, type UnderwritingInput } from "../../shared/money/underwriting.ts";
+import { GRADERS, netFromSale, underwrite, type UnderwritingInput } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG, type MoneyConfig } from "../../shared/money/config.ts";
 import { CONDITION_NAMES } from "../../shared/conditions.ts";
 import { dollars } from "../../shared/format.ts";
-import type { BuyingOption, Grader, Screen, Underwriting } from "../../shared/types.ts";
+import type { BuyingOption, CompSummary, Grader, Screen, Underwriting } from "../../shared/types.ts";
 import { usualPrice } from "../../shared/money/auction.ts";
 import { retargetScreen } from "../../shared/money/targets.ts";
 
@@ -29,6 +29,8 @@ export interface ScreenInput {
     bestOffer?: boolean;
     // Printing marks the main photo showed, where it could tell.
     photoMarks?: { firstEditionStamp: string; artBoxShadow: string };
+    // Set only by discovery after a clear, single, non-stock photo reading.
+    photoVerified?: boolean;
 }
 
 export interface ScreenDeps {
@@ -49,8 +51,7 @@ const SELLER_MARKS = {
     UNLIMITED: { firstEditionStamp: "NOT_PRESENT", artBoxShadow: "PRESENT" },
 } as const;
 
-// A Buy It Now under this share of the card's cheapest price in any
-// condition is junk: a $5 "Base Set Charizard" is never the real card.
+// A very low price calls for verification; it cannot prove a counterfeit.
 // Auctions are exempt; a 99-cent starting bid is normal.
 const TOO_CHEAP_SHARE = 0.2;
 
@@ -145,11 +146,14 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
     const floor =
         rawPrices.status === "PRICED" && rawPrices.prices?.length ? Math.min(...rawPrices.prices.map((p) => p.price)) : null;
 
-    if (listing.buyingOption === "FIXED_PRICE" && floor !== null && listing.price < floor * TOO_CHEAP_SHARE) {
+    const priceAnomaly = listing.buyingOption === "FIXED_PRICE" && floor !== null && listing.price < floor * TOO_CHEAP_SHARE
+        ? { referencePrice: floor, photoChecked: listing.photoVerified === true }
+        : undefined;
+    if (priceAnomaly && !priceAnomaly.photoChecked) {
         return screen(
             "UNSCREENED",
-            `At ${dollars(listing.price)}, it's far below the ${dollars(floor)} this card sells for in any condition: likely a fake, a reprint, or not the card.`,
-            { card: cardInfo, junk: true }
+            `At ${dollars(listing.price)}, it's far below the lowest quoted price of ${dollars(floor)}. Photo verification is required; price alone cannot establish a deal or a fake.`,
+            { card: cardInfo, priceAnomaly }
         );
     }
 
@@ -209,16 +213,27 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
             assumed = `${CONDITION_NAMES[rawCondition]}, grading ${grade} at best`;
         }
     } catch (error) {
-        return screen("UNSCREENED", `The price lookup failed: ${(error as Error).message}`, { card: cardInfo });
+        return screen("UNSCREENED", `The price lookup failed: ${(error as Error).message}`, { card: cardInfo, priceAnomaly });
     }
 
     const { verdict, reasons, best, paths } = outcome;
     const bestCase = best ? { label: best.label, maxBid: best.maxBid, profit: best.profit, roi: best.roi } : null;
     const priced = paths.filter((path) => path.status === "PRICED");
+    const playedPrices = (rawPrices.prices ?? []).filter((price) => ["MODERATELY_PLAYED", "HEAVILY_PLAYED", "DAMAGED"].includes(price.condition));
     const money = best
         ? {
               shipping: best.shipping,
-              paths: priced.map((path) => ({ label: path.label, expectedNet: path.expectedNet, fixedCosts: path.fixedCosts })),
+              paths: priced.map((path) => {
+                  const summaries = path.path === "GRADED_RESALE" ? [input.slabPricing?.summary]
+                      : path.grader ? input.gradedPricing?.[path.grader]?.byGrade : [];
+                  const available = (summaries ?? []).filter((summary): summary is CompSummary => Boolean(summary && summary.count > 0));
+                  const support = available.reduce<CompSummary | undefined>((least, summary) =>
+                      !least || summary.count < least.count ? summary : least, undefined);
+                  return { label: path.label, expectedNet: path.expectedNet, fixedCosts: path.fixedCosts,
+                      path: path.path, downsideNet: path.downside + path.cost,
+                      compCount: support?.count, compConfidence: support?.confidence };
+              }),
+              ...(playedPrices.length ? { rawFloorNet: netFromSale(Math.min(...playedPrices.map((price) => price.price)), "raw", config.selling) } : {}),
               auction: listing.buyingOption === "AUCTION",
               usual: usualPrice(paths, input.slab ? input.slabPricing?.summary : null),
               bestOffer: listing.bestOffer,
@@ -227,8 +242,8 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
 
     if (verdict.startsWith("BUY") || verdict === "PASS") {
         // Flags an auction that will very likely end above its max bid.
-        return retargetScreen(screen("DROPPED", reasons[0] ?? null, { card: cardInfo, bestCase, assumed, money }), listing.price, config.targets, config, includeOffers);
+        return retargetScreen(screen("DROPPED", reasons[0] ?? null, { card: cardInfo, bestCase, assumed, money, priceAnomaly }), listing.price, config.targets, config, includeOffers);
     }
 
-    return screen("UNSCREENED", reasons[0] ?? "It couldn't be priced.", { card: cardInfo, assumed });
+    return screen("UNSCREENED", reasons[0] ?? "It couldn't be priced.", { card: cardInfo, assumed, priceAnomaly });
 }

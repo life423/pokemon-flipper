@@ -3,9 +3,10 @@ import { prefersReducedMotion, transitionName, withViewTransition } from "./moti
 import type { EbayUsage, Evaluation, ListingSummary, RatingLevel, SearchIntent, Targets } from "./types";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { analysisConcurrency, canAutoAnalyze, meetsMinimumGrade, resultGroup, type ResultGroup } from "../../shared/analysis.ts";
+import { compareAnalysisPriority } from "../../shared/analysis-priority.ts";
 import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.ts";
 import { offerFor, offerWorthMaking } from "../../shared/money/offer.ts";
-import { bargainScore, bargainSignals } from "../../shared/signals.ts";
+import { compareListingEvidence, listingSignals } from "../../shared/signals.ts";
 import { name } from "./format";
 import { evaluateListing, fetchEbayUsage, fetchSetYears, streamDeals, type DealsMessage } from "./api";
 import { DealCard } from "./components/DealCard";
@@ -86,7 +87,7 @@ const VIEW_NAMES: Record<View, string> = {
     hidden: "Hidden finds",
     all: "All",
 };
-type SortKey = "best" | "bargain" | "ending" | "priceLow" | "priceHigh";
+type SortKey = "best" | "overlooked" | "ending" | "priceLow" | "priceHigh";
 type TypeFilter = "all" | "AUCTION" | "FIXED_PRICE";
 type KindFilter = "all" | "raw" | "graded";
 
@@ -119,16 +120,7 @@ const LEVEL_ORDER: Record<RatingLevel, number> = { STRONG: 0, GOOD: 1, THIN: 2, 
 const evaluationOf = (analysis?: AnalysisState) => (analysis?.status === "done" ? analysis.evaluation : null);
 const isDeal = (evaluation: Evaluation | null) => evaluation?.underwriting?.verdict.startsWith("BUY") ?? false;
 
-// How far under its best-case max bid a listing sits, from the free check.
-function bestCaseRoom(listing: ListingSummary): number {
-    const best = listing.screen?.bestCase;
-
-    if (!best || best.maxBid <= 0 || listing.currentPrice === null) return -Infinity;
-
-    return (best.maxBid - listing.currentPrice) / best.maxBid;
-}
-
-const SORTS: Record<Exclude<SortKey, "best" | "bargain">, (a: ListingSummary, b: ListingSummary) => number> = {
+const SORTS: Record<Exclude<SortKey, "best" | "overlooked">, (a: ListingSummary, b: ListingSummary) => number> = {
     // Listings without an end date (most Buy It Now) go last.
     ending: (a, b) =>
         (a.endTime ? Date.parse(a.endTime) : Infinity) - (b.endTime ? Date.parse(b.endTime) : Infinity),
@@ -507,7 +499,7 @@ export function App() {
         const waiting = listings
             // Long-shot auctions aren't worth the AI.
             .filter((listing) => canAutoAnalyze(listing) && !analyses[listing.id])
-            .sort((a, b) => bestCaseRoom(b) - bestCaseRoom(a));
+            .sort((a, b) => compareAnalysisPriority(a, b, targets));
         let free = analysisConcurrency(waiting.length + running, analysisOutcomes) - running;
 
         for (const listing of waiting) {
@@ -518,7 +510,7 @@ export function App() {
             remaining -= 1;
             void runAnalysis(listing);
         }
-    }, [listings, analyses, budget, runAnalysis, analysisOutcomes]);
+    }, [listings, analyses, budget, runAnalysis, analysisOutcomes, targets]);
 
     function changeAutoSetting(value: number) {
         setAutoSetting(value);
@@ -592,15 +584,17 @@ export function App() {
             if (ra) return -1;
             if (rb) return 1;
 
-            return bestCaseRoom(b) - bestCaseRoom(a);
+            return compareAnalysisPriority(a, b, targets);
         };
 
         // The listings with the strongest signs of being overlooked first.
-        const bargain = (listing: ListingSummary) => bargainScore(bargainSignals(listing, evaluationOf(analyses[listing.id]), now));
-        const compareBargain = (a: ListingSummary, b: ListingSummary) => bargain(b) - bargain(a);
+        const compareOverlooked = (a: ListingSummary, b: ListingSummary) => {
+            const verified = Number(isDeal(evaluationOf(analyses[b.id]))) - Number(isDeal(evaluationOf(analyses[a.id])));
+            return verified || compareListingEvidence(listingSignals(a, evaluationOf(analyses[a.id]), now), listingSignals(b, evaluationOf(analyses[b.id]), now)) || compareBest(a, b);
+        };
 
-        return [...groups[view]].sort(sort === "best" ? compareBest : sort === "bargain" ? compareBargain : SORTS[sort]);
-    }, [groups, view, sort, analyses]);
+        return [...groups[view]].sort(sort === "best" ? compareBest : sort === "overlooked" ? compareOverlooked : SORTS[sort]);
+    }, [groups, view, sort, analyses, targets, now]);
 
     const counts = useMemo(() => {
         const count = (status: string) => listings.filter((listing) => listing.screen?.status === status).length;
@@ -609,7 +603,8 @@ export function App() {
         return {
             candidates: listings.filter(canAutoAnalyze).length,
             dropped: count("DROPPED"),
-            unchecked: listings.filter((listing) => listing.screen?.status === "UNSCREENED" && !listing.match).length,
+            unchecked: listings.filter((listing) => listing.screen?.status === "UNSCREENED" && !listing.match &&
+                !(listing.screen.priceAnomaly && !listing.screen.priceAnomaly.photoChecked)).length,
             mismatched: listings.filter(
                 (listing) =>
                     (listing.match && listing.match !== "JUNK") || Boolean(evaluationOf(analyses[listing.id])?.identity?.notThisCard)
@@ -1128,7 +1123,7 @@ export function App() {
                                         <option value="ending">Ending soonest</option>
                                         <option value="priceLow">Price, low to high</option>
                                         <option value="priceHigh">Price, high to low</option>
-                                        <option value="bargain">Most overlooked first</option>
+                                        <option value="overlooked">Most overlooked first</option>
                                     </select>
                                 </label>
                                 <label className={styles.field}>

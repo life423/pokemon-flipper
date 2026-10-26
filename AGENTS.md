@@ -111,6 +111,111 @@ send it to the seller or submit an eBay offer. No automatic sending is authorize
 9. Persistent shortlist with targeted refresh instead of rerunning whole searches.
 10. Adapt searches within an eBay request budget and share overlapping lookups.
 
+## Next branch and proposed priorities
+
+The user requested a new branch and further improvement ideas after release
+`6b67170` was merged and pushed to `main`. Branch `faster-real-deals` was created
+from that release. The following are proposals, not blanket authorization to
+implement every item or start recurring searches:
+
+The user subsequently authorized priorities **1 and 3 only**, with explicit
+requirements to preserve working behavior and keep AI/eBay usage reasonable.
+
+1. Review the extreme-underpricing exclusion. `prescreen.ts` marks a fixed-price
+   listing below 20% of the cheapest known raw price as junk, and discovery
+   excludes junk. Price alone should not prove a counterfeit; consider bounded,
+   stronger photo verification before discarding a potentially genuine bargain.
+2. Prioritize fresh listings with deduplicated refreshes, rather than repeatedly
+   reviewing the same best-match inventory. Preserve caching and the eBay reserve.
+3. Prioritize analysis by conservative achievable profit, photo coverage,
+   comparable-sale quality and capital required. Current waiting order uses
+   best-case price room, which can favor optimistic grading assumptions.
+4. Give raw resale, buy-and-grade and auction strategies distinct search modes.
+   A raw-resale mode should prioritize profit without requiring a grade increase.
+5. Explore overlapping independent discovery with normal screening. Discovery
+   currently starts after the normal stream finishes. Keep shared service caps,
+   deduplication, cancellation and normal-result streaming intact.
+6. Recover only failed price lookups after provider cooldowns, retaining completed
+   photo assessments and successful results instead of restarting a whole search.
+7. Finish the guided budget setup, evidence-based search suggestions, explanations
+   for empty results, persistent shortlist, conservative downside on cards and
+   specific next-action guidance from the earlier backlog.
+8. Extend liquidity only when reliable turnover evidence is available; raw-card
+   resale speed is still unknown. Repeat the ten-query evaluation on the final
+   workflow with explicit API budgets; the saved timings predate that workflow.
+
+Already delivered in `6b67170`: offer-aware screening and separate offers within
+10%, automatic sampled discovery, adaptive analysis concurrency, visible price
+and potential-grade controls, photo confidence and independent raw condition,
+clearer money labels and total investment, observed graded resale activity,
+shared lookups, bounded provider waits and cooldowns. At that release, budget-aware
+search adaptation, ranking, strategy modes and shortlist work remained incomplete.
+
+### Current local work on priorities 1 and 3
+
+- Very cheap fixed-price listings now await photo verification in Review rather
+  than being marked junk by price alone. Auctions remain exempt from this flag.
+- Recovery uses the existing cached discovery scan plus an independent matching
+  photo check. Stock, ambiguous, multiple-card, wrong-identity, mismatch and
+  cancelled cases do not trigger comp/detail requests. A successful preliminary
+  check only restores ordinary screening; full analysis still decides Deals.
+- These listings receive at most a quarter of the existing discovery scan
+  ceiling (at most 30 listings out of a 120-scan ceiling). They do not get an
+  additional search budget. Existing global AI caps, per-search full-analysis
+  limits, cancellation and eBay reserve remain in force.
+- Automatic analysis and unverified Best sorting prioritize lower resale
+  estimates meeting the user's targets, then as-is resale, then grading-dependent
+  opportunities. Supporting comps, available unique photos, preliminary photo
+  matches and capital required contribute to ordering. It adds no provider calls
+  and does not change underwriting, profit thresholds or grade assumptions.
+- Availability of photos is not proof of front/back coverage. Duplicate images
+  and different resolutions of the same eBay photo count once for queue ordering.
+- Validation uses mocked providers and an offline browser preview; no paid AI
+  or live eBay calls are needed for these checks. Work was developed on
+  `faster-real-deals`; consult Git for the commit and delivery state.
+- All 235 tests, type checks and the production build pass. The offline browser
+  preview confirms conservative raw resale before a speculative grading jackpot,
+  with an unverified low price in Review and zero confirmed Deals.
+
+### Listing-evidence cleanup at the stopping point
+
+The user asked to improve the system and remove the redundant "Bargain" stamp.
+The card badge and displayed numeric score are removed. The detail panel now
+groups listing clues, checks/risks and discovery/auction context. Limited seller
+history and weak photos are cautions and do not improve opportunity sorting.
+Repeated evidence of the same printing/name/finish/set issue is deduplicated;
+stronger actual clues precede accumulated weak metadata. Retrieval method alone
+does not prove a title mistake. Default financial ranking remains separate.
+
+### Stopping point and saved UI requests
+
+The user requested a stopping point, a working commit on the current branch,
+and then no further work. Commit locally on `faster-real-deals`; no merge or
+GitHub push was requested for this stopping point. All 239 tests, type checking,
+production build and diff checks pass before the commit.
+
+The following later requests are saved for the next session and are NOT yet
+implemented:
+
+- Auction cards currently mix the current bid with profit at another winning
+  price and total investment at the current bid. Show an explicit max snipe/bid
+  ceiling, and tie each profit/ROI/total-cost figure to the same winning price.
+  Show time left, bid count, shipping assumptions, and when the current bid
+  already exceeds the ceiling. Any-profit/Any-ROI can mean a break-even ceiling;
+  clearly distinguish that from an attractive profit target.
+- Show an evidence-based comparable-sale guide/range for possible auction
+  closing prices, including sample size and uncertainty. Raw market quotes are
+  not auction-ending predictions; missing/uncertain data must remain unknown.
+- Raw cards need both PSA and CGC grading routes visible. Current condition AI
+  produces one shared PSA-style grade range used to price both graders, so do
+  not imply independent or certified grade predictions. Compare separate fees,
+  resale evidence and limits using existing data. Slabs retain their actual
+  certified grader/grade.
+- Perform a full UI/UX layout pass: fix overlapping components, unwanted scroll
+  bars, inconsistent type and spacing scales, and dense card content. Test
+  desktop and phone layouts with offline fixtures, including auctions, missing
+  photos/prices, long titles, side panels, filters and grading comparisons.
+
 ## Validation commands
 
 `npm test`, `npm run typecheck`, `npm run build`, and `git diff --check`.

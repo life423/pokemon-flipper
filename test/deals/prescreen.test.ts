@@ -140,16 +140,32 @@ test("a 1st Edition claim is screened at 1st Edition prices", async () => {
     assert.equal(result.status, "CANDIDATE");
 });
 
-test("a Buy It Now priced far below the card in any condition is junk; an auction isn't", async () => {
+test("a very cheap Buy It Now waits for photos without being labeled junk; auctions are exempt", async () => {
     // Lugia's cheapest raw price here is $315 (Moderately Played).
-    const junk = await prescreen(rawLugia({ price: 5, buyingOption: "FIXED_PRICE" }), deps);
+    let compCalls = 0;
+    const pending = await prescreen(rawLugia({ price: 5, buyingOption: "FIXED_PRICE" }), { ...deps, fetchComps: async () => { compCalls += 1; return []; } });
     const auction = await prescreen(rawLugia({ price: 5, buyingOption: "AUCTION" }), deps);
     const cheapButReal = await prescreen(rawLugia({ price: 100, buyingOption: "FIXED_PRICE" }), deps);
 
-    assert.equal(junk.junk, true);
-    assert.match(junk.reason, /far below the \$315\.00/);
+    assert.equal(pending.junk, undefined);
+    assert.equal(pending.status, "UNSCREENED");
+    assert.deepEqual(pending.priceAnomaly, { referencePrice: 315, photoChecked: false });
+    assert.match(pending.reason, /Photo verification is required/);
+    assert.equal(compCalls, 0, "pending photos do not spend graded comp lookups");
+    assert.equal(auction.priceAnomaly, undefined);
+    assert.equal(cheapButReal.priceAnomaly, undefined);
     assert.equal(auction.junk, undefined);
     assert.equal(cheapButReal.junk, undefined);
+});
+
+test("a very cheap card resumes normal screening after photo verification", async () => {
+    const verified = await prescreen(rawLugia({ price: 5, buyingOption: "FIXED_PRICE", photoVerified: true }), deps);
+    assert.equal(verified.status, "CANDIDATE");
+    assert.deepEqual(verified.priceAnomaly, { referencePrice: 315, photoChecked: true });
+    assert.equal(verified.junk, undefined);
+    assert.ok(verified.money.rawFloorNet > 0);
+    assert.ok(verified.money.paths.some((path) => path.path === "RAW"));
+    assert.ok(verified.money.paths.some((path) => path.path === "GRADE" && path.compCount >= 3));
 });
 
 test("a 1st Edition claim in the item details only is priced as what the main photo shows", async () => {

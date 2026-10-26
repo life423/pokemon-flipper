@@ -67,11 +67,11 @@ test("set-symbol explanations are separated from canonical price lookup names", 
 
 test("a full assessment removes a disproved Shadowless lead and its bargain boost", async () => {
     const { currentSellerMistakes } = await import("../../shared/seller-mistakes.ts");
-    const { bargainSignals } = await import("../../shared/signals.ts");
+    const { listingSignals } = await import("../../shared/signals.ts");
     const listing = { title: "Mewtwo Base Set holo 10/102", buyingOption: "FIXED_PRICE", mistakes: [{ kind: "SHADOWLESS", detail: "Possible Shadowless" }], found: { how: "PHOTO_SHOWS_IT", note: "A quick photo lead" } };
     const evaluation = { identity: { status: "IDENTIFIED", name: "Mewtwo", set: "Base Set", printing: "UNLIMITED", finish: "HOLO", evidence: { photo: "UNLIMITED" } } };
     assert.deepEqual(currentSellerMistakes(listing, evaluation), []);
-    assert.ok(!bargainSignals(listing, evaluation).some((signal) => signal.id === "FOUND" || signal.id === "SELLER_SHADOWLESS"));
+    assert.ok(!listingSignals(listing, evaluation).some((signal) => signal.id === "FOUND" || signal.id === "SELLER_SHADOWLESS"));
     assert.ok(!kinds("Charizard Shadowless 1st Edition", { ...scan, printingMarks: { ...marks, firstEditionStamp: "NOT_PRESENT" } }).includes("SHADOWLESS"));
 });
 

@@ -8,6 +8,7 @@ import { checkComps } from "../ai/comp-checker.ts";
 import { matchMainPhoto, type ClaimedCard, type PhotoMatch } from "../ai/photo-match.ts";
 import { prescreen, type ScreenInput } from "./prescreen.ts";
 import { withTargets } from "../../shared/money/targets.ts";
+import { availablePhotoCount } from "../../shared/analysis-priority.ts";
 import type { ListingSummary, Screen, SearchIntent, Targets } from "../../shared/types.ts";
 
 // A search, the way eBay matches it, narrowed to the card searched for,
@@ -107,8 +108,9 @@ export async function screenListing(
     );
     signal?.throwIfAborted();
 
-    // Priced too low to be the real card: junk, before any eBay request.
+    // Explicit junk stays excluded; a low price alone waits for bounded discovery.
     if (first.junk) return { ...listing, match: "JUNK", screen: first };
+    if (first.priceAnomaly && !first.priceAnomaly.photoChecked) return { ...listing, screen: first };
 
     // A candidate's main photo, checked against the card it claims before any
     // eBay request or full analysis. Long-shot auctions aren't worth it.
@@ -122,11 +124,14 @@ export async function screenListing(
             const reason = `The main photo doesn't match: ${seen.problems.join("; ") || "another card"}.`;
             return { ...listing, match: "OTHER_CARD", screen: { ...first, reason } };
         }
+        if (first.priceAnomaly && seen?.verdict !== "MATCH") {
+            return { ...listing, screen: { ...first, status: "UNSCREENED", priceAnomaly: { ...first.priceAnomaly, photoChecked: false }, reason: "The unusually low price needs a clear matching photo before automatic analysis." } };
+        }
     }
 
     // Dropped on its title alone: no eBay detail request.
     if (first.status !== "CANDIDATE" && !first.incomplete) {
-        return { ...listing, screen: first };
+        return { ...listing, screen: { ...first, evidence: { photos: availablePhotoCount(listing.images), mainPhoto: seen?.verdict === "MATCH" ? "MATCH" : seen?.verdict === "CANT_TELL" ? "CANT_TELL" : "UNKNOWN" } } };
     }
 
     let details: ListingDetails;
@@ -136,7 +141,7 @@ export async function screenListing(
     } catch {
         signal?.throwIfAborted();
         // Out of eBay requests, or the listing is gone: the title's check stands.
-        return { ...listing, screen: first };
+        return { ...listing, screen: { ...first, evidence: { photos: availablePhotoCount(listing.images), mainPhoto: seen?.verdict === "MATCH" ? "MATCH" : seen?.verdict === "CANT_TELL" ? "CANT_TELL" : "UNKNOWN" } } };
     }
     signal?.throwIfAborted();
 
@@ -168,7 +173,7 @@ export async function screenListing(
         seller: details.seller ?? listing.seller,
         cardCondition: details.cardCondition,
         conditionNotes: details.conditionNotes,
-        screen,
+        screen: { ...screen, evidence: { photos: availablePhotoCount(details.images ?? listing.images), mainPhoto: seen?.verdict === "MATCH" ? "MATCH" : seen?.verdict === "CANT_TELL" ? "CANT_TELL" : "UNKNOWN" } },
     };
 }
 

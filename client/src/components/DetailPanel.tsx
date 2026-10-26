@@ -22,8 +22,7 @@ import { ceilingLabel } from "../../../shared/format.ts";
 import { describeOffer, numbersAtOffer, offerFor } from "../../../shared/money/offer.ts";
 import { resaleActivity } from "../../../shared/liquidity.ts";
 import { photoEvidence } from "../../../shared/photo-evidence.ts";
-import { currentSellerMistakes } from "../../../shared/seller-mistakes.ts";
-import { bargainScore, bargainSignals } from "../../../shared/signals.ts";
+import { listingSignals } from "../../../shared/signals.ts";
 import { writeOfferNote } from "../api";
 import { RatingBadge, VerdictBadge } from "./VerdictBadge";
 import styles from "./DetailPanel.module.css";
@@ -191,7 +190,6 @@ function Analysis({
         0
     );
     const evidence = photoEvidence(evaluation, minGrade);
-    const mistakes = currentSellerMistakes(listing, evaluation);
 
     return (
         <>
@@ -215,8 +213,7 @@ function Analysis({
                 </Section>
             )}
 
-            <BargainSection listing={listing} evaluation={evaluation} />
-            {mistakes.length > 0 && <Section title="Seller listing differences"><Notes items={mistakes.map((mistake) => mistake.detail)} tone="muted" /></Section>}
+            <ListingEvidenceSection listing={listing} evaluation={evaluation} />
             <OfferSection listing={listing} evaluation={evaluation} />
             <Section title="Resale activity">
                 <p>{resaleActivity(evaluation, now).label}</p>
@@ -435,24 +432,17 @@ function PathCard({ path, auction }: { path: MoneyPath; auction: boolean }) {
     );
 }
 
-function BargainSection({ listing, evaluation }: { listing: ListingSummary; evaluation: Evaluation }) {
-    const signals = bargainSignals(listing, evaluation);
+function ListingEvidenceSection({ listing, evaluation }: { listing: ListingSummary; evaluation: Evaluation }) {
+    const signals = listingSignals(listing, evaluation);
 
     if (signals.length === 0) return null;
 
     return (
-        <Section title={`Bargain signals: ${bargainScore(signals)}`}>
-            <p className={styles.small}>
-                Signs it's overlooked or mispriced because of how it was listed. None of them means buy: the photos and
-                the money math above still decide.
-            </p>
-            <ul className={styles.notes}>
-                {signals.map((signal) => (
-                    <li key={signal.id}>
-                        <strong>{signal.label}.</strong> {signal.detail}
-                    </li>
-                ))}
-            </ul>
+        <Section title="Listing evidence">
+            {([['OPPORTUNITY', 'Listing clues'], ['CAUTION', 'Checks and risks'], ['CONTEXT', 'Discovery and auction context']] as const).map(([kind, title]) => {
+                const items = signals.filter((signal) => signal.kind === kind);
+                return items.length ? <div key={kind}><h4>{title}</h4><ul className={styles.notes}>{items.map((signal) => <li key={signal.id}><strong>{signal.label}.</strong> {signal.detail}</li>)}</ul></div> : null;
+            })}
         </Section>
     );
 }

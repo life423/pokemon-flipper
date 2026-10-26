@@ -1,23 +1,23 @@
 import type { Evaluation, FoundHow, ListingSummary } from "./types.ts";
 import { currentSellerMistakes } from "./seller-mistakes.ts";
 
-// Bargain signals: signs a listing is overlooked or mispriced because of how
-// it was listed, not because of the card. None of them means buy. Each is a
-// reason to look closer; the photos and the money math still decide.
+// Explain observed listing clues separately from risks and auction context.
+// These never establish profit or change the purchase verdict.
 
-export interface BargainSignal {
+export interface ListingSignal {
     id: string;
     label: string;
     detail: string;
     weight: number;
+    kind: "OPPORTUNITY" | "CAUTION" | "CONTEXT";
 }
 
 // How Dig deeper turned a listing up: the reason it's hidden from others.
 const FOUND_LABELS: Record<FoundHow, string> = {
-    MISSPELLED: "Misspelled title",
-    NUMBER_ONLY: "Title gives only the number",
+    MISSPELLED: "Found via alternate-name search",
+    NUMBER_ONLY: "Found via collector-number search",
     WRONG_CATEGORY: "Listed in the wrong category",
-    PHOTO_SHOWS_IT: "Title hides it; the photo shows it",
+    PHOTO_SHOWS_IT: "Found through photo verification",
 };
 
 const PRINTING_NAMES: Record<string, string> = { FIRST_EDITION: "1st Edition", SHADOWLESS: "Shadowless" };
@@ -43,6 +43,7 @@ function mentionsSet(title: string, set: string): boolean {
 
 // The hour (US Eastern) an auction ends, if it's when few buyers are awake.
 function quietHour(endTime: string): number | null {
+    if (!Number.isFinite(Date.parse(endTime))) return null;
     const hour =
         Number(
             new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hourCycle: "h23" }).format(
@@ -57,12 +58,12 @@ function hourName(hour: number): string {
     return hour === 0 ? "midnight" : `${hour} AM`;
 }
 
-export function bargainSignals(
+export function listingSignals(
     listing: ListingSummary,
     evaluation: Evaluation | null | undefined,
     now = Date.now()
-): BargainSignal[] {
-    const signals: BargainSignal[] = [];
+): ListingSignal[] {
+    const signals: Omit<ListingSignal, "kind">[] = [];
     const title = words(listing.title);
     const identity = evaluation?.identity ?? null;
     const evidence = identity?.evidence ?? null;
@@ -102,7 +103,7 @@ export function bargainSignals(
     }
 
     // A dig already says how the title hides it.
-    if (name && !listing.found && !words(name).split(" ").every((word) => title.includes(word))) {
+    if (name && !words(name).split(" ").every((word) => title.split(" ").includes(word))) {
         signals.push({
             id: "NAME_OFF",
             label: "Name misspelled or missing",
@@ -111,7 +112,7 @@ export function bargainSignals(
         });
     }
 
-    if (identity?.status === "IDENTIFIED" && /HOLO/.test(identity.finish) && !/REVERSE/.test(identity.finish) && !/\bholo/.test(title)) {
+    if (identity?.status === "IDENTIFIED" && identity.finish === "HOLO" && !/\bholo/.test(title)) {
         signals.push({
             id: "TITLE_OMITS_HOLO",
             label: "Title omits holo",
@@ -143,9 +144,9 @@ export function bargainSignals(
     if (identity?.status === "IDENTIFIED" && sufficiency && sufficiency !== "SUFFICIENT") {
         signals.push({
             id: "WEAK_PHOTOS",
-            label: "Weak photos, card still clear",
-            detail: "Thin or blurry photos put buyers off, but the card was still identified.",
-            weight: 10,
+            label: "Limited photo evidence",
+            detail: "The card was identified, but the available views limit the condition assessment.",
+            weight: 0,
         });
     }
 
@@ -156,8 +157,8 @@ export function bargainSignals(
             signals.push({
                 id: "FEW_BIDS",
                 label: listing.bids === 0 ? "No bids, ending soon" : "One bid, ending soon",
-                detail: "Less than a day left and almost no bidding.",
-                weight: 15,
+                detail: "Less than a day remains. The current bid count does not establish the final price.",
+                weight: 0,
             });
         }
 
@@ -167,8 +168,8 @@ export function bargainSignals(
             signals.push({
                 id: "QUIET_HOUR",
                 label: `Ends ${hourName(hour)} Eastern`,
-                detail: "Few bidders are awake to bid at the end.",
-                weight: 10,
+                detail: "Scheduled closing time; bidder activity and the final price remain unknown.",
+                weight: 0,
             });
         }
     }
@@ -178,16 +179,31 @@ export function bargainSignals(
     if (typeof feedback === "number" && feedback < 25) {
         signals.push({
             id: "NEW_SELLER",
-            label: "New seller",
-            detail: `${feedback} feedback: newer sellers misprice more often, and carry more risk.`,
-            weight: 6,
+            label: "Limited seller history",
+            detail: `${feedback} feedback ratings. Review the seller's history and return terms.`,
+            weight: 0,
         });
     }
 
-    return signals.sort((a, b) => b.weight - a.weight);
+    const grouped = new Map<string, ListingSignal>();
+    for (const signal of signals) {
+        const kind = ["NEW_SELLER", "WEAK_PHOTOS"].includes(signal.id) ? "CAUTION"
+            : ["FOUND", "QUIET_HOUR", "FEW_BIDS"].includes(signal.id) ? "CONTEXT" : "OPPORTUNITY";
+        const group = /SLEEPER|PRINTING|FIRST_EDITION|SHADOWLESS/.test(signal.id) ? "PRINTING"
+            : /NAME|GENERIC_TITLE/.test(signal.id) ? "NAME"
+            : /HOLO/.test(signal.id) ? "FINISH"
+            : ["SELLER_SET", "NO_SET"].includes(signal.id) ? "SET" : signal.id;
+        const previous = grouped.get(group);
+        if (!previous || signal.weight > previous.weight) grouped.set(group, { ...signal, kind });
+    }
+    return [...grouped.values()].sort((a, b) => b.weight - a.weight);
 }
 
-// 0 to 100: how strongly a listing looks overlooked. Not a buy signal.
-export function bargainScore(signals: BargainSignal[]): number {
-    return Math.min(100, signals.reduce((total, signal) => total + signal.weight, 0));
+// Sort by the strongest actual listing clue, then distinct clue count.
+// Risk, weak photos and retrieval method never increase opportunity priority.
+export function compareListingEvidence(a: ListingSignal[], b: ListingSignal[]): number {
+    const opportunities = (signals: ListingSignal[]) => signals.filter((signal) => signal.kind === "OPPORTUNITY");
+    const left = opportunities(a);
+    const right = opportunities(b);
+    return Math.max(0, ...right.map((signal) => signal.weight)) - Math.max(0, ...left.map((signal) => signal.weight)) || right.length - left.length;
 }

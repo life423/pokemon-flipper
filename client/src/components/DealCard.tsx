@@ -4,7 +4,6 @@ import type { ListingSummary } from "../types";
 import { dollars, timeLeft } from "../format";
 import { ceilingLabel } from "../../../shared/format.ts";
 import { numbersAtOffer, offerFor, offerWorthMaking } from "../../../shared/money/offer.ts";
-import { bargainScore, bargainSignals } from "../../../shared/signals.ts";
 import { yearOf } from "../../../shared/sets.ts";
 import { resaleActivity } from "../../../shared/liquidity.ts";
 import { photoEvidence } from "../../../shared/photo-evidence.ts";
@@ -74,6 +73,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
     const activity = resaleActivity(evaluation, now);
     const evidence = evaluation ? photoEvidence(evaluation, minGrade) : null;
     const mistakes = currentSellerMistakes(listing, evaluation);
+    const pricePending = !evaluation && listing.screen?.priceAnomaly && !listing.screen.priceAnomaly.photoChecked;
     const longShot = rating?.level === "LONG_SHOT" || Boolean(screen?.longShot);
 
     // The verdict, in the palette's meanings.
@@ -96,6 +96,8 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
                       ? ["Can't price", "watch"]
                       : underwriting?.verdict === "PASS"
                         ? ["Pass", "pass"]
+                        : pricePending
+                          ? ["Verify price", "watch"]
                         : listing.mistakes?.length
                           ? ["Photo lead", "watch"]
                         : screen?.status === "CANDIDATE"
@@ -153,7 +155,6 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
               : "\u2014";
 
     // The line under the price: the most you'd pay, and how it's sold.
-    const signals = bargainSignals(listing, evaluation, now);
     const ceiling = best?.maxBid ?? screen?.bestCase?.maxBid ?? null;
     const meta = [
         ceiling !== null
@@ -163,7 +164,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
         auction ? left : null,
         listing.shipping === null ? "ship not quoted" : listing.shipping === 0 ? "free ship" : `${dollars(listing.shipping)} ship`,
     ].filter(Boolean);
-    const metaShort = [meta[0], auction ? left : "Buy It Now"].filter(Boolean);
+    const metaShort = [ceiling !== null ? meta[0] : null, auction ? left : "Buy It Now"].filter(Boolean);
 
     return (
         <article
@@ -204,6 +205,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
                 </div>
 
                 {best && <p className={styles.activity}>Est. total invested {dollars(best.cost)}. Profit includes fees, tax, shipping{best.path === "GRADE" ? " and grading" : ""}.</p>}
+                {pricePending && <p className={styles.activity}>Unusually low price. Awaiting photo verification; this is not a confirmed deal.</p>}
                 {mistakes.map((mistake) => <p className={styles.activity} key={mistake.kind}>{mistake.detail}</p>)}
                 {evaluation?.condition && evidence && <p className={styles.activity}>AI condition: {nameCondition(evaluation.condition.rawCondition)} · {evidence.confidence.toLowerCase()} photo confidence. {evidence.coverage}.</p>}
                 {minGrade > 0 && evidence && <p className={styles.activity}>{evidence.target}</p>}
@@ -220,11 +222,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
                     {/* A narrow card keeps just the max price and time left. */}
                     <span className={styles.metaFull}>{meta.join(" \u00b7 ")}</span>
                     <span className={styles.metaShort}>{metaShort.join(" \u00b7 ")}</span>
-                    {signals.length > 0 && tone !== "quiet" && (
-                        <span className={styles.bargain} title={signals.map((signal) => signal.label).join(", ")}>
-                            Bargain {bargainScore(signals)}
-                        </span>
-                    )}
+
                 </p>
             </div>
 

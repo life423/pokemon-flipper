@@ -3,10 +3,12 @@ import { mapLimit } from "../lib/concurrency.ts";
 import { readSearch } from "../search/intent.ts";
 import { cardMismatch, gradingMatches } from "../search/relevance.ts";
 import { digQueries, type DigQuery } from "../search/dig.ts";
-import { findCardInPhoto, describeWanted, type PhotoFind } from "../ai/photo-find.ts";
+import { findCardInPhoto, describeWanted, photoFitsSearch, type PhotoFind } from "../ai/photo-find.ts";
 import { screeningSteps, screenListing, type ScreenSteps } from "./find-deals.ts";
 import { sellerMistakes } from "./seller-mistakes.ts";
+import type { PhotoMatch } from "../ai/photo-match.ts";
 import { analysisConcurrency } from "../../shared/analysis.ts";
+import { compareAnalysisPriority } from "../../shared/analysis-priority.ts";
 import type { FoundHow, ListingSummary, SearchIntent, Targets } from "../../shared/types.ts";
 
 // Dig deeper: single cards a plain search misses, where the hidden deals
@@ -51,6 +53,7 @@ function photoSteps(seen: PhotoFind, intent: SearchIntent, steps: ScreenSteps): 
         check: (input) => steps.check({ ...input,
             title: [seen.inspection?.card.name ?? intent.cardName, seen.set, seen.cardNumber].filter(Boolean).join(" "),
             photoMarks: seen.inspection?.printingMarks ?? input.photoMarks,
+            photoVerified: Boolean(seen.inspection && photoFitsSearch(seen.inspection, intent)),
         }),
     };
 }
@@ -66,6 +69,7 @@ async function digListing(
 ): Promise<ListingSummary | null> {
     signal?.throwIfAborted();
     const recheck = listing.match || listing.screen;
+    const priceAnomaly = listing.screen?.priceAnomaly;
 
     // A title that doesn't name the card: the photo has to show it.
     if (!listing.images[0] || photoBudget.left <= 0) return null;
@@ -76,16 +80,31 @@ async function digListing(
 
     // Only a single card, plainly the one searched for. Several cards is a lot.
     if (seen?.found !== "YES" || seen.cardCount > 1) return null;
+    if (priceAnomaly && (!seen.inspection || !photoFitsSearch(seen.inspection, intent))) return null;
+    let pricePhoto: PhotoMatch | null = null;
+    if (priceAnomaly) {
+        // Require the independent mismatch/fake/reprint check before fetching
+        // grading comps or listing details for an implausibly cheap card.
+        pricePhoto = await steps.matchPhoto(listing.images[0], {
+            name: seen.inspection!.card.name, set: seen.set, cardNumber: seen.cardNumber,
+            printing: "UNKNOWN", printingLabel: null,
+        });
+        signal?.throwIfAborted();
+        if (pricePhoto?.verdict === "MISMATCH") return { ...listing, match: "OTHER_CARD", screen: { ...listing.screen!, reason: `Photo verification failed: ${pricePhoto.problems.join("; ") || "the card doesn't match"}.` } };
+        if (pricePhoto?.verdict !== "MATCH") return null;
+    }
     const claimed = await steps.readTitle({ title: listing.title, aspects: {} });
     signal?.throwIfAborted();
     const mistakes = seen.inspection ? sellerMistakes(listing, seen.inspection, claimed.aspects) : [];
-    if (recheck && mistakes.length === 0) return null;
-    const screened = await screenListing({ ...listing, match: undefined }, photoSteps(seen, intent, steps), intent, signal);
+    if (recheck && mistakes.length === 0 && !priceAnomaly) return null;
+    const verifiedSteps = photoSteps(seen, intent, steps);
+    if (pricePhoto) verifiedSteps.matchPhoto = async () => pricePhoto;
+    const screened = await screenListing({ ...listing, match: undefined }, verifiedSteps, intent, signal);
     const foundHow: FoundHow = how === "MISSPELLED" || how === "NUMBER_ONLY" ? how
         : listing.categoryId !== CCG_INDIVIDUAL_CARDS ? "WRONG_CATEGORY" : "PHOTO_SHOWS_IT";
 
     const supported = mistakes.filter((mistake) => mistake.kind !== "HOLO" || !screened.screen?.card?.availableFinishes?.length || screened.screen.card.availableFinishes.includes("HOLO"));
-    if (recheck && supported.length === 0) return null;
+    if (recheck && supported.length === 0 && !priceAnomaly) return null;
     return { ...screened, mistakes: supported, found: { how: foundHow, note: seen.shows } };
 }
 
@@ -115,8 +134,8 @@ export async function digDeeper(
     // Seller claims can hide the value, so also inspect a bounded sample of
     // initially rejected listings. Existing candidates already get full AI.
     for (const listing of primaryListings) {
-        if (!listing.isGraded && listing.match !== "JUNK" && listing.screen?.status !== "CANDIDATE" && listing.images[0]) {
-            found.set(listing.id, { listing, how: "PHOTO_SHOWS_IT", lane: 0 });
+        if ((!listing.isGraded || listing.screen?.priceAnomaly) && listing.match !== "JUNK" && listing.screen?.status !== "CANDIDATE" && listing.images[0]) {
+            found.set(listing.id, { listing, how: "PHOTO_SHOWS_IT", lane: listing.screen?.priceAnomaly ? -1 : 0 });
         }
     }
 
@@ -144,6 +163,11 @@ export async function digDeeper(
         if (!lanes.has(item.lane)) lanes.set(item.lane, []);
         lanes.get(item.lane)!.push(item);
     }
+    for (const lane of lanes.values()) lane.sort((a, b) => compareAnalysisPriority(a.listing, b.listing, targets));
+    // Unusually cheap listings share the existing photo ceiling. A flood of
+    // implausible prices cannot consume all discovery work or trigger details.
+    const anomalies = lanes.get(-1);
+    if (anomalies) lanes.set(-1, anomalies.slice(0, Math.ceil(maximum / 4)));
     const live: typeof eligible = [];
     while (live.length < maximum) {
         let added = false;

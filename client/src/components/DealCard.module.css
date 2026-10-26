@@ -222,8 +222,7 @@
     font-size: var(--text-xs);
 }
 
-.found,
-.bargain {
+.found {
     display: inline-block;
     margin-right: 6px;
     padding: 0 6px;
@@ -236,11 +235,6 @@
     color: var(--action-text);
 }
 
-.bargain {
-    margin: 0 0 0 6px;
-    background: color-mix(in srgb, var(--warning) 14%, transparent);
-    color: var(--warning);
-}
 
 /* Three facts behind the verdict, divided by hairlines, and the way in. */
 .stats {
@@ -315,8 +309,7 @@
 }
 
 @container card (max-width: 26rem) {
-    .metaFull,
-    .bargain {
+    .metaFull {
         display: none;
     }
 

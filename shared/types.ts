@@ -46,7 +46,9 @@ export interface Screen {
     // other targets without another lookup.
     money?: {
         shipping: number;
-        paths: { label: string; expectedNet: number; fixedCosts: number }[];
+        paths: { label: string; expectedNet: number; fixedCosts: number; path?: PathKind; downsideNet?: number; compCount?: number; compConfidence?: Confidence }[];
+        // Lowest quoted played/damaged raw condition, when one is available.
+        rawFloorNet?: number;
         auction: boolean;
         usual: UsualPrice | null;
         bestOffer?: boolean;
@@ -55,8 +57,9 @@ export interface Screen {
     // bid. Not worth the AI.
     longShot?: boolean;
     requiresOffer?: boolean;
-    // Priced far below anything the card sells for: a fake, a reprint, or
-    // not the card at all. Skipped like other junk.
+    priceAnomaly?: { referencePrice: number; photoChecked: boolean };
+    evidence?: { photos: number; mainPhoto: "MATCH" | "CANT_TELL" | "UNKNOWN" };
+    // Explicit junk evidence. An unusually low price uses priceAnomaly instead.
     junk?: boolean;
     // The check was missing the set, number, name, grader, or grade: the
     // listing's own item details might settle it.

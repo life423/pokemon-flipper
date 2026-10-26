@@ -3,7 +3,8 @@ import { offerFor, offerWorthMaking } from "./money/offer.ts";
 
 // Automatic analysis and its progress counts use the same eligibility rule.
 export function canAutoAnalyze(listing: ListingSummary): boolean {
-    return !listing.match && (listing.screen?.status === "CANDIDATE" || Boolean(listing.mistakes?.length)) && !listing.screen?.longShot;
+    return !listing.match && !(listing.screen?.priceAnomaly && !listing.screen.priceAnomaly.photoChecked) &&
+        (listing.screen?.status === "CANDIDATE" || Boolean(listing.mistakes?.length)) && !listing.screen?.longShot;
 }
 
 export type ResultGroup = "deals" | "offers" | "candidates" | "longShots" | "review";
@@ -13,6 +14,7 @@ export function resultGroup(listing: ListingSummary, evaluation: Evaluation | nu
     if (verdict?.startsWith("BUY")) return evaluation?.rating?.level === "LONG_SHOT" ? "longShots" : "deals";
     if (includeOffers && verdict === "PASS" && offerWorthMaking(offerFor(listing, evaluation?.underwriting?.best?.maxBid))) return "offers";
     if (verdict === "NEEDS_REVIEW" || verdict === "CANT_PRICE") return "review";
+    if (!evaluation && listing.screen?.priceAnomaly && !listing.screen.priceAnomaly.photoChecked) return "review";
     if (!evaluation && listing.mistakes?.length && listing.screen?.status !== "CANDIDATE") return "review";
     if (!evaluation && listing.screen?.status === "CANDIDATE") return listing.screen.longShot ? "longShots" : "candidates";
     return null;
