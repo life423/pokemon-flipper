@@ -286,3 +286,15 @@ test("a slab that needs review, or looks fake, isn't priced", () => {
     assert.equal(review.verdict, "NEEDS_REVIEW");
     assert.equal(fake.verdict, "PASS");
 });
+
+test("final raw pricing uses the AI's condition even when the seller calls it Near Mint", () => {
+    const result = underwrite(lugiaEvaluation({
+        listing: { price: 100, shipping: 5, cardCondition: "Near mint or better" },
+        condition: { rawCondition: "HEAVILY_PLAYED", gradeRange: { low: 2, likely: 3, high: 5 }, authenticity: { concern: "NONE_SEEN", reasons: [] } },
+        gradedPricing: {},
+        rawPricing: { status: "PRICED", prices: [{ condition: "NEAR_MINT", price: 531.39 }, { condition: "HEAVILY_PLAYED", price: 70 }] },
+    }), CONFIG);
+    assert.equal(result.verdict, "PASS");
+    assert.equal(pathOf(result, "Resell raw").salePrice, 70);
+    assert.equal(pathOf(result, "Resell raw").priceCondition, "HEAVILY_PLAYED");
+});

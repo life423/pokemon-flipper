@@ -1,10 +1,13 @@
 // eBay Browse API: reads public listings with an application token
 // (client credentials). No eBay user ever signs in.
+import { fetchJson } from "../lib/http.ts";
+import { createSingleFlight } from "../lib/single-flight.ts";
 
 const EBAY_API = "https://api.ebay.com";
 
 let cachedToken: string | null = null;
 let tokenExpiresAt = 0;
+const share = createSingleFlight();
 
 export class EbayError extends Error {
     constructor(
@@ -16,6 +19,10 @@ export class EbayError extends Error {
 }
 
 async function getAccessToken(): Promise<string> {
+    return share("token", requestAccessToken);
+}
+
+async function requestAccessToken(): Promise<string> {
     if (cachedToken && Date.now() < tokenExpiresAt) {
         return cachedToken;
     }
@@ -24,7 +31,7 @@ async function getAccessToken(): Promise<string> {
         "base64"
     );
 
-    const response = await fetch(`${EBAY_API}/identity/v1/oauth2/token`, {
+    const { response, body: data } = await fetchJson(`${EBAY_API}/identity/v1/oauth2/token`, {
         method: "POST",
         headers: {
             "Content-Type": "application/x-www-form-urlencoded",
@@ -34,9 +41,7 @@ async function getAccessToken(): Promise<string> {
             grant_type: "client_credentials",
             scope: "https://api.ebay.com/oauth/api_scope",
         }),
-    });
-
-    const data = await response.json().catch(() => ({}));
+    }, { service: "eBay sign-in" });
 
     if (!response.ok) {
         throw new Error(
@@ -64,8 +69,7 @@ export async function ebayGet<T>(path: string): Promise<T> {
         headers["X-EBAY-C-ENDUSERCTX"] = `contextualLocation=country%3DUS%2Czip%3D${process.env.EBAY_SHIP_TO_ZIP}`;
     }
 
-    const response = await fetch(`${EBAY_API}${path}`, { headers });
-    const data = await response.json().catch(() => ({}));
+    const { response, body: data } = await fetchJson(`${EBAY_API}${path}`, { headers }, { service: "eBay" });
 
     if (!response.ok) {
         throw new EbayError(

@@ -38,6 +38,7 @@ export interface Screen {
         cardNumber: string | null;
         printing: Printing | "UNKNOWN";
         printingLabel: string | null;
+        availableFinishes?: string[];
     } | null;
     bestCase: { label: string; maxBid: number; profit: number; roi: number | null } | null;
     assumed: string | null;
@@ -48,10 +49,12 @@ export interface Screen {
         paths: { label: string; expectedNet: number; fixedCosts: number }[];
         auction: boolean;
         usual: UsualPrice | null;
+        bestOffer?: boolean;
     };
     // An auction that will very likely end above even its best-case max
     // bid. Not worth the AI.
     longShot?: boolean;
+    requiresOffer?: boolean;
     // Priced far below anything the card sells for: a fake, a reprint, or
     // not the card at all. Skipped like other junk.
     junk?: boolean;
@@ -89,8 +92,24 @@ export interface SearchIntent {
 // How Dig deeper turned a listing up.
 export type FoundHow = "MISSPELLED" | "NUMBER_ONLY" | "WRONG_CATEGORY" | "PHOTO_SHOWS_IT";
 
+export interface PhotoCardReading {
+    name: string | null;
+    set: string | null;
+    cardNumber: string | null;
+    finish: "HOLO" | "NON_HOLO" | "REVERSE_HOLO" | "UNKNOWN";
+    language: string | null;
+    confidence: "HIGH" | "MEDIUM" | "LOW";
+    evidence: string[];
+}
+
+export interface SellerMistake {
+    kind: "NAME" | "FIRST_EDITION" | "SHADOWLESS" | "HOLO" | "SET" | "GENERIC_TITLE";
+    detail: string;
+}
+
 // One search result, with the free check once it's run.
 export interface ListingSummary {
+    mistakes?: SellerMistake[];
     id: string;
     title: string;
     currentPrice: number | null;
@@ -123,9 +142,12 @@ export interface PhotoReport {
     usable: boolean;
     isStockImage: boolean;
     issues: string[];
+    // Lighting, background contrast, glare, cropping, or a holder hides detail.
+    obscuresCondition?: boolean;
 }
 
 export interface PhotoCheck {
+    cardIdentity?: PhotoCardReading;
     photoSufficiency: string;
     confidence: string;
     cardCount: string;

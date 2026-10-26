@@ -20,6 +20,14 @@ export interface IdentityListing {
 // What identity reads from the photo check.
 export type IdentityPhotos = Pick<PhotoCheck, "printedName" | "printedNumber" | "printingMarks" | "cardMatch" | "slab">;
 
+export interface PhotoConfirmation {
+    name: string;
+    set: string;
+    cardNumber: string;
+    finish?: "HOLO" | "NON_HOLO" | "REVERSE_HOLO";
+    printing?: Printing;
+}
+
 // The identity as it's built: the public fields plus a few the pricing
 // code reads.
 export interface IdentityDraft extends Identity {
@@ -69,6 +77,7 @@ const SHADOWLESS_SETS = new Set(["base set", "base set shadowless"]);
 const SET_FAMILIES: Record<string, string[]> = {
     "base set": ["base set", "base set shadowless"],
     "base set shadowless": ["base set", "base set shadowless"],
+    "crown zenith": ["crown zenith", "crown zenith galarian gallery"],
 };
 
 const SET_FAMILY_SEARCH: Record<string, string> = {
@@ -364,7 +373,8 @@ export function resolvePrinting(
         itemSpecifics,
         label = "NOT_STATED",
         photo,
-    }: { title: PrintingClaim; itemSpecifics: PrintingClaim; label?: PrintingClaim; photo: PrintingOrUnknown },
+        corroboratedPhoto,
+    }: { title: PrintingClaim; itemSpecifics: PrintingClaim; label?: PrintingClaim; photo: PrintingOrUnknown; corroboratedPhoto?: Printing },
     { hasEditions, setName = null }: { hasEditions: boolean | null; setName?: string | null }
 ): PrintingDecision {
     const printingName = (printing: string) => printingLabel(printing, setName);
@@ -394,6 +404,11 @@ export function resolvePrinting(
 
     if (photo === "UNKNOWN") {
         return review("The photos don't clearly show which printing this is.");
+    }
+    if (corroboratedPhoto === photo && label === "NOT_STATED") {
+        return { status: "ACCEPTED", printing: photo, reason: claim !== photo
+            ? "Two independent photo readings confirm this printing despite the seller's omitted or incorrect claim."
+            : null };
     }
     if (claim && claim !== photo) {
         // A pricier claim the photos clearly don't support: priced as what the
@@ -610,8 +625,16 @@ export function titleContradiction(title: string, setName: string | null, cardNu
 export async function identifyCard(
     listing: IdentityListing,
     photoCheck: IdentityPhotos,
-    { lookupCards }: { lookupCards: LookupCards }
+    { lookupCards, photoIdentity }: { lookupCards: LookupCards; photoIdentity?: PhotoConfirmation }
 ): Promise<{ identity: IdentityDraft; card: PricedCard | null }> {
+    const sellerListing = listing;
+    if (photoIdentity) {
+        listing = {
+            ...listing,
+            title: `${photoIdentity.name} ${photoIdentity.set} ${photoIdentity.cardNumber}`,
+            aspects: { ...listing.aspects, "Card Name": photoIdentity.name, Set: photoIdentity.set, "Card Number": photoIdentity.cardNumber, Language: "English" },
+        };
+    }
     const aspects = listing.aspects ?? {};
     const listedName = aspects["Card Name"] ?? aspects.Character ?? photoCheck.printedName ?? null;
 
@@ -745,7 +768,7 @@ export async function identifyCard(
     }
 
     const evidence = {
-        title: printingClaimFromText(listing.title),
+        title: printingClaimFromText(sellerListing.title),
         itemSpecifics: printingClaimFromText(aspectText(aspects, /edition|feature|print/i)),
         label,
         photo,
@@ -754,7 +777,7 @@ export async function identifyCard(
     };
     identity.evidence = evidence;
 
-    identity.finish = resolveFinish(
+    identity.finish = photoIdentity?.finish ?? resolveFinish(
         finishClaimFromText(aspectText(aspects, /finish|feature/i)),
         finishClaimFromText(listing.title)
     );
@@ -768,14 +791,14 @@ export async function identifyCard(
     }
 
     // Anything else on the card that shows it isn't what the listing claims.
-    if (photoCheck.cardMatch?.verdict === "MISMATCH") {
+    if (photoCheck.cardMatch?.verdict === "MISMATCH" && !photoIdentity) {
         const problems = photoCheck.cardMatch.problems.join("; ") || "the card differs from the listing";
 
         identity.notThisCard = problems;
         return needsReview(`The photos don't match the listing: ${problems}.`, card);
     }
 
-    const printing = resolvePrinting(evidence, {
+    const printing = resolvePrinting({ ...evidence, corroboratedPhoto: photoIdentity?.printing }, {
         hasEditions: identity.hasEditions,
         setName: identity.set,
     });
@@ -786,6 +809,7 @@ export async function identifyCard(
 
     // Priced as a cheaper printing than the seller claims: say so.
     if (printing.reason) identity.reasons.push(printing.reason);
+    if (photoIdentity && (sellerListing.title !== listing.title)) identity.reasons.push("Identity is corroborated by independent discovery and full-photo readings; seller wording was not used as proof of the card.");
 
     if (labelNamesNone && printing.printing === "FIRST_EDITION") {
         return needsReview("The listing says 1st Edition, but the slab label doesn't.", card);

@@ -1,13 +1,17 @@
 import { dollars, percent } from "../format.ts";
+import { pathNumbers } from "./underwriting.ts";
+import { MONEY_CONFIG } from "./config.ts";
+import type { PricedPath } from "../types.ts";
 
 // What to offer on a Buy It Now that accepts Best Offer. The max price
 // (the most that still clears your targets) is where you walk away.
 
 // Opening offer on a listing that's already a deal at its asking price.
-const OPENING_DISCOUNT = 0.15;
+const OPENING_DISCOUNT = 0.1;
 
-// Sellers rarely take more than this far below their asking price.
-const LONG_SHOT_DISCOUNT = 0.4;
+// Discovery policy, not a prediction of what a seller will accept.
+// Larger discounts require a price drop before being shown as opportunities.
+const LONG_SHOT_DISCOUNT = 0.1;
 
 export interface OfferPlan {
     // What to offer, rounded to a number that reads as deliberate.
@@ -16,7 +20,7 @@ export interface OfferPlan {
     walkAway: number;
     // Paying the full asking price would still clear your targets.
     clearsAtAsking: boolean;
-    // More than 40% under asking: a seller is unlikely to take it.
+    // More than 10% under asking: outside our offer-discovery cutoff.
     longShot: boolean;
 }
 
@@ -31,15 +35,18 @@ export function offerPlan(asking: number, maxPrice: number): OfferPlan | null {
     if (maxPrice <= 0 || asking <= 0) return null;
 
     const clearsAtAsking = asking <= maxPrice;
-    const offer = roundOffer(clearsAtAsking ? asking * (1 - OPENING_DISCOUNT) : maxPrice);
+    const minimumOffer = Math.ceil((asking * (1 - LONG_SHOT_DISCOUNT) - 1e-9) * 100) / 100;
+    const rounded = roundOffer(clearsAtAsking ? asking * (1 - OPENING_DISCOUNT) : maxPrice);
+    // Keep rounding from turning a permitted discount into a lowball.
+    const offer = maxPrice >= minimumOffer ? Math.max(minimumOffer, rounded) : rounded;
 
     if (offer <= 0) return null;
 
     return {
         offer,
-        walkAway: Math.floor(maxPrice),
+        walkAway: Math.floor((maxPrice + 1e-9) * 100) / 100,
         clearsAtAsking,
-        longShot: offer < asking * (1 - LONG_SHOT_DISCOUNT),
+        longShot: offer + 1e-9 < asking * (1 - LONG_SHOT_DISCOUNT),
     };
 }
 
@@ -51,9 +58,22 @@ export function describeOffer(plan: OfferPlan, asking: number): string {
         return `It's already a deal at ${dollars(asking)}. Open at ${dollars(plan.offer)} (${under} under) to keep more; paying the full price still clears your targets.`;
     }
 
-    const base = `Offer ${dollars(plan.offer)}, ${under} under asking: the most that still clears your targets.`;
+    const base = `Offer ${dollars(plan.offer)}, ${under} under asking, within your price limit.`;
 
-    return plan.longShot ? `${base} Sellers rarely take that much off, so it's a long shot.` : base;
+    return plan.longShot
+        ? `Your limit is ${dollars(plan.walkAway)}, ${under} below asking. This is outside the 10% offer-discovery cutoff; wait for a price drop. Seller acceptance is unknown.`
+        : `${base} Seller acceptance is unknown; this is only an opportunity if they agree.`;
+}
+
+export function numbersAtOffer(path: PricedPath, plan: OfferPlan) {
+    const { profit, roi } = pathNumbers({
+        expectedNet: path.expectedNet,
+        downsideNet: path.downside + path.cost,
+        fixedCosts: path.fixedCosts,
+        shipping: path.shipping,
+        price: plan.offer,
+    }, MONEY_CONFIG);
+    return { profit, roi };
 }
 
 // The plan for a listing, when it's a Buy It Now that takes offers and its

@@ -652,3 +652,25 @@ test("a pricier printing than the seller claims still needs both: no settling up
 
     assert.equal(decision.status, "NEEDS_REVIEW");
 });
+
+test("corroborated photos can identify a seller's wrong set and finish without borrowing the seller's premium claim", async () => {
+    const seller = { title: "Lugia Team Rocket 9/111 Non-Holo Unlimited", aspects: { Set: "Team Rocket", "Card Name": "Lugia", "Card Number": "9/111", Finish: "Non-Holo" } };
+    const photos = photoCheck({}, { cardMatch: { verdict: "MISMATCH", problems: ["Neo Genesis symbol, not Team Rocket"] } });
+    const { identity, card } = await identifyCard(seller, photos, {
+        lookupCards: lookup(LUGIA), photoIdentity: { name: "Lugia", set: "Neo Genesis", cardNumber: "9/111", finish: "HOLO", printing: "UNLIMITED" },
+    });
+    assert.equal(identity.status, "IDENTIFIED");
+    assert.equal(identity.set, "Neo Genesis");
+    assert.equal(identity.finish, "HOLO");
+    assert.equal(rawPricesFor(card, identity).status, "PRICED");
+    const ordinary = await identifyCard(seller, photos, { lookupCards: lookup(LUGIA) });
+    assert.equal(ordinary.identity.status, "NEEDS_REVIEW");
+});
+
+test("unclaimed premium printings require corroboration and conflicting slab/text claims still require review", () => {
+    const evidence = { title: "UNLIMITED", itemSpecifics: "NOT_STATED", photo: "FIRST_EDITION" };
+    assert.equal(resolvePrinting(evidence, { hasEditions: true }).status, "NEEDS_REVIEW");
+    assert.equal(resolvePrinting({ ...evidence, corroboratedPhoto: "FIRST_EDITION" }, { hasEditions: true }).status, "ACCEPTED");
+    assert.equal(resolvePrinting({ ...evidence, corroboratedPhoto: "FIRST_EDITION", label: "UNLIMITED" }, { hasEditions: true }).status, "NEEDS_REVIEW");
+    assert.equal(resolvePrinting({ ...evidence, corroboratedPhoto: "FIRST_EDITION" }, { hasEditions: false }).status, "NEEDS_REVIEW");
+});

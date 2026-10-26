@@ -2,6 +2,7 @@ import { ebayGet } from "./api.ts";
 import { exclusionReason, normalizeText } from "./filters.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { countRequest, ebayUsage, EbayBudgetError } from "./usage.ts";
+import { createSingleFlight } from "../lib/single-flight.ts";
 import type { BuyingOption, ListingSummary, Seller } from "../../shared/types.ts";
 
 // Toys & Hobbies > Collectible Card Games > CCG Individual Cards
@@ -23,6 +24,7 @@ export const DETAILS_MAX_AGE_HOURS = 24 * 7;
 
 // Detail requests this server has sent to eBay, for the logs.
 let detailRequests = 0;
+const shareDetails = createSingleFlight();
 
 export function detailRequestCount(): number {
     return detailRequests;
@@ -135,7 +137,9 @@ export async function searchListings(
     {
         maxResults = PAGE_SIZE,
         anyCategory = false,
-    }: { maxResults?: number; anyCategory?: boolean } = {}
+        keepReserve = false,
+        signal,
+    }: { maxResults?: number; anyCategory?: boolean; keepReserve?: boolean; signal?: AbortSignal } = {}
 ): Promise<{ listings: ListingSummary[]; total: number; skipped: number }> {
     const scope = anyCategory ? "any" : "cards";
     const key = `ebay:search:${maxResults}:${scope}:${normalizeText(search).trim()}`;
@@ -157,6 +161,10 @@ export async function searchListings(
     let skipped = 0;
 
     for (let offset = 0; offset < maxResults; offset += PAGE_SIZE) {
+        signal?.throwIfAborted();
+        if (keepReserve && (await ebayUsage())?.braking) {
+            throw new EbayBudgetError("Saving the rest of today's eBay allowance; extra searches paused.");
+        }
         const params = new URLSearchParams({
             q: `pokemon ${search}`.trim(),
             // Outside the card category, for listings filed in the wrong one.
@@ -213,12 +221,13 @@ export async function getListingDetails(
         throw new EbayBudgetError("Saving the rest of today's eBay allowance.");
     }
 
-    detailRequests += 1;
-    countRequest();
-    const details = await fetchListingDetails(itemId);
-    await writeCache(key, details);
-
-    return details;
+    return shareDetails(itemId, async () => {
+        detailRequests += 1;
+        countRequest();
+        const details = await fetchListingDetails(itemId);
+        await writeCache(key, details);
+        return details;
+    });
 }
 
 async function fetchListingDetails(itemId: string): Promise<ListingDetails> {

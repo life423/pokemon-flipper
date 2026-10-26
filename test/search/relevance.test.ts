@@ -73,3 +73,19 @@ test("a set fits the search when it's in the family, or unknown", () => {
     assert.equal(setMatches(null, INTENT), true);
     assert.equal(setMatches("Scarlet & Violet 151", { ...INTENT, sets: [] }), true);
 });
+
+test("a guessed card name cannot erase a number-only search", async () => {
+    const { cleanReading } = await import("../../server/search/intent.ts");
+    const intent = cleanReading({ cardName: "Galarian Sirfetch'd", sets: ["Sword & Shield Black Star Promos"], cardNumber: "SWSH050", printing: null, graded: null, titleWords: ["galarian", "sirfetch'd"] }, "pokemon promo swsh050");
+    assert.equal(intent.cardName, null);
+    assert.deepEqual(intent.titleWords, []);
+    assert.equal(intent.cardNumber, "SWSH050");
+    assert.equal(titleMatches("Charizard V SWSH050 Pokemon Promo", intent), true);
+    assert.equal(cardMismatch(screen(card("Sword & Shield Black Star Promos", { cardNumber: "SWSH051" })), intent), "OTHER_CARD");
+});
+
+test("Crown Zenith searches include its gallery without including other expansions", () => {
+    const intent = { ...INTENT, cardName: "Mewtwo VSTAR", sets: ["Crown Zenith"] };
+    assert.equal(setMatches("SWSH: Crown Zenith: Galarian Gallery", intent), true);
+    assert.equal(setMatches("Brilliant Stars: Trainer Gallery", intent), false);
+});

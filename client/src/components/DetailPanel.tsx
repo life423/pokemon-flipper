@@ -19,7 +19,10 @@ import { describeRange, dollars, name, percent, timeLeft } from "../format";
 import { useNow } from "../useNow";
 import { CONDITION_AREAS } from "../../../shared/conditions.ts";
 import { ceilingLabel } from "../../../shared/format.ts";
-import { describeOffer, offerFor } from "../../../shared/money/offer.ts";
+import { describeOffer, numbersAtOffer, offerFor } from "../../../shared/money/offer.ts";
+import { resaleActivity } from "../../../shared/liquidity.ts";
+import { photoEvidence } from "../../../shared/photo-evidence.ts";
+import { currentSellerMistakes } from "../../../shared/seller-mistakes.ts";
 import { bargainScore, bargainSignals } from "../../../shared/signals.ts";
 import { writeOfferNote } from "../api";
 import { RatingBadge, VerdictBadge } from "./VerdictBadge";
@@ -33,9 +36,10 @@ interface Props {
     now: number;
     onClose: () => void;
     onAnalyze: (fresh: boolean) => void;
+    minGrade?: number;
 }
 
-export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closing = false }: Props) {
+export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closing = false, minGrade = 0 }: Props) {
     // A new listing opens at the top of the panel.
     const panel = useRef<HTMLElement>(null);
 
@@ -106,6 +110,7 @@ export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closin
                         listing={listing}
                         evaluation={analysis.evaluation}
                         now={now}
+                        minGrade={minGrade}
                         onReanalyze={() => onAnalyze(true)}
                     />
                 )}
@@ -173,22 +178,32 @@ function Analysis({
     evaluation,
     now,
     onReanalyze,
+    minGrade,
 }: {
     listing: ListingSummary;
     evaluation: Evaluation;
     now: number;
     onReanalyze: () => void;
+    minGrade: number;
 }) {
     const tokens = evaluation.usage.reduce(
         (total, step) => total + (step.inputTokens ?? 0) + (step.outputTokens ?? 0),
         0
     );
+    const evidence = photoEvidence(evaluation, minGrade);
+    const mistakes = currentSellerMistakes(listing, evaluation);
 
     return (
         <>
             {evaluation.underwriting && (
                 <VerdictSection underwriting={evaluation.underwriting} evaluation={evaluation} now={now} />
             )}
+            <Section title="Photo evidence and grading confidence">
+                <p>Assessment confidence: {name(evidence.confidence)}. {evidence.coverage}.</p>
+                <p>{evidence.target}</p>
+                <p className={styles.small}>Confidence describes the photo assessment. The chance of receiving a particular PSA grade is not calibrated.</p>
+                <Notes items={evidence.issues} tone="muted" />
+            </Section>
 
             {evaluation.underwriting && evaluation.underwriting.paths.length > 0 && (
                 <Section title="Every path">
@@ -201,7 +216,12 @@ function Analysis({
             )}
 
             <BargainSection listing={listing} evaluation={evaluation} />
+            {mistakes.length > 0 && <Section title="Seller listing differences"><Notes items={mistakes.map((mistake) => mistake.detail)} tone="muted" /></Section>}
             <OfferSection listing={listing} evaluation={evaluation} />
+            <Section title="Resale activity">
+                <p>{resaleActivity(evaluation, now).label}</p>
+                <p className={styles.small}>{resaleActivity(evaluation, now).detail}</p>
+            </Section>
             <ListingSection listing={listing} evaluation={evaluation} />
             {evaluation.identity && <IdentitySection identity={evaluation.identity} isSlab={Boolean(evaluation.slab)} />}
             {evaluation.slab && <SlabSection slab={evaluation.slab} pricing={evaluation.slabPricing} />}
@@ -250,22 +270,23 @@ function VerdictSection({
     if (room !== null) {
         // An auction's bid days before the end says nothing about the outcome.
         if (listing.buyingOption !== "AUCTION") rows.push([
-            "Under your max price",
-            <span className={room >= 0 ? styles.good : styles.bad}>{dollars(room)}</span>,
+            room >= 0 ? "Below your price limit" : "Above your price limit",
+            <span className={room >= 0 ? styles.good : styles.bad}>{dollars(Math.abs(room))}</span>,
         ]);
     }
-    if (best && underwriting.verdict.startsWith("BUY")) {
+    if (best && (listing.buyingOption !== "AUCTION" || underwriting.verdict.startsWith("BUY"))) {
         // An auction's bid will rise, so its profit is shown at the max bid.
         const auction = listing.buyingOption === "AUCTION";
         const profit = auction ? best.profitAtMaxBid : best.profit;
         const roi = auction ? best.roiAtMaxBid : best.roi;
 
         rows.push([
-            auction ? "Profit at max bid" : "Profit at this price",
-            <span className={styles.good}>
-                {dollars(profit)} ({percent(roi)} return)
+            auction ? "Est. profit at max bid" : (profit ?? 0) < 0 ? "Est. net loss at asking" : "Est. net profit at asking",
+            <span className={(profit ?? 0) >= 0 ? styles.good : styles.bad}>
+                {dollars(profit === null ? null : Math.abs(profit))} ({percent(roi)} return on total cost)
             </span>,
         ]);
+        if (!auction) rows.push(["Est. total invested", dollars(best.cost)]);
     }
     if (left) {
         rows.push(["Ends in", left]);
@@ -381,11 +402,13 @@ function PathCard({ path, auction }: { path: MoneyPath; auction: boolean }) {
             />
 
             {path.outlook && (
+                <>
+                <p className={styles.small}>Scenario weights are pricing assumptions, not measured probabilities of receiving a PSA or CGC grade.</p>
                 <table className={styles.table}>
                     <thead>
                         <tr>
                             <th>Grade</th>
-                            <th>Chance</th>
+                            <th>Scenario weight</th>
                             <th>Sells for</th>
                         </tr>
                     </thead>
@@ -406,6 +429,7 @@ function PathCard({ path, auction }: { path: MoneyPath; auction: boolean }) {
                         ))}
                     </tbody>
                 </table>
+                </>
             )}
         </div>
     );
@@ -440,6 +464,8 @@ function OfferSection({ listing, evaluation }: { listing: ListingSummary; evalua
     const [copied, setCopied] = useState(false);
 
     if (!plan || listing.currentPrice === null) return null;
+    const best = evaluation.underwriting?.best;
+    const offerNumbers = best ? numbersAtOffer(best, plan) : null;
 
     async function write() {
         setWriting(true);
@@ -464,13 +490,15 @@ function OfferSection({ listing, evaluation }: { listing: ListingSummary; evalua
         <Section title="Best offer">
             <Pairs
                 rows={[
-                    ["Offer", <strong>{dollars(plan.offer)}</strong>],
+                    [plan.longShot ? "Wait for price at or below" : "Suggested offer (not submitted)", <strong>{dollars(plan.longShot ? plan.walkAway : plan.offer)}</strong>],
                     ["Walk away above", dollars(plan.walkAway)],
+                    ...(!plan.longShot && offerNumbers ? [["Est. profit if accepted", `${dollars(offerNumbers.profit)} (${percent(offerNumbers.roi)} return)`] as [string, ReactNode]] : []),
                 ]}
             />
             <p className={styles.small}>{describeOffer(plan, listing.currentPrice)}</p>
 
-            <div className={styles.noteActions}>
+            <p className={styles.small}>Notes are drafts only. Nothing is sent and no offer is submitted by this app.</p>
+            {!plan.longShot && <div className={styles.noteActions}>
                 <button type="button" className={styles.secondary} onClick={write} disabled={writing}>
                     {writing ? "Writing..." : note ? "Write another note" : "Write a note for the seller"}
                 </button>
@@ -479,7 +507,7 @@ function OfferSection({ listing, evaluation }: { listing: ListingSummary; evalua
                         {copied ? "Copied" : "Copy"}
                     </button>
                 )}
-            </div>
+            </div>}
             {note && <p className={styles.note}>{note}</p>}
         </Section>
     );

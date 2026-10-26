@@ -5,10 +5,10 @@ import styles from "./SearchProgress.module.css";
 
 // Where a search is: finding listings on eBay, the free check, the AI,
 // then done. Or stopped, or failed.
-export type SearchPhase = "finding" | "filtering" | "ai" | "done" | "stopped" | "error";
+export type SearchPhase = "finding" | "filtering" | "discovering" | "ai" | "done" | "stopped" | "error";
 
 const STEPS = ["Finding listings", "Filtering listings", "AI analysis", "Finalizing results"];
-const STEP_OF: Record<SearchPhase, number> = { finding: 0, filtering: 1, ai: 2, done: 4, stopped: -1, error: -1 };
+const STEP_OF: Record<SearchPhase, number> = { finding: 0, filtering: 1, discovering: 1, ai: 2, done: 4, stopped: -1, error: -1 };
 const COLLAPSED_KEY = "searchProgressCollapsed";
 
 interface Props {
@@ -54,12 +54,12 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
         });
     };
 
-    const running = phase === "finding" || phase === "filtering" || phase === "ai";
+    const running = phase === "finding" || phase === "filtering" || phase === "discovering" || phase === "ai";
     const step = STEP_OF[phase];
 
     // How far along: the free check while it runs, then the AI.
     const percent =
-        phase === "finding"
+        phase === "finding" || phase === "discovering"
             ? null
             : phase === "ai"
               ? ai.target > 0
@@ -75,6 +75,7 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
     const title = {
         finding: "Searching eBay",
         filtering: "Searching eBay",
+        discovering: "Looking for overlooked listings",
         ai: "AI analysis",
         done: "Search complete",
         stopped: "Search stopped",
@@ -85,9 +86,9 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
         phase === "error"
             ? (error ?? "Something went wrong.")
             : phase === "done"
-              ? `${checked.toLocaleString()} listings checked for \u201c${query}\u201d`
+              ? `${checked.toLocaleString()} listing and photo checks for \u201c${query}\u201d`
               : phase === "stopped"
-                ? `Stopped after ${checked.toLocaleString()} of ${(total ?? checked).toLocaleString()} listings. Results so far stay below.`
+                ? `Stopped after ${checked.toLocaleString()} of ${(total ?? checked).toLocaleString()} checks. Results so far stay below.`
                 : phase === "ai"
                   ? `Checking the best candidates for \u201c${query}\u201d`
                   : `Scanning listings for \u201c${query}\u201d`;
@@ -95,18 +96,22 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
     const caption =
         phase === "ai"
             ? `${ai.done} of ${ai.target} candidates analyzed`
+            : phase === "discovering"
+              ? "Checking extra search coverage…"
             : phase === "finding"
               ? "Finding listings..."
-              : `${checked.toLocaleString()} of ${(total ?? 0).toLocaleString()} candidates checked`;
+              : `${checked.toLocaleString()} of ${(total ?? 0).toLocaleString()} checks completed`;
 
     // What's happening right now, in a few words.
     const activity =
-        phase === "finding"
+            phase === "discovering"
+                ? "Automatic discovery is running; results stay available below."
+            : phase === "finding"
             ? "Searching eBay..."
             : ai.analyzing > 0
               ? `AI analyzing ${ai.analyzing} ${ai.analyzing === 1 ? "candidate" : "candidates"}...`
               : phase === "filtering"
-                ? "Checking listings for free..."
+                ? "Reading titles, checking photos and prices..."
                 : ai.waiting > 0
                   ? `${ai.waiting} ${ai.waiting === 1 ? "candidate is" : "candidates are"} waiting for the AI.`
                   : phase === "stopped"

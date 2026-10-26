@@ -32,6 +32,9 @@ import { gradedPricesFor, compsForGrade } from "../pricing/graded-comps.ts";
 import { checkSlab } from "../identity/slab-check.ts";
 import { GRADERS, underwrite } from "../../shared/money/underwriting.ts";
 import { rateDeal } from "../../shared/money/rating.ts";
+import { savedPhotoInspection } from "../ai/photo-find.ts";
+import { confirmPhotoIdentity } from "../identity/photo-confirmation.ts";
+import { verifyShadowless } from "../ai/shadowless-check.ts";
 
 // eBay allows 24 photos; the ones past the first few are often the
 // close-ups that matter most.
@@ -209,7 +212,13 @@ export async function evaluateListing(
     let identifiedCard = null;
 
     if (checkedPhotos.cardCount === "ONE") {
-        const { identity, card } = await identifyCard(listing, checkedPhotos, { lookupCards });
+        const scan = await savedPhotoInspection(photoUrls[0]);
+        const photoIdentity = confirmPhotoIdentity(scan, checkedPhotos);
+        if (photoIdentity?.printing === "SHADOWLESS") {
+            const fronts = checkedPhotos.images.filter((image) => image.usable && !image.isStockImage && (image.view === "FRONT" || image.view === "FRONT_DETAIL"));
+            if (!await verifyShadowless(fronts.map((image) => photoUrls[image.number - 1]))) photoIdentity.printing = undefined;
+        }
+        const { identity, card } = await identifyCard(listing, checkedPhotos, { lookupCards, photoIdentity });
 
         identifiedCard = card;
         evaluation.identity = identity;

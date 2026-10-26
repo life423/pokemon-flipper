@@ -88,3 +88,13 @@ test("a repeat search uses the latest price and shipping while preserving the sa
     assert.equal(unknown.listing.shipping, saved.listing.shipping);
     assert.equal(unknown.rating, null);
 });
+
+test("offer-only screening is opt-in and observes the 10% cutoff", () => {
+    const screen = { status: "DROPPED", reason: "Too expensive", card: null, bestCase: null, assumed: "Near Mint", money: { shipping: 0, paths: [{ label: "Resell raw", expectedNet: 110, fixedCosts: 0 }], auction: false, usual: null, bestOffer: true } };
+    const targets = { minProfit: 0, minRoi: 0 };
+    assert.equal(retargetScreen(screen, 110, targets).status, "DROPPED");
+    assert.equal(retargetScreen(screen, 110, targets, undefined, true).status, "CANDIDATE");
+    assert.equal(retargetScreen(screen, 110, targets, undefined, true).requiresOffer, true);
+    assert.equal(retargetScreen(screen, 125, targets, undefined, true).status, "DROPPED");
+    assert.equal(retargetScreen(screen, 90, targets, undefined, false).status, "CANDIDATE");
+});

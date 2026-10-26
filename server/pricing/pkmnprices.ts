@@ -4,6 +4,8 @@ import { conditionOf } from "./raw-prices.ts";
 import { cardNumberOf, cardVariants } from "./records.ts";
 import type { CardRecord, Comp, FetchComps, LookupCards } from "./types.ts";
 import { createLimiter } from "../lib/concurrency.ts";
+import { createSingleFlight } from "../lib/single-flight.ts";
+import { fetchJson, ProviderError } from "../lib/http.ts";
 
 // pkmnprices.com: TCGplayer prices by printing and condition, and
 // individual eBay sold comps (sourced from PriceCharting). Every call
@@ -18,6 +20,8 @@ const MAX_IN_FLIGHT = 2;
 const RETRY_WAITS_MS = [5_000, 15_000, 30_000, 60_000];
 
 const limit = createLimiter(MAX_IN_FLIGHT);
+const share = createSingleFlight();
+let coolingUntil = 0;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -25,6 +29,10 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 type ApiBody = any;
 
 async function apiGet(path: string, maxAgeHours = DAY): Promise<ApiBody> {
+    return share(`${path}:${maxAgeHours}`, () => load(path, maxAgeHours));
+}
+
+async function load(path: string, maxAgeHours: number): Promise<ApiBody> {
     const cached = await readCache(`pkmnprices:${path}`, maxAgeHours);
 
     if (cached) return cached;
@@ -37,8 +45,10 @@ async function apiGet(path: string, maxAgeHours = DAY): Promise<ApiBody> {
 
     for (let attempt = 0; ; attempt += 1) {
         const { response, body } = await limit(async () => {
-            const response = await fetch(`${BASE}${path}`, { headers: { "x-api-key": apiKey } });
-            return { response, body: await response.json().catch(() => ({})) };
+            if (Date.now() < coolingUntil) {
+                throw new ProviderError("Price service is rate limited and cooling down. Cached prices still work; try missing prices again later.");
+            }
+            return fetchJson(`${BASE}${path}`, { headers: { "x-api-key": apiKey } }, { service: "Price lookup" });
         });
 
         const creditLimit = /credit/i.test(`${body.error?.code ?? ""} ${body.error?.message ?? ""}`);
@@ -46,7 +56,13 @@ async function apiGet(path: string, maxAgeHours = DAY): Promise<ApiBody> {
         if (response.status === 429 && !creditLimit && attempt < RETRY_WAITS_MS.length) {
             // Retry-After, in seconds, when pkmnprices sends one.
             const retryAfter = Number(response.headers.get("retry-after"));
-            await sleep(retryAfter > 0 ? retryAfter * 1000 : RETRY_WAITS_MS[attempt]);
+            const waitMs = retryAfter > 0 ? retryAfter * 1000 : RETRY_WAITS_MS[attempt];
+            coolingUntil = Math.max(coolingUntil, Date.now() + waitMs);
+            // A long server-directed wait is deferred, never retried early.
+            if (waitMs > 15_000 || attempt >= 2) {
+                throw new ProviderError("Price service is rate limited. Try this listing again later.");
+            }
+            await sleep(waitMs);
             continue;
         }
 

@@ -1,4 +1,5 @@
 import type { Evaluation, FoundHow, ListingSummary } from "./types.ts";
+import { currentSellerMistakes } from "./seller-mistakes.ts";
 
 // Bargain signals: signs a listing is overlooked or mispriced because of how
 // it was listed, not because of the card. None of them means buy. Each is a
@@ -67,13 +68,18 @@ export function bargainSignals(
     const evidence = identity?.evidence ?? null;
     const name = identity?.name ?? listing.screen?.card?.name ?? null;
     const set = identity?.set ?? listing.screen?.card?.set ?? null;
+    const mistakes = currentSellerMistakes(listing, evaluation);
+    for (const mistake of mistakes) signals.push({
+        id: `SELLER_${mistake.kind}`, label: "Photo suggests a seller mistake", detail: mistake.detail, weight: 20,
+    });
 
     // Found by digging: a listing most buyers' searches never show.
-    if (listing.found) {
+    const disprovedPhotoLead = listing.found?.how === "PHOTO_SHOWS_IT" && Boolean(listing.mistakes?.length) && mistakes.length === 0;
+    if (listing.found && !disprovedPhotoLead) {
         signals.push({
             id: "FOUND",
             label: FOUND_LABELS[listing.found.how],
-            detail: `Found by Dig deeper: ${listing.found.note}`,
+            detail: `Found by automatic discovery: ${listing.found.note}`,
             weight: 30,
         });
     }

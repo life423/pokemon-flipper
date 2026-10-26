@@ -26,6 +26,7 @@ export interface ScreenInput {
     isGraded: boolean;
     cardCondition: string | null;
     buyingOption?: BuyingOption;
+    bestOffer?: boolean;
     // Printing marks the main photo showed, where it could tell.
     photoMarks?: { firstEditionStamp: string; artBoxShadow: string };
 }
@@ -37,6 +38,7 @@ export interface ScreenDeps {
     checkComps?: CheckComps;
     config?: MoneyConfig;
     now?: number;
+    includeOffers?: boolean;
 }
 
 // Printing marks that agree with the seller, standing in for photos.
@@ -92,7 +94,7 @@ function screen(status: Screen["status"], reason: string | null, extra: Partial<
 }
 
 export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise<Screen> {
-    const { lookupCards, fetchComps, checkComps, config = MONEY_CONFIG, now = Date.now() } = deps;
+    const { lookupCards, fetchComps, checkComps, config = MONEY_CONFIG, now = Date.now(), includeOffers = false } = deps;
 
     if (typeof listing.price !== "number") {
         return screen("UNSCREENED", "The listing has no price.");
@@ -135,6 +137,7 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
         cardNumber: identity.cardNumber,
         printing: identity.printing,
         printingLabel: identity.printingLabel,
+        availableFinishes: [...new Set(card?.variants.map((variant) => variant.finish) ?? [])],
     };
 
     // The card's cheapest price in any condition, from the lookup already made.
@@ -218,16 +221,13 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
               paths: priced.map((path) => ({ label: path.label, expectedNet: path.expectedNet, fixedCosts: path.fixedCosts })),
               auction: listing.buyingOption === "AUCTION",
               usual: usualPrice(paths, input.slab ? input.slabPricing?.summary : null),
+              bestOffer: listing.bestOffer,
           }
         : undefined;
 
-    if (verdict.startsWith("BUY")) {
+    if (verdict.startsWith("BUY") || verdict === "PASS") {
         // Flags an auction that will very likely end above its max bid.
-        return retargetScreen(screen("CANDIDATE", null, { card: cardInfo, bestCase, assumed, money }), listing.price, config.targets, config);
-    }
-
-    if (verdict === "PASS") {
-        return screen("DROPPED", reasons[0] ?? null, { card: cardInfo, bestCase, assumed, money });
+        return retargetScreen(screen("DROPPED", reasons[0] ?? null, { card: cardInfo, bestCase, assumed, money }), listing.price, config.targets, config, includeOffers);
     }
 
     return screen("UNSCREENED", reasons[0] ?? "It couldn't be priced.", { card: cardInfo, assumed });

@@ -208,3 +208,11 @@ test("a value the rules don't recognize counts as the riskiest", () => {
 
     assert.equal(moreCautious(flagged, unknown), unknown);
 });
+
+test("obscured views limit grading, while an additional clear view can supply evidence", () => {
+    const obscured = photoCheck({ images: [photo(1, "FRONT", { obscuresCondition: true, issues: ["Overexposure and white background obscure edges"] }), photo(2, "BACK")] });
+    assert.equal(getGradingMode(obscured).mode, "LIMITED");
+    assert.match(getGradingMode(obscured).reasons.join(" "), /background contrast/);
+    const clear = { ...obscured, images: [...obscured.images, photo(3, "FRONT_DETAIL", { obscuresCondition: false })] };
+    assert.equal(getGradingMode(clear).mode, "FULL");
+});

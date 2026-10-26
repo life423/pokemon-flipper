@@ -1,0 +1,219 @@
+{
+  "date": "2026-10-25",
+  "branch": "improvements-review",
+  "method": "Ten distinct queries through the app search API, at most 200 eBay results per query, Any profit/ROI, offers excluded, and up to two selected full analyses per query. This diagnostic run predates the final automatic-discovery changes. Representative browser checks followed.",
+  "limitations": [
+    "Nine search streams completed; the broad vintage search was stopped at 150 seconds after price-provider rate limits.",
+    "Full analyses were sampled, not exhaustive. These timings are diagnostic observations, not guarantees or final-version benchmarks.",
+    "The eBay allowance changed by 399 during the run; concurrent app activity may contribute."
+  ],
+  "usageBefore": {
+    "used": 540,
+    "limit": 5000,
+    "remaining": 4460,
+    "resetsAt": "2026-10-26T07:00:00.000Z",
+    "braking": false
+  },
+  "usageAfter": {
+    "used": 939,
+    "limit": 5000,
+    "remaining": 4061,
+    "resetsAt": "2026-10-26T07:00:00.000Z",
+    "braking": false
+  },
+  "queries": [
+    {
+      "query": "1999 base set holo",
+      "firstListingSeconds": 0.901,
+      "screenSeconds": 107.505,
+      "matched": 195,
+      "received": 195,
+      "statuses": {
+        "UNSCREENED": 17,
+        "DROPPED": 145,
+        "CANDIDATE": 17,
+        "OTHER_SET": 12,
+        "OTHER_CARD": 3,
+        "JUNK": 1
+      },
+      "completed": true,
+      "errors": [],
+      "sampledFullAnalyses": 2
+    },
+    {
+      "query": "neo genesis lugia",
+      "firstListingSeconds": 28.524,
+      "screenSeconds": 92.891,
+      "matched": 136,
+      "received": 136,
+      "statuses": {
+        "UNSCREENED": 22,
+        "DROPPED": 98,
+        "CANDIDATE": 13,
+        "OTHER_CARD": 1,
+        "OTHER_SET": 1,
+        "OTHER_LANGUAGE": 1
+      },
+      "completed": true,
+      "errors": [],
+      "sampledFullAnalyses": 2
+    },
+    {
+      "query": "pikachu 151 illustration rare",
+      "firstListingSeconds": 29.535,
+      "screenSeconds": 58.529,
+      "matched": 191,
+      "received": 191,
+      "statuses": {
+        "DROPPED": 162,
+        "UNSCREENED": 16,
+        "CANDIDATE": 10,
+        "JUNK": 1,
+        "OTHER_LANGUAGE": 1,
+        "OTHER_CARD": 1
+      },
+      "completed": true,
+      "errors": [],
+      "sampledFullAnalyses": 0
+    },
+    {
+      "query": "umbreon vmax 215/203",
+      "firstListingSeconds": 17.718,
+      "screenSeconds": 55.868,
+      "matched": 190,
+      "received": 190,
+      "statuses": {
+        "UNSCREENED": 37,
+        "DROPPED": 132,
+        "CANDIDATE": 17,
+        "JUNK": 2,
+        "OTHER_LANGUAGE": 1,
+        "OTHER_CARD": 1
+      },
+      "completed": true,
+      "errors": [],
+      "sampledFullAnalyses": 2
+    },
+    {
+      "query": "charizard ex obsidian flames",
+      "firstListingSeconds": 22.628,
+      "screenSeconds": 57.998,
+      "matched": 198,
+      "received": 198,
+      "statuses": {
+        "DROPPED": 182,
+        "UNSCREENED": 10,
+        "CANDIDATE": 6
+      },
+      "completed": true,
+      "errors": [],
+      "sampledFullAnalyses": 0
+    },
+    {
+      "query": "team rocket dark blastoise",
+      "firstListingSeconds": 17.398,
+      "screenSeconds": 135.763,
+      "matched": 174,
+      "received": 174,
+      "statuses": {
+        "DROPPED": 134,
+        "OTHER_CARD": 2,
+        "UNSCREENED": 24,
+        "CANDIDATE": 13,
+        "OTHER_SET": 1
+      },
+      "completed": true,
+      "errors": [],
+      "sampledFullAnalyses": 2
+    },
+    {
+      "query": "gengar fossil psa 8",
+      "firstListingSeconds": 38.384,
+      "screenSeconds": 66.431,
+      "matched": 71,
+      "received": 71,
+      "statuses": {
+        "DROPPED": 56,
+        "UNSCREENED": 8,
+        "CANDIDATE": 2,
+        "JUNK": 2,
+        "OTHER_SET": 1,
+        "OTHER_LANGUAGE": 2
+      },
+      "completed": true,
+      "errors": [],
+      "sampledFullAnalyses": 0
+    },
+    {
+      "query": "crown zenith mewtwo vstar",
+      "firstListingSeconds": 16.658,
+      "screenSeconds": 35.634,
+      "matched": 197,
+      "received": 197,
+      "statuses": {
+        "UNSCREENED": 195,
+        "JUNK": 1,
+        "OTHER_LANGUAGE": 1
+      },
+      "completed": true,
+      "errors": [],
+      "sampledFullAnalyses": 0
+    },
+    {
+      "query": "pokemon promo swsh050",
+      "firstListingSeconds": null,
+      "screenSeconds": 12.199,
+      "matched": 0,
+      "received": 0,
+      "statuses": {},
+      "completed": true,
+      "errors": [],
+      "sampledFullAnalyses": 0
+    },
+    {
+      "query": "vintage pokemon holo raw",
+      "firstListingSeconds": 2.972,
+      "screenSeconds": 150.008,
+      "matched": 87,
+      "received": 73,
+      "statuses": {
+        "DROPPED": 37,
+        "JUNK": 3,
+        "UNSCREENED": 26,
+        "CANDIDATE": 5,
+        "OTHER_CARD": 1,
+        "OTHER_LANGUAGE": 1
+      },
+      "completed": false,
+      "errors": [
+        "The price lookup failed: Price service is rate limited. Try this listing again later.",
+        "The price lookup failed: Price service is rate limited. Try this listing again later.",
+        "The card lookup failed: Price service is rate limited. Try this listing again later.",
+        "The price lookup failed: Price service is rate limited. Try this listing again later.",
+        "The card lookup failed: Price service is rate limited. Try this listing again later.",
+        "The card lookup failed: Price service is rate limited. Try this listing again later.",
+        "The price lookup failed: Price service is rate limited. Try this listing again later.",
+        "The price lookup failed: Price service is rate limited. Try this listing again later.",
+        "The card lookup failed: Price service is rate limited. Try this listing again later.",
+        "The card lookup failed: Price service is rate limited. Try this listing again later.",
+        "The price lookup failed: Price service is rate limited. Try this listing again later.",
+        "AbortError: This operation was aborted"
+      ],
+      "sampledFullAnalyses": 2
+    }
+  ],
+  "fixes": [
+    "Preserve explicit Any targets in server screening.",
+    "Do not invent a required Pokemon name for number-only searches.",
+    "Recognize the Crown Zenith Galarian Gallery family.",
+    "Share overlapping provider lookups, bound waits and honor cooldowns.",
+    "Separate offer opportunities from deals and enforce the 10 percent cutoff.",
+    "Make automatic discovery cancellable, cached, sampled and adaptive.",
+    "Read seller mistakes from photos, corroborate premium identity and discard disproved leads."
+  ],
+  "uiValidation": [
+    "1999 base set holo: normal results stream before automatic discovery; no Dig deeper button.",
+    "A 92-photo diagnostic sample produced provisional leads, not confirmed deals. A subsequent cached run reused those readings.",
+    "A proposed Shadowless Mewtwo was rejected by full photo analysis: actually Unlimited, damaged, PSA-style range 1-4 likely 3, and a loss at asking."
+  ]
+}

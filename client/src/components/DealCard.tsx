@@ -3,9 +3,12 @@ import type { AnalysisState } from "../App";
 import type { ListingSummary } from "../types";
 import { dollars, timeLeft } from "../format";
 import { ceilingLabel } from "../../../shared/format.ts";
-import { offerFor, offerWorthMaking } from "../../../shared/money/offer.ts";
+import { numbersAtOffer, offerFor, offerWorthMaking } from "../../../shared/money/offer.ts";
 import { bargainScore, bargainSignals } from "../../../shared/signals.ts";
 import { yearOf } from "../../../shared/sets.ts";
+import { resaleActivity } from "../../../shared/liquidity.ts";
+import { photoEvidence } from "../../../shared/photo-evidence.ts";
+import { currentSellerMistakes } from "../../../shared/seller-mistakes.ts";
 import { ChevronIcon } from "./Icons";
 import { Tween } from "./Tween";
 import styles from "./DealCard.module.css";
@@ -21,6 +24,7 @@ interface Props {
     onOpen: () => void;
     // Release years by set, for the subtitle.
     years: Record<string, number>;
+    minGrade?: number;
 }
 
 // How Dig deeper found it, in a word or two.
@@ -54,7 +58,7 @@ function signed(value: number | null): string {
     return value < 0 ? `\u2212${dollars(-value)}` : `+${dollars(value)}`;
 }
 
-export function DealCard({ listing, analysis, selected, now, onOpen, years, index = 0, transitionName }: Props) {
+export function DealCard({ listing, analysis, selected, now, onOpen, years, index = 0, transitionName, minGrade = 0 }: Props) {
     const evaluation = analysis?.status === "done" ? analysis.evaluation : null;
     const underwriting = evaluation?.underwriting ?? null;
     const best = underwriting?.best ?? null;
@@ -66,6 +70,10 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
     const plan = offerFor(listing, best?.maxBid);
     // Doesn't clear at its asking price, but would at a realistic offer.
     const offer = underwriting?.verdict === "PASS" && offerWorthMaking(plan) ? plan : null;
+    const offerNumbers = offer && best ? numbersAtOffer(best, offer) : null;
+    const activity = resaleActivity(evaluation, now);
+    const evidence = evaluation ? photoEvidence(evaluation, minGrade) : null;
+    const mistakes = currentSellerMistakes(listing, evaluation);
     const longShot = rating?.level === "LONG_SHOT" || Boolean(screen?.longShot);
 
     // The verdict, in the palette's meanings.
@@ -88,6 +96,8 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
                       ? ["Can't price", "watch"]
                       : underwriting?.verdict === "PASS"
                         ? ["Pass", "pass"]
+                        : listing.mistakes?.length
+                          ? ["Photo lead", "watch"]
                         : screen?.status === "CANDIDATE"
                           ? ["Possible", "pending"]
                           : screen?.status === "DROPPED"
@@ -122,6 +132,8 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
     const grader = best?.grader ?? "PSA";
     const grade = evaluation?.slab?.grade
         ? `${evaluation.slab.grader ?? ""} ${evaluation.slab.grade}`.trim()
+        : range && minGrade > 0
+          ? `${grader} ${range.low}–${range.high}`
         : range
           ? range.likely !== null
               ? `${grader} ${range.likely}`
@@ -176,18 +188,32 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
 
                 <div className={styles.priceRow}>
                     <span className={styles.price}>
+                        <small>{auction ? "Current bid" : "Asking price"}</small>{" "}
                         {dollars(listing.currentPrice)}
                         {auction && <small> bid</small>}
                     </span>
                     {profit?.value != null && (
                         <span className={gain ? styles.gain : styles.loss}>
+                            <small>{auction ? "Est. profit at auction outcome" : gain ? "Est. profit at asking" : "Est. loss at asking"}</small>{" "}
                             <Tween value={profit.value} format={signed} />
                         </span>
                     )}
                     {profit?.roi != null && (
-                        <span className={gain ? styles.gain : styles.loss}>{Math.round(profit.roi * 100)}% ROI</span>
+                        <span className={gain ? styles.gain : styles.loss}>{Math.round(profit.roi * 100)}% return on total cost</span>
                     )}
                 </div>
+
+                {best && <p className={styles.activity}>Est. total invested {dollars(best.cost)}. Profit includes fees, tax, shipping{best.path === "GRADE" ? " and grading" : ""}.</p>}
+                {mistakes.map((mistake) => <p className={styles.activity} key={mistake.kind}>{mistake.detail}</p>)}
+                {evaluation?.condition && evidence && <p className={styles.activity}>AI condition: {nameCondition(evaluation.condition.rawCondition)} · {evidence.confidence.toLowerCase()} photo confidence. {evidence.coverage}.</p>}
+                {minGrade > 0 && evidence && <p className={styles.activity}>{evidence.target}</p>}
+
+                {offer && offerNumbers && (
+                    <p className={styles.meta}>
+                        Offer {dollars(offer.offer)}: estimated profit {signed(offerNumbers.profit)} if accepted. Seller acceptance unknown.
+                    </p>
+                )}
+                {evaluation && <p className={styles.activity} title={activity.detail}>{activity.label}{activity.recentSales !== null ? ` · ${activity.recentSales} observed sales / 30 days` : ""}</p>}
 
                 <p className={styles.meta}>
                     {listing.found && <span className={styles.found}>{FOUND[listing.found.how] ?? "Hidden find"}</span>}
@@ -209,7 +235,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
                         <dd>{grade}</dd>
                     </div>
                     <div>
-                        <dt>Comp value</dt>
+                        <dt>Est. resale before costs</dt>
                         <dd>{comp != null ? wholeDollars(comp) : "\u2014"}</dd>
                     </div>
                     <div>
@@ -220,4 +246,8 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
                 </dl>
         </article>
     );
+}
+
+function nameCondition(value: string): string {
+    return value.toLowerCase().replaceAll("_", " ");
 }

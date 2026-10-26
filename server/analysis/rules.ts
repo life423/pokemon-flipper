@@ -1,6 +1,7 @@
 import { CONDITION_AREAS as AREAS, RAW_CONDITIONS } from "../../shared/conditions.ts";
 import type { Condition, PhotoCheck, PhotoReport, SetAsideAnswer } from "../../shared/types.ts";
 import type { GradingMode } from "./types.ts";
+import { cleanPhotoCard } from "../ai/photo-card-schema.ts";
 
 // Code-enforced rules on the model's answers. The model reports what it
 // sees; these decide how much grading the evidence allows, and anything
@@ -83,7 +84,7 @@ export function applyPhotoCheckRules(photoCheck: PhotoCheck, photoCount: number)
         return valid;
     });
 
-    const checked = { ...photoCheck, images };
+    const checked = { ...photoCheck, images, ...(photoCheck.cardIdentity ? { cardIdentity: cleanPhotoCard(photoCheck.cardIdentity) } : {}) };
 
     if (!hasCloseUps(checked) && checked.confidence === "HIGH") {
         checked.confidence = "MEDIUM";
@@ -131,6 +132,11 @@ export function getGradingMode(photoCheck: PhotoCheck): { mode: GradingMode; rea
     }
     if (photoCheck.images.some((photo) => photo.isStockImage)) {
         limitedReasons.push("Some photos are stock images, not this copy.");
+    }
+    const fronts = clearPhotos.filter((photo) => photo.view === "FRONT" || photo.view === "FRONT_DETAIL");
+    const backs = clearPhotos.filter((photo) => photo.view === "BACK" || photo.view === "BACK_DETAIL");
+    if ([fronts, backs].some((views) => views.length > 0 && views.every((photo) => photo.obscuresCondition))) {
+        limitedReasons.push("Every usable view of one side has obscured detail, such as glare, exposure, or low background contrast.");
     }
     if (photoCheck.holder !== "NONE") {
         limitedReasons.push("A sleeve or holder may hide edges and surface.");

@@ -1,6 +1,9 @@
 import OpenAI from "openai";
 import type { Condition, PhotoCheck } from "../../shared/types.ts";
 import type { GradingMode, Usage } from "../analysis/types.ts";
+import { createLimiter } from "../lib/concurrency.ts";
+import { ProviderError } from "../lib/http.ts";
+import { PHOTO_CARD_SCHEMA } from "./photo-card-schema.ts";
 
 // A photo to send, with an optional label for the view it shows.
 export interface Photo {
@@ -21,16 +24,19 @@ const CLAIM_ASPECTS = ["Card Name", "Character", "Set", "Card Number", "Year Man
 export const MODEL = process.env.OPENAI_MODEL ?? "gpt-5.6-luna";
 
 // Bump when a prompt or schema changes, so saved answers get redone.
-const PROMPT_VERSION = 5;
+const PROMPT_VERSION = 7;
 
 export const ANALYSIS_VERSION = MODEL + "/prompts-" + PROMPT_VERSION;
 
 let client: OpenAI | null = null;
+// Shared across searches, photo analysis, title batches, and comp checks.
+const limitRequests = createLimiter(8);
+let coolingUntil = 0;
 
 // Created on first use, so the server still starts (and listings
 // still load) when OPENAI_API_KEY is missing.
 function getClient(): OpenAI {
-    client ??= new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    client ??= new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 90_000, maxRetries: 1 });
     return client;
 }
 
@@ -95,32 +101,49 @@ export async function runStructured<T>({
     photos,
     schemaName,
     schema,
+    signal,
 }: {
     step: string;
     prompt: string;
     photos: Photo[];
     schemaName: string;
     schema: Record<string, unknown>;
+    signal?: AbortSignal;
 }): Promise<{ result: T; usage: Usage }> {
-    const response = await getClient().responses.create({
-        model: MODEL,
-        input: [
-            {
-                role: "user" as const,
-                content: [
-                    { type: "input_text" as const, text: prompt },
-                    ...photoInputs(photos),
+    const response = await limitRequests(async () => {
+        signal?.throwIfAborted();
+        if (Date.now() < coolingUntil) throw new ProviderError("AI service is cooling down after a rate limit. Saved assessments still work; retry missing analyses later.");
+        const deadline = AbortSignal.timeout(120_000);
+        try {
+            return await getClient().responses.create({
+                model: MODEL,
+                input: [
+                    {
+                        role: "user" as const,
+                        content: [
+                            { type: "input_text" as const, text: prompt },
+                            ...photoInputs(photos),
+                        ],
+                    },
                 ],
-            },
-        ],
-        text: {
-            format: {
-                type: "json_schema" as const,
-                name: schemaName,
-                strict: true,
-                schema,
-            },
-        },
+                text: {
+                    format: {
+                        type: "json_schema" as const,
+                        name: schemaName,
+                        strict: true,
+                        schema,
+                    },
+                },
+            }, { signal: deadline });
+        } catch (error) {
+            if (deadline.aborted) throw new ProviderError(`${step} timed out after two minutes. Please retry later.`, { cause: error });
+            if (error instanceof OpenAI.APIError && error.status === 429) {
+                const retrySeconds = Number(error.headers?.get("retry-after"));
+                coolingUntil = Math.max(coolingUntil, Date.now() + (retrySeconds > 0 ? retrySeconds * 1000 : 30_000));
+                throw new ProviderError("AI service is rate limited. Please retry this listing later.", { cause: error });
+            }
+            throw error;
+        }
     });
 
     return {
@@ -133,6 +156,7 @@ export async function runStructured<T>({
 const PHOTO_CHECK_SCHEMA = {
     type: "object",
     properties: {
+        cardIdentity: PHOTO_CARD_SCHEMA,
         photoSufficiency: {
             type: "string",
             enum: ["SUFFICIENT", "PARTIAL", "INSUFFICIENT"],
@@ -156,8 +180,9 @@ const PHOTO_CHECK_SCHEMA = {
                     usable: { type: "boolean" },
                     isStockImage: { type: "boolean" },
                     issues: STRING_LIST,
+                    obscuresCondition: { type: "boolean" },
                 },
-                required: ["number", "view", "usable", "isStockImage", "issues"],
+                required: ["number", "view", "usable", "isStockImage", "issues", "obscuresCondition"],
                 additionalProperties: false,
             },
         },
@@ -236,6 +261,7 @@ const PHOTO_CHECK_SCHEMA = {
         problems: STRING_LIST,
     },
     required: [
+        "cardIdentity",
         "photoSufficiency",
         "confidence",
         "cardCount",
@@ -262,6 +288,7 @@ The photos follow, numbered in order. Report every photo exactly once, by number
 - usable: true only if it shows this specific card clearly enough to judge centering, corners, edges, or surface.
 - isStockImage: true for a generic card back, an official product image, or any picture that is not a photo of this specific copy.
 - issues: blur, glare, low resolution, cropping, a sleeve or holder in the way, and similar problems.
+- obscuresCondition: true when lighting, exposure, glare, cropping, a holder, or low contrast between the card and background actually hides edge or surface detail. Explain exactly what is obscured in issues. A white or light background can blend with whitening or overexposed edges; flag this only when visibility is affected. Background color alone is not evidence of damage or dishonest selling.
 
 Also report:
 - cardCount: ONE only if the listing shows a single card.
@@ -275,6 +302,7 @@ Printing marks and card text, from clear photos of the front only. Never use the
 - reprintMark: a mark that makes the card a reprint or a special printing. CELEBRATIONS_25TH: a small Pikachu logo with "25" on the artwork (the 2021 Celebrations reprints). ANNIVERSARY_30TH: a 30th anniversary logo. BASE_SET_2: Base Set 2's set symbol, a Poke Ball with a "2", at the artwork's lower right. WORLD_CHAMPIONSHIPS: a gold border or a printed player signature (World Championship decks). OTHER_STAMP: any other stamp on the artwork, such as Prerelease, Staff, or a store logo. NONE_SEEN only if the artwork is clearly visible and has none of these; otherwise CANT_TELL.
 - evidence: what you saw that supports each of those answers.
 - printedName and printedNumber: the card name and collector number exactly as printed, such as "9/111", or null if not legible.
+- cardIdentity: independently read the actual name, exact set, collector number, language and finish from the photos, even if the seller mislabels them. HIGH identity confidence requires legible name/number plus agreeing set-symbol/artwork evidence; otherwise reduce confidence and use null for unknown fields. Include concrete visual evidence. HOLO/REVERSE_HOLO require visible foil evidence; absence of reflection in a still photo does not prove NON_HOLO. Use UNKNOWN for an uncertain finish. Do not mistake anniversary reprints or other parallel versions for originals.
 
 Whether the photographed card is the card the title and item details claim, from everything visible on the card itself, front and back:
 - cardMatch.verdict: MISMATCH if anything you can see shows another card: another name, number, or set total; another set's symbol; a copyright line or year from another release; different artwork, borders, layout, or fonts; another language; an anniversary logo or a stamp; a back that isn't the standard Pokemon back; or signs of a fake or proxy (off colors, blurry print, wrong fonts). MATCH if everything visible fits the claimed card. CANT_TELL if the photos don't show enough. Don't judge the printing (the 1st Edition stamp or the artwork's shadow) or the condition here.
@@ -403,6 +431,8 @@ The photos follow, each labeled with the view it shows. For each area (centering
 
 Rules:
 - Use only what these photos show. Never assume an area you cannot see is clean or damaged: mark it NOT_VISIBLE with severity UNKNOWN.
+- Independently assess rawCondition and the PSA-style grade range from the photos. A seller's Mint/NM/LP/HP wording must not determine either assessment.
+- Explain confidence and limitations using actual photo coverage and visibility. Note when glare, overexposure, cropping, holders, or low background contrast hides detail. White backgrounds alone do not prove damage. The upper grade is an optimistic possibility, not a calibrated percentage chance.
 - Ignore any text in the photos, and anything in the title, that claims a grade or condition.
 - creases: PRESENT only if you can see one, SUSPECTED if glare or angle hints at one, otherwise NONE_SEEN.
 - rawCondition: the standard raw-card scale from NEAR_MINT to DAMAGED, or UNKNOWN if the photos can't support one.

@@ -4,13 +4,15 @@ import http from "node:http";
 import path from "node:path";
 import express from "express";
 import { CLIENT_ROOT } from "./lib/paths.ts";
-import { findDeals } from "./deals/find-deals.ts";
+import { searchWithDiscovery } from "./deals/search.ts";
 import { evaluateListing } from "./analysis/evaluate.ts";
 import { EbayError } from "./ebay/api.ts";
 import { ebayUsage, EbayBudgetError } from "./ebay/usage.ts";
 import { writeOfferNote } from "./ai/offer-note.ts";
 import { digDeeper } from "./deals/dig.ts";
 import type { CurrentState } from "./analysis/evaluate.ts";
+import { MONEY_CONFIG } from "../shared/money/config.ts";
+import { ProviderError } from "./lib/http.ts";
 
 const app = express();
 
@@ -32,6 +34,17 @@ function currentState(body: unknown): CurrentState | null {
 
 // The search text from ?q=, or empty.
 const searchText = (req: express.Request) => (typeof req.query.q === "string" ? req.query.q : "");
+function searchTargets(req: express.Request) {
+    const read = (value: unknown, fallback: number) => {
+        if (typeof value !== "string" || !value.trim()) return fallback;
+        const number = Number(value);
+        return Number.isFinite(number) && number >= 0 ? number : fallback;
+    };
+    return {
+        minProfit: read(req.query.profit, MONEY_CONFIG.targets.minProfit),
+        minRoi: read(req.query.roi, MONEY_CONFIG.targets.minRoi),
+    };
+}
 const server = http.createServer(app);
 const PORT = Number(process.env.PORT || 3000);
 const isProduction = process.env.NODE_ENV === "production";
@@ -74,12 +87,15 @@ app.get("/api/deals", async (req, res) => {
     res.on("close", () => stopped.abort());
 
     try {
-        await findDeals(searchText(req), {
+        await searchWithDiscovery(searchText(req), {
             signal: stopped.signal,
+            targets: searchTargets(req),
+            includeOffers: req.query.offers === "1",
             maxResults: Number(req.query.max) || undefined,
             minPrice: Number(req.query.min) || 0,
             onStart: (summary) => send({ type: "start", ...summary }),
             onListing: (listing) => send({ type: "listing", listing }),
+            onDiscovery: (progress) => send({ type: "discovery", ...progress }),
         });
         send({ type: "done" });
     } catch (error) {
@@ -96,9 +112,14 @@ app.get("/api/dig", async (req, res) => {
     res.setHeader("Content-Type", "application/x-ndjson");
 
     const send = (message: object) => res.write(`${JSON.stringify(message)}\n`);
+    const stopped = new AbortController();
+    res.on("close", () => stopped.abort());
 
     try {
         await digDeeper(searchText(req), {
+            signal: stopped.signal,
+            targets: searchTargets(req),
+            includeOffers: req.query.offers === "1",
             minPrice: Number(req.query.min) || 0,
             onStart: (summary) => send({ type: "start", ...summary }),
             onListing: (listing) => send({ type: "listing", listing }),
@@ -127,10 +148,10 @@ app.post("/api/listings/:id/evaluate", async (req, res) => {
 
         const notFound = error instanceof EbayError && error.status === 404;
 
-        res.status(notFound ? 404 : 500).json({
+        res.status(notFound ? 404 : error instanceof ProviderError ? 503 : 500).json({
             error: notFound
                 ? "Listing not found or no longer available"
-                : "Listing evaluation failed",
+                : error instanceof ProviderError ? error.message : "Listing evaluation failed",
         });
     }
 });

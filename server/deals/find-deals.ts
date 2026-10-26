@@ -7,7 +7,8 @@ import { fillFromTitle, readTitle } from "../ai/title-reader.ts";
 import { checkComps } from "../ai/comp-checker.ts";
 import { matchMainPhoto, type ClaimedCard, type PhotoMatch } from "../ai/photo-match.ts";
 import { prescreen, type ScreenInput } from "./prescreen.ts";
-import type { ListingSummary, Screen, SearchIntent } from "../../shared/types.ts";
+import { withTargets } from "../../shared/money/targets.ts";
+import type { ListingSummary, Screen, SearchIntent, Targets } from "../../shared/types.ts";
 
 // A search, the way eBay matches it, narrowed to the card searched for,
 // with every listing screened for free. eBay limits listing-detail
@@ -41,16 +42,20 @@ export interface ScreenSteps {
     matchPhoto: (imageUrl: string, card: ClaimedCard) => Promise<PhotoMatch | null>;
 }
 
-export const REAL_STEPS: ScreenSteps = {
-    readTitle: fillFromTitle,
-    // Past the day's reserve, eBay refuses and the title's check stands.
-    loadDetails: (itemId) => getListingDetails(itemId, { keepReserve: true }),
-    check: (input) =>
-        prescreen(input, { lookupCards, fetchComps, checkComps }).catch((error: Error) =>
-            unscreened(`The free check failed: ${error.message}`)
-        ),
-    matchPhoto: matchMainPhoto,
-};
+export function screeningSteps(targets?: Targets, includeOffers = false, signal?: AbortSignal): ScreenSteps {
+    return {
+        readTitle: signal ? (listing) => fillFromTitle(listing, (title) => readTitle(title, signal)) : fillFromTitle,
+        // Past the day's reserve, eBay refuses and the title's check stands.
+        loadDetails: (itemId) => getListingDetails(itemId, { keepReserve: true }),
+        check: (input) =>
+            prescreen(input, { lookupCards, fetchComps, checkComps, config: targets ? withTargets(targets) : undefined, includeOffers }).catch((error: Error) =>
+                unscreened(`The free check failed: ${error.message}`)
+            ),
+        matchPhoto: matchMainPhoto,
+    };
+}
+
+export const REAL_STEPS = screeningSteps();
 
 function unscreened(reason: string): Screen {
     return { status: "UNSCREENED", reason, card: null, bestCase: null, assumed: null };
@@ -72,6 +77,7 @@ export async function screenListing(
         shipping: listing.shipping,
         isGraded: listing.isGraded,
         buyingOption: listing.buyingOption,
+        bestOffer: listing.bestOffer,
     };
 
     // First from the search result alone: the title, read by the AI. The
@@ -178,6 +184,8 @@ export async function findDeals(
         maxResults = DEFAULT_RESULTS,
         minPrice = 0,
         signal,
+        targets,
+        includeOffers = false,
     }: {
         onStart?: (summary: SearchSummary) => void;
         onListing?: (listing: ListingSummary) => void;
@@ -187,6 +195,8 @@ export async function findDeals(
         // A stopped search: the listings not yet checked are skipped, so no
         // more eBay requests or AI calls go out.
         signal?: AbortSignal;
+        targets?: Targets;
+        includeOffers?: boolean;
     } = {}
 ): Promise<ListingSummary[]> {
     if (signal?.aborted) return [];
@@ -214,10 +224,7 @@ export async function findDeals(
     if (signal?.aborted) return [];
     for (const listing of matching) void readTitle(listing.title, signal);
 
-    const steps: ScreenSteps = {
-        ...REAL_STEPS,
-        readTitle: (listing) => fillFromTitle(listing, (title) => readTitle(title, signal)),
-    };
+    const steps = screeningSteps(targets, includeOffers, signal);
 
     const results = await mapLimit(matching, PARALLEL_LISTINGS, async (listing) => {
         if (signal?.aborted) return null;

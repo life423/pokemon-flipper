@@ -2,6 +2,7 @@ import { MONEY_CONFIG, type MoneyConfig } from "./config.ts";
 import { bestPath, pathNumbers, underwrite } from "./underwriting.ts";
 import { rateDeal } from "./rating.ts";
 import { isLongShot } from "./auction.ts";
+import { offerPlan, offerWorthMaking } from "./offer.ts";
 import type { Evaluation, ListingSummary, Screen, Targets } from "../types.ts";
 
 // Your profit and return targets change by card, so the page re-prices
@@ -43,7 +44,8 @@ export function retargetScreen(
     screen: Screen,
     price: number | null,
     targets: Targets,
-    config: MoneyConfig = MONEY_CONFIG
+    config: MoneyConfig = MONEY_CONFIG,
+    includeOffers = false
 ): Screen {
     if (!screen.money || price === null || screen.status === "UNSCREENED") return screen;
 
@@ -56,10 +58,13 @@ export function retargetScreen(
     const best = bestPath(priced);
 
     if (!best) return screen;
+    const requiresOffer = !best.clears && includeOffers && screen.money.bestOffer === true &&
+        offerWorthMaking(offerPlan(price, best.maxBid));
 
     return {
         ...screen,
-        status: best.clears ? "CANDIDATE" : "DROPPED",
+        status: best.clears || requiresOffer ? "CANDIDATE" : "DROPPED",
+        requiresOffer,
         bestCase: { label: best.label, maxBid: best.maxBid, profit: best.profit, roi: best.roi },
         longShot: best.clears && isLongShot(auction, usual, best.maxBid),
     };

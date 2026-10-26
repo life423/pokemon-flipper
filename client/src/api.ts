@@ -1,4 +1,4 @@
-import type { EbayUsage, Evaluation, ListingSummary, SearchIntent } from "./types";
+import type { EbayUsage, Evaluation, ListingSummary, SearchIntent, Targets } from "./types";
 
 // fetch, with a plain message when the server can't be reached at all.
 async function reach(url: string, init?: RequestInit): Promise<Response> {
@@ -23,6 +23,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 export type DealsMessage =
     | { type: "start"; total: number; found: number; count: number; skipped: number; intent: SearchIntent }
     | { type: "listing"; listing: ListingSummary }
+    | { type: "discovery"; status: "checking" | "done" | "error"; checked: number; total: number; note?: string }
     | { type: "done" }
     | { type: "error"; error: string };
 
@@ -65,10 +66,11 @@ async function streamLines<T extends { type: string }>(
 
 export function streamDeals(
     query: string,
-    { maxResults, minPrice, signal }: { maxResults: number; minPrice: number; signal?: AbortSignal },
+    { maxResults, minPrice, signal, targets, includeOffers = false }: { maxResults: number; minPrice: number; signal?: AbortSignal; targets?: Targets; includeOffers?: boolean },
     onMessage: (message: DealsMessage) => void
 ): Promise<void> {
-    return streamLines(`/api/deals?q=${encodeURIComponent(query)}&max=${maxResults}&min=${minPrice}`, onMessage, signal);
+    const criteria = targets ? `&profit=${targets.minProfit}&roi=${targets.minRoi}` : "";
+    return streamLines(`/api/deals?q=${encodeURIComponent(query)}&max=${maxResults}&min=${minPrice}${criteria}&offers=${includeOffers ? 1 : 0}`, onMessage, signal);
 }
 
 export type DigMessage =
@@ -78,8 +80,9 @@ export type DigMessage =
     | { type: "error"; error: string };
 
 // Dig deeper: misspelled, vague, wrong-category, and lot listings, checked by photo.
-export function streamDig(query: string, minPrice: number, onMessage: (message: DigMessage) => void): Promise<void> {
-    return streamLines(`/api/dig?q=${encodeURIComponent(query)}&min=${minPrice}`, onMessage);
+export function streamDig(query: string, minPrice: number, onMessage: (message: DigMessage) => void, targets?: Targets, includeOffers = false): Promise<void> {
+    const criteria = targets ? `&profit=${targets.minProfit}&roi=${targets.minRoi}` : "";
+    return streamLines(`/api/dig?q=${encodeURIComponent(query)}&min=${minPrice}${criteria}&offers=${includeOffers ? 1 : 0}`, onMessage);
 }
 
 // A friendly note to send with a Best Offer, written fresh each time.

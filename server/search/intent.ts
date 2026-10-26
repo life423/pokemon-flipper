@@ -1,7 +1,7 @@
 import { runStructured, MODEL } from "../ai/openai.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { normalizeText } from "../ebay/filters.ts";
-import { isPrinting, printingClaimFromText } from "../identity/card-identity.ts";
+import { isPrinting, normalizeWords, printingClaimFromText } from "../identity/card-identity.ts";
 import type { SearchIntent } from "../../shared/types.ts";
 
 // What a search means. eBay does the matching; this says which of
@@ -60,14 +60,21 @@ export function readSearchByRules(search: string): SearchIntent {
 }
 
 // The AI's reading, checked and cleaned. Anything off falls back to "any".
-function cleanReading(reading: Reading): SearchIntent {
+export function cleanReading(reading: Reading, search: string): SearchIntent {
+    const typed = ` ${normalizeWords(search)} `;
+    const explicitlyTyped = (value: string) => typed.includes(` ${normalizeWords(value)} `);
+    // A model's guess about a number-only search must not reject every real
+    // result. Only require card-name words the user actually typed.
+    const cardName = reading.cardName?.trim() || null;
+    const titleWords = (reading.titleWords ?? []).map((word) => normalizeText(word).trim())
+        .filter((word) => word && explicitlyTyped(word)).slice(0, 2);
     return {
-        cardName: reading.cardName?.trim() || null,
+        cardName: cardName && explicitlyTyped(cardName) ? cardName : null,
         sets: (reading.sets ?? []).map((set) => set.trim()).filter(Boolean),
         cardNumber: reading.cardNumber?.trim() || null,
         printing: isPrinting(reading.printing) ? reading.printing : null,
         graded: typeof reading.graded === "boolean" ? reading.graded : null,
-        titleWords: (reading.titleWords ?? []).map((word) => normalizeText(word).trim()).filter(Boolean).slice(0, 2),
+        titleWords,
         source: "ai",
     };
 }
@@ -76,7 +83,7 @@ export async function readSearch(search: string): Promise<SearchIntent> {
     const key = `search-intent:v${INTENT_VERSION}:${MODEL}:${normalizeText(search).trim()}`;
     const saved = await readCache<SearchIntent>(key, MONTH_HOURS);
 
-    if (saved) return saved;
+    if (saved) return cleanReading(saved, search);
 
     try {
         const { result } = await runStructured<Reading>({
@@ -86,7 +93,7 @@ export async function readSearch(search: string): Promise<SearchIntent> {
             schemaName: "search_intent",
             schema: SCHEMA,
         });
-        const intent = cleanReading(result);
+        const intent = cleanReading(result, search);
 
         await writeCache(key, intent);
 

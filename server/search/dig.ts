@@ -62,12 +62,19 @@ async function variants(intent: SearchIntent): Promise<Variants> {
 }
 
 export async function digQueries(search: string, intent: SearchIntent): Promise<DigQuery[]> {
-    const { misspellings, numbers } = await variants(intent);
+    // A broad set/condition search has no single card to look for in photos.
+    // Still expand its category coverage, using the user's exact search.
+    const { misspellings, numbers } = intent.cardName ? await variants(intent) : { misspellings: [], numbers: [] };
     const set = intent.sets[0] ?? "";
 
     return [
         ...misspellings.map((word) => ({ query: `${word} ${set}`.trim(), how: "MISSPELLED" as const })),
         ...numbers.map((number) => ({ query: `${number} holo`, how: "NUMBER_ONLY" as const })),
         { query: search, how: "WRONG_CATEGORY", anyCategory: true },
+        ...(set ? [{ query: `${set} card`, how: "PHOTO_SHOWS_IT" as const }] : []),
+        ...(intent.cardName && set ? [{ query: intent.cardName, how: "PHOTO_SHOWS_IT" as const }] : []),
+        ...(/base set|neo |team rocket|gym |fossil|jungle|vintage|199\d/i.test(`${search} ${set}`)
+            ? [{ query: "old card 1999", how: "PHOTO_SHOWS_IT" as const }]
+            : []),
     ];
 }

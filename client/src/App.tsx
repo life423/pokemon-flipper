@@ -2,12 +2,12 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { prefersReducedMotion, transitionName, withViewTransition } from "./motion";
 import type { EbayUsage, Evaluation, ListingSummary, RatingLevel, SearchIntent, Targets } from "./types";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
-import { canAutoAnalyze } from "../../shared/analysis.ts";
+import { analysisConcurrency, canAutoAnalyze, meetsMinimumGrade, resultGroup, type ResultGroup } from "../../shared/analysis.ts";
 import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.ts";
 import { offerFor, offerWorthMaking } from "../../shared/money/offer.ts";
 import { bargainScore, bargainSignals } from "../../shared/signals.ts";
 import { name } from "./format";
-import { evaluateListing, fetchEbayUsage, fetchSetYears, streamDeals, streamDig, type DealsMessage } from "./api";
+import { evaluateListing, fetchEbayUsage, fetchSetYears, streamDeals, type DealsMessage } from "./api";
 import { DealCard } from "./components/DealCard";
 import { Drawer } from "./components/Drawer";
 import { EmptyState } from "./components/EmptyState";
@@ -34,11 +34,11 @@ export type AnalysisState =
     | { status: "done"; evaluation: Evaluation }
     | { status: "error"; message: string };
 
-type View = "deals" | "candidates" | "longShots" | "review" | "hidden" | "all";
+type View = ResultGroup | "hidden" | "all";
 
 // The views, in order, and what each is called everywhere it appears.
 // Long shots come late: auctions unlikely to end at a profitable price.
-const VIEWS: View[] = ["deals", "candidates", "review", "hidden", "longShots", "all"];
+const VIEWS: View[] = ["deals", "offers", "candidates", "review", "hidden", "longShots", "all"];
 
 // Recent searches, newest first, offered before the next search.
 const RECENT_KEY = "recentSearches";
@@ -60,6 +60,7 @@ function readRecentSearches(): string[] {
 const VIEW_SHORT: Partial<Record<View, string>> = { hidden: "Hidden" };
 const VIEW_ICONS: Record<View, ReactNode> = {
     deals: <TagIcon />,
+    offers: <DollarIcon />,
     candidates: <ClockIcon />,
     longShots: <TrendIcon />,
     review: <ReviewIcon />,
@@ -78,6 +79,7 @@ const SHORTCUT = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navi
 
 const VIEW_NAMES: Record<View, string> = {
     deals: "Deals",
+    offers: "Offers",
     candidates: "Waiting",
     longShots: "Long shots",
     review: "Review",
@@ -89,7 +91,6 @@ type TypeFilter = "all" | "AUCTION" | "FIXED_PRICE";
 type KindFilter = "all" | "raw" | "graded";
 
 // AI analyses at once, and per search unless you ask for more.
-const PARALLEL_ANALYSES = 3;
 // How many candidates the AI analyzes on its own per search: every one
 // that lands in Waiting by default, best first, or a cap, or none.
 const ALL = Number.POSITIVE_INFINITY;
@@ -248,8 +249,9 @@ export function App() {
     const [summary, setSummary] = useState<SearchSummary | null>(null);
 
     // Dig deeper: the listings the plain search missed.
-    const [digStatus, setDigStatus] = useState<"idle" | "digging" | "done">("idle");
+    const [digStatus, setDigStatus] = useState<"idle" | "checking" | "done" | "error">("idle");
     const [digTotal, setDigTotal] = useState(0);
+    const [digChecked, setDigChecked] = useState(0);
     const [digError, setDigError] = useState<string | null>(null);
     const lastQuery = useRef("");
     const [searchStatus, setSearchStatus] = useState<"idle" | "checking" | "done" | "error">("idle");
@@ -324,6 +326,23 @@ export function App() {
     const [drawerOpen, setDrawerOpen] = useState(false);
 
     const [rawAnalyses, setAnalyses] = useState<Record<string, AnalysisState>>({});
+    const [analysisOutcomes, setAnalysisOutcomes] = useState<boolean[]>([]);
+    const [includeOffers, setIncludeOffers] = useState(() => {
+        try { return localStorage.getItem("includeOffers") === "1"; } catch { return false; }
+    });
+    const availableViews = VIEWS.filter((key) => key !== "offers" || includeOffers);
+    function changeIncludeOffers(enabled: boolean) {
+        setIncludeOffers(enabled);
+        if (!enabled && view === "offers") setView("deals");
+        try { localStorage.setItem("includeOffers", enabled ? "1" : "0"); } catch { /* Visit only. */ }
+    }
+    const [minGrade, setMinGrade] = useState(() => {
+        try { const saved = Number(localStorage.getItem("minGrade")); return Number.isInteger(saved) && saved >= 0 && saved <= 10 ? saved : 0; } catch { return 0; }
+    });
+    function changeMinGrade(value: number) {
+        setMinGrade(value);
+        try { localStorage.setItem("minGrade", String(value)); } catch { /* Visit only. */ }
+    }
 
     const [targets, setTargets] = useState<Targets>(readTargets);
     const [targetInputs, setTargetInputs] = useState(() => targetText(readTargets()));
@@ -332,9 +351,9 @@ export function App() {
     const listings = useMemo(
         () =>
             rawListings.map((listing) =>
-                listing.screen ? { ...listing, screen: retargetScreen(listing.screen, listing.currentPrice, targets) } : listing
+                listing.screen ? { ...listing, screen: retargetScreen(listing.screen, listing.currentPrice, targets, undefined, includeOffers) } : listing
             ),
-        [rawListings, targets]
+        [rawListings, targets, includeOffers]
     );
 
     const analyses = useMemo(() => {
@@ -379,38 +398,13 @@ export function App() {
         try {
             const evaluation = await evaluateListing(listing, { fresh });
             setAnalyses((previous) => ({ ...previous, [listing.id]: { status: "done", evaluation } }));
+            setAnalysisOutcomes((previous) => [...previous.slice(-7), true]);
         } catch (error) {
             const message = error instanceof Error ? error.message : "Analysis failed";
             setAnalyses((previous) => ({ ...previous, [listing.id]: { status: "error", message } }));
+            setAnalysisOutcomes((previous) => [...previous.slice(-7), false]);
         }
     }, []);
-
-    // Misspelled, vague, wrong-category, and lot listings, checked by photo,
-    // added to this search's results as they turn up.
-    async function dig() {
-        const id = searchId.current;
-
-        setDigStatus("digging");
-        setDigTotal(0);
-        setDigError(null);
-
-        try {
-            await streamDig(lastQuery.current, Number(minPrice) || 0, (message) => {
-                if (searchId.current !== id) return;
-                if (message.type === "start") setDigTotal(message.total);
-                if (message.type === "listing") {
-                    setListings((current) =>
-                        current.some((listing) => listing.id === message.listing.id) ? current : [...current, message.listing]
-                    );
-                }
-            });
-        } catch (error) {
-            if (searchId.current === id) setDigError((error as Error).message);
-        }
-
-        if (searchId.current === id) setDigStatus("done");
-        refreshUsage();
-    }
 
     const [recentSearches, setRecentSearches] = useState<string[]>(readRecentSearches);
 
@@ -449,6 +443,7 @@ export function App() {
         rememberSearch(text);
         setDigStatus("idle");
         setDigTotal(0);
+        setDigChecked(0);
         setDigError(null);
 
         autoQueued.current = new Set();
@@ -461,13 +456,21 @@ export function App() {
         setSearchStatus("checking");
 
         try {
-            await streamDeals(text, { maxResults: resultsSetting, minPrice: Number(minPrice) || 0, signal: controller.signal }, (message) => {
+            await streamDeals(text, { maxResults: resultsSetting, minPrice: Number(minPrice) || 0, signal: controller.signal, targets, includeOffers }, (message) => {
                 if (searchId.current !== id) return;
                 if (message.type === "start") {
                     setTotal(message.count);
                     setSummary(message);
                 }
-                if (message.type === "listing") setListings((previous) => [...previous, message.listing]);
+                if (message.type === "listing") setListings((previous) => previous.some((listing) => listing.id === message.listing.id)
+                    ? previous.map((listing) => listing.id === message.listing.id ? message.listing : listing)
+                    : [...previous, message.listing]);
+                if (message.type === "discovery") {
+                    setDigStatus(message.status);
+                    setDigTotal(message.total);
+                    setDigChecked(message.checked);
+                    setDigError(message.note ?? null);
+                }
             });
 
             if (searchId.current === id) setSearchStatus("done");
@@ -488,21 +491,24 @@ export function App() {
         setBudget(autoQueued.current.size);
         setStopped(true);
         setSearchStatus("done");
+        if (digStatus === "checking") {
+            setDigStatus("error");
+            setDigError("Automatic discovery stopped. Results checked so far stay below.");
+        }
     }
 
     // The AI looks at the most promising candidates on its own, a couple
     // at a time, up to this search's budget.
     useEffect(() => {
         const running = Object.values(analyses).filter((analysis) => analysis.status === "loading").length;
-        let free = PARALLEL_ANALYSES - running;
         let remaining = budget - autoQueued.current.size;
-
-        if (free <= 0 || remaining <= 0) return;
+        if (remaining <= 0) return;
 
         const waiting = listings
             // Long-shot auctions aren't worth the AI.
             .filter((listing) => canAutoAnalyze(listing) && !analyses[listing.id])
             .sort((a, b) => bestCaseRoom(b) - bestCaseRoom(a));
+        let free = analysisConcurrency(waiting.length + running, analysisOutcomes) - running;
 
         for (const listing of waiting) {
             if (free <= 0 || remaining <= 0) break;
@@ -512,7 +518,7 @@ export function App() {
             remaining -= 1;
             void runAnalysis(listing);
         }
-    }, [listings, analyses, budget, runAnalysis]);
+    }, [listings, analyses, budget, runAnalysis, analysisOutcomes]);
 
     function changeAutoSetting(value: number) {
         setAutoSetting(value);
@@ -536,31 +542,22 @@ export function App() {
             .filter((listing) => !listing.match && !evaluationOf(analyses[listing.id])?.identity?.notThisCard)
             .filter((listing) => typeFilter === "all" || listing.buyingOption === typeFilter)
             .filter((listing) => kindFilter === "all" || listing.isGraded === (kindFilter === "graded"))
+            .filter((listing) => {
+                const evaluation = evaluationOf(analyses[listing.id]);
+                return !evaluation || meetsMinimumGrade(evaluation, minGrade);
+            })
             .filter((listing) => (listing.currentPrice ?? 0) <= limit)
             .filter((listing) => listing.buyingOption !== "FIXED_PRICE" || (listing.currentPrice ?? 0) >= floor)
             .filter((listing) => !listing.endTime || Date.parse(listing.endTime) > now);
-    }, [listings, analyses, typeFilter, kindFilter, maxPrice, minPrice, now]);
+    }, [listings, analyses, typeFilter, kindFilter, maxPrice, minPrice, minGrade, now]);
 
     const groups = useMemo(() => {
-        const deals: ListingSummary[] = [];
-        const candidates: ListingSummary[] = [];
-        // Auctions that will very likely end above the max bid.
-        const longShots: ListingSummary[] = [];
-        const review: ListingSummary[] = [];
+        const grouped: Record<ResultGroup, ListingSummary[]> = { deals: [], offers: [], candidates: [], longShots: [], review: [] };
 
         for (const listing of filtered) {
             const evaluation = evaluationOf(analyses[listing.id]);
-            const verdict = evaluation?.underwriting?.verdict;
-
-            if (isDeal(evaluation)) (evaluation?.rating?.level === "LONG_SHOT" ? longShots : deals).push(listing);
-            // A pass at the asking price that a realistic Best Offer would make a deal.
-            else if (verdict === "PASS" && offerWorthMaking(offerFor(listing, evaluation?.underwriting?.best?.maxBid))) {
-                deals.push(listing);
-            }
-            else if (verdict === "NEEDS_REVIEW" || verdict === "CANT_PRICE") review.push(listing);
-            else if (!evaluation && listing.screen?.status === "CANDIDATE") {
-                (listing.screen.longShot ? longShots : candidates).push(listing);
-            }
+            const group = resultGroup(listing, evaluation, includeOffers);
+            if (group) grouped[group].push(listing);
         }
 
         // Turned up by Dig deeper, shown only while genuine profit still exists:
@@ -572,14 +569,14 @@ export function App() {
 
             if (evaluation) {
                 const verdict = evaluation.underwriting?.verdict;
-                return isDeal(evaluation) || (verdict === "PASS" && offerWorthMaking(offerFor(listing, evaluation.underwriting?.best?.maxBid)));
+                return isDeal(evaluation) || (listing.mistakes?.length && verdict === "NEEDS_REVIEW") || (includeOffers && verdict === "PASS" && offerWorthMaking(offerFor(listing, evaluation.underwriting?.best?.maxBid)));
             }
 
-            return listing.screen?.status === "CANDIDATE";
+            return listing.screen?.status === "CANDIDATE" || Boolean(listing.mistakes?.length);
         });
 
-        return { deals, candidates, longShots, review, hidden, all: filtered };
-    }, [filtered, analyses]);
+        return { ...grouped, hidden, all: filtered };
+    }, [filtered, analyses, includeOffers]);
 
     const visible = useMemo(() => {
         const compareBest = (a: ListingSummary, b: ListingSummary) => {
@@ -607,7 +604,7 @@ export function App() {
 
     const counts = useMemo(() => {
         const count = (status: string) => listings.filter((listing) => listing.screen?.status === status).length;
-        const analyzing = Object.values(analyses).filter((analysis) => analysis.status === "loading").length;
+        const analyzing = listings.filter((listing) => analyses[listing.id]?.status === "loading").length;
 
         return {
             candidates: listings.filter(canAutoAnalyze).length,
@@ -629,7 +626,7 @@ export function App() {
     const selected = listings.find((listing) => listing.id === selectedId) ?? null;
 
     // Filters narrowing the results, shown as a count on the Filters button.
-    const activeFilters = [typeFilter !== "all", kindFilter !== "all", maxPrice !== "", minPrice !== "", sort !== "best"].filter(
+    const activeFilters = [typeFilter !== "all", kindFilter !== "all", maxPrice !== "", minPrice !== "", minGrade > 0, sort !== "best"].filter(
         Boolean
     ).length;
     // The panel slides away before it goes; with reduced motion, it just goes.
@@ -662,9 +659,10 @@ export function App() {
                   ? `No deals yet. ${counts.waiting} ${counts.waiting === 1 ? "candidate hasn't" : "candidates haven't"} been analyzed: see Waiting.`
                   : "No deals in this search at the current prices.",
         candidates: "Nothing waiting for the AI.",
+        offers: "No offer opportunities within 10% of asking. Seller acceptance is never assumed.",
         longShots: "No long-shot auctions.",
         review: "Nothing needs review.",
-        hidden: "Nothing hidden found yet. Dig deeper goes looking.",
+        hidden: "No hidden opportunities found. Every search automatically checks for overlooked listings.",
         all: "No listings match the filters.",
     };
 
@@ -757,6 +755,7 @@ export function App() {
         },
         minPrice !== "" && { key: "min", label: `Buy It Now ≥ $${minPrice}`, clear: () => changeMinPrice("") },
         maxPrice !== "" && { key: "max", label: `Price ≤ $${maxPrice}`, clear: () => setMaxPrice("") },
+        minGrade > 0 && { key: "grade", label: `Potential grade ≥ ${minGrade}`, clear: () => changeMinGrade(0) },
     ].filter((chip): chip is { key: string; label: string; clear: () => void } => Boolean(chip));
 
     const clearAll = () => {
@@ -764,6 +763,7 @@ export function App() {
         changeTarget("minRoi", "");
         changeMinPrice("");
         setMaxPrice("");
+        changeMinGrade(0);
         withViewTransition(() => {
             setTypeFilter("all");
             setKindFilter("all");
@@ -772,16 +772,9 @@ export function App() {
 
     // Where the search is, for the progress panel: the free check, then the
     // AI on the best candidates, up to this search's budget.
-    const aiTarget = Math.min(counts.candidates, budget);
-    const aiDone = Math.min(
-        aiTarget,
-        listings.filter(
-            (listing) =>
-                canAutoAnalyze(listing) &&
-                analyses[listing.id] &&
-                analyses[listing.id].status !== "loading"
-        ).length
-    );
+    const startedAnalyses = listings.map((listing) => analyses[listing.id]).filter(Boolean);
+    const aiTarget = Math.max(Math.min(counts.candidates, budget), startedAnalyses.length);
+    const aiDone = startedAnalyses.filter((analysis) => analysis.status !== "loading").length;
     const aiBusy = counts.analyzing > 0 || (counts.waiting > 0 && budgetLeft > 0);
     const phase: SearchPhase =
         searchStatus === "error"
@@ -790,27 +783,21 @@ export function App() {
               ? "stopped"
               : searchStatus === "checking"
                 ? summary
-                    ? "filtering"
+                    ? digStatus === "checking" ? "discovering" : "filtering"
                     : "finding"
                 : aiBusy
                   ? "ai"
                   : "done";
 
-    // The panel's buttons, when they apply, and how a dig went.
+    // Discovery always runs; only extra full analyses require a button.
     const showMoreAi = counts.waiting > 0 && budgetLeft <= 0;
-    const showDig = searchStatus === "done" && Boolean(summary?.intent.cardName) && digStatus !== "digging";
-    const progressActions = (showMoreAi || showDig || digStatus !== "idle") && (
+    const progressActions = (showMoreAi || digStatus !== "idle") && (
         <div className={styles.progressActions}>
-            {(showMoreAi || showDig) && (
+            {showMoreAi && (
                 <div className={styles.progressButtons}>
                     {showMoreAi && (
                         <button type="button" className={styles.secondary} onClick={() => setBudget((current) => current + 5)}>
                             Analyze 5 more (paid)
-                        </button>
-                    )}
-                    {showDig && (
-                        <button type="button" className={styles.secondary} onClick={dig}>
-                            {digStatus === "done" ? "Dig again" : "Dig deeper"}
                         </button>
                     )}
                 </div>
@@ -819,9 +806,9 @@ export function App() {
                 <p className={digError ? styles.warning : undefined}>
                     {digError
                         ? digError
-                        : digStatus === "digging"
-                          ? `Digging: misspelled titles, number-only titles, and other categories${digTotal ? ` (${digTotal} more listings)` : ""}. The photos decide.`
-                          : `Dig deeper checked ${digTotal} more listings and found ${groups.hidden.length} hidden ${groups.hidden.length === 1 ? "one" : "ones"}: see Hidden finds.`}
+                        : digStatus === "checking"
+                          ? `Automatically checking for seller mistakes and overlooked listings${digTotal ? `: ${digChecked} of ${digTotal} photo checks` : "…"}. Results keep arriving below.`
+                          : `Automatic discovery checked ${digChecked} photos for seller mistakes and overlooked cards. Hidden finds has ${groups.hidden.length} potential ${groups.hidden.length === 1 ? "opportunity" : "opportunities"}.`}
                 </p>
             )}
         </div>
@@ -963,7 +950,7 @@ export function App() {
                                         label="Show"
                                         value={view}
                                         onChange={setView}
-                                        options={VIEWS.map((key) => [
+                                        options={availableViews.map((key) => [
                                             key,
                                             <span className={styles.tabLabel}>
                                                 {VIEW_ICONS[key]}
@@ -1000,6 +987,25 @@ export function App() {
                                 </div>
                             </div>
 
+                            <div className={`${styles.searchPreferences} ${styles.wideOnly}`}>
+                                <label className={styles.offerToggle} title="Include opportunities requiring an unaccepted offer, at most 10% below asking">
+                                    <span>Include Best Offers</span>
+                                    <input type="checkbox" role="switch" aria-label="Include Best Offer opportunities" checked={includeOffers} onChange={(event) => changeIncludeOffers(event.target.checked)} />
+                                </label>
+                                <label className={styles.field}>
+                                    <span>Minimum Buy It Now price</span>
+                                    <span className={styles.affix}><span>$</span><input type="number" min="0" inputMode="decimal" placeholder="Any" value={minPrice} onChange={(event) => changeMinPrice(event.target.value)} /></span>
+                                </label>
+                                <label className={styles.field} title="Raw cards use the upper end of the AI PSA-style grade range. Slabs use their label grade. Applies after analysis; potential is not a guarantee.">
+                                    <span>Minimum potential grade</span>
+                                    <select value={minGrade} onChange={(event) => changeMinGrade(Number(event.target.value))}>
+                                        <option value={0}>Any grade</option>
+                                        {Array.from({ length: 10 }, (_, index) => index + 1).map((grade) => <option key={grade} value={grade}>{grade} or above</option>)}
+                                    </select>
+                                </label>
+                                {minGrade > 0 && <p className={styles.preferenceNote}>Includes cards whose upper estimated grade meets your target. Check the likely grade, confidence and photo evidence.</p>}
+                            </div>
+
                             {/* What's narrowing the results, each one a click to remove. */}
                             {activeChips.length > 0 && (
                                 <div className={styles.activeFilters}>
@@ -1029,7 +1035,7 @@ export function App() {
                             <section className={styles.drawerSection}>
                                 <h3>Show</h3>
                                 <div className={styles.viewList}>
-                                    {VIEWS.map((key) => (
+                                    {availableViews.map((key) => (
                                         <button
                                             key={key}
                                             type="button"
@@ -1125,10 +1131,22 @@ export function App() {
                                         <option value="bargain">Most overlooked first</option>
                                     </select>
                                 </label>
+                                <label className={styles.field}>
+                                    <span>Minimum potential grade</span>
+                                    <select value={minGrade} onChange={(event) => changeMinGrade(Number(event.target.value))}>
+                                        <option value={0}>Any grade</option>
+                                        {Array.from({ length: 10 }, (_, index) => index + 1).map((grade) => <option key={grade} value={grade}>{grade} or above</option>)}
+                                    </select>
+                                </label>
+                                <p className={styles.usage}>Uses the upper end of the AI grade range after analysis. Potential is not a guarantee; check the likely grade and photo confidence.</p>
                             </section>
 
                             <section className={styles.drawerSection}>
                                 <h3>Each search</h3>
+                                <label className={styles.offerToggle}>
+                                    <span>Include deals requiring a Best Offer<small>Offers at most 10% below asking. Acceptance is unknown.</small></span>
+                                    <input type="checkbox" role="switch" checked={includeOffers} onChange={(event) => changeIncludeOffers(event.target.checked)} />
+                                </label>
                                 <label className={styles.field}>
                                     <span>Results per search</span>
                                     <select value={resultsSetting} onChange={(event) => changeResultsSetting(Number(event.target.value))}>
@@ -1140,7 +1158,7 @@ export function App() {
                                     </select>
                                 </label>
                                 <label className={styles.field}>
-                                    <span>AI per search</span>
+                                    <span>Full AI analyses per search</span>
                                     <select value={autoSetting} onChange={(event) => changeAutoSetting(Number(event.target.value))}>
                                         {AUTO_OPTIONS.map((option) => (
                                             <option key={option} value={option}>
@@ -1149,6 +1167,7 @@ export function App() {
                                         ))}
                                     </select>
                                 </label>
+                                <p className={styles.usage}>Automatic discovery is included in every search. Screening and discovery may use cached or paid AI photo checks; this limit controls full condition analyses.</p>
                                 {usage && <p className={styles.usage}>{describeUsage(usage)}</p>}
                             </section>
                         </Drawer>
@@ -1160,8 +1179,8 @@ export function App() {
                             query={lastQuery.current}
                             error={searchError}
                             ebayTotal={summary?.total ?? null}
-                            checked={listings.length}
-                            total={total}
+                            checked={digStatus === "idle" ? listings.length : (total ?? 0) + digChecked}
+                            total={total === null ? null : total + digTotal}
                             ai={{ done: aiDone, target: aiTarget, analyzing: counts.analyzing, waiting: counts.waiting }}
                             stats={{
                                 junk: (summary?.skipped ?? 0) + counts.junk,
@@ -1237,6 +1256,7 @@ export function App() {
                                 transitionName={index < 24 ? transitionName(listing.id) : undefined}
                                 analysis={analyses[listing.id]}
                                 years={setYearsByKey}
+                                minGrade={minGrade}
                                 selected={listing.id === selectedId}
                                 now={now}
                                 onOpen={() => {
@@ -1252,6 +1272,7 @@ export function App() {
                     <DetailPanel
                         listing={selected}
                         closing={panelClosing}
+                        minGrade={minGrade}
                         analysis={analyses[selected.id]}
                         now={now}
                         onClose={close}
