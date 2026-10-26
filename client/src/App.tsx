@@ -8,7 +8,8 @@ import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.t
 import { offerFor, offerWorthMaking } from "../../shared/money/offer.ts";
 import { compareListingEvidence, listingSignals } from "../../shared/signals.ts";
 import { name } from "./format";
-import { evaluateListing, fetchEbayUsage, fetchSetYears, streamDeals, type DealsMessage } from "./api";
+import { evaluateListing, fetchEbayUsage, fetchSetYears, reviewListingPhotos, streamDeals, type DealsMessage } from "./api";
+import type { DeeperReviewState } from "./components/PhotoReview";
 import { DealCard } from "./components/DealCard";
 import { Drawer } from "./components/Drawer";
 import { EmptyState } from "./components/EmptyState";
@@ -351,7 +352,13 @@ export function App() {
         });
     }
 
+    const activeAnalyses = useRef(new Set<string>());
+    const activePhotoReviews = useRef(new Set<string>());
+    const [photoReviews, setPhotoReviews] = useState<Record<string, DeeperReviewState>>({});
+
     const runAnalysis = useCallback(async (listing: ListingSummary, fresh = false) => {
+        if (activeAnalyses.current.has(listing.id) || activePhotoReviews.current.has(listing.id)) return;
+        activeAnalyses.current.add(listing.id);
         setAnalyses((previous) => ({ ...previous, [listing.id]: { status: "loading", startedAt: Date.now() } }));
 
         try {
@@ -362,6 +369,28 @@ export function App() {
             const message = error instanceof Error ? error.message : "Analysis failed";
             setAnalyses((previous) => ({ ...previous, [listing.id]: { status: "error", message } }));
             setAnalysisOutcomes((previous) => [...previous.slice(-7), false]);
+        } finally {
+            activeAnalyses.current.delete(listing.id);
+        }
+    }, []);
+
+    const runPhotoReview = useCallback(async (listing: ListingSummary, evaluation: Evaluation) => {
+        const key = evaluation.photoReviewKey;
+        if (!key || activeAnalyses.current.has(listing.id) || activePhotoReviews.current.has(listing.id)) return;
+        activePhotoReviews.current.add(listing.id);
+        setPhotoReviews((previous) => ({ ...previous, [listing.id]: { status: "loading", key } }));
+        try {
+            const review = await reviewListingPhotos(listing.id, key);
+            setAnalyses((previous) => {
+                const analysis = previous[listing.id];
+                if (analysis?.status !== "done" || analysis.evaluation.photoReviewKey !== key) return previous;
+                return { ...previous, [listing.id]: { status: "done", evaluation: { ...analysis.evaluation, deeperPhotoReview: review } } };
+            });
+            setPhotoReviews((previous) => { const next = { ...previous }; delete next[listing.id]; return next; });
+        } catch (error) {
+            setPhotoReviews((previous) => ({ ...previous, [listing.id]: { status: "error", key, message: (error as Error).message } }));
+        } finally {
+            activePhotoReviews.current.delete(listing.id);
         }
     }, []);
 
@@ -1217,6 +1246,7 @@ export function App() {
                                 // The first screenfuls glide when you sort or filter.
                                 transitionName={index < 24 ? transitionName(listing.id) : undefined}
                                 analysis={analyses[listing.id]}
+                                photoReviewState={photoReviews[listing.id]}
                                 years={setYearsByKey}
                                 minGrade={minGrade}
                                 targets={targets}
@@ -1241,6 +1271,11 @@ export function App() {
                         now={now}
                         onClose={close}
                         onAnalyze={(fresh) => runAnalysis(selected, fresh)}
+                        photoReviewState={photoReviews[selected.id]}
+                        onPhotoReview={() => {
+                            const analysis = analyses[selected.id];
+                            if (analysis?.status === "done") void runPhotoReview(selected, analysis.evaluation);
+                        }}
                     />
                 )}
             </div>

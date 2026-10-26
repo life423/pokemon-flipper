@@ -35,6 +35,7 @@ import { rateDeal } from "../../shared/money/rating.ts";
 import { savedPhotoInspection } from "../ai/photo-find.ts";
 import { confirmPhotoIdentity } from "../identity/photo-confirmation.ts";
 import { verifyShadowless } from "../ai/shadowless-check.ts";
+import { photoReviewKey } from "./deeper-review.ts";
 
 // eBay allows 24 photos; the ones past the first few are often the
 // close-ups that matter most.
@@ -307,15 +308,18 @@ export async function evaluateListing(
         }
     }
 
+    const context = { title: listing.title, photos: photoUrls };
+    const contextChanged = JSON.stringify(record.reviewContext) !== JSON.stringify(context);
+    record.reviewContext = context;
+
     if (changed) {
         record.answeredAt = new Date().toISOString();
-
-        if (remember) {
-            await saveRecord(listing.id, record);
-        }
     }
+    if (remember && (changed || contextChanged)) await saveRecord(listing.id, record);
 
     evaluation.answeredAt = record.answeredAt;
+    if (remember) evaluation.photoReviewKey = photoReviewKey(record);
+    if (record.deeperPhotoReview?.inputKey === evaluation.photoReviewKey) evaluation.deeperPhotoReview = record.deeperPhotoReview;
     evaluation.underwriting = underwrite(evaluation);
     evaluation.rating = rateDeal(evaluation);
 

@@ -1,5 +1,6 @@
 import { MONEY_CONFIG } from "./money/config.ts";
 import { pathNumbers } from "./money/underwriting.ts";
+import { deeperPhotoConcerns } from "./photo-review.ts";
 import type { Evaluation, Grader, PricedPath, Targets } from "./types.ts";
 
 export function returnText(value: number | null | undefined): string {
@@ -18,7 +19,7 @@ export function auctionDecision(evaluation: Evaluation, targets: Targets = MONEY
     const best = evaluation.underwriting?.best;
     const current = evaluation.listing.price;
     const ceiling = best && Number.isFinite(best.maxBid) && best.maxBid > 0 ? best.maxBid : null;
-    const provisional = evaluation.identity?.status !== "IDENTIFIED" || (evaluation.slab
+    const provisional = deeperPhotoConcerns(evaluation).length > 0 || evaluation.identity?.status !== "IDENTIFIED" || (evaluation.slab
         ? evaluation.slab.status !== "OK"
         : !evaluation.condition || evaluation.condition.confidence === "LOW" || evaluation.condition.rawCondition === "UNKNOWN" || evaluation.condition.gradeRange.likely === null);
     const ended = Boolean(evaluation.listing.endTime && Date.parse(evaluation.listing.endTime) <= now);

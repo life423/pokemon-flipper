@@ -23,6 +23,7 @@ import { MONEY_CONFIG } from "../../../shared/money/config.ts";
 import { AuctionSummary } from "./AuctionSummary";
 import { GradingComparison } from "./GradingComparison";
 import { PhotoGallery } from "./PhotoGallery";
+import { PhotoReview, type DeeperReviewState } from "./PhotoReview";
 import { CONDITION_AREAS } from "../../../shared/conditions.ts";
 import { returnText } from "../../../shared/card-presentation.ts";
 import { ceilingLabel } from "../../../shared/format.ts";
@@ -44,9 +45,11 @@ interface Props {
     onAnalyze: (fresh: boolean) => void;
     minGrade?: number;
     targets?: Targets;
+    photoReviewState?: DeeperReviewState;
+    onPhotoReview: () => void;
 }
 
-export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closing = false, minGrade = 0, targets = MONEY_CONFIG.targets }: Props) {
+export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closing = false, minGrade = 0, targets = MONEY_CONFIG.targets, photoReviewState, onPhotoReview }: Props) {
     // A new listing opens at the top of the panel.
     const panel = useRef<HTMLElement>(null);
 
@@ -69,6 +72,10 @@ export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closin
                         &times;
                     </button>
                 </header>
+
+                <PhotoReview listing={listing} evaluation={analysis?.status === "done" ? analysis.evaluation : null}
+                    phase={analysis?.status === "loading" || analysis?.status === "error" ? analysis.status : undefined}
+                    state={photoReviewState} onReview={onPhotoReview} />
 
                 <PhotoGallery images={analysis?.status === "done" ? analysis.evaluation.listing.photos ?? listing.images : listing.images} />
 
@@ -109,6 +116,7 @@ export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closin
                         minGrade={minGrade}
                         targets={targets}
                         onReanalyze={() => onAnalyze(true)}
+                        reviewing={photoReviewState?.status === "loading"}
                     />
                 )}
                 </div>
@@ -177,6 +185,7 @@ function Analysis({
     onReanalyze,
     minGrade,
     targets,
+    reviewing,
 }: {
     listing: ListingSummary;
     evaluation: Evaluation;
@@ -184,6 +193,7 @@ function Analysis({
     onReanalyze: () => void;
     minGrade: number;
     targets: Targets;
+    reviewing: boolean;
 }) {
     const tokens = evaluation.usage.reduce(
         (total, step) => total + (step.inputTokens ?? 0) + (step.outputTokens ?? 0),
@@ -242,11 +252,11 @@ function Analysis({
                 <p className={styles.small}>
                     {evaluation.answeredAt && `Analyzed ${new Date(evaluation.answeredAt).toLocaleString()}. `}
                     {evaluation.usage.length > 0
-                        ? `This run used ${tokens.toLocaleString()} tokens.`
-                        : "Reused the saved answer: no AI calls this time."}
+                        ? `The initial analysis used ${tokens.toLocaleString()} tokens.`
+                        : "The initial analysis reused saved AI assessments."}
                 </p>
-                <button type="button" className={styles.secondary} onClick={onReanalyze}>
-                    Analyze again (paid)
+                <button type="button" className={styles.secondary} onClick={onReanalyze} disabled={reviewing}>
+                    Reanalyze full listing (paid)
                 </button>
             </footer>
         </>

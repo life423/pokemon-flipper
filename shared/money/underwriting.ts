@@ -17,6 +17,7 @@ import type {
     SlabPricing,
     UnavailablePath,
     Underwriting,
+    DeeperPhotoReview,
     Verdict,
 } from "../types.ts";
 
@@ -30,6 +31,7 @@ export const GRADERS: Grader[] = ["PSA", "CGC"];
 // one of these from the seller's details; the full analysis, from the
 // photos.
 export interface UnderwritingInput {
+    deeperPhotoReview?: DeeperPhotoReview;
     listing: { price: number | null; shipping: number | null };
     identity: Identity | null;
     condition: Pick<Condition, "rawCondition" | "gradeRange" | "authenticity"> | null;
@@ -402,7 +404,7 @@ function underwriteSlab(
 
 // Every path, and the verdict: the path that clears your targets by
 // the most, or pass. Anything unknown stops the math instead of guessing.
-export function underwrite(input: UnderwritingInput, config: MoneyConfig = MONEY_CONFIG): Underwriting {
+function underwriteBase(input: UnderwritingInput, config: MoneyConfig): Underwriting {
     const { identity, condition } = input;
     const price = input.listing?.price;
 
@@ -496,4 +498,15 @@ export function underwrite(input: UnderwritingInput, config: MoneyConfig = MONEY
         paths,
         assumptions,
     };
+}
+
+export function underwrite(input: UnderwritingInput, config: MoneyConfig = MONEY_CONFIG): Underwriting {
+    const result = underwriteBase(input, config);
+    const concerns = input.deeperPhotoReview?.findings.filter((finding) => finding.impact === "NEW_CONCERN").map((finding) => finding.observation) ?? [];
+    // Preserve the original grade and money scenarios, but pause actionable
+    // purchase advice when the optional second opinion finds a new risk.
+    if (concerns.length && result.best && result.verdict !== "NEEDS_REVIEW") return {
+        ...result, verdict: "NEEDS_REVIEW", reasons: [...concerns.map((concern) => `Your review needed: ${concern}`), ...result.reasons],
+    };
+    return result;
 }

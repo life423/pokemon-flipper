@@ -19,3 +19,17 @@ test("Any targets and offer settings reach both search endpoints as explicit zer
         assert.equal(params.get("roi"), "0");
     }
 });
+
+test("focused photo review uses only its explicit endpoint and saved-assessment key", async (t) => {
+    const { reviewListingPhotos } = await import("../../client/src/api.ts");
+    let calls = 0;
+    t.mock.method(globalThis, "fetch", async (url, init) => {
+        calls++;
+        assert.equal(url, "/api/listings/v1%7C123%7C0/photo-review");
+        assert.equal(init.method, "POST");
+        assert.deepEqual(JSON.parse(init.body), { key: "saved-key" });
+        return Response.json({ summary: "saved review" });
+    });
+    await reviewListingPhotos("v1|123|0", "saved-key");
+    assert.equal(calls, 1);
+});

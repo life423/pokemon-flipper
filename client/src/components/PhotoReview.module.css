@@ -1,0 +1,32 @@
+.review {
+    display: grid;
+    gap: var(--space-2);
+    min-width: 0;
+    padding: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    overflow-wrap: anywhere;
+    font-size: var(--text-sm);
+}
+.title { color: var(--action-text); font-weight: 650; }
+.meta { color: var(--text-muted); font-size: var(--text-xs); line-height: 1.5; }
+.caution { color: var(--warning); }
+.caution strong { font-size: var(--text-sm); }
+.caution p, .caution ul { margin-top: var(--space-1); font-size: var(--text-xs); }
+.review ul { margin: var(--space-2) 0 0; padding-left: var(--space-4); }
+.deep, .action { display: grid; gap: var(--space-3); margin-top: var(--space-2); }
+.deep h3 { font-size: var(--text-md); }
+.deep h4 { font-size: var(--text-sm); }
+.action button {
+    min-height: var(--tap);
+    justify-self: start;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-control);
+    background: var(--surface-alt);
+    color: var(--action-text);
+    font-weight: 650;
+    cursor: pointer;
+}
+.action button:disabled { opacity: 0.6; cursor: default; }
+.finding { display: grid; gap: var(--space-1); padding-top: var(--space-3); border-top: 1px solid var(--border); }

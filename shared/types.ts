@@ -423,7 +423,25 @@ export interface Rating {
 
 // ---- One analyzed listing ----
 
+export type PhotoReviewArea = "IDENTITY" | "CENTERING" | "CORNERS" | "EDGES" | "SURFACE" | "PHOTO_QUALITY";
+export interface DeeperPhotoReview {
+    inputKey: string;
+    reviewedAt: string;
+    summary: string;
+    photoNumbers: number[];
+    findings: {
+        area: PhotoReviewArea;
+        impact: "NEW_CONCERN" | "SUPPORTS_PRIOR" | "UNRESOLVED";
+        observation: string;
+        photoNumbers: number[];
+    }[];
+    requestedPhotos: string[];
+    usage: { inputTokens: number | null; outputTokens: number | null };
+}
+
 export interface Evaluation {
+    photoReviewKey?: string;
+    deeperPhotoReview?: DeeperPhotoReview;
     listing: {
         id: string;
         title: string;

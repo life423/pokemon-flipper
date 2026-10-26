@@ -1,4 +1,4 @@
-import type { EbayUsage, Evaluation, ListingSummary, SearchIntent, Targets } from "./types";
+import type { DeeperPhotoReview, EbayUsage, Evaluation, ListingSummary, SearchIntent, Targets } from "./types";
 
 // fetch, with a plain message when the server can't be reached at all.
 async function reach(url: string, init?: RequestInit): Promise<Response> {
@@ -123,4 +123,10 @@ export function evaluateListing(listing: ListingSummary, { fresh = false } = {})
 // Each set's release year, by set key (shared/sets.ts).
 export function fetchSetYears(): Promise<Record<string, number>> {
     return request("/api/set-years");
+}
+
+export function reviewListingPhotos(itemId: string, key: string): Promise<DeeperPhotoReview> {
+    return request(`/api/listings/${encodeURIComponent(itemId)}/photo-review`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key }),
+    });
 }

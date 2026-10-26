@@ -12,6 +12,7 @@ import { photoEvidence } from "../../../shared/photo-evidence.ts";
 import { currentSellerMistakes } from "../../../shared/seller-mistakes.ts";
 import { AuctionSummary } from "./AuctionSummary";
 import { GradingComparison } from "./GradingComparison";
+import { PhotoReview, type DeeperReviewState } from "./PhotoReview";
 import styles from "./DealCard.module.css";
 
 interface Props {
@@ -25,11 +26,12 @@ interface Props {
     years: Record<string, number>;
     minGrade?: number;
     targets?: Targets;
+    photoReviewState?: DeeperReviewState;
 }
 const COMPACT = new Intl.NumberFormat("en-US", { notation: "compact", maximumSignificantDigits: 2 });
 const signed = (value: number) => `${value < 0 ? "−" : "+"}${dollars(Math.abs(value))}`;
 
-export function DealCard({ listing, analysis, selected, now, onOpen, years, index = 0, transitionName, minGrade = 0, targets = MONEY_CONFIG.targets }: Props) {
+export function DealCard({ listing, analysis, selected, now, onOpen, years, index = 0, transitionName, minGrade = 0, targets = MONEY_CONFIG.targets, photoReviewState }: Props) {
     const evaluation = analysis?.status === "done" ? analysis.evaluation : null;
     const best = evaluation?.underwriting?.best;
     const verdict = evaluation?.underwriting?.verdict;
@@ -52,12 +54,13 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
     const [badge, tone] = analysis?.status === "loading" ? ["Analyzing", "pending"]
         : decision?.status === "ENDED" ? ["Ended", "quiet"]
         : decision?.status === "OVER_LIMIT" ? ["Over limit", "pass"]
-        : decision?.status === "PROVISIONAL" ? ["Review photos", "watch"]
+        : decision?.status === "PROVISIONAL" ? ["Your review needed", "watch"]
         : longShot ? ["Long shot", "quiet"]
         : deal && auction ? [decision?.breakEven ? "Break-even" : "Within limit", decision?.breakEven ? "watch" : "buy"]
         : deal ? [evaluation?.rating?.level === "THIN" ? "Thin margin" : best?.path === "GRADE" ? "Buy + grade" : "Buy", best?.path === "GRADE" ? "grade" : "buy"]
         : offer ? ["Offer", "offer"]
-        : verdict === "NEEDS_REVIEW" || verdict === "CANT_PRICE" ? ["Review", "watch"]
+        : verdict === "NEEDS_REVIEW" ? ["Your review needed", "watch"]
+        : verdict === "CANT_PRICE" ? ["Can't price", "watch"]
         : verdict === "PASS" ? ["Pass", "pass"]
         : pricePending ? ["Verify price", "watch"]
         : mistakes.length ? ["Photo lead", "watch"]
@@ -75,6 +78,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
             <div className={styles.identity}><h2>{title}</h2><p>{subtitle}</p></div>
             <span className={styles.badge}>{badge}</span>
         </header>
+        <PhotoReview compact evaluation={evaluation} listing={listing} state={photoReviewState} phase={analysis?.status === "loading" || analysis?.status === "error" ? analysis.status : undefined} />
         {auction && evaluation ? <AuctionSummary evaluation={evaluation} targets={targets} now={now} /> : <>
             <div className={styles.money}>
                 <div><span className={styles.label}>{auction ? "Current bid" : "Asking price"}</span><strong className={styles.price}>{dollars(listing.currentPrice)}</strong></div>
@@ -92,7 +96,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
         {minGrade > 0 && evidence && <p className={styles.note}>{evidence.target}</p>}
         <dl className={styles.facts}>
             <div><dt>Seller</dt><dd>{sellerText}</dd></div>
-            <div><dt>Photo assessment</dt><dd>{evidence ? `${evaluation?.condition ? `${name(evaluation.condition.rawCondition)} · ` : ""}${evidence.confidence.toLowerCase()} confidence · ${evaluation?.photoCheck?.images.filter((image) => image.usable && !image.isStockImage).length ?? 0} usable views` : "Awaiting analysis"}</dd></div>
+            <div><dt>AI raw condition</dt><dd>{evaluation?.condition ? name(evaluation.condition.rawCondition) : evaluation?.slab ? "Certified slab" : "Not assessed"}</dd></div>
         </dl>
         {evaluation && <p className={styles.note} title={activity.detail}>{activity.label}{activity.recentSales !== null ? ` · ${activity.recentSales} observed ${activity.recentSales === 1 ? "sale" : "sales"} / 30 days` : ""}</p>}
         <p className={styles.openHint}>View analysis <span aria-hidden="true">↗</span></p>

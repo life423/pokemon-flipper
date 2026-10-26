@@ -1,12 +1,16 @@
 import type { Evaluation } from "./types.ts";
 
+export function photoAssessmentConfidence(evaluation: Evaluation) {
+    return evaluation.condition?.confidence ?? (evaluation.slab?.status === "OK" ? evaluation.photoCheck?.confidence : undefined) ?? "UNKNOWN";
+}
+
 export function photoEvidence(evaluation: Evaluation, requestedGrade = 0) {
     const photos = evaluation.photoCheck?.images ?? [];
     const usable = photos.filter((photo) => photo.usable && !photo.isStockImage);
     const fronts = usable.filter((photo) => photo.view === "FRONT").length;
     const backs = usable.filter((photo) => photo.view === "BACK").length;
     const closeUps = usable.filter((photo) => photo.view === "FRONT_DETAIL" || photo.view === "BACK_DETAIL").length;
-    const confidence = evaluation.condition?.confidence ?? evaluation.photoCheck?.confidence ?? "UNKNOWN";
+    const confidence = photoAssessmentConfidence(evaluation);
     const coverage = `${usable.length} usable photos: ${fronts} front, ${backs} back, ${closeUps} close-ups`;
     const issues = [...new Set(photos.flatMap((photo) => photo.issues))];
     const range = evaluation.condition?.gradeRange;

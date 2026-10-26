@@ -330,6 +330,36 @@ and consult Git for delivery status.
   confirmed the corrected loss, Deals removal, tier and downside on desktop
   and a 375px phone. No AI/eBay/price-provider calls were made for these fixes.
 
+## October 26 AI photo-review clarity and optional second opinion
+
+The user agreed to clear AI-review status and an optional deeper AI photo-review
+button. Work was developed on `ai-photo-review` from `8b8911b`. The user then
+authorized committing it, updating `main` and pushing to GitHub as the latest
+commit. Consult Git for current delivery status.
+
+- Cards and analysis now distinguish preliminary AI matching from completed
+  photo analysis. Show checked photo count, original assessment date, condition
+  confidence and **Your review needed** with concrete reasons. A successful
+  photo check alone does not establish high grading confidence.
+- The optional **Deeper AI photo review · paid** uses one request on the existing
+  model, at most eight unique useful cached listing photos, an output-token cap,
+  no SDK retries and the existing global AI limiter. It makes no eBay or price
+  requests. Normal automatic initial analysis and its cache version are unchanged.
+- Save the focused report separately, keyed to the photos and initial assessment.
+  Reopen saved results without paying again; deduplicate concurrent clicks and
+  preserve successful answers across a temporary disk-write failure in a bounded
+  recovery cache. Failed AI attempts have a short retry cooldown.
+- Keep the original assessment visible during/following the second opinion.
+  The report cites listing photo numbers and requests specific missing views.
+  It cannot increase grades, confidence or bid limits. A new visible concern
+  holds purchase/offer advice for review without weakening existing hard stops.
+  Stock-only/obscured-front inputs ask for better photos before allowing payment.
+- All 274 tests, both TypeScript projects, directly typed new tests, production
+  build and diff checks pass. Offline browser checks cover desktop and 320/375px
+  phone layouts, pending/saved/error states, new-risk removal from Deals, and
+  stock-photo rejection. No AI/eBay/price-provider calls were made in validation.
+  See `docs/ai-photo-review-2026-10-26.md` for scope and limitations.
+
 ## Validation commands
 
 `npm test`, `npm run typecheck`, `npm run build`, and `git diff --check`.

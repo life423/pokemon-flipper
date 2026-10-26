@@ -102,6 +102,8 @@ export async function runStructured<T>({
     schemaName,
     schema,
     signal,
+    maxRetries,
+    maxOutputTokens,
 }: {
     step: string;
     prompt: string;
@@ -109,6 +111,8 @@ export async function runStructured<T>({
     schemaName: string;
     schema: Record<string, unknown>;
     signal?: AbortSignal;
+    maxRetries?: number;
+    maxOutputTokens?: number;
 }): Promise<{ result: T; usage: Usage }> {
     const response = await limitRequests(async () => {
         signal?.throwIfAborted();
@@ -117,6 +121,7 @@ export async function runStructured<T>({
         try {
             return await getClient().responses.create({
                 model: MODEL,
+                ...(maxOutputTokens !== undefined ? { max_output_tokens: maxOutputTokens } : {}),
                 input: [
                     {
                         role: "user" as const,
@@ -134,7 +139,7 @@ export async function runStructured<T>({
                         schema,
                     },
                 },
-            }, { signal: deadline });
+            }, { signal: deadline, ...(maxRetries !== undefined ? { maxRetries } : {}) });
         } catch (error) {
             if (deadline.aborted) throw new ProviderError(`${step} timed out after two minutes. Please retry later.`, { cause: error });
             if (error instanceof OpenAI.APIError && error.status === 429) {

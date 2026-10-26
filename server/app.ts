@@ -13,6 +13,7 @@ import { digDeeper } from "./deals/dig.ts";
 import type { CurrentState } from "./analysis/evaluate.ts";
 import { MONEY_CONFIG } from "../shared/money/config.ts";
 import { ProviderError } from "./lib/http.ts";
+import { PhotoReviewError, reviewListingPhotos } from "./analysis/deeper-review.ts";
 
 const app = express();
 
@@ -153,6 +154,21 @@ app.post("/api/listings/:id/evaluate", async (req, res) => {
                 ? "Listing not found or no longer available"
                 : error instanceof ProviderError ? error.message : "Listing evaluation failed",
         });
+    }
+});
+
+// Optional focused photo review: cached details, one paid request on first use.
+app.post("/api/listings/:id/photo-review", async (req, res) => {
+    const key = req.body?.key;
+    if (typeof key !== "string" || !/^[a-f0-9]{64}$/.test(key)) {
+        res.status(400).json({ error: "A current saved photo assessment is required." });
+        return;
+    }
+    try {
+        res.json(await reviewListingPhotos(req.params.id, key));
+    } catch (error) {
+        res.status(error instanceof PhotoReviewError ? error.status : error instanceof ProviderError ? 503 : 502)
+            .json({ error: error instanceof PhotoReviewError || error instanceof ProviderError ? error.message : "The deeper photo review failed. Your previous assessment is unchanged." });
     }
 });
 
