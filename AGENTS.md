@@ -1,7 +1,34 @@
 # Project memory and user preferences
 
-Updated October 26, 2026. This file records the user's agreed requirements so
+Updated October 29, 2026. This file records the user's agreed requirements so
 future work can continue without losing the conversation context.
+
+## October 29 audit corrections
+
+The user authorized fixing the audit findings, starting with pricing and stale
+photo assessments, while preserving behavior and testing end to end. Work is on
+`codex/audit-fixes`. The user subsequently authorized committing the fixes,
+merging into main and pushing to GitHub on October 29; no deployment was
+requested. Consult Git for delivery status. Read
+`docs/audit-fixes-2026-10-29.md` for exact changes, evidence and limitations.
+
+- Missing grades in a nonmonotonic observed price range now block that grading
+  route instead of inheriting a lower-grade premium. Complete ranges and supported
+  raw resale still work; the existing monotonic fallback remains an assumption.
+- Reuse assessments only for current title/photo evidence, normalizing eBay image
+  sizes. Changed evidence and late old responses must not restore a stale result.
+  Full reanalysis refreshes listing details. Preserve unchanged-photo reuse and
+  never fetch URLs merely because the browser submitted them as evidence hints.
+- Preserve cancellation through initial pagination/provider requests, explicit
+  terminal stream completion, and the user-controlled rerun when widening a
+  server-side minimum price. Do not silently spend on a rerun while typing.
+- Modal focus must survive shortcuts and loading/result DOM transitions. Keep
+  ordinary Tab/Escape restoration and named progress feedback.
+- Portable Windows production startup and compatible security updates are included.
+  Verification: 285 unit tests, both TypeScript projects, direct strict regression
+  typing, build, dev/production smoke checks and 35 browser checks pass. The browser
+  count includes 13 accessibility scans. Zero live paid/provider calls were used.
+  These checks do not establish marketplace accuracy or measured production speed.
 
 ## Working agreement
 

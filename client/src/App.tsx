@@ -29,12 +29,14 @@ import {
 } from "./components/Icons";
 import { DetailPanel } from "./components/DetailPanel";
 import { useNow } from "./useNow";
+import { listingEvidenceKey } from "../../shared/listing-evidence.ts";
 import styles from "./App.module.css";
 
-export type AnalysisState =
+export type AnalysisState = (
     | { status: "loading"; startedAt: number }
     | { status: "done"; evaluation: Evaluation }
-    | { status: "error"; message: string };
+    | { status: "error"; message: string }
+) & { evidenceKey: string };
 
 type View = ResultGroup | "hidden" | "all";
 
@@ -205,6 +207,8 @@ export function App() {
 
     const [query, setQuery] = useState("");
     const [rawListings, setListings] = useState<ListingSummary[]>([]);
+    const latestListings = useRef(new Map<string, ListingSummary>());
+    latestListings.current = new Map(rawListings.map((listing) => [listing.id, listing]));
     const [total, setTotal] = useState<number | null>(null);
     const [summary, setSummary] = useState<SearchSummary | null>(null);
 
@@ -255,6 +259,8 @@ export function App() {
             // Without storage the setting lasts for this visit.
         }
     }
+    const [searchedMinPrice, setSearchedMinPrice] = useState(0);
+    const needsWiderSearch = searchStatus !== "idle" && Math.max(0, Number(minPrice) || 0) < searchedMinPrice;
 
     const [autoSetting, setAutoSetting] = useState(readAutoSetting);
     const [resultsSetting, setResultsSetting] = useState(readResultsSetting);
@@ -321,9 +327,11 @@ export function App() {
         const currentListings = new Map(rawListings.map((listing) => [listing.id, listing]));
 
         for (const [id, analysis] of Object.entries(rawAnalyses)) {
+            const current = currentListings.get(id);
+            if (current && analysis.evidenceKey !== listingEvidenceKey(current)) continue;
             repriced[id] =
                 analysis.status === "done"
-                    ? { status: "done", evaluation: retargetEvaluation(analysis.evaluation, targets, currentListings.get(id)) }
+                    ? { ...analysis, evaluation: retargetEvaluation(analysis.evaluation, targets, current) }
                     : analysis;
         }
 
@@ -354,23 +362,39 @@ export function App() {
 
     const activeAnalyses = useRef(new Set<string>());
     const activePhotoReviews = useRef(new Set<string>());
+    const pendingAnalyses = useRef(new Map<string, { listing: ListingSummary; fresh: boolean }>());
     const [photoReviews, setPhotoReviews] = useState<Record<string, DeeperReviewState>>({});
 
-    const runAnalysis = useCallback(async (listing: ListingSummary, fresh = false) => {
-        if (activeAnalyses.current.has(listing.id) || activePhotoReviews.current.has(listing.id)) return;
+    const runAnalysis = useCallback(async (listing: ListingSummary, fresh = false): Promise<void> => {
+        const evidenceKey = listingEvidenceKey(listing);
+        if (activeAnalyses.current.has(listing.id) || activePhotoReviews.current.has(listing.id)) {
+            pendingAnalyses.current.set(listing.id, { listing, fresh });
+            setAnalyses((previous) => ({ ...previous, [listing.id]: { status: "loading", startedAt: Date.now(), evidenceKey } }));
+            return;
+        }
         activeAnalyses.current.add(listing.id);
-        setAnalyses((previous) => ({ ...previous, [listing.id]: { status: "loading", startedAt: Date.now() } }));
+        setAnalyses((previous) => ({ ...previous, [listing.id]: { status: "loading", startedAt: Date.now(), evidenceKey } }));
+        const stillCurrent = () => {
+            const current = latestListings.current.get(listing.id);
+            return !current || listingEvidenceKey(current) === evidenceKey;
+        };
 
         try {
             const evaluation = await evaluateListing(listing, { fresh });
-            setAnalyses((previous) => ({ ...previous, [listing.id]: { status: "done", evaluation } }));
+            if (stillCurrent()) setAnalyses((previous) => ({ ...previous, [listing.id]: { status: "done", evaluation, evidenceKey } }));
             setAnalysisOutcomes((previous) => [...previous.slice(-7), true]);
         } catch (error) {
             const message = error instanceof Error ? error.message : "Analysis failed";
-            setAnalyses((previous) => ({ ...previous, [listing.id]: { status: "error", message } }));
+            if (stillCurrent()) setAnalyses((previous) => ({ ...previous, [listing.id]: { status: "error", message, evidenceKey } }));
             setAnalysisOutcomes((previous) => [...previous.slice(-7), false]);
         } finally {
             activeAnalyses.current.delete(listing.id);
+            const pending = pendingAnalyses.current.get(listing.id);
+            pendingAnalyses.current.delete(listing.id);
+            const current = latestListings.current.get(listing.id);
+            if (pending && current && listingEvidenceKey(pending.listing) === listingEvidenceKey(current)) {
+                void runAnalysis(current, pending.fresh);
+            }
         }
     }, []);
 
@@ -384,15 +408,19 @@ export function App() {
             setAnalyses((previous) => {
                 const analysis = previous[listing.id];
                 if (analysis?.status !== "done" || analysis.evaluation.photoReviewKey !== key) return previous;
-                return { ...previous, [listing.id]: { status: "done", evaluation: { ...analysis.evaluation, deeperPhotoReview: review } } };
+                return { ...previous, [listing.id]: { ...analysis, evaluation: { ...analysis.evaluation, deeperPhotoReview: review } } };
             });
             setPhotoReviews((previous) => { const next = { ...previous }; delete next[listing.id]; return next; });
         } catch (error) {
             setPhotoReviews((previous) => ({ ...previous, [listing.id]: { status: "error", key, message: (error as Error).message } }));
         } finally {
             activePhotoReviews.current.delete(listing.id);
+            const pending = pendingAnalyses.current.get(listing.id);
+            pendingAnalyses.current.delete(listing.id);
+            const current = latestListings.current.get(listing.id);
+            if (pending && current && listingEvidenceKey(pending.listing) === listingEvidenceKey(current)) void runAnalysis(current, pending.fresh);
         }
-    }, []);
+    }, [runAnalysis]);
 
     const [recentSearches, setRecentSearches] = useState<string[]>(readRecentSearches);
 
@@ -435,6 +463,7 @@ export function App() {
         setDigError(null);
 
         autoQueued.current = new Set();
+        pendingAnalyses.current.clear();
         setListings([]);
         setTotal(null);
         setSummary(null);
@@ -442,6 +471,8 @@ export function App() {
         setBudget(autoSetting);
         setView("deals");
         setSearchStatus("checking");
+        setSearchError("");
+        setSearchedMinPrice(Math.max(0, Number(minPrice) || 0));
 
         try {
             await streamDeals(text, { maxResults: resultsSetting, minPrice: Number(minPrice) || 0, signal: controller.signal, targets, includeOffers }, (message) => {
@@ -494,7 +525,8 @@ export function App() {
 
         const waiting = listings
             // Long-shot auctions aren't worth the AI.
-            .filter((listing) => canAutoAnalyze(listing) && !analyses[listing.id])
+            .filter((listing) => canAutoAnalyze(listing) && !analyses[listing.id] &&
+                !activeAnalyses.current.has(listing.id) && !activePhotoReviews.current.has(listing.id))
             .sort((a, b) => compareAnalysisPriority(a, b, targets));
         let free = analysisConcurrency(waiting.length + running, analysisOutcomes) - running;
 
@@ -506,7 +538,7 @@ export function App() {
             remaining -= 1;
             void runAnalysis(listing);
         }
-    }, [listings, analyses, budget, runAnalysis, analysisOutcomes, targets]);
+    }, [listings, analyses, budget, runAnalysis, analysisOutcomes, targets, photoReviews]);
 
     function changeAutoSetting(value: number) {
         setAutoSetting(value);
@@ -676,6 +708,7 @@ export function App() {
         const onKey = (event: KeyboardEvent) => {
             if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
                 event.preventDefault();
+                if (drawerOpen || selectedId !== null) return;
                 searchInput.current?.focus();
                 searchInput.current?.select();
             }
@@ -683,7 +716,7 @@ export function App() {
 
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
-    }, []);
+    }, [drawerOpen, selectedId]);
 
     // Each target's dropdown: quick picks, and a custom amount.
     const targetMenu = (field: keyof Targets, close: () => void) => (
@@ -1191,6 +1224,14 @@ export function App() {
                             details={progressDetails}
                         />
                     )}
+
+                    {needsWiderSearch && <div className={styles.searchUpdate} role="status">
+                        <p>This search excluded Buy It Now listings below ${searchedMinPrice}. Rerun it to include lower prices.</p>
+                        <button type="button" className={styles.secondary} onClick={() => {
+                            setQuery(lastQuery.current);
+                            void search(undefined, lastQuery.current);
+                        }}>Rerun search</button>
+                    </div>}
 
                     {searchStatus === "idle" && (
                         <EmptyState>

@@ -3,6 +3,7 @@ import { exclusionReason, normalizeText } from "./filters.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { countRequest, ebayUsage, EbayBudgetError } from "./usage.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
+import { photoEvidenceKey, searchPhotosFitDetails } from "../../shared/listing-evidence.ts";
 import type { BuyingOption, ListingSummary, Seller } from "../../shared/types.ts";
 
 // Toys & Hobbies > Collectible Card Games > CCG Individual Cards
@@ -59,6 +60,8 @@ interface EbayItem {
 
 // Full details for analysis.
 export interface ListingDetails {
+    // Search snapshot used to validate this cache without requesting eBay again.
+    searchPhotoKey?: string;
     id: string;
     title: string;
     url: string;
@@ -142,8 +145,10 @@ export async function searchListings(
     }: { maxResults?: number; anyCategory?: boolean; keepReserve?: boolean; signal?: AbortSignal } = {}
 ): Promise<{ listings: ListingSummary[]; total: number; skipped: number }> {
     const scope = anyCategory ? "any" : "cards";
+    signal?.throwIfAborted();
     const key = `ebay:search:${maxResults}:${scope}:${normalizeText(search).trim()}`;
     const saved = await readCache<{ listings: ListingSummary[]; total: number; skipped: number }>(key, SEARCH_MAX_AGE_HOURS);
+    signal?.throwIfAborted();
 
     if (saved) return saved;
 
@@ -176,8 +181,9 @@ export async function searchListings(
 
         countRequest();
         const page = await ebayGet<{ itemSummaries?: EbayItem[]; total?: number }>(
-            `/buy/browse/v1/item_summary/search?${params}`
+            `/buy/browse/v1/item_summary/search?${params}`, { signal }
         );
+        signal?.throwIfAborted();
         const items = page.itemSummaries ?? [];
         total = page.total ?? total;
 
@@ -208,23 +214,36 @@ export async function searchListings(
 // (the free check's bulk lookups); a deliberate analysis still asks.
 export async function getListingDetails(
     itemId: string,
-    { maxAgeHours = DETAILS_MAX_AGE_HOURS, keepReserve = false }: { maxAgeHours?: number; keepReserve?: boolean } = {}
+    { maxAgeHours = DETAILS_MAX_AGE_HOURS, keepReserve = false, expectedPhotos, expectedTitle }: {
+        maxAgeHours?: number; keepReserve?: boolean; expectedPhotos?: readonly string[]; expectedTitle?: string;
+    } = {}
 ): Promise<ListingDetails> {
     const key = `ebay:item:${itemId}`;
 
     if (maxAgeHours > 0) {
         const saved = await readCache<ListingDetails>(key, maxAgeHours);
-        if (saved) return saved;
+        if (saved && (expectedTitle === undefined || expectedTitle.trim() === saved.title.trim()) &&
+            (expectedPhotos === undefined || (saved.searchPhotoKey !== undefined
+                ? saved.searchPhotoKey === photoEvidenceKey(expectedPhotos)
+                : searchPhotosFitDetails(expectedPhotos, saved.images)))) {
+            if (expectedPhotos !== undefined && saved.searchPhotoKey === undefined) {
+                saved.searchPhotoKey = photoEvidenceKey(expectedPhotos);
+                await writeCache(key, saved);
+            }
+            return saved;
+        }
     }
 
     if (keepReserve && (await ebayUsage())?.braking) {
         throw new EbayBudgetError("Saving the rest of today's eBay allowance.");
     }
 
-    return shareDetails(itemId, async () => {
+    const evidence = expectedPhotos === undefined ? "" : photoEvidenceKey(expectedPhotos);
+    return shareDetails(JSON.stringify([itemId, expectedTitle, evidence]), async () => {
         detailRequests += 1;
         countRequest();
         const details = await fetchListingDetails(itemId);
+        if (expectedPhotos !== undefined) details.searchPhotoKey = evidence;
         await writeCache(key, details);
         return details;
     });

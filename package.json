@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "npm run kill-ports && tsx watch --clear-screen=false server/app.ts",
     "kill-ports": "kill-port 3000 || true",
-    "start": "NODE_ENV=production tsx server/app.ts",
+    "start": "node --import tsx scripts/start.mjs",
     "test": "node --import tsx --test \"test/**/*.test.*\"",
     "evaluate": "tsx scripts/evaluate.ts",
     "consistency": "tsx scripts/consistency.ts",
@@ -33,6 +33,6 @@
     "kill-port": "^2.0.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
-    "vite": "^6.4.3"
+    "vite": "^6.4.5"
   }
 }

@@ -4,7 +4,8 @@ import type { DeeperPhotoReview, EbayUsage, Evaluation, ListingSummary, SearchIn
 async function reach(url: string, init?: RequestInit): Promise<Response> {
     try {
         return await fetch(url, init);
-    } catch {
+    } catch (error) {
+        if (init?.signal?.aborted) throw error;
         throw new Error("Can't reach the app's server. Is npm run dev running?");
     }
 }
@@ -44,23 +45,37 @@ async function streamLines<T extends { type: string }>(
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffered = "";
+    let completed = false;
+    const deliver = (line: string) => {
+        if (!line.trim()) return;
+        const message = JSON.parse(line) as T & { error?: string };
+        if (message.type === "error") throw new Error(message.error);
+        onMessage(message);
+        if (message.type === "done") completed = true;
+    };
 
-    for (;;) {
-        const { done, value } = await reader.read();
-        buffered += decoder.decode(value, { stream: !done });
+    try {
+        for (;;) {
+            const { done, value } = await reader.read();
+            buffered += decoder.decode(value, { stream: !done });
 
-        const lines = buffered.split("\n");
-        buffered = lines.pop() ?? "";
+            const lines = buffered.split("\n");
+            buffered = lines.pop() ?? "";
 
-        for (const line of lines) {
-            if (!line.trim()) continue;
+            for (const line of lines) {
+                deliver(line);
+                if (completed) return;
+            }
 
-            const message = JSON.parse(line) as T & { error?: string };
-            if (message.type === "error") throw new Error(message.error);
-            onMessage(message);
+            if (done) {
+                deliver(buffered);
+                if (!completed) throw new Error("Search ended before completion. Results checked so far are kept; run the search again to finish.");
+                return;
+            }
         }
-
-        if (done) return;
+    } finally {
+        await reader.cancel().catch(() => {});
+        reader.releaseLock();
     }
 }
 
@@ -112,6 +127,8 @@ export function evaluateListing(listing: ListingSummary, { fresh = false } = {})
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+            title: listing.title,
+            images: listing.images,
             price: listing.currentPrice,
             shipping: listing.shipping,
             bids: listing.bids,

@@ -103,18 +103,21 @@ type GradePrices =
     | { ok: false; reason: string };
 
 // The median sold price for each grade in the range. A grade with no
-// verified sales takes the price of the nearest lower grade that has
-// some, never a higher one. With nothing below it, there's no floor.
+// verified sales may use the nearest lower observed grade only while the
+// observed range is nondecreasing. A lower-grade premium is not a floor
+// for an unobserved grade. Complete nonmonotonic ranges remain priceable.
 export function pricesByGrade(byGrade: CompSummary[], { low, high }: Pick<GradeRange, "low" | "high">): GradePrices {
     const known = new Map<number, number>();
 
     for (const summary of byGrade) {
-        if (summary.count > 0 && typeof summary.median === "number") {
+        if (summary.count > 0 && typeof summary.median === "number" && Number.isFinite(summary.median) && summary.median > 0) {
             known.set(Number(summary.grade), summary.median);
         }
     }
 
     const prices: Record<number, { price: number; filledFrom: number | null }> = {};
+    const observed = [...known].filter(([grade]) => grade >= low && grade <= high).sort(([a], [b]) => a - b);
+    const hasPriceReversal = observed.some(([, price], index) => index > 0 && price < observed[index - 1][1]);
     let floor: { grade: number; price: number } | null = null;
 
     for (let grade = low; grade <= high; grade += 1) {
@@ -123,12 +126,14 @@ export function pricesByGrade(byGrade: CompSummary[], { low, high }: Pick<GradeR
         if (price !== undefined) {
             floor = { grade, price };
             prices[grade] = { price, filledFrom: null };
-        } else if (floor) {
+        } else if (floor && !hasPriceReversal) {
             prices[grade] = { price: floor.price, filledFrom: floor.grade };
         } else {
             return {
                 ok: false,
-                reason: `No verified sales at grade ${grade}, the low end of the range, so there's no floor to price from.`,
+                reason: hasPriceReversal
+                    ? `No verified sales at grade ${grade}. Observed prices do not rise with grade, so a lower grade cannot safely fill this gap.`
+                    : `No verified sales at grade ${grade}, the low end of the range, so there's no floor to price from.`,
             };
         }
     }

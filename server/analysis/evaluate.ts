@@ -97,6 +97,8 @@ async function slabPricesFor(card: PricedCard | null, identity: Identity, slab: 
 //   remember: save new answers.
 // What changes on a listing between searches, as the page last saw it.
 export interface CurrentState {
+    title?: string;
+    images?: string[];
     price: number | null;
     shipping: number | null;
     bids: number;
@@ -114,7 +116,11 @@ export async function evaluateListing(
     // From the page: the saved details plus the price it just searched,
     // so analyzing a listing usually costs no eBay request. Without that
     // (the evaluate script), the details are fetched fresh for the price.
-    const details = await getListingDetails(itemId, current ? {} : { maxAgeHours: 0 });
+    const details = await getListingDetails(itemId, {
+        ...(!current || fresh ? { maxAgeHours: 0 } : {}),
+        expectedPhotos: current?.images,
+        expectedTitle: current?.title,
+    });
     const listing = current
         ? {
               ...details,

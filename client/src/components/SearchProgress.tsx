@@ -108,6 +108,8 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
                 ? "Automatic discovery is running; results stay available below."
             : phase === "finding"
             ? "Searching eBay..."
+            : phase === "error"
+              ? "The search could not finish. Any results checked so far are kept."
             : ai.analyzing > 0
               ? `AI analyzing ${ai.analyzing} ${ai.analyzing === 1 ? "candidate" : "candidates"}...`
               : phase === "filtering"
@@ -143,7 +145,7 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
                     {collapsed ? (
                         <>
                             <p className={styles.compactTitle}>
-                                {phase === "done" ? "Done:" : phase === "stopped" ? "Stopped:" : "Searching"} “{query}”
+                                {phase === "done" ? "Done:" : phase === "stopped" ? "Stopped:" : phase === "error" ? "Search incomplete:" : "Searching"} “{query}”
                             </p>
                             <p className={styles.sub}>{compact}</p>
                             {phase !== "error" && <ProgressBar percent={percent} thin />}
@@ -284,6 +286,7 @@ function ProgressBar({ percent, thin = false }: { percent: number | null; thin?:
         <div
             className={`${styles.bar} ${thin ? styles.thin : ""}`}
             role="progressbar"
+            aria-label="Search completion"
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={percent === null ? undefined : Math.round(percent * 100)}

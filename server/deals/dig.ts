@@ -125,10 +125,10 @@ export async function digDeeper(
     dependencies: DigSteps = { search: searchListings, plan: digQueries, readIntent: readSearch, findPhoto: findCardInPhoto, screening: screeningSteps }
 ): Promise<void> {
     signal?.throwIfAborted();
-    const intent = knownIntent ?? await dependencies.readIntent(search);
+    const intent = knownIntent ?? await dependencies.readIntent(search, signal);
     signal?.throwIfAborted();
 
-    const plan: DigQuery[] = await dependencies.plan(search, intent);
+    const plan: DigQuery[] = await dependencies.plan(search, intent, signal);
     const found = new Map<string, { listing: ListingSummary; how: FoundHow; lane: number }>();
     const excluded = new Set(excludeIds);
     // Seller claims can hide the value, so also inspect a bounded sample of

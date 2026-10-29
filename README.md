@@ -159,7 +159,10 @@ Everything is TypeScript. The server runs through [tsx](https://tsx.is), and the
 
 - The free check runs on search results with AI-read titles; only listings that pass get an eBay detail request. That's about 300 requests per new 1,000-result search instead of 1,000.
 - Searches are saved for 10 minutes and listing details for a week. Analyzing a listing you've already searched usually costs no eBay request at all.
-- Changing targets, filters, or sorting never touches eBay.
+- Repricing a completed analysis, filtering loaded results and sorting make no
+  eBay requests. Lower targets can qualify additional automatic analyses within
+  the current AI budget. Widening the minimum Buy It Now price requires an explicit
+  **Rerun search** to include previously excluded listings.
 - Searches fetch 400 results by default (eBay sorts by best match, so later pages are mostly loose matches). **Filters** can raise it to 1,000.
 - The page shows how many of today's requests are left, from eBay's own count. In the last 10% of the day's allowance, the free check stops fetching listing details and works from titles, so searches keep working until the allowance resets at midnight Pacific.
 
@@ -172,7 +175,7 @@ eBay raises the limit through its free [Application Growth Check](https://develo
 ## Testing
 
 ```bash
-npm test            # 145 tests
+npm test            # 285 tests
 npm run typecheck   # server, shared code, scripts, and the page
 ```
 

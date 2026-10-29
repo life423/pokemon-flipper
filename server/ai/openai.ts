@@ -139,8 +139,9 @@ export async function runStructured<T>({
                         schema,
                     },
                 },
-            }, { signal: deadline, ...(maxRetries !== undefined ? { maxRetries } : {}) });
+            }, { signal: signal ? AbortSignal.any([signal, deadline]) : deadline, ...(maxRetries !== undefined ? { maxRetries } : {}) });
         } catch (error) {
+            signal?.throwIfAborted();
             if (deadline.aborted) throw new ProviderError(`${step} timed out after two minutes. Please retry later.`, { cause: error });
             if (error instanceof OpenAI.APIError && error.status === 429) {
                 const retrySeconds = Number(error.headers?.get("retry-after"));

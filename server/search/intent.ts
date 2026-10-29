@@ -79,9 +79,11 @@ export function cleanReading(reading: Reading, search: string): SearchIntent {
     };
 }
 
-export async function readSearch(search: string): Promise<SearchIntent> {
+export async function readSearch(search: string, signal?: AbortSignal): Promise<SearchIntent> {
+    signal?.throwIfAborted();
     const key = `search-intent:v${INTENT_VERSION}:${MODEL}:${normalizeText(search).trim()}`;
     const saved = await readCache<SearchIntent>(key, MONTH_HOURS);
+    signal?.throwIfAborted();
 
     if (saved) return cleanReading(saved, search);
 
@@ -92,6 +94,7 @@ export async function readSearch(search: string): Promise<SearchIntent> {
             photos: [],
             schemaName: "search_intent",
             schema: SCHEMA,
+            signal,
         });
         const intent = cleanReading(result, search);
 
@@ -99,6 +102,7 @@ export async function readSearch(search: string): Promise<SearchIntent> {
 
         return intent;
     } catch (error) {
+        signal?.throwIfAborted();
         console.error(`Reading the search failed, so every eBay result is kept: ${(error as Error).message}`);
 
         return readSearchByRules(search);

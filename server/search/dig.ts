@@ -30,10 +30,12 @@ const SCHEMA = {
     },
 };
 
-async function variants(intent: SearchIntent): Promise<Variants> {
+async function variants(intent: SearchIntent, signal?: AbortSignal): Promise<Variants> {
+    signal?.throwIfAborted();
     const card = `${intent.cardName}${intent.sets.length ? ` (${intent.sets.join(" or ")})` : ""}`;
     const key = `dig-variants:v${PLAN_VERSION}:${MODEL}:${card.toLowerCase()}`;
     const saved = await readCache<Variants>(key, MONTH_HOURS);
+    signal?.throwIfAborted();
 
     if (saved) return saved;
 
@@ -46,6 +48,7 @@ async function variants(intent: SearchIntent): Promise<Variants> {
             photos: [],
             schemaName: "dig_variants",
             schema: SCHEMA,
+            signal,
         });
         const cleaned = {
             misspellings: result.misspellings.map((word) => word.trim().toLowerCase()).filter(Boolean).slice(0, 3),
@@ -56,15 +59,17 @@ async function variants(intent: SearchIntent): Promise<Variants> {
 
         return cleaned;
     } catch (error) {
+        signal?.throwIfAborted();
         console.error(`Dig plan failed: ${(error as Error).message}`);
         return { misspellings: [], numbers: [] };
     }
 }
 
-export async function digQueries(search: string, intent: SearchIntent): Promise<DigQuery[]> {
+export async function digQueries(search: string, intent: SearchIntent, signal?: AbortSignal): Promise<DigQuery[]> {
+    signal?.throwIfAborted();
     // A broad set/condition search has no single card to look for in photos.
     // Still expand its category coverage, using the user's exact search.
-    const { misspellings, numbers } = intent.cardName ? await variants(intent) : { misspellings: [], numbers: [] };
+    const { misspellings, numbers } = intent.cardName ? await variants(intent, signal) : { misspellings: [], numbers: [] };
     const set = intent.sets[0] ?? "";
 
     return [

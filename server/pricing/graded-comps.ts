@@ -101,6 +101,8 @@ export function compProblem(comp: Comp, { printing, setName, grader, grade, now 
 
     const ageDays = (now - Date.parse(comp.sold_at)) / DAY_MS;
 
+    if (!Number.isFinite(ageDays)) return "invalid sale date";
+    if (ageDays < 0) return "future sale date";
     if (!(ageDays <= RECENT_DAYS)) return "older than 180 days";
 
     return null;

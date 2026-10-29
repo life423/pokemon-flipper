@@ -45,6 +45,14 @@ const SHADOWLESS_PSA8 = [
 
 const criteria = (printing, setName, grade) => ({ printing, setName, grader: "PSA", grade, now: NOW });
 
+test("only valid past sales within the inclusive 180-day window enter pricing", () => {
+    const title = "2000 Lugia Neo Genesis Unlimited Holo PSA 9 9/111";
+    const dates = [NOW, NOW - 180 * 86400000, NOW - 180 * 86400000 - 1, NOW + 1].map((time) => new Date(time).toISOString());
+    const summary = summarizeComps([...dates, "invalid"].map((date) => comp(2500, date, "Unlimited Holofoil", title)), criteria("UNLIMITED", "Neo Genesis", 9));
+    assert.equal(summary.count, 2);
+    assert.deepEqual(summary.dropped, { "older than 180 days": 1, "future sale date": 1, "invalid sale date": 1 });
+});
+
 test("Lugia PSA 9: Unlimited and 1st Edition sales are priced apart", () => {
     const unlimited = summarizeComps(LUGIA_PSA9, criteria("UNLIMITED", "Neo Genesis", 9));
     const firstEdition = summarizeComps(LUGIA_PSA9, criteria("FIRST_EDITION", "Neo Genesis", 9));

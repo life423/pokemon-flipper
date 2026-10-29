@@ -26,6 +26,9 @@ function currentState(body: unknown): CurrentState | null {
     if (!value || number(value.price) === null) return null;
 
     return {
+        title: typeof value.title === "string" ? value.title.slice(0, 500) : undefined,
+        images: Array.isArray(value.images) && value.images.length <= 24 && value.images.every((image) => typeof image === "string" && image.length <= 2048)
+            ? value.images as string[] : undefined,
         price: number(value.price),
         shipping: number(value.shipping),
         bids: number(value.bids) ?? 0,

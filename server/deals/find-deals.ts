@@ -38,7 +38,7 @@ export interface SearchSummary {
 // The steps a listing goes through, passed in so tests can supply their own.
 export interface ScreenSteps {
     readTitle: typeof fillFromTitle;
-    loadDetails: (itemId: string) => Promise<ListingDetails>;
+    loadDetails: (itemId: string, listing?: Pick<ListingSummary, "images" | "title">) => Promise<ListingDetails>;
     check: (input: ScreenInput) => Promise<Screen>;
     matchPhoto: (imageUrl: string, card: ClaimedCard) => Promise<PhotoMatch | null>;
 }
@@ -47,7 +47,9 @@ export function screeningSteps(targets?: Targets, includeOffers = false, signal?
     return {
         readTitle: signal ? (listing) => fillFromTitle(listing, (title) => readTitle(title, signal)) : fillFromTitle,
         // Past the day's reserve, eBay refuses and the title's check stands.
-        loadDetails: (itemId) => getListingDetails(itemId, { keepReserve: true }),
+        loadDetails: (itemId, listing) => getListingDetails(itemId, {
+            keepReserve: true, expectedPhotos: listing?.images, expectedTitle: listing?.title,
+        }),
         check: (input) =>
             prescreen(input, { lookupCards, fetchComps, checkComps, config: targets ? withTargets(targets) : undefined, includeOffers }).catch((error: Error) =>
                 unscreened(`The free check failed: ${error.message}`)
@@ -137,7 +139,7 @@ export async function screenListing(
     let details: ListingDetails;
 
     try {
-        details = await steps.loadDetails(listing.id);
+        details = await steps.loadDetails(listing.id, listing);
     } catch {
         signal?.throwIfAborted();
         // Out of eBay requests, or the listing is gone: the title's check stands.
@@ -205,10 +207,10 @@ export async function findDeals(
     } = {}
 ): Promise<ListingSummary[]> {
     if (signal?.aborted) return [];
-    const intent = await readSearch(search);
+    const intent = await readSearch(search, signal);
     if (signal?.aborted) return [];
     const limit = Math.min(MOST_RESULTS, Math.max(200, Math.round(maxResults / 200) * 200));
-    const { listings, total, skipped } = await searchListings(search, { maxResults: limit });
+    const { listings, total, skipped } = await searchListings(search, { maxResults: limit, signal });
     if (signal?.aborted) return [];
     const now = Date.now();
     const requestsBefore = detailRequestCount();

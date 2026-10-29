@@ -57,8 +57,10 @@ async function requestAccessToken(): Promise<string> {
     return cachedToken;
 }
 
-export async function ebayGet<T>(path: string): Promise<T> {
+export async function ebayGet<T>(path: string, { signal }: { signal?: AbortSignal } = {}): Promise<T> {
+    signal?.throwIfAborted();
     const token = await getAccessToken();
+    signal?.throwIfAborted();
     const headers: Record<string, string> = {
         Authorization: `Bearer ${token}`,
         "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
@@ -69,7 +71,7 @@ export async function ebayGet<T>(path: string): Promise<T> {
         headers["X-EBAY-C-ENDUSERCTX"] = `contextualLocation=country%3DUS%2Czip%3D${process.env.EBAY_SHIP_TO_ZIP}`;
     }
 
-    const { response, body: data } = await fetchJson(`${EBAY_API}${path}`, { headers }, { service: "eBay" });
+    const { response, body: data } = await fetchJson(`${EBAY_API}${path}`, { headers, signal }, { service: "eBay" });
 
     if (!response.ok) {
         throw new EbayError(
