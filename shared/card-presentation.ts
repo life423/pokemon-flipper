@@ -22,7 +22,7 @@ export function auctionDecision(evaluation: Evaluation, targets: Targets = MONEY
     const provisional = deeperPhotoConcerns(evaluation).length > 0 || evaluation.identity?.status !== "IDENTIFIED" || (evaluation.slab
         ? evaluation.slab.status !== "OK"
         : !evaluation.condition || evaluation.condition.confidence === "LOW" || evaluation.condition.rawCondition === "UNKNOWN" || evaluation.condition.gradeRange.likely === null);
-    const ended = Boolean(evaluation.listing.endTime && Date.parse(evaluation.listing.endTime) <= now);
+    const ended = evaluation.listing.availability === "UNAVAILABLE" || Boolean(evaluation.listing.endTime && Date.parse(evaluation.listing.endTime) <= now);
     const overLimit = ceiling !== null && current !== null && current > ceiling;
     const status = ended ? "ENDED" : ceiling === null ? "UNPRICED" : overLimit ? "OVER_LIMIT" : provisional ? "PROVISIONAL" : "WITHIN_LIMIT";
     const breakEven = targets.minProfit === 0 && targets.minRoi === 0;

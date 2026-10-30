@@ -197,6 +197,11 @@
     font-size: var(--text-xs);
     color: var(--action-text);
 }
+.actions { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.actions .openHint { flex: 1; }
+.save { position: relative; z-index: 2; min-height: var(--tap); padding: 0 var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-alt); color: var(--text); cursor: pointer; }
+.save[aria-pressed="true"] { color: var(--action-text); border-color: var(--accent); }
+.save:disabled { opacity: .65; cursor: wait; }
 
 @media (hover:hover)  {
     .card:hover  {

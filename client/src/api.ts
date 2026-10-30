@@ -1,4 +1,5 @@
 import type { DeeperPhotoReview, EbayUsage, Evaluation, ListingSummary, SearchIntent, Targets } from "./types";
+import type { ShortlistEntry, RefreshResult } from "../../shared/shortlist.ts";
 
 // fetch, with a plain message when the server can't be reached at all.
 async function reach(url: string, init?: RequestInit): Promise<Response> {
@@ -22,7 +23,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export type DealsMessage =
-    | { type: "start"; total: number; found: number; count: number; skipped: number; intent: SearchIntent }
+    | { type: "start"; total: number; found: number; count: number; skipped: number; intent: SearchIntent; mode?: "new"; deferred?: number; previouslySeen?: number }
     | { type: "listing"; listing: ListingSummary }
     | { type: "discovery"; status: "checking" | "done" | "error"; checked: number; total: number; note?: string }
     | { type: "done" }
@@ -34,9 +35,10 @@ export type DealsMessage =
 async function streamLines<T extends { type: string }>(
     url: string,
     onMessage: (message: T) => void,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    init?: RequestInit
 ): Promise<void> {
-    const response = await reach(url, { signal });
+    const response = await reach(url, { ...init, signal });
 
     if (!response.ok || !response.body) {
         throw new Error(`Search failed (${response.status})`);
@@ -86,6 +88,23 @@ export function streamDeals(
 ): Promise<void> {
     const criteria = targets ? `&profit=${targets.minProfit}&roi=${targets.minRoi}` : "";
     return streamLines(`/api/deals?q=${encodeURIComponent(query)}&max=${maxResults}&min=${minPrice}${criteria}&offers=${includeOffers ? 1 : 0}`, onMessage, signal);
+}
+
+export function streamNewDeals(query: string, options: { minPrice: number; signal?: AbortSignal; targets: Targets; includeOffers: boolean; knownIds: string[] }, onMessage: (message: DealsMessage) => void): Promise<void> {
+    return streamLines(`/api/deals/new?min=${options.minPrice}&profit=${options.targets.minProfit}&roi=${options.targets.minRoi}&offers=${options.includeOffers ? 1 : 0}`, onMessage, options.signal,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query, knownIds: options.knownIds.slice(-500) }) });
+}
+
+export async function fetchShortlist(): Promise<ShortlistEntry[]> { return (await request<{ entries: ShortlistEntry[] }>("/api/shortlist")).entries; }
+export function saveListing(listing: ListingSummary): Promise<ShortlistEntry> {
+    return request("/api/shortlist", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ listing }) });
+}
+export function updateSavedListing(id: string, notes: string, ceiling: number | null): Promise<ShortlistEntry> {
+    return request(`/api/shortlist/${encodeURIComponent(id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ notes, ceiling }) });
+}
+export function removeSavedListing(id: string): Promise<{ removed: string }> { return request(`/api/shortlist/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+export function refreshSavedListings(ids: string[]): Promise<RefreshResult> {
+    return request("/api/shortlist/refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) });
 }
 
 export type DigMessage =

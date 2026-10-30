@@ -47,9 +47,13 @@ interface Props {
     targets?: Targets;
     photoReviewState?: DeeperReviewState;
     onPhotoReview: () => void;
+    onSave?: () => void;
+    saved?: boolean;
+    saving?: boolean;
 }
 
-export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closing = false, minGrade = 0, targets = MONEY_CONFIG.targets, photoReviewState, onPhotoReview }: Props) {
+export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closing = false, minGrade = 0, targets = MONEY_CONFIG.targets, photoReviewState, onPhotoReview, onSave, saved, saving }: Props) {
+    const unavailable = listing.availability === "UNAVAILABLE" || Boolean(listing.endTime && Date.parse(listing.endTime) <= now);
     // A new listing opens at the top of the panel.
     const panel = useRef<HTMLElement>(null);
 
@@ -75,31 +79,33 @@ export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closin
 
                 <PhotoReview listing={listing} evaluation={analysis?.status === "done" ? analysis.evaluation : null}
                     phase={analysis?.status === "loading" || analysis?.status === "error" ? analysis.status : undefined}
-                    state={photoReviewState} onReview={onPhotoReview} />
+                    state={photoReviewState} onReview={unavailable ? undefined : onPhotoReview} />
+                {unavailable && <p className={styles.bad}>Saved analysis only. This listing is unavailable or ended.</p>}
 
                 <PhotoGallery images={analysis?.status === "done" ? analysis.evaluation.listing.photos ?? listing.images : listing.images} />
 
                 <p className={styles.small}>
-                    <a href={listing.url} target="_blank" rel="noopener noreferrer">
+                    <a className={styles.listingLink} href={listing.url} target="_blank" rel="noopener noreferrer">
                         Open the listing on eBay
                     </a>
                 </p>
+                {onSave && <button type="button" className={styles.secondary} onClick={() => { if (!saving) onSave(); }} aria-disabled={saving} aria-pressed={saved}>{saving ? "Saving…" : saved ? "Remove from shortlist" : "Save to shortlist"}</button>}
 
-                {!analysis && (
+                {!analysis && !unavailable && (
                     <div className={styles.cta}>
                         <p>
                             Checks the photos, identifies the exact card and printing, and prices every
                             path. About 20 seconds the first time.
                         </p>
                         <button type="button" className={styles.primary} onClick={() => onAnalyze(false)}>
-                            Analyze
+                            Analyze listing (paid)
                         </button>
                     </div>
                 )}
 
                 {analysis?.status === "loading" && <Loading startedAt={analysis.startedAt} />}
 
-                {analysis?.status === "error" && (
+                {analysis?.status === "error" && !unavailable && (
                     <div className={styles.cta}>
                         <p className={styles.bad}>The analysis failed: {analysis.message}</p>
                         <button type="button" className={styles.primary} onClick={() => onAnalyze(false)}>
@@ -116,7 +122,7 @@ export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closin
                         minGrade={minGrade}
                         targets={targets}
                         onReanalyze={() => onAnalyze(true)}
-                        reviewing={photoReviewState?.status === "loading"}
+                        reviewing={photoReviewState?.status === "loading" || unavailable}
                     />
                 )}
                 </div>

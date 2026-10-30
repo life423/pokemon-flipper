@@ -78,6 +78,8 @@
     margin-block: var(--space-4);
 }
 
+.listingLink { display: inline-flex; align-items: center; min-height: var(--tap); }
+
 .primary,
 .secondary {
     min-height: var(--tap);

@@ -32,7 +32,7 @@ export const GRADERS: Grader[] = ["PSA", "CGC"];
 // photos.
 export interface UnderwritingInput {
     deeperPhotoReview?: DeeperPhotoReview;
-    listing: { price: number | null; shipping: number | null };
+    listing: { price: number | null; shipping: number | null; availability?: string };
     identity: Identity | null;
     condition: Pick<Condition, "rawCondition" | "gradeRange" | "authenticity"> | null;
     rawPricing?: RawPricing | null;
@@ -410,6 +410,7 @@ function underwriteSlab(
 // Every path, and the verdict: the path that clears your targets by
 // the most, or pass. Anything unknown stops the math instead of guessing.
 function underwriteBase(input: UnderwritingInput, config: MoneyConfig): Underwriting {
+    if (input.listing.availability === "UNAVAILABLE") return verdict("PASS", ["This listing is no longer available. Do not buy or bid on this saved snapshot."]);
     const { identity, condition } = input;
     const price = input.listing?.price;
 

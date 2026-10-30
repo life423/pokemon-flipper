@@ -112,6 +112,8 @@ export interface SellerMistake {
 
 // One search result, with the free check once it's run.
 export interface ListingSummary {
+    termsCheckedAt?: string;
+    availability?: "ACTIVE" | "UNAVAILABLE" | "UNKNOWN";
     mistakes?: SellerMistake[];
     id: string;
     title: string;
@@ -443,6 +445,8 @@ export interface Evaluation {
     photoReviewKey?: string;
     deeperPhotoReview?: DeeperPhotoReview;
     listing: {
+        termsCheckedAt?: string;
+        availability?: "ACTIVE" | "UNAVAILABLE" | "UNKNOWN";
         id: string;
         title: string;
         url: string;

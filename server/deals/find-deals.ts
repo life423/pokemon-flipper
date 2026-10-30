@@ -25,6 +25,9 @@ const MOST_RESULTS = 1000;
 const PARALLEL_LISTINGS = 6;
 
 export interface SearchSummary {
+    mode?: "new";
+    deferred?: number;
+    previouslySeen?: number;
     // eBay's count for the search, and how many were fetched and kept.
     total: number;
     found: number;
@@ -193,6 +196,7 @@ export async function findDeals(
         signal,
         targets,
         includeOffers = false,
+        newOnly,
     }: {
         onStart?: (summary: SearchSummary) => void;
         onListing?: (listing: ListingSummary) => void;
@@ -204,26 +208,31 @@ export async function findDeals(
         signal?: AbortSignal;
         targets?: Targets;
         includeOffers?: boolean;
+        newOnly?: { excludeIds: readonly string[]; limit: number };
     } = {}
 ): Promise<ListingSummary[]> {
     if (signal?.aborted) return [];
     const intent = await readSearch(search, signal);
     if (signal?.aborted) return [];
     const limit = Math.min(MOST_RESULTS, Math.max(200, Math.round(maxResults / 200) * 200));
-    const { listings, total, skipped } = await searchListings(search, { maxResults: limit, signal });
+    const { listings, total, skipped } = await searchListings(search, { maxResults: newOnly ? 200 : limit, signal, ...(newOnly ? { sort: "newlyListed" as const, keepReserve: true } : {}) });
     if (signal?.aborted) return [];
     const now = Date.now();
     const requestsBefore = detailRequestCount();
 
     const live = listings.filter((listing) => !listing.endTime || Date.parse(listing.endTime) > now);
-    const matching = live.filter(
+    const excluded = new Set(newOnly?.excludeIds ?? []);
+    const unseen = live.filter((listing) => !excluded.has(listing.id));
+    const eligible = unseen.filter(
         (listing) =>
             titleMatches(listing.title, intent) &&
             gradingMatches(listing.isGraded, intent) &&
             !(listing.buyingOption === "FIXED_PRICE" && (listing.currentPrice ?? 0) < minPrice)
     );
 
-    onStart({ total, found: live.length, count: matching.length, skipped, intent });
+    const matching = newOnly ? eligible.slice(0, newOnly.limit) : eligible;
+    onStart({ total, found: live.length, count: matching.length, skipped, intent,
+        ...(newOnly ? { mode: "new", deferred: Math.max(0, eligible.length - matching.length), previouslySeen: live.length - unseen.length } : {}) });
 
     // Every title queued for reading at once, so the AI gets full batches
     // of 25, but not waited on: each listing is checked as soon as its own

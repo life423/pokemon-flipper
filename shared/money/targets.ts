@@ -4,6 +4,7 @@ import { rateDeal } from "./rating.ts";
 import { isLongShot } from "./auction.ts";
 import { offerPlan, offerWorthMaking } from "./offer.ts";
 import type { Evaluation, ListingSummary, Screen, Targets } from "../types.ts";
+import { withFreshListing } from "../fresh-listing.ts";
 
 // Your profit and return targets change by card, so the page re-prices
 // everything for the targets you set. The same money math runs on the
@@ -15,6 +16,7 @@ export function withTargets(targets: Targets, config: MoneyConfig = MONEY_CONFIG
 
 // An analyzed listing: every path, the verdict, and the rating, redone.
 export function retargetEvaluation(evaluation: Evaluation, targets: Targets, current?: ListingSummary): Evaluation {
+    if (current) current = withFreshListing(current, evaluation);
     // Keep the saved photo assessment, but use the latest search's purchase
     // terms. A missing shipping quote falls back to the listing details,
     // just as it does when the server evaluates a search result.
@@ -23,8 +25,9 @@ export function retargetEvaluation(evaluation: Evaluation, targets: Targets, cur
               ...evaluation,
               listing: {
                   ...evaluation.listing,
+                  availability: current.availability ?? evaluation.listing.availability,
                   price: current.currentPrice,
-                  shipping: current.shipping ?? evaluation.listing.shipping,
+                  shipping: current.termsCheckedAt ? current.shipping : current.shipping ?? evaluation.listing.shipping,
                   bids: current.bids,
                   endTime: current.endTime,
                   buyingOption: current.buyingOption,

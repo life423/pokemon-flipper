@@ -27,11 +27,14 @@ interface Props {
     minGrade?: number;
     targets?: Targets;
     photoReviewState?: DeeperReviewState;
+    saved?: boolean;
+    saving?: boolean;
+    onSave?: () => void;
 }
 const COMPACT = new Intl.NumberFormat("en-US", { notation: "compact", maximumSignificantDigits: 2 });
 const signed = (value: number) => `${value < 0 ? "−" : "+"}${dollars(Math.abs(value))}`;
 
-export function DealCard({ listing, analysis, selected, now, onOpen, years, index = 0, transitionName, minGrade = 0, targets = MONEY_CONFIG.targets, photoReviewState }: Props) {
+export function DealCard({ listing, analysis, selected, now, onOpen, years, index = 0, transitionName, minGrade = 0, targets = MONEY_CONFIG.targets, photoReviewState, saved, saving, onSave }: Props) {
     const evaluation = analysis?.status === "done" ? analysis.evaluation : null;
     const best = evaluation?.underwriting?.best;
     const verdict = evaluation?.underwriting?.verdict;
@@ -99,6 +102,8 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
             <div><dt>AI raw condition</dt><dd>{evaluation?.condition ? name(evaluation.condition.rawCondition) : evaluation?.slab ? "Certified slab" : "Not assessed"}</dd></div>
         </dl>
         {evaluation && <p className={styles.note} title={activity.detail}>{activity.label}{activity.recentSales !== null ? ` · ${activity.recentSales} observed ${activity.recentSales === 1 ? "sale" : "sales"} / 30 days` : ""}</p>}
-        <p className={styles.openHint}>View analysis <span aria-hidden="true">↗</span></p>
+        <div className={styles.actions}><p className={styles.openHint}>View analysis <span aria-hidden="true">↗</span></p>
+            {onSave && <button type="button" className={styles.save} onClick={() => { if (!saving) onSave(); }} aria-disabled={saving} aria-pressed={saved} aria-label={`${saved ? "Remove" : "Save"} ${title} ${saved ? "from" : "to"} shortlist`}>{saving ? "Saving…" : saved ? "Saved ✓" : "Save"}</button>}
+        </div>
     </article>;
 }

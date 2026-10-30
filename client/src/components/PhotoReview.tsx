@@ -45,7 +45,7 @@ export function PhotoReview({ evaluation, listing, phase, compact = false, state
                 <p className={styles.meta}>Reopening this saved review makes no AI request.</p>
             </div> : <div className={styles.action}>
                 <p>Ask AI to focus on unresolved corners, edges, surface and printing evidence. Your current assessment stays visible.</p>
-                <button type="button" onClick={onReview} disabled={!evaluation.photoReviewKey || !plan?.photos.length || current?.status === "loading"}>
+                <button type="button" onClick={onReview} disabled={!onReview || !evaluation.photoReviewKey || !plan?.photos.length || current?.status === "loading"}>
                     {current?.status === "loading" ? "AI reviewing details…" : "Deeper AI photo review · paid"}
                 </button>
                 <p className={styles.meta}>{!evaluation.photoReviewKey ? "Refresh the app and open the listing to enable a saved review." : plan?.reason ?? `One AI request using up to ${plan?.photos.length} existing photos. Results are saved; better seller photos may still be needed.`}</p>

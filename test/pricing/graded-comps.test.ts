@@ -53,6 +53,18 @@ test("only valid past sales within the inclusive 180-day window enter pricing", 
     assert.deepEqual(summary.dropped, { "older than 180 days": 1, "future sale date": 1, "invalid sale date": 1 });
 });
 
+test("failed or partial comp checks never claim every retained sale was AI-checked", () => {
+    const passing = LUGIA_PSA9.filter((sale) => sale.variant === "Unlimited Holofoil");
+    const target = criteria("UNLIMITED", "Neo Genesis", 9);
+    const rules = summarizeComps(passing, target);
+    const failed = summarizeComps(passing, target, new Map());
+    const partial = summarizeComps(passing, target, new Map([[passing[0], { keep: true, reason: null, note: "fits" }]]));
+    assert.equal(failed.checkedByAI, undefined); assert.equal(partial.checkedByAI, undefined);
+    assert.equal(failed.median, rules.median); assert.equal(partial.count, rules.count);
+    const complete = summarizeComps(passing, target, new Map(passing.map((sale) => [sale, { keep: true, reason: null, note: "fits" }])));
+    assert.equal(complete.checkedByAI, true);
+});
+
 test("Lugia PSA 9: Unlimited and 1st Edition sales are priced apart", () => {
     const unlimited = summarizeComps(LUGIA_PSA9, criteria("UNLIMITED", "Neo Genesis", 9));
     const firstEdition = summarizeComps(LUGIA_PSA9, criteria("FIRST_EDITION", "Neo Genesis", 9));

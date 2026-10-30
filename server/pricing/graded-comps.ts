@@ -179,7 +179,7 @@ export function summarizeComps(
             title: comp.title,
             url: comp.listing_url ?? null,
         })),
-        ...(verdicts ? { checkedByAI: true } : {}),
+        ...(kept.length > 0 && kept.every((comp) => verdicts?.has(comp)) ? { checkedByAI: true } : {}),
     };
 }
 

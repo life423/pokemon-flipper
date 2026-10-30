@@ -1,0 +1,20 @@
+.root { display: grid; gap: var(--space-4); margin-top: var(--space-4); }
+.head, .itemHead, .noteActions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.head h2 { font-size: var(--text-xl); }
+.head p, .small { color: var(--text-muted); font-size: var(--text-sm); }
+:is(.head, .itemHead, .noteActions, .error) > button { min-height: var(--tap); border: 1px solid var(--border); border-radius: var(--radius-control); padding: var(--space-2) var(--space-3); background: var(--surface-alt); color: var(--text); cursor: pointer; }
+:is(.head, .itemHead, .noteActions, .error) > button:disabled, :is(.head, .itemHead, .noteActions, .error) > button[aria-disabled="true"] { opacity: .6; cursor: default; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr)); gap: var(--space-5); align-items: start; }
+.item { min-width: 0; display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--bg); }
+.item article { box-shadow: none; }
+.select { display: inline-flex; align-items: center; gap: var(--space-2); min-height: var(--tap); font-size: var(--text-sm); cursor: pointer; }
+.select input { width: 20px; height: 20px; accent-color: var(--accent-strong); }
+.warning { color: var(--warning); font-size: var(--text-sm); }
+.error { color: var(--pass-text); font-size: var(--text-sm); }
+.notes summary { min-height: var(--tap); align-content: center; cursor: pointer; font-size: var(--text-sm); }
+.notes form { display: grid; gap: var(--space-3); padding-top: var(--space-3); }
+.notes label { display: grid; gap: var(--space-2); font-size: var(--text-sm); }
+.notes input, .notes textarea { width: 100%; min-height: var(--tap); border: 1px solid var(--border); border-radius: var(--radius-control); padding: var(--space-2); background: var(--surface); color: var(--text); font: inherit; font-size: max(16px, var(--text-md)); }
+.notes textarea { resize: vertical; }
+.empty { padding: var(--space-6); border: 1px solid var(--border); border-radius: var(--radius-card); }
+@media (max-width: 26rem) { .item { padding: var(--space-3); } }

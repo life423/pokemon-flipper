@@ -4,6 +4,7 @@ import { getListingDetails, type ListingDetails } from "../../server/ebay/listin
 import { evaluateListing } from "../../server/analysis/evaluate.ts";
 import { writeCache } from "../../server/lib/cache.ts";
 import { photoEvidenceKey } from "../../shared/listing-evidence.ts";
+import { offlineEbayCredentials } from "../fixtures/ebay-credentials.ts";
 
 const photo = (id: string, size = 500) => `https://i.ebayimg.com/images/g/${id}/s-l${size}.jpg`;
 function details(id: string, images = [photo("front", 1600), photo("back", 1600)]): ListingDetails {
@@ -16,6 +17,7 @@ function item(value: ListingDetails) {
 }
 
 test("unchanged legacy search photos reuse details, while changed, removed photos and title refresh once", async (t) => {
+    offlineEbayCredentials(t);
     const id = `v1|freshness-${Date.now()}|0`;
     let current = details(id);
     let requests = 0;
@@ -43,6 +45,7 @@ test("unchanged legacy search photos reuse details, while changed, removed photo
 });
 
 test("a changed-photo search and explicit full reanalysis both reject cached photo details", async (t) => {
+    offlineEbayCredentials(t);
     let requests = 0;
     let current: ListingDetails;
     t.mock.method(globalThis, "fetch", async (url: unknown) => {

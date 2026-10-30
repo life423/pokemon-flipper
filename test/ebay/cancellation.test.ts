@@ -4,8 +4,10 @@ import { findDeals } from "../../server/deals/find-deals.ts";
 import { searchListings } from "../../server/ebay/listings.ts";
 import { writeCache } from "../../server/lib/cache.ts";
 import { MODEL } from "../../server/ai/openai.ts";
+import { offlineEbayCredentials } from "../fixtures/ebay-credentials.ts";
 
 test("stopping the first primary search page prevents all later page requests", async (t) => {
+    offlineEbayCredentials(t);
     const controller = new AbortController();
     const query = `offline cancellation ${Date.now()}`;
     await writeCache(`search-intent:v1:${MODEL}:${query}`, { cardName: null, sets: [], cardNumber: null, printing: null, graded: null, titleWords: [], source: "rules" });

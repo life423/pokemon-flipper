@@ -4,11 +4,14 @@ import type { EbayUsage, Evaluation, ListingSummary, RatingLevel, SearchIntent, 
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { analysisConcurrency, canAutoAnalyze, meetsMinimumGrade, resultGroup, type ResultGroup } from "../../shared/analysis.ts";
 import { compareAnalysisPriority } from "../../shared/analysis-priority.ts";
+import { withFreshListing } from "../../shared/fresh-listing.ts";
 import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.ts";
 import { offerFor, offerWorthMaking } from "../../shared/money/offer.ts";
 import { compareListingEvidence, listingSignals } from "../../shared/signals.ts";
 import { name } from "./format";
-import { evaluateListing, fetchEbayUsage, fetchSetYears, reviewListingPhotos, streamDeals, type DealsMessage } from "./api";
+import { evaluateListing, fetchEbayUsage, fetchSetYears, reviewListingPhotos, streamDeals, streamNewDeals, fetchShortlist, saveListing, removeSavedListing, updateSavedListing, refreshSavedListings, type DealsMessage } from "./api";
+import type { ShortlistEntry } from "../../shared/shortlist.ts";
+import { ShortlistView } from "./components/ShortlistView";
 import type { DeeperReviewState } from "./components/PhotoReview";
 import { DealCard } from "./components/DealCard";
 import { Drawer } from "./components/Drawer";
@@ -38,7 +41,7 @@ export type AnalysisState = (
     | { status: "error"; message: string }
 ) & { evidenceKey: string };
 
-type View = ResultGroup | "hidden" | "all";
+type View = ResultGroup | "hidden" | "all" | "new";
 
 // The views, in order, and what each is called everywhere it appears.
 // Long shots come late: auctions unlikely to end at a profitable price.
@@ -63,6 +66,7 @@ function readRecentSearches(): string[] {
 // Shorter tab names where phones need the room.
 const VIEW_SHORT: Partial<Record<View, string>> = { hidden: "Hidden" };
 const VIEW_ICONS: Record<View, ReactNode> = {
+    new: <SparkleIcon />,
     deals: <TagIcon />,
     offers: <DollarIcon />,
     candidates: <ClockIcon />,
@@ -82,6 +86,7 @@ const TARGET_PRESETS: Record<"minProfit" | "minRoi", [string, string][]> = {
 const SHORTCUT = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘ K" : "Ctrl K";
 
 const VIEW_NAMES: Record<View, string> = {
+    new: "New listings",
     deals: "Deals",
     offers: "Offers",
     candidates: "Waiting",
@@ -204,11 +209,38 @@ function Segmented<T extends string>({
 
 export function App() {
     const now = useNow(30_000);
+    const [page, setPage] = useState<"search" | "shortlist">("search");
+    const [shortlist, setShortlist] = useState<ShortlistEntry[]>([]);
+    const [shortlistLoading, setShortlistLoading] = useState(true);
+    const [shortlistError, setShortlistError] = useState("");
+    const shortlistRevision = useRef(0);
+    const shortlistLoad = useRef(0);
+    const [savingIds, setSavingIds] = useState(new Set<string>());
+    const activeSaves = useRef(new Set<string>());
+    const [refreshingSaved, setRefreshingSaved] = useState(false);
+    const refreshingRef = useRef(false);
+    const [refreshErrors, setRefreshErrors] = useState<Record<string, string>>({});
+    const [saveNotice, setSaveNotice] = useState<{ text: string; error?: boolean } | null>(null);
+    const [newMode, setNewMode] = useState(false);
+    const [newIds, setNewIds] = useState(new Set<string>());
+    const [newChecked, setNewChecked] = useState(0);
+    const loadShortlist = useCallback(async () => {
+        const revision = shortlistRevision.current;
+        const request = ++shortlistLoad.current;
+        setShortlistLoading(true);
+        try {
+            const entries = await fetchShortlist();
+            if (request === shortlistLoad.current && revision === shortlistRevision.current) { setShortlist(entries); setShortlistError(""); }
+        } catch (error) { if (request === shortlistLoad.current && revision === shortlistRevision.current) setShortlistError((error as Error).message); }
+        finally { if (request === shortlistLoad.current) setShortlistLoading(false); }
+    }, []);
+    useEffect(() => { void loadShortlist(); const refresh = () => void loadShortlist(); window.addEventListener("focus", refresh); return () => window.removeEventListener("focus", refresh); }, [loadShortlist]);
+    useEffect(() => { if (!saveNotice || saveNotice.error) return; const timer = window.setTimeout(() => setSaveNotice(null), 5000); return () => window.clearTimeout(timer); }, [saveNotice]);
 
     const [query, setQuery] = useState("");
     const [rawListings, setListings] = useState<ListingSummary[]>([]);
     const latestListings = useRef(new Map<string, ListingSummary>());
-    latestListings.current = new Map(rawListings.map((listing) => [listing.id, listing]));
+    latestListings.current = new Map((page === "search" ? [...shortlist.map((entry) => entry.listing), ...rawListings] : [...rawListings, ...shortlist.map((entry) => entry.listing)]).map((listing) => [listing.id, listing]));
     const [total, setTotal] = useState<number | null>(null);
     const [summary, setSummary] = useState<SearchSummary | null>(null);
 
@@ -296,7 +328,7 @@ export function App() {
     const [includeOffers, setIncludeOffers] = useState(() => {
         try { return localStorage.getItem("includeOffers") === "1"; } catch { return false; }
     });
-    const availableViews = VIEWS.filter((key) => key !== "offers" || includeOffers);
+    const availableViews: View[] = [...(newMode ? ["new" as const] : []), ...VIEWS.filter((key) => key !== "offers" || includeOffers)];
     function changeIncludeOffers(enabled: boolean) {
         setIncludeOffers(enabled);
         if (!enabled && view === "offers") setView("deals");
@@ -324,7 +356,7 @@ export function App() {
 
     const analyses = useMemo(() => {
         const repriced: Record<string, AnalysisState> = {};
-        const currentListings = new Map(rawListings.map((listing) => [listing.id, listing]));
+        const currentListings = latestListings.current;
 
         for (const [id, analysis] of Object.entries(rawAnalyses)) {
             const current = currentListings.get(id);
@@ -334,9 +366,62 @@ export function App() {
                     ? { ...analysis, evaluation: retargetEvaluation(analysis.evaluation, targets, current) }
                     : analysis;
         }
+        for (const entry of shortlist) {
+            if (!entry.evaluation || repriced[entry.id]) continue;
+            const current = currentListings.get(entry.id) ?? entry.listing;
+            if (listingEvidenceKey(current) !== listingEvidenceKey(entry.listing)) continue;
+            repriced[entry.id] = { status: "done", evidenceKey: listingEvidenceKey(current), evaluation: retargetEvaluation(entry.evaluation, targets, current) };
+        }
+        if (page === "shortlist") for (const entry of shortlist) {
+            const analysis = repriced[entry.id];
+            if (analysis?.status === "done" && entry.listing.endTime && Date.parse(entry.listing.endTime) <= now) {
+                repriced[entry.id] = { ...analysis, evaluation: retargetEvaluation({ ...analysis.evaluation, listing: { ...analysis.evaluation.listing, availability: "UNAVAILABLE" } }, targets) };
+            }
+        }
 
         return repriced;
-    }, [rawAnalyses, targets, rawListings]);
+    }, [rawAnalyses, targets, rawListings, shortlist, page, now]);
+
+    const toggleSaved = async (listing: ListingSummary) => {
+        if (activeSaves.current.has(listing.id)) return;
+        activeSaves.current.add(listing.id); setSavingIds(new Set(activeSaves.current)); shortlistRevision.current += 1;
+        try {
+            if (shortlist.some((entry) => entry.id === listing.id)) {
+                await removeSavedListing(listing.id); setShortlist((previous) => previous.filter((entry) => entry.id !== listing.id));
+                setSaveNotice({ text: "Removed from shortlist." });
+            } else {
+                const entry = await saveListing(listing); setShortlist((previous) => [entry, ...previous.filter((saved) => saved.id !== entry.id)]);
+                setSaveNotice({ text: "Saved to shortlist." });
+            }
+        } catch (error) { setSaveNotice({ text: (error as Error).message, error: true }); }
+        finally { shortlistRevision.current += 1; activeSaves.current.delete(listing.id); setSavingIds(new Set(activeSaves.current)); }
+    };
+    const removeSaved = async (id: string) => {
+        shortlistRevision.current += 1;
+        try { await removeSavedListing(id); setShortlist((previous) => previous.filter((entry) => entry.id !== id)); if (selectedId === id) setSelectedId(null); setSaveNotice({ text: "Removed from shortlist." }); }
+        finally { shortlistRevision.current += 1; }
+    };
+    const updateSaved = async (id: string, notes: string, ceiling: number | null) => {
+        shortlistRevision.current += 1;
+        try { const entry = await updateSavedListing(id, notes, ceiling); setShortlist((previous) => previous.map((saved) => saved.id === id ? { ...saved, notes: entry.notes, ceiling: entry.ceiling } : saved)); }
+        finally { shortlistRevision.current += 1; }
+    };
+    const refreshSaved = async (ids: string[]) => {
+        if (refreshingRef.current) return;
+        refreshingRef.current = true; setRefreshingSaved(true); shortlistRevision.current += 1;
+        try {
+            const result = await refreshSavedListings(ids);
+            const byId = new Map(result.entries.map((entry) => [entry.id, entry]));
+            setShortlist((previous) => previous.flatMap((entry) => ids.includes(entry.id) ? byId.has(entry.id) ? [byId.get(entry.id)!] : [] : [entry]));
+            setListings((previous) => previous.map((listing) => ids.includes(listing.id) ? byId.get(listing.id)?.listing ?? listing : listing));
+            setAnalyses((previous) => { const next = { ...previous }; for (const id of ids) { const entry = byId.get(id); if (result.errors.some((error) => error.id === id)) continue;
+                if (entry?.evaluation) next[id] = { status: "done", evidenceKey: listingEvidenceKey(entry.listing), evaluation: entry.evaluation }; else delete next[id]; } return next; });
+            setRefreshErrors((previous) => { const next = { ...previous }; for (const id of ids) delete next[id]; for (const error of result.errors) next[error.id] = error.message; return next; });
+            setSaveNotice({ text: result.errors.length ? `${result.errors.length} refresh ${result.errors.length === 1 ? "failed" : "checks failed"}. Previous snapshots kept for those listings.` : "Selected listings refreshed. No AI analysis was started.", error: Boolean(result.errors.length) });
+            refreshUsage();
+        } catch (error) { setSaveNotice({ text: (error as Error).message, error: true }); }
+        finally { shortlistRevision.current += 1; refreshingRef.current = false; setRefreshingSaved(false); }
+    };
 
     function changeTarget(field: keyof Targets, text: string) {
         setTargetInputs((previous) => ({ ...previous, [field]: text }));
@@ -381,7 +466,19 @@ export function App() {
 
         try {
             const evaluation = await evaluateListing(listing, { fresh });
-            if (stillCurrent()) setAnalyses((previous) => ({ ...previous, [listing.id]: { status: "done", evaluation, evidenceKey } }));
+            if (stillCurrent()) {
+                const current = latestListings.current.get(listing.id) ?? listing;
+                const updated = withFreshListing(current, evaluation);
+                if (updated !== current) {
+                    latestListings.current.set(listing.id, updated);
+                    setListings((previous) => previous.map((item) => item.id === listing.id ? withFreshListing(item, evaluation) : item));
+                    setShortlist((previous) => previous.map((entry) => entry.id === listing.id ? { ...entry, listing: withFreshListing(entry.listing, evaluation) } : entry));
+                }
+                if (listingEvidenceKey(updated) === listingEvidenceKey({ title: evaluation.listing.title, images: evaluation.listing.photos ?? updated.images }) || !fresh) {
+                    setAnalyses((previous) => ({ ...previous, [listing.id]: { status: "done", evaluation, evidenceKey: listingEvidenceKey(updated) } }));
+                }
+            }
+            void loadShortlist();
             setAnalysisOutcomes((previous) => [...previous.slice(-7), true]);
         } catch (error) {
             const message = error instanceof Error ? error.message : "Analysis failed";
@@ -396,7 +493,7 @@ export function App() {
                 void runAnalysis(current, pending.fresh);
             }
         }
-    }, []);
+    }, [loadShortlist]);
 
     const runPhotoReview = useCallback(async (listing: ListingSummary, evaluation: Evaluation) => {
         const key = evaluation.photoReviewKey;
@@ -411,6 +508,7 @@ export function App() {
                 return { ...previous, [listing.id]: { ...analysis, evaluation: { ...analysis.evaluation, deeperPhotoReview: review } } };
             });
             setPhotoReviews((previous) => { const next = { ...previous }; delete next[listing.id]; return next; });
+            void loadShortlist();
         } catch (error) {
             setPhotoReviews((previous) => ({ ...previous, [listing.id]: { status: "error", key, message: (error as Error).message } }));
         } finally {
@@ -420,7 +518,7 @@ export function App() {
             const current = latestListings.current.get(listing.id);
             if (pending && current && listingEvidenceKey(pending.listing) === listingEvidenceKey(current)) void runAnalysis(current, pending.fresh);
         }
-    }, [runAnalysis]);
+    }, [runAnalysis, loadShortlist]);
 
     const [recentSearches, setRecentSearches] = useState<string[]>(readRecentSearches);
 
@@ -444,10 +542,12 @@ export function App() {
     }
 
     // From the search box, or a quick pick with its own text.
-    async function search(event?: FormEvent, text = query) {
+    async function search(event?: FormEvent, text = query, onlyNew = false) {
         event?.preventDefault();
 
         if (!text.trim()) return;
+        setPage("search");
+        setNewMode(onlyNew); setNewIds(new Set()); setNewChecked(0);
 
 
         const id = ++searchId.current;
@@ -464,33 +564,37 @@ export function App() {
 
         autoQueued.current = new Set();
         pendingAnalyses.current.clear();
-        setListings([]);
+        if (!onlyNew) setListings([]);
         setTotal(null);
         setSummary(null);
         setSelectedId(null);
-        setBudget(autoSetting);
-        setView("deals");
+        setBudget(onlyNew ? Math.min(5, autoSetting) : autoSetting);
+        setView(onlyNew ? "new" : "deals");
         setSearchStatus("checking");
         setSearchError("");
         setSearchedMinPrice(Math.max(0, Number(minPrice) || 0));
 
         try {
-            await streamDeals(text, { maxResults: resultsSetting, minPrice: Number(minPrice) || 0, signal: controller.signal, targets, includeOffers }, (message) => {
+            const receive = (message: DealsMessage) => {
                 if (searchId.current !== id) return;
                 if (message.type === "start") {
                     setTotal(message.count);
                     setSummary(message);
                 }
-                if (message.type === "listing") setListings((previous) => previous.some((listing) => listing.id === message.listing.id)
-                    ? previous.map((listing) => listing.id === message.listing.id ? message.listing : listing)
-                    : [...previous, message.listing]);
+                if (message.type === "listing") {
+                    setListings((previous) => previous.some((listing) => listing.id === message.listing.id)
+                        ? previous.map((listing) => listing.id === message.listing.id ? message.listing : listing) : [...previous, message.listing]);
+                    if (onlyNew) { setNewIds((previous) => new Set([...previous, message.listing.id])); setNewChecked((previous) => previous + 1); }
+                }
                 if (message.type === "discovery") {
                     setDigStatus(message.status);
                     setDigTotal(message.total);
                     setDigChecked(message.checked);
                     setDigError(message.note ?? null);
                 }
-            });
+            };
+            if (onlyNew) await streamNewDeals(text, { minPrice: Math.max(0, Number(minPrice) || 0), signal: controller.signal, targets, includeOffers, knownIds: rawListings.map((listing) => listing.id) }, receive);
+            else await streamDeals(text, { maxResults: resultsSetting, minPrice: Number(minPrice) || 0, signal: controller.signal, targets, includeOffers }, receive);
 
             if (searchId.current === id) setSearchStatus("done");
             refreshUsage();
@@ -519,13 +623,14 @@ export function App() {
     // The AI looks at the most promising candidates on its own, a couple
     // at a time, up to this search's budget.
     useEffect(() => {
+        if (page === "shortlist") return;
         const running = Object.values(analyses).filter((analysis) => analysis.status === "loading").length;
         let remaining = budget - autoQueued.current.size;
         if (remaining <= 0) return;
 
         const waiting = listings
             // Long-shot auctions aren't worth the AI.
-            .filter((listing) => canAutoAnalyze(listing) && !analyses[listing.id] &&
+            .filter((listing) => (!newMode || newIds.has(listing.id)) && canAutoAnalyze(listing) && !analyses[listing.id] &&
                 !activeAnalyses.current.has(listing.id) && !activePhotoReviews.current.has(listing.id))
             .sort((a, b) => compareAnalysisPriority(a, b, targets));
         let free = analysisConcurrency(waiting.length + running, analysisOutcomes) - running;
@@ -538,12 +643,13 @@ export function App() {
             remaining -= 1;
             void runAnalysis(listing);
         }
-    }, [listings, analyses, budget, runAnalysis, analysisOutcomes, targets, photoReviews]);
+    }, [listings, analyses, budget, runAnalysis, analysisOutcomes, targets, photoReviews, page, newMode, newIds]);
 
     function changeAutoSetting(value: number) {
         setAutoSetting(value);
         // Takes effect mid-search too: Off or a lower cap stops new analyses now.
-        setBudget(value === ALL ? ALL : Math.max(autoQueued.current.size, value));
+        const cap = newMode ? Math.min(5, value) : value;
+        setBudget(cap === ALL ? ALL : Math.max(autoQueued.current.size, cap));
 
         try {
             localStorage.setItem(AUTO_KEY, String(value));
@@ -560,6 +666,7 @@ export function App() {
             // Another set, card, or printing than the one searched for, including
             // a reprint the photos gave away.
             .filter((listing) => !listing.match && !evaluationOf(analyses[listing.id])?.identity?.notThisCard)
+            .filter((listing) => listing.availability !== "UNAVAILABLE")
             .filter((listing) => typeFilter === "all" || listing.buyingOption === typeFilter)
             .filter((listing) => kindFilter === "all" || listing.isGraded === (kindFilter === "graded"))
             .filter((listing) => {
@@ -595,8 +702,8 @@ export function App() {
             return listing.screen?.status === "CANDIDATE" || Boolean(listing.mistakes?.length);
         });
 
-        return { ...grouped, hidden, all: filtered };
-    }, [filtered, analyses, includeOffers]);
+        return { ...grouped, hidden, all: filtered, new: filtered.filter((listing) => newIds.has(listing.id)) };
+    }, [filtered, analyses, includeOffers, newIds]);
 
     const visible = useMemo(() => {
         const compareBest = (a: ListingSummary, b: ListingSummary) => {
@@ -629,7 +736,7 @@ export function App() {
         const analyzing = listings.filter((listing) => analyses[listing.id]?.status === "loading").length;
 
         return {
-            candidates: listings.filter(canAutoAnalyze).length,
+            candidates: listings.filter((listing) => (!newMode || newIds.has(listing.id)) && canAutoAnalyze(listing)).length,
             dropped: count("DROPPED"),
             unchecked: listings.filter((listing) => listing.screen?.status === "UNSCREENED" && !listing.match &&
                 !(listing.screen.priceAnomaly && !listing.screen.priceAnomaly.photoChecked)).length,
@@ -641,12 +748,12 @@ export function App() {
             junk: listings.filter((listing) => listing.match === "JUNK").length,
             analyzing,
             waiting: listings.filter(
-                (listing) => canAutoAnalyze(listing) && !analyses[listing.id]
+                (listing) => (!newMode || newIds.has(listing.id)) && canAutoAnalyze(listing) && !analyses[listing.id]
             ).length,
         };
-    }, [listings, analyses]);
+    }, [listings, analyses, newMode, newIds]);
 
-    const selected = listings.find((listing) => listing.id === selectedId) ?? null;
+    const selected = (page === "shortlist" ? shortlist.map((entry) => entry.listing) : listings).find((listing) => listing.id === selectedId) ?? null;
 
     // Filters narrowing the results, shown as a count on the Filters button.
     const activeFilters = [typeFilter !== "all", kindFilter !== "all", maxPrice !== "", minPrice !== "", minGrade > 0, sort !== "best"].filter(
@@ -675,6 +782,7 @@ export function App() {
     const budgetLeft = budget - autoQueued.current.size;
 
     const emptyText: Record<View, string> = {
+        new: "No unseen listings in this newest-listing window match the current filters. Your earlier results remain in the other views.",
         deals:
             searchStatus === "checking" || counts.analyzing > 0
                 ? "No deals yet. Still checking."
@@ -796,7 +904,7 @@ export function App() {
 
     // Where the search is, for the progress panel: the free check, then the
     // AI on the best candidates, up to this search's budget.
-    const startedAnalyses = listings.map((listing) => analyses[listing.id]).filter(Boolean);
+    const startedAnalyses = listings.filter((listing) => !newMode || newIds.has(listing.id)).map((listing) => analyses[listing.id]).filter(Boolean);
     const aiTarget = Math.max(Math.min(counts.candidates, budget), startedAnalyses.length);
     const aiDone = startedAnalyses.filter((analysis) => analysis.status !== "loading").length;
     const aiBusy = counts.analyzing > 0 || (counts.waiting > 0 && budgetLeft > 0);
@@ -841,10 +949,10 @@ export function App() {
     // One tap down: what eBay returned, and the counts behind the four shown.
     const progressDetails = summary && (
         <>
-            <p>
+            {newMode ? <p>Loaded a window of {summary.found} newest listings. Skipped {summary.previouslySeen ?? 0} already seen; selected {summary.count} unseen listings for screening.{(summary.deferred ?? 0) > 0 ? ` Another ${summary.deferred} remain in this window for a later scan.` : ""} This scan does not cover all eBay inventory.</p> : <p>
                 eBay has {summary.total.toLocaleString()} results. Of the first {summary.found.toLocaleString()},{" "}
                 {summary.count.toLocaleString()} are {describeIntent(summary.intent)}.
-            </p>
+            </p>}
             <p>
                 {counts.candidates} could be profitable at best; {counts.mismatched} set aside as other sets, cards, or
                 languages.
@@ -966,7 +1074,13 @@ export function App() {
                         </div>
 
                         {/* Before the first search there's nothing to count, so phones skip the tabs. */}
-                        <div className={styles.controlPanel} data-idle={searchStatus === "idle" || undefined}>
+                        <nav className={styles.workspaceNav} aria-label="Workspace">
+                            <button type="button" aria-label="Search results" aria-pressed={page === "search"} onClick={() => { setSelectedId(null); setPage("search"); }}>Results</button>
+                            <button type="button" aria-pressed={page === "shortlist"} onClick={() => { setSelectedId(null); setPage("shortlist"); void loadShortlist(); }}>Shortlist ({shortlist.length})</button>
+                            {page === "search" && searchStatus !== "idle" && <button type="button" className={styles.findNew} disabled={searchStatus === "checking" || phase === "ai"} onClick={() => void search(undefined, lastQuery.current, true)}>Find new listings</button>}
+                        </nav>
+                        {saveNotice && <p className={saveNotice.error ? styles.warning : styles.saveNotice} role={saveNotice.error ? "alert" : "status"}>{saveNotice.text}</p>}
+                        <div className={styles.controlPanel} hidden={page === "shortlist"} data-idle={searchStatus === "idle" || undefined}>
                             <div className={styles.controlRow}>
                                 {/* Every view remains visible in wrapping tabs. */}
                                 <div className={styles.tabs}>
@@ -1197,13 +1311,17 @@ export function App() {
                         </Drawer>
                     </header>
 
+                    {page === "shortlist" ? <ShortlistView entries={shortlist} loading={shortlistLoading} error={shortlistError} refreshing={refreshingSaved} refreshErrors={refreshErrors}
+                        onRetry={() => void loadShortlist()} onRefresh={refreshSaved} onRemove={removeSaved} onUpdate={updateSaved} now={now}
+                        renderCard={(entry) => <DealCard listing={entry.listing} analysis={analyses[entry.id]} selected={entry.id === selectedId} now={now} years={setYearsByKey} targets={targets} minGrade={minGrade} photoReviewState={photoReviews[entry.id]}
+                            onOpen={() => openPanel(entry.id)} />} /> : <>
                     {searchStatus !== "idle" && (
                         <SearchProgress
                             phase={phase}
                             query={lastQuery.current}
                             error={searchError}
                             ebayTotal={summary?.total ?? null}
-                            checked={digStatus === "idle" ? listings.length : (total ?? 0) + digChecked}
+                            checked={newMode ? newChecked : digStatus === "idle" ? listings.length : (total ?? 0) + digChecked}
                             total={total === null ? null : total + digTotal}
                             ai={{ done: aiDone, target: aiTarget, analyzing: counts.analyzing, waiting: counts.waiting }}
                             stats={{
@@ -1224,6 +1342,7 @@ export function App() {
                             details={progressDetails}
                         />
                     )}
+                    {newMode && <p className={styles.discoveryNote}>Checks one page of the 200 newest listings, screens up to 20 unseen listings and automatically starts up to {Math.min(5, autoSetting)} full AI analyses. Discovery stays within your saved limits; repeated scans share a one-minute search cache.</p>}
 
                     {needsWiderSearch && <div className={styles.searchUpdate} role="status">
                         <p>This search excluded Buy It Now listings below ${searchedMinPrice}. Rerun it to include lower prices.</p>
@@ -1288,6 +1407,9 @@ export function App() {
                                 transitionName={index < 24 ? transitionName(listing.id) : undefined}
                                 analysis={analyses[listing.id]}
                                 photoReviewState={photoReviews[listing.id]}
+                                saved={shortlist.some((entry) => entry.id === listing.id)}
+                                saving={savingIds.has(listing.id)}
+                                onSave={() => void toggleSaved(listing)}
                                 years={setYearsByKey}
                                 minGrade={minGrade}
                                 targets={targets}
@@ -1300,6 +1422,7 @@ export function App() {
                             />
                         ))}
                     </div>
+                    </>}
                 </main>
 
                 {selected && (
@@ -1312,6 +1435,9 @@ export function App() {
                         now={now}
                         onClose={close}
                         onAnalyze={(fresh) => runAnalysis(selected, fresh)}
+                        saved={shortlist.some((entry) => entry.id === selected.id)}
+                        saving={savingIds.has(selected.id)}
+                        onSave={() => void toggleSaved(selected)}
                         photoReviewState={photoReviews[selected.id]}
                         onPhotoReview={() => {
                             const analysis = analyses[selected.id];

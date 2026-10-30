@@ -36,6 +36,8 @@ import { savedPhotoInspection } from "../ai/photo-find.ts";
 import { confirmPhotoIdentity } from "../identity/photo-confirmation.ts";
 import { verifyShadowless } from "../ai/shadowless-check.ts";
 import { photoReviewKey } from "./deeper-review.ts";
+import { listingEvidenceKey } from "../../shared/listing-evidence.ts";
+import { createSingleFlight } from "../lib/single-flight.ts";
 
 // eBay allows 24 photos; the ones past the first few are often the
 // close-ups that matter most.
@@ -105,13 +107,29 @@ export interface CurrentState {
     endTime: string | null;
 }
 
-export async function evaluateListing(
+interface EvaluationOptions { fresh?: boolean; remember?: boolean; current?: CurrentState | null }
+const shareEvaluations = createSingleFlight();
+const evaluationTails = new Map<string, Promise<void>>();
+
+// Identical requests share their entire evaluation. Different snapshots for the
+// same item wait, then reuse the first request's saved AI work when it still fits.
+export function evaluateListing(itemId: string, options: EvaluationOptions = {}): Promise<Evaluation> {
+    const normalized = { fresh: options.fresh ?? false, remember: options.remember ?? true, current: options.fresh ? null : options.current ?? null };
+    return shareEvaluations(JSON.stringify([itemId, normalized]), () => {
+        const result = (evaluationTails.get(itemId) ?? Promise.resolve()).then(() => evaluateOnce(itemId, normalized));
+        const tail = result.then(() => {}, () => {});
+        evaluationTails.set(itemId, tail);
+        return result.finally(() => { if (evaluationTails.get(itemId) === tail) evaluationTails.delete(itemId); });
+    });
+}
+
+async function evaluateOnce(
     itemId: string,
     {
         fresh = false,
         remember = true,
         current = null,
-    }: { fresh?: boolean; remember?: boolean; current?: CurrentState | null } = {}
+    }: EvaluationOptions = {}
 ): Promise<Evaluation> {
     // From the page: the saved details plus the price it just searched,
     // so analyzing a listing usually costs no eBay request. Without that
@@ -141,6 +159,8 @@ export async function evaluateListing(
             id: listing.id,
             title: listing.title,
             url: listing.url,
+            availability: listing.availability,
+            ...(fresh && details.retrievedAt ? { termsCheckedAt: details.retrievedAt } : {}),
             sellerCondition: listing.condition,
             cardCondition: listing.cardCondition,
             conditionNotes: listing.conditionNotes,
@@ -173,8 +193,8 @@ export async function evaluateListing(
         usage: [],
     };
 
-    if (photoUrls.length === 0) {
-        evaluation.modeReasons = ["The listing has no photos."];
+    if (photoUrls.length === 0 || listing.availability === "UNAVAILABLE") {
+        evaluation.modeReasons = [listing.availability === "UNAVAILABLE" ? "This listing is no longer available." : "The listing has no photos."];
         evaluation.underwriting = underwrite(evaluation);
         return evaluation;
     }
@@ -186,6 +206,7 @@ export async function evaluateListing(
         : reusableRecord(await loadSaved(listing.id), {
               version: ANALYSIS_VERSION,
               fingerprint,
+              title: listing.title,
           });
 
     const record: SavedRecord = saved ?? {
@@ -315,19 +336,21 @@ export async function evaluateListing(
     }
 
     const context = { title: listing.title, photos: photoUrls };
-    const contextChanged = JSON.stringify(record.reviewContext) !== JSON.stringify(context);
     record.reviewContext = context;
 
     if (changed) {
         record.answeredAt = new Date().toISOString();
     }
-    if (remember && (changed || contextChanged)) await saveRecord(listing.id, record);
 
     evaluation.answeredAt = record.answeredAt;
     if (remember) evaluation.photoReviewKey = photoReviewKey(record);
     if (record.deeperPhotoReview?.inputKey === evaluation.photoReviewKey) evaluation.deeperPhotoReview = record.deeperPhotoReview;
     evaluation.underwriting = underwrite(evaluation);
     evaluation.rating = rateDeal(evaluation);
+    if (remember) {
+        record.latestEvaluation = { evidenceKey: listingEvidenceKey({ title: current?.title ?? listing.title, images: current?.images ?? photoUrls }), evaluation };
+        await saveRecord(listing.id, record);
+    }
 
     return evaluation;
 }

@@ -11,7 +11,7 @@ const urls = [
     "https://i.ebayimg.com/images/g/b/s-l1600.jpg",
 ];
 
-const current = { version: "model/prompts-1", fingerprint: photoFingerprint(urls) };
+const current = { version: "model/prompts-1", fingerprint: photoFingerprint(urls), title: "Venusaur Base Set" };
 
 function saved(overrides = {}) {
     return {
@@ -19,6 +19,7 @@ function saved(overrides = {}) {
         photoFingerprint: photoFingerprint(urls),
         photoCheck: { result: {}, usage: {} },
         assessment: null,
+        reviewContext: { title: current.title, photos: urls },
         ...overrides,
     };
 }
@@ -39,6 +40,12 @@ test("a saved answer is redone when the photos, model, or prompts change", () =>
     assert.equal(reusableRecord(saved({ version: "model/prompts-2" }), current), null);
     assert.equal(reusableRecord(saved({ photoFingerprint: "different" }), current), null);
     assert.equal(reusableRecord(saved({ photoCheck: null }), current), null);
+});
+
+test("a title change or missing legacy title invalidates otherwise identical photos", () => {
+    assert.equal(reusableRecord(saved(), { ...current, title: "Venusaur corrected printing" }), null);
+    assert.equal(reusableRecord(saved({ reviewContext: undefined }), current), null);
+    assert.ok(reusableRecord(saved(), { ...current, title: ` ${current.title} ` }));
 });
 
 test("a saved condition answer fits only the same mode and photos", () => {

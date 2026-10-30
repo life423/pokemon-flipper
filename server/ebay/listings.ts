@@ -1,4 +1,4 @@
-import { ebayGet } from "./api.ts";
+import { ebayGet, EbayError } from "./api.ts";
 import { exclusionReason, normalizeText } from "./filters.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { countRequest, ebayUsage, EbayBudgetError } from "./usage.ts";
@@ -38,6 +38,7 @@ interface Amount {
 
 // The parts of an eBay item this app reads, from search or getItem.
 interface EbayItem {
+    estimatedAvailabilities?: { estimatedAvailabilityStatus?: string }[];
     itemId: string;
     title: string;
     itemWebUrl: string;
@@ -60,6 +61,9 @@ interface EbayItem {
 
 // Full details for analysis.
 export interface ListingDetails {
+    retrievedAt?: string;
+    availability?: "ACTIVE" | "UNAVAILABLE" | "UNKNOWN";
+    bestOffer?: boolean;
     // Search snapshot used to validate this cache without requesting eBay again.
     searchPhotoKey?: string;
     id: string;
@@ -112,6 +116,7 @@ function priceDetails(item: EbayItem) {
         price: toAmount(isAuction ? (item.currentBidPrice ?? item.price) : item.price),
         shipping: toAmount(item.shippingOptions?.[0]?.shippingCost),
         buyingOption,
+        bestOffer: item.buyingOptions?.includes("BEST_OFFER") ?? false,
         bids: item.bidCount ?? 0,
         // Fixed-price listings usually have no end date.
         endTime: item.itemEndDate ?? null,
@@ -142,12 +147,13 @@ export async function searchListings(
         anyCategory = false,
         keepReserve = false,
         signal,
-    }: { maxResults?: number; anyCategory?: boolean; keepReserve?: boolean; signal?: AbortSignal } = {}
+        sort,
+    }: { maxResults?: number; anyCategory?: boolean; keepReserve?: boolean; signal?: AbortSignal; sort?: "newlyListed" } = {}
 ): Promise<{ listings: ListingSummary[]; total: number; skipped: number }> {
     const scope = anyCategory ? "any" : "cards";
     signal?.throwIfAborted();
-    const key = `ebay:search:${maxResults}:${scope}:${normalizeText(search).trim()}`;
-    const saved = await readCache<{ listings: ListingSummary[]; total: number; skipped: number }>(key, SEARCH_MAX_AGE_HOURS);
+    const key = `ebay:search:${maxResults}:${scope}:${sort ? `${sort}:` : ""}${normalizeText(search).trim()}`;
+    const saved = await readCache<{ listings: ListingSummary[]; total: number; skipped: number }>(key, sort ? 1 / 60 : SEARCH_MAX_AGE_HOURS);
     signal?.throwIfAborted();
 
     if (saved) return saved;
@@ -177,6 +183,7 @@ export async function searchListings(
             filter: `buyingOptions:{AUCTION|FIXED_PRICE},conditionIds:{${UNGRADED}|${GRADED}}`,
             limit: String(PAGE_SIZE),
             offset: String(offset),
+            ...(sort ? { sort } : {}),
         });
 
         countRequest();
@@ -222,7 +229,7 @@ export async function getListingDetails(
 
     if (maxAgeHours > 0) {
         const saved = await readCache<ListingDetails>(key, maxAgeHours);
-        if (saved && (expectedTitle === undefined || expectedTitle.trim() === saved.title.trim()) &&
+        if (saved && (saved.availability !== "UNAVAILABLE" || await readCache(key, 1 / 60)) && (expectedTitle === undefined || expectedTitle.trim() === saved.title.trim()) &&
             (expectedPhotos === undefined || (saved.searchPhotoKey !== undefined
                 ? saved.searchPhotoKey === photoEvidenceKey(expectedPhotos)
                 : searchPhotosFitDetails(expectedPhotos, saved.images)))) {
@@ -242,7 +249,15 @@ export async function getListingDetails(
     return shareDetails(JSON.stringify([itemId, expectedTitle, evidence]), async () => {
         detailRequests += 1;
         countRequest();
-        const details = await fetchListingDetails(itemId);
+        let details: ListingDetails;
+        try { details = await fetchListingDetails(itemId); }
+        catch (error) {
+            if (error instanceof EbayError && [404, 410].includes(error.status)) {
+                const previous = await readCache<ListingDetails>(key, DETAILS_MAX_AGE_HOURS);
+                if (previous) await writeCache(key, { ...previous, availability: "UNAVAILABLE" }).catch(() => {});
+            }
+            throw error;
+        }
         if (expectedPhotos !== undefined) details.searchPhotoKey = evidence;
         await writeCache(key, details);
         return details;
@@ -261,6 +276,9 @@ async function fetchListingDetails(itemId: string): Promise<ListingDetails> {
     }
 
     return {
+        retrievedAt: new Date().toISOString(),
+        availability: item.itemEndDate && Date.parse(item.itemEndDate) <= Date.now() || item.estimatedAvailabilities?.some((entry) => entry.estimatedAvailabilityStatus === "OUT_OF_STOCK")
+            ? "UNAVAILABLE" : item.estimatedAvailabilities?.some((entry) => ["IN_STOCK", "LIMITED_STOCK"].includes(entry.estimatedAvailabilityStatus ?? "")) ? "ACTIVE" : "UNKNOWN",
         id: item.itemId,
         title: item.title,
         url: item.itemWebUrl,

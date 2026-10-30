@@ -1,7 +1,69 @@
 # Project memory and user preferences
 
-Updated October 29, 2026. This file records the user's agreed requirements so
+Updated October 30, 2026. This file records the user's agreed requirements so
 future work can continue without losing the conversation context.
+
+## October 30 live API validation and correctness
+
+The user authorized committing the fixes and shortlist/discovery features,
+merging them into `main`, and pushing to GitHub on October 30. Consult Git for
+the resulting revision and remote synchronization. No deployment was requested.
+Keep `.env` private and the unrelated local `.env.example` deletion outside the
+release; the repository retains its blank setup template.
+
+The user explicitly authorized spending money and using the real APIs, and said
+this is the best way to build the app. Use representative live searches and paid
+analyses to validate end-to-end behavior. Unit tests remain useful regressions;
+do not substitute an entirely mocked workflow for live verification. Preserve
+useful checks and caches, avoid duplicate paid work, and report measured usage
+and incomplete samples honestly. Do not ask again merely because a relevant
+development/test request consumes API credits.
+
+The initial 401 came from starting the app without `.env`. The user supplied the
+file; a fresh process authenticated with eBay, OpenAI and both pricing services.
+Never copy key values into reports or commits. `.env` stays ignored. Restart the
+server after configuration changes. Missing keys now fail before a token request;
+rejected pairs share a 60-second failure cooldown and give an actionable message.
+
+The supplied audit's four correctness issues were confirmed and corrected:
+fresh analysis ignores browser terms, fresh server snapshots reach cards and the
+shortlist, assessment reuse requires matching saved title context, AI-checked
+comp labels require checks on every retained sale, and identical evaluations
+share work while differing snapshots for one item serialize. Preserve the
+identity safeguards, two cautious condition assessments, fee math and discovery.
+See `docs/live-validation-2026-10-30.md` for live evidence and limits. Public paid
+access still needs accounts/authorization, a transactional credit ledger, nested
+provider-budget enforcement, durable jobs and payment/refill handling. Those are
+not implemented or approved by this local correctness pass.
+
+## October 29 shortlist, refresh and discovery
+
+The user authorized implementing a persistent shortlist, targeted refresh and
+new-listing discovery while preserving behavior and controlling API usage. Work
+is on `codex/shortlist-discovery`; commit/push only when requested. Read
+`docs/shortlist-discovery-2026-10-29.md` for behavior, limits and verification.
+
+- Store listing snapshots, trusted server evaluations, notes and ceilings locally
+  on the server. Save/edit/remove/load must never trigger provider work. Preserve
+  user data on read errors and concurrent updates. No account sync is implied.
+- Refresh only selected saved IDs (at most ten), with global concurrency two,
+  same-ID sharing, a durable one-minute success cooldown and 30-second failure
+  backoff. Preserve the eBay reserve. Refresh terms/photos, never paid AI.
+- Same title/full photo evidence reuses the assessment and reprices current terms.
+  A fresh unknown shipping quote replaces an old known quote. Changed evidence
+  clears advice until explicit analysis; unavailable/ended listings cannot retain
+  buy/bid recommendations or start paid reanalysis. Keep notes and historical data.
+- New-listing discovery is an explicit newest-page action: one page of 200,
+  at most 20 unseen screenings and five automatic full analyses (or the user's
+  lower cap). Existing screening may still use paid title/photo checks. Exclude
+  seen IDs before those checks, persist history per query/minimum, preserve prior
+  results, reserve, cancellation and caches, and do not add background polling.
+- Preserve the prior audit fixes and normal search behavior. Verify actual phone,
+  tablet and desktop renders and request counts; a build alone is insufficient.
+  Final verification: 298 unit tests, type checks, strict new-test typing, build,
+  74 browser checks (27 accessibility scans), actual server-restart persistence
+  and zero audit vulnerabilities. Providers were replaced with offline fixtures;
+  this does not validate live marketplace accuracy or production Core Web Vitals.
 
 ## October 29 audit corrections
 
@@ -390,8 +452,9 @@ commit. Consult Git for current delivery status.
 ## Validation commands
 
 `npm test`, `npm run typecheck`, `npm run build`, and `git diff --check`.
-Live diagnostics may consume paid API credits; prefer cached or offline fixtures
-for regressions. Keep secrets and ignored API-response caches out of commits.
+The user authorizes paid live diagnostics. Combine meaningful unit regressions
+with representative real-API workflow checks; use caches to avoid duplicate work.
+Keep secrets and ignored API-response caches out of commits.
 
 ## Current implementation and review status
 

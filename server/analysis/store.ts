@@ -34,15 +34,16 @@ export async function saveRecord(itemId: string, record: SavedRecord): Promise<v
     await fs.writeFile(fileFor(itemId), JSON.stringify(record, null, 2));
 }
 
-// A saved record counts only if it came from the same photos and
-// the same model and prompts.
+// Title text is part of the model input too. Legacy records without that
+// context require one new assessment rather than silently assuming it matches.
 export function reusableRecord(
     saved: SavedRecord | null,
-    { version, fingerprint }: { version: string; fingerprint: string }
+    { version, fingerprint, title }: { version: string; fingerprint: string; title: string }
 ): SavedRecord | null {
     if (!saved?.photoCheck?.result) return null;
     if (saved.version !== version) return null;
     if (saved.photoFingerprint !== fingerprint) return null;
+    if (saved.reviewContext?.title.trim() !== title.trim()) return null;
 
     return saved;
 }

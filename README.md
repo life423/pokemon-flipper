@@ -59,6 +59,9 @@ Three ways to flip a card are priced for every listing:
 
 ## What you get
 
+- **Shortlist:** save up to 100 listings with their latest local assessment, notes and your own bid/purchase ceiling. Saving and opening the shortlist make no paid/provider calls.
+- **Targeted refresh:** check one saved listing or up to ten selected listings. Current prices, shipping, bids, end time, photos and availability replace the snapshot. Unchanged photos reuse the assessment; changed photos require an explicit analysis. Unavailable listings retain their history but no purchase advice.
+- **Find new listings:** after a search, scan one page of the 200 newest listings. Previously seen IDs are skipped before screening, at most 20 unseen listings are screened per click, and at most five full analyses start automatically within your saved setting. Earlier results stay available in the other views.
 - **A verdict for every listing:** buy raw, buy and grade, buy graded, pass, needs review, or can't price.
 - **A max bid:** the most you can pay and still clear your targets after eBay fees, sales tax, shipping, and grading costs.
 - **Your targets, live:** set a minimum profit and minimum return in the toolbar (or *Any*). Every max bid, verdict, and ranking recalculates instantly, with no new lookups.
@@ -97,6 +100,10 @@ npm run dev
 ```
 
 Open **http://localhost:3000** and search for a card.
+
+The server reads `.env` at startup. After adding or changing keys, restart
+`npm run dev`. eBay requires a matching Production app ID and cert ID. Missing or
+rejected eBay credentials now appear as an actionable search error.
 
 ## Configuration
 
@@ -142,6 +149,7 @@ server/
   identity/       Card, set, number, and printing identity; slab checks
   pricing/        pkmnprices, raw prices, graded comps
   search/         Reading a search; which results match it
+  shortlist/      Persistent saved listings and targeted refresh
   lib/            Cache, batching, concurrency, paths
 shared/
   money/          The money math, run by both the server and the page
@@ -172,10 +180,26 @@ eBay raises the limit through its free [Application Growth Check](https://develo
 
 **pkmnprices.** Credits are charged per row returned. Responses are saved for a day.
 
+**Saved listings and new inventory.** Saves, notes, ceilings and removals use local
+storage on the app server, with no provider call. Targeted refresh runs at most two
+eBay detail requests at once, reuses successful checks for one minute, and backs
+off failed checks for 30 seconds. It preserves the daily reserve and never starts
+AI analysis. New inventory scans share a separate one-minute newest-search cache,
+remember seen IDs across restarts and screen at most 20 per action. Screening can
+use paid title/photo checks and pricing lookups through the existing caches. The
+five-analysis cap applies to automatic full analyses; **Analyze 5 more (paid)** is
+an explicit continuation. There is no background polling.
+
+The shortlist lives in `data/shortlist.json`; discovery history lives in
+`data/search-history.json`. They belong to this app installation, with no account
+sync. Back up these files along with the rest of `data/`. For isolated tests,
+`POKEMON_FLIPPER_DATA_DIR` selects another data directory. See
+[implementation and verification](docs/shortlist-discovery-2026-10-29.md).
+
 ## Testing
 
 ```bash
-npm test            # 285 tests
+npm test            # 311 tests
 npm run typecheck   # server, shared code, scripts, and the page
 ```
 

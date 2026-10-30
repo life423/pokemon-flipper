@@ -1,4 +1,4 @@
-import type { Condition, DeeperPhotoReview, PhotoCheck } from "../../shared/types.ts";
+import type { Condition, DeeperPhotoReview, PhotoCheck, Evaluation } from "../../shared/types.ts";
 
 export type GradingMode = "FULL" | "LIMITED" | "BLOCKED";
 
@@ -17,6 +17,7 @@ export interface SavedAssessment {
 
 // The model's answers for one listing, saved so they aren't paid for twice.
 export interface SavedRecord {
+    latestEvaluation?: { evidenceKey: string; evaluation: Evaluation };
     reviewContext?: { title: string; photos: string[] };
     deeperPhotoReview?: DeeperPhotoReview;
     itemId: string;

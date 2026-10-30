@@ -1,6 +1,15 @@
 .shell {
     min-height: 100dvh;
 }
+.workspaceNav { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.workspaceNav button { min-height: var(--tap); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text-muted); cursor: pointer; font-size: var(--text-sm); }
+.workspaceNav button[aria-pressed="true"] { color: var(--text); border-color: var(--accent); background: var(--surface-alt); }
+.workspaceNav .findNew { margin-left: auto; color: var(--action-text); }
+.workspaceNav button:disabled { opacity: .55; cursor: default; }
+.controlPanel[hidden] { display: none; }
+.saveNotice, .discoveryNote { font-size: var(--text-sm); color: var(--text-muted); }
+.discoveryNote { margin-bottom: var(--space-4); }
+@media (max-width: 32rem) { .workspaceNav .findNew { margin-left: 0; } }
 
 .searchUpdate {
     display: flex;
