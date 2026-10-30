@@ -1,5 +1,10 @@
 import type { DeeperPhotoReview, EbayUsage, Evaluation, ListingSummary, SearchIntent, Targets } from "./types";
 import type { ShortlistEntry, RefreshResult } from "../../shared/shortlist.ts";
+import type { PricingRetryResult } from "../../shared/pricing-retries.ts";
+
+export function retryPricingBatch(tickets: string[], targets: Targets, includeOffers: boolean, signal: AbortSignal): Promise<PricingRetryResult> {
+    return request(`/api/pricing/retry?profit=${targets.minProfit}&roi=${targets.minRoi}&offers=${includeOffers ? 1 : 0}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tickets }), signal });
+}
 
 // fetch, with a plain message when the server can't be reached at all.
 async function reach(url: string, init?: RequestInit): Promise<Response> {

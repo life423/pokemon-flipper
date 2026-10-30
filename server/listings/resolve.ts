@@ -2,6 +2,7 @@ import { parseListingLink } from "../../shared/listing-link.ts";
 import type { ListingSummary } from "../../shared/types.ts";
 import { exclusionReason } from "../ebay/filters.ts";
 import { getListingDetails } from "../ebay/listings.ts";
+import { searchAttributes } from "../../shared/search-criteria.ts";
 
 export class ListingLinkError extends Error {
     constructor(message: string, readonly status = 400) { super(message); }
@@ -17,6 +18,7 @@ export function createListingResolver({ details = getListingDetails, now = () =>
         if (listing.availability === "UNAVAILABLE" || listing.endTime && Date.parse(listing.endTime) <= now()) throw new ListingLinkError("This listing is unavailable or ended. No AI analysis was started.", 410);
         if (!listing.images.length) throw new ListingLinkError("This listing has no photos to assess. No AI analysis was started.", 422);
         return { id: listing.id, title: listing.title, url: parsed.url, images: listing.images, currentPrice: listing.price,
+            listedAttributes: searchAttributes(listing.title, listing.aspects),
             shipping: listing.shipping, bids: listing.bids, buyingOption: listing.buyingOption, endTime: listing.endTime,
             seller: listing.seller, bestOffer: listing.bestOffer, availability: listing.availability ?? "UNKNOWN",
             termsCheckedAt: listing.retrievedAt ?? new Date(now()).toISOString(),

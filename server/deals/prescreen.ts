@@ -11,6 +11,7 @@ import { dollars } from "../../shared/format.ts";
 import type { BuyingOption, CompSummary, Grader, Screen, Underwriting } from "../../shared/types.ts";
 import { usualPrice } from "../../shared/money/auction.ts";
 import { retargetScreen } from "../../shared/money/targets.ts";
+import { pricingIssue } from "../pricing/errors.ts";
 
 // The free first check, before any paid AI: what a listing is worth at
 // its best, from the seller's own details and the price data. A listing
@@ -117,11 +118,15 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
         !aspects.Set || !(aspects["Card Number"] || sellerView.printedNumber) || !(aspects["Card Name"] ?? aspects.Character);
 
     let identified;
+    let lookupIssue: Screen["pricingIssue"];
 
     try {
-        identified = await identifyCard(listing, sellerView, { lookupCards });
+        identified = await identifyCard(listing, sellerView, { lookupCards: async (query) => {
+            try { return await lookupCards(query); }
+            catch (error) { lookupIssue = pricingIssue(error); throw error; }
+        } });
     } catch (error) {
-        return screen("UNSCREENED", `The card lookup failed: ${(error as Error).message}`);
+        return screen("UNSCREENED", `The card lookup failed: ${(error as Error).message}`, { pricingIssue: pricingIssue(error) });
     }
 
     const { identity, card } = identified;
@@ -129,6 +134,7 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
     if (!readyForPricing(identity)) {
         return screen("UNSCREENED", identity.reasons[0] ?? "The card couldn't be identified from the listing.", {
             incomplete,
+            pricingIssue: lookupIssue,
         });
     }
 
@@ -213,7 +219,7 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
             assumed = `${CONDITION_NAMES[rawCondition]}, grading ${grade} at best`;
         }
     } catch (error) {
-        return screen("UNSCREENED", `The price lookup failed: ${(error as Error).message}`, { card: cardInfo, priceAnomaly });
+        return screen("UNSCREENED", `The price lookup failed: ${(error as Error).message}`, { card: cardInfo, priceAnomaly, pricingIssue: pricingIssue(error) });
     }
 
     const { verdict, reasons, best, paths } = outcome;

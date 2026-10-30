@@ -9,7 +9,14 @@
     border-radius: var(--radius-card);
     background: var(--surface);
     transition: border-color var(--dur-fast), box-shadow var(--dur-fast);
+    /* Portfolio subtleSlideUp, shortened with a capped stagger for results. */
+    animation: card-enter var(--dur-base) var(--ease-out) calc(min(var(--i, 0), 4) * 20ms) backwards;
 }
+@keyframes card-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+.savedMark { display: inline-block; animation: saved-confirm var(--dur-base) var(--ease-out); }
+/* A restrained one-shot version of the portfolio's celebrate animation. */
+@keyframes saved-confirm { 0% { transform: scale(.85); } 50% { transform: scale(1.12); } 100% { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .card, .savedMark { animation: none; } }
 
 .selected  {
     border-color: var(--accent);
@@ -74,6 +81,8 @@
     font-size: var(--text-xs);
     overflow-wrap: anywhere;
 }
+.identity .details { color: var(--text); font-size: var(--text-sm); line-height: 1.5; }
+.details span { color: var(--text-muted); }
 
 .badge  {
     grid-column: 2;
@@ -183,11 +192,6 @@
     margin: var(--space-1) 0 0;
     font-size: var(--text-xs);
     overflow-wrap: anywhere;
-}
-
-.certified  {
-    font-size: var(--text-sm);
-    font-weight: 600;
 }
 
 .openHint  {

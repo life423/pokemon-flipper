@@ -14,6 +14,7 @@ import { AuctionSummary } from "./AuctionSummary";
 import { GradingComparison } from "./GradingComparison";
 import { PhotoReview, type DeeperReviewState } from "./PhotoReview";
 import styles from "./DealCard.module.css";
+import { cardDetails } from "../../../shared/card-details.ts";
 
 interface Props {
     index?: number;
@@ -50,6 +51,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
     const mistakes = currentSellerMistakes(listing, evaluation);
     const activity = resaleActivity(evaluation, now);
     const card = evaluation?.identity ?? screen?.card;
+    const details = cardDetails(listing, evaluation);
     const number = card?.cardNumber?.replace(/^0+(?=\d)/, "");
     const title = card?.name ? [card.name, number].filter(Boolean).join(" ") : listing.title;
     const subtitle = card?.name ? [card.set, yearOf(years, card.set), card.printing !== "UNLIMITED" ? card.printingLabel : null].filter(Boolean).join(" · ") : listing.isGraded ? "Graded card" : "Raw card";
@@ -75,13 +77,14 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
     const ceiling = best?.maxBid ?? (!evaluation ? screen?.bestCase?.maxBid : null);
     return <article className={`${styles.card} ${selected ? styles.selected : ""}`} data-tone={tone}
         style={{ "--i": Math.min(index, 10), viewTransitionName: transitionName } as CSSProperties}>
-        <button type="button" className={styles.hit} onClick={onOpen} aria-label={`Open ${title}`} />
+        <button type="button" className={styles.hit} onClick={onOpen} aria-label={`Open ${title}, ${details.source}: ${details.grade}, ${details.finish}`} />
         <header className={styles.head}>
             <div className={styles.photo}>{listing.images[0] && <img src={listing.images[0]} alt="" loading="lazy" />}</div>
-            <div className={styles.identity}><h2>{title}</h2><p>{subtitle}</p></div>
+            <div className={styles.identity}><h2>{title}</h2><p>{subtitle}</p><p className={styles.details}><span>{details.source}: </span>{details.grade} · {details.finish}</p></div>
             <span className={styles.badge}>{badge}</span>
         </header>
         <PhotoReview compact evaluation={evaluation} listing={listing} state={photoReviewState} phase={analysis?.status === "loading" || analysis?.status === "error" ? analysis.status : undefined} />
+        {!evaluation && screen?.status === "UNSCREENED" && <p className={styles.note}>{screen.pricingIssue?.kind === "RATE_LIMIT" ? "Pricing paused for provider cooldown." : screen.pricingIssue?.kind === "TEMPORARY" ? "Price lookup temporarily unavailable." : screen.pricingIssue?.kind === "CREDITS" ? "Pricing unavailable. Check provider credits." : screen.pricingIssue?.kind === "CONFIG" ? "Pricing unavailable. Check provider setup." : screen.reason}</p>}
         {auction && evaluation ? <AuctionSummary evaluation={evaluation} targets={targets} now={now} /> : <>
             <div className={styles.money}>
                 <div><span className={styles.label}>{auction ? "Current bid" : "Asking price"}</span><strong className={styles.price}>{dollars(listing.currentPrice)}</strong></div>
@@ -95,7 +98,6 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
         {offer && offerNumbers && <p className={styles.notice}>Offer {dollars(offer.offer)} · est. profit {signed(offerNumbers.profit)} if accepted. Acceptance is unknown.</p>}
         {mistakes[0] && <p className={styles.note}>{mistakes[0].detail}</p>}
         {evaluation?.condition && <GradingComparison evaluation={evaluation} />}
-        {evaluation?.slab && <p className={styles.certified}>Certified label: {evaluation.slab.grader ?? "Unknown grader"} {evaluation.slab.grade ?? "Unreadable"}</p>}
         {minGrade > 0 && evidence && <p className={styles.note}>{evidence.target}</p>}
         <dl className={styles.facts}>
             <div><dt>Seller</dt><dd>{sellerText}</dd></div>
@@ -103,7 +105,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
         </dl>
         {evaluation && <p className={styles.note} title={activity.detail}>{activity.label}{activity.recentSales !== null ? ` · ${activity.recentSales} observed ${activity.recentSales === 1 ? "sale" : "sales"} / 30 days` : ""}</p>}
         <div className={styles.actions}><p className={styles.openHint}>View analysis <span aria-hidden="true">↗</span></p>
-            {onSave && <button type="button" className={styles.save} onClick={() => { if (!saving) onSave(); }} aria-disabled={saving} aria-pressed={saved} aria-label={saving ? `Saving… ${title}` : saved ? `Saved: remove ${title} from shortlist` : `Save ${title} to shortlist`}>{saving ? "Saving…" : saved ? <>Saved <span aria-hidden="true">✓</span></> : "Save"}</button>}
+            {onSave && <button type="button" className={styles.save} onClick={() => { if (!saving) onSave(); }} aria-disabled={saving} aria-pressed={saved} aria-label={saving ? `Saving… ${title}` : saved ? `Saved: remove ${title} from shortlist` : `Save ${title} to shortlist`}>{saving ? "Saving…" : saved ? <>Saved <span className={styles.savedMark} aria-hidden="true">✓</span></> : "Save"}</button>}
         </div>
     </article>;
 }

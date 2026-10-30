@@ -3,6 +3,7 @@
 // quietly blanking a number on the page.
 
 import type { RawCondition } from "./conditions.ts";
+import type { PricingIssue, PricingRetry } from "./pricing-retries.ts";
 
 export type Printing = "FIRST_EDITION" | "SHADOWLESS" | "UNLIMITED";
 export type Verdict = "BUY_RAW" | "BUY_AND_GRADE" | "BUY_GRADED" | "PASS" | "NEEDS_REVIEW" | "CANT_PRICE";
@@ -32,6 +33,8 @@ export interface Seller {
 export interface Screen {
     status: "CANDIDATE" | "DROPPED" | "UNSCREENED";
     reason: string | null;
+    pricingIssue?: PricingIssue;
+    pricingRetry?: PricingRetry;
     card: {
         name: string | null;
         set: string | null;
@@ -119,6 +122,7 @@ export interface SellerMistake {
 
 // One search result, with the free check once it's run.
 export interface ListingSummary {
+    listedAttributes?: { grader: string | null; grade: number | null; finish: "HOLO" | "NON_HOLO" | "REVERSE_HOLO" | null };
     termsCheckedAt?: string;
     availability?: "ACTIVE" | "UNAVAILABLE" | "UNKNOWN";
     mistakes?: SellerMistake[];

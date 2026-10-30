@@ -12,6 +12,7 @@ import type { RefreshResult } from "../../shared/shortlist.ts";
 import { shortlistStore, ShortlistError } from "./store.ts";
 import { readCache } from "../lib/cache.ts";
 import { withFreshListing } from "../../shared/fresh-listing.ts";
+import { searchAttributes } from "../../shared/search-criteria.ts";
 
 export function createShortlistService({ store = shortlistStore, details = getListingDetails, load = loadSaved, cached = (id: string) => readCache<ListingDetails>(`ebay:item:${id}`, 24 * 7), now = () => Date.now() } = {}) {
     const limit = createLimiter(2);
@@ -60,6 +61,7 @@ export function createShortlistService({ store = shortlistStore, details = getLi
             }
             await store.update(id, (latest) => {
                 const listing: ListingSummary = { ...latest.listing, title: refreshed.title, url: refreshed.url, currentPrice: refreshed.price, shipping: refreshed.shipping,
+                    listedAttributes: searchAttributes(refreshed.title, refreshed.aspects),
                     termsCheckedAt: refreshed.retrievedAt ?? new Date(now()).toISOString(),
                     buyingOption: refreshed.buyingOption, bids: refreshed.bids, endTime: refreshed.endTime, images: refreshed.images, seller: refreshed.seller,
                     isGraded: /graded/i.test(refreshed.condition ?? "") && !/ungraded/i.test(refreshed.condition ?? "") || Boolean(refreshed.aspects["Professional Grader"]),

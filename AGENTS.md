@@ -3,6 +3,46 @@
 Updated October 30, 2026. This file records the user's agreed requirements so
 future work can continue without losing the conversation context.
 
+## October 30 pricing retries, card details and motion
+
+The user requested pricing retries and visible grade/finish on every card while
+preserving behavior, reasonable API use and mobile usability. They subsequently
+requested some animations from their portfolio's `animations.js`. Work is on
+`codex/pricing-retries-card-details` from `08be1a3`. The user subsequently
+authorized committing the changes, merging into `main`, and pushing to GitHub.
+Consult Git for the resulting revision and remote synchronization. No deployment
+was requested. Read
+`docs/pricing-retries-card-details-2026-10-30.md`.
+
+- Retry only structured temporary pricing failures, not identity failures,
+  absent comps, exhausted credits or configuration errors. Identity deliberately
+  catches lookup failures, so preserve a separate typed pricing signal across
+  that boundary instead of classifying by reason text.
+- Use explicit batches of at most five, one global batch at a time, paced work,
+  provider cooldown/Retry-After, three attempts per server-held snapshot, and
+  bounded 30-minute in-memory tickets. Successful duplicate requests reuse work.
+  No arbitrary browser listing payload may start a pricing retry. No polling or
+  expanded AI budget; retry pricing uses deterministic comp rules without new
+  title/photo/AI-comp calls. New candidates still follow the existing AI setting.
+- Keep assessments and unrelated results. Reject late replies for changed
+  title/photos/attributes/terms; skip evaluated or analyzing IDs. Cancellation
+  stops subsequent queued work. Pricing retries do not refresh eBay terms.
+- Show seller attributes as Listed, checked slabs as Label checked, raw cards as
+  Raw, and uncertain/qualified readings as needing review. Never substitute a
+  potential raw grade for a slab grade. Fresh details replace old attributes;
+  preserve them on shortlist save/refresh. Unknown finish stays unknown.
+- Adapt only short purposeful portfolio effects: card slide/fade entrances,
+  active-mode underline, pricing feedback fade and a one-shot saved check.
+  Keep current tokens/brand, capped stagger, and explicit reduced-motion stops.
+- Validation: 345 unit tests, typechecks/build, 15 live browser checks plus 12
+  supplementary motion/UI checks (nine axe scans total). One test-only network
+  interruption exercised cooldown, followed by recovery of two real listings
+  with one real pricing call and no retry-time eBay/OpenAI calls. UI-only motion
+  checks replay captured actual search data to avoid another provider batch;
+  save/remove and cached retry endpoints stayed real. Test shortlist mutations
+  were reversed and verified. Phone/tablet/desktop/enlarged-text screenshots
+  were inspected; physical-device and production performance checks remain.
+
 ## October 30 flexible natural-language search
 
 The user requested flexible queries such as “aquapolis cards psa 7 or better

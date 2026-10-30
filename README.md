@@ -59,6 +59,8 @@ Three ways to flip a card are priced for every listing:
 
 ## What you get
 
+- **Targeted pricing retries:** temporary provider failures offer **Retry pricing**, up to five listings at a time after cooldown. The queue reuses caches, stops on provider limits and preserves existing assessments. Identity problems and missing comps stay separate. New candidates follow your existing AI setting; retries do not refresh listing terms or rerun search/discovery. See [limits and verification](docs/pricing-retries-card-details-2026-10-30.md).
+- **Grade and finish at a glance:** card headers show values such as **Listed: PSA 8 · Holo**, then **Label checked** after a successful slab assessment. Raw cards remain labeled Raw; unreadable or qualified grades need review. Short entrances, selection underlines and save feedback respect reduced-motion preferences.
 - **Flexible search:** type “Aquapolis cards PSA 7 or better holo”, “PSA 8+ Aquapolis holos”, or “Neo Genesis Lugia CGC 8.5 to 9.5”. The app shows the interpreted criteria and enforces the requested grader, inclusive slab-grade range and finish. Holo, reverse holo and non-holo stay distinct. A raw card's potential grade is a separate filter. Ordinary keyword searches and listing links still work. See [behavior and live verification](docs/flexible-search-2026-10-30.md).
 - **Evaluate a listing link:** choose **Evaluate eBay link**, paste or drop a full eBay.com listing link, then choose **Evaluate listing · paid**. Pasting a link in search mode also selects evaluation. Switching modes preserves both drafts. The app checks that one listing's current terms and photos, opens its analysis, and lets you save it. Item numbers also work. Tracking parameters are removed; a link evaluation does not start a broad search or overlooked-listing discovery.
 - **Shortlist:** save up to 100 listings with their latest local assessment, notes and your own bid/purchase ceiling. Saving and opening the shortlist make no paid/provider calls.
@@ -207,7 +209,7 @@ and missing photos stop before analysis. See [supported inputs and live checks](
 ## Testing
 
 ```bash
-npm test            # 331 tests
+npm test            # 345 tests
 npm run typecheck   # server, shared code, scripts, and the page
 ```
 

@@ -22,6 +22,7 @@ import { searchHistory } from "./search/history.ts";
 import { discoverNewListings } from "./deals/new-listings.ts";
 import { searchFailureMessage } from "./deals/errors.ts";
 import { resolveListingLink, ListingLinkError } from "./listings/resolve.ts";
+import { pricingRetries, PricingRetryError } from "./deals/pricing-retries.ts";
 
 const app = express();
 
@@ -62,6 +63,13 @@ const PORT = Number(process.env.PORT || 3000);
 const isProduction = process.env.NODE_ENV === "production";
 
 app.use(express.json());
+
+app.post("/api/pricing/retry", async (req, res) => {
+    const controller = new AbortController();
+    res.on("close", () => controller.abort());
+    try { res.json(await pricingRetries.retry(req.body?.tickets, searchTargets(req), req.query.offers === "1", controller.signal)); }
+    catch (error) { if (!controller.signal.aborted) res.status(error instanceof PricingRetryError ? error.status : 502).json({ error: (error as Error).message }); }
+});
 
 // Only extract a validated eBay identifier; never fetch the submitted URL.
 // Resolve current terms before the client starts the existing paid analysis.

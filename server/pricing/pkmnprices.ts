@@ -6,6 +6,8 @@ import type { CardRecord, Comp, FetchComps, LookupCards } from "./types.ts";
 import { createLimiter } from "../lib/concurrency.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
 import { fetchJson, ProviderError } from "../lib/http.ts";
+import { PricingProviderError, retryAfterMs } from "./errors.ts";
+import type { PricingIssue } from "../../shared/pricing-retries.ts";
 
 // pkmnprices.com: TCGplayer prices by printing and condition, and
 // individual eBay sold comps (sourced from PriceCharting). Every call
@@ -22,6 +24,11 @@ const RETRY_WAITS_MS = [5_000, 15_000, 30_000, 60_000];
 const limit = createLimiter(MAX_IN_FLIGHT);
 const share = createSingleFlight();
 let coolingUntil = 0;
+let coolingKind: PricingIssue["kind"] = "RATE_LIMIT";
+let lastRequestAt = 0;
+export function pricingCooldown(): PricingIssue | null {
+    return Date.now() < coolingUntil ? { kind: coolingKind, retryAt: new Date(coolingUntil).toISOString() } : null;
+}
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -40,27 +47,41 @@ async function load(path: string, maxAgeHours: number): Promise<ApiBody> {
     const apiKey = process.env.PKMNPRICES_API_KEY;
 
     if (!apiKey) {
-        throw new Error("PKMNPRICES_API_KEY is not set");
+        throw new PricingProviderError("PKMNPRICES_API_KEY is not set", "CONFIG");
     }
 
     for (let attempt = 0; ; attempt += 1) {
         const { response, body } = await limit(async () => {
             if (Date.now() < coolingUntil) {
-                throw new ProviderError("Price service is rate limited and cooling down. Cached prices still work; try missing prices again later.");
+                throw new PricingProviderError(coolingKind === "CREDITS" ? "Price-service credits are unavailable. Check the provider account; cached prices still work." : "Price service is cooling down. Cached prices still work; retry missing prices after the cooldown.", coolingKind, coolingUntil);
             }
-            return fetchJson(`${BASE}${path}`, { headers: { "x-api-key": apiKey } }, { service: "Price lookup" });
+            // Pace uncached requests across searches and retries, not per browser.
+            const slot = Math.max(Date.now(), lastRequestAt + 1000);
+            lastRequestAt = slot;
+            if (slot > Date.now()) await sleep(slot - Date.now());
+            if (Date.now() < coolingUntil) throw new PricingProviderError("Price service is cooling down; cached prices still work.", coolingKind, coolingUntil);
+            try { return await fetchJson(`${BASE}${path}`, { headers: { "x-api-key": apiKey } }, { service: "Price lookup" }); }
+            catch (error) {
+                if (error instanceof ProviderError || error instanceof TypeError) { coolingKind = "TEMPORARY"; coolingUntil = Math.max(coolingUntil, Date.now() + 30_000); throw new PricingProviderError((error as Error).message, "TEMPORARY", coolingUntil); }
+                throw error;
+            }
         });
 
         const creditLimit = /credit/i.test(`${body.error?.code ?? ""} ${body.error?.message ?? ""}`);
 
-        if (response.status === 429 && !creditLimit && attempt < RETRY_WAITS_MS.length) {
+        if (response.status === 429 && creditLimit) {
+            coolingKind = "CREDITS";
+            coolingUntil = Math.max(coolingUntil, Date.now() + retryAfterMs(response.headers.get("retry-after"), Date.now(), 60 * 60_000));
+            throw new PricingProviderError("Price-service credits are unavailable. Check the provider account; cached prices still work.", "CREDITS", coolingUntil);
+        }
+        if (response.status === 429 && attempt < RETRY_WAITS_MS.length) {
             // Retry-After, in seconds, when pkmnprices sends one.
-            const retryAfter = Number(response.headers.get("retry-after"));
-            const waitMs = retryAfter > 0 ? retryAfter * 1000 : RETRY_WAITS_MS[attempt];
+            const waitMs = retryAfterMs(response.headers.get("retry-after"), Date.now(), RETRY_WAITS_MS[attempt]);
+            coolingKind = "RATE_LIMIT";
             coolingUntil = Math.max(coolingUntil, Date.now() + waitMs);
             // A long server-directed wait is deferred, never retried early.
             if (waitMs > 15_000 || attempt >= 2) {
-                throw new ProviderError("Price service is rate limited. Try this listing again later.");
+                throw new PricingProviderError("Price service is rate limited. Retry pricing after the cooldown.", "RATE_LIMIT", coolingUntil);
             }
             await sleep(waitMs);
             continue;
@@ -72,9 +93,13 @@ async function load(path: string, maxAgeHours: number): Promise<ApiBody> {
 
 async function finish(path: string, response: Response, body: ApiBody): Promise<ApiBody> {
     if (!response.ok) {
-        throw new Error(
-            `pkmnprices request failed (${response.status}): ${body.error?.message ?? "unknown error"}`
-        );
+        const message = `pkmnprices request failed (${response.status}): ${body.error?.message ?? "unknown error"}`;
+        if (response.status >= 500 || [401, 403].includes(response.status)) {
+            coolingKind = response.status >= 500 ? "TEMPORARY" : "CONFIG";
+            coolingUntil = Math.max(coolingUntil, Date.now() + 30_000);
+            throw new PricingProviderError(message, coolingKind, coolingUntil);
+        }
+        throw new Error(message);
     }
 
     await writeCache(`pkmnprices:${path}`, body);

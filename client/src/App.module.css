@@ -4,8 +4,12 @@
 .inputHint { flex: 1 0 100%; color: var(--text-muted); font-size: var(--text-sm); line-height: 1.5; }
 .searchMeaning { color: var(--text-muted); font-size: var(--text-sm); line-height: 1.5; margin-bottom: var(--space-3); overflow-wrap: anywhere; }
 .entryModes { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: var(--space-1); }
-.entryModes button { min-height: var(--tap); padding: var(--space-2) var(--space-3); border: 1px solid transparent; border-radius: var(--radius-control); background: transparent; color: var(--text-muted); font: inherit; font-size: var(--text-sm); font-weight: 650; cursor: pointer; }
+.entryModes button { position: relative; min-height: var(--tap); padding: var(--space-2) var(--space-3); border: 1px solid transparent; border-radius: var(--radius-control); background: transparent; color: var(--text-muted); font: inherit; font-size: var(--text-sm); font-weight: 650; cursor: pointer; }
 .entryModes button[aria-pressed="true"] { color: var(--action-text); border-color: var(--border); background: var(--surface-alt); }
+/* Adapted from the portfolio's nav underline; transform keeps layout stable. */
+.entryModes button::after { content: ""; position: absolute; left: var(--space-3); right: var(--space-3); bottom: 3px; height: 2px; border-radius: 2px; background: var(--accent); transform: scaleX(0); transition: transform var(--dur-fast) var(--ease-out); }
+.entryModes button[aria-pressed="true"]::after { transform: scaleX(1); }
+@media (prefers-reduced-motion: reduce) { .entryModes button::after { transition: none; transition-duration: 0s !important; } }
 @media (hover: hover) { .entryModes button:hover { color: var(--text); background: var(--surface); } }
 .linkEvaluation { display: grid; gap: var(--space-4); margin-top: var(--space-4); }
 .linkEvaluation > h2 { font-size: var(--text-xl); }

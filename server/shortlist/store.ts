@@ -3,6 +3,7 @@ import { DATA_DIR } from "../lib/paths.ts";
 import { jsonStore } from "../lib/json-store.ts";
 import { SHORTLIST_LIMIT, type ShortlistEntry } from "../../shared/shortlist.ts";
 import type { ListingSummary, Evaluation } from "../../shared/types.ts";
+import { searchAttributes } from "../../shared/search-criteria.ts";
 
 export class ShortlistError extends Error {
     constructor(message: string, readonly status = 400) { super(message); }
@@ -21,7 +22,14 @@ export function cleanSavedListing(value: unknown): ListingSummary {
         throw new ShortlistError("A valid listing snapshot is required.");
     }
     const seller = input.seller;
+    const attributes = input.listedAttributes;
+    const listedAttributes = attributes ? {
+        grader: ["PSA", "CGC", "BGS", "SGC", "TAG"].includes(attributes.grader ?? "") ? attributes.grader : null,
+        grade: typeof attributes.grade === "number" && attributes.grade >= 1 && attributes.grade <= 10 && Number.isInteger(attributes.grade * 2) ? attributes.grade : null,
+        finish: ["HOLO", "NON_HOLO", "REVERSE_HOLO"].includes(attributes.finish ?? "") ? attributes.finish : null,
+    } : searchAttributes(input.title);
     return { id: input.id, title: input.title, url: input.url!, currentPrice: input.currentPrice!, shipping: input.shipping!,
+        listedAttributes,
         ...(typeof input.termsCheckedAt === "string" && Number.isFinite(Date.parse(input.termsCheckedAt)) ? { termsCheckedAt: input.termsCheckedAt } : {}),
         buyingOption: input.buyingOption!, bids: Number.isInteger(input.bids) && input.bids! >= 0 ? input.bids! : 0,
         isGraded: input.isGraded === true, images: [...input.images], endTime: input.endTime!, bestOffer: input.bestOffer === true,

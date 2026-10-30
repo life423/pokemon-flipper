@@ -1,4 +1,5 @@
 import type { Evaluation, ListingSummary } from "./types.ts";
+import { searchAttributes } from "./search-criteria.ts";
 
 // An explicit fresh evaluation carries server-checked terms. Do not put an older
 // browser snapshot back over them. A later selected refresh still takes priority.
@@ -8,6 +9,7 @@ export function withFreshListing(current: ListingSummary, evaluation: Evaluation
     if (current.termsCheckedAt && Date.parse(current.termsCheckedAt) > Date.parse(checked)) return current;
     const listing = evaluation.listing;
     return { ...current, title: listing.title, url: listing.url, currentPrice: listing.price, shipping: listing.shipping,
+        listedAttributes: searchAttributes(listing.title, listing.aspects),
         bids: listing.bids, endTime: listing.endTime, buyingOption: listing.buyingOption, images: listing.photos ?? current.images,
         seller: listing.seller, availability: listing.availability, termsCheckedAt: checked, screen: undefined, match: undefined, mistakes: undefined };
 }

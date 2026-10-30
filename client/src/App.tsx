@@ -7,15 +7,17 @@ import { compareAnalysisPriority } from "../../shared/analysis-priority.ts";
 import { withFreshListing } from "../../shared/fresh-listing.ts";
 import { looksLikeListingLink, parseListingLink } from "../../shared/listing-link.ts";
 import { describeSearchCriteria, evaluatedCriteriaMismatch } from "../../shared/search-criteria.ts";
+import { applyPricingRetry, PRICING_RETRY_LIMIT } from "../../shared/pricing-retries.ts";
 import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.ts";
 import { offerFor, offerWorthMaking } from "../../shared/money/offer.ts";
 import { compareListingEvidence, listingSignals } from "../../shared/signals.ts";
 import { name } from "./format";
-import { evaluateListing, fetchEbayUsage, fetchSetYears, reviewListingPhotos, streamDeals, streamNewDeals, fetchShortlist, saveListing, removeSavedListing, updateSavedListing, refreshSavedListings, resolveListingLink, type DealsMessage } from "./api";
+import { evaluateListing, fetchEbayUsage, fetchSetYears, reviewListingPhotos, streamDeals, streamNewDeals, fetchShortlist, saveListing, removeSavedListing, updateSavedListing, refreshSavedListings, resolveListingLink, retryPricingBatch, type DealsMessage } from "./api";
 import type { ShortlistEntry } from "../../shared/shortlist.ts";
 import { ShortlistView } from "./components/ShortlistView";
 import type { DeeperReviewState } from "./components/PhotoReview";
 import { DealCard } from "./components/DealCard";
+import { PricingRetries } from "./components/PricingRetries";
 import { Drawer } from "./components/Drawer";
 import { EmptyState } from "./components/EmptyState";
 import { SearchProgress, type SearchPhase } from "./components/SearchProgress";
@@ -257,6 +259,11 @@ export function App() {
         setQuery(text);
     };
     const [rawListings, setListings] = useState<ListingSummary[]>([]);
+    const [pricingBusy, setPricingBusy] = useState(false);
+    const [pricingNote, setPricingNote] = useState("");
+    const pricingAbort = useRef<AbortController | null>(null);
+    const pricingRevision = useRef(0);
+    useEffect(() => () => { pricingAbort.current?.abort(); }, []);
     const latestListings = useRef(new Map<string, ListingSummary>());
     latestListings.current = new Map((page === "search" ? [...(directListing ? [directListing] : []), ...shortlist.map((entry) => entry.listing), ...rawListings]
         : page === "listing" ? [...rawListings, ...shortlist.map((entry) => entry.listing), ...(directListing ? [directListing] : [])]
@@ -344,6 +351,8 @@ export function App() {
     const [drawerOpen, setDrawerOpen] = useState(false);
 
     const [rawAnalyses, setAnalyses] = useState<Record<string, AnalysisState>>({});
+    const pricingAnalyses = useRef(rawAnalyses);
+    pricingAnalyses.current = rawAnalyses;
     const [analysisOutcomes, setAnalysisOutcomes] = useState<boolean[]>([]);
     const [includeOffers, setIncludeOffers] = useState(() => {
         try { return localStorage.getItem("includeOffers") === "1"; } catch { return false; }
@@ -547,6 +556,7 @@ export function App() {
     };
     const openListingLink = async (input: string) => {
         if (linkRequest.current) return;
+        cancelPricing();
         setLinkEntry(true);
         setSelectedId(null); setPage("listing"); setLinkError("");
         if (!parseListingLink(input)) { setLinkStatus("error"); setLinkError("Paste a full ebay.com/itm/ listing link or its item number."); return; }
@@ -576,6 +586,7 @@ export function App() {
     };
     const chooseEntry = (link: boolean) => {
         cancelLink();
+        cancelPricing();
         if (linkInput) linkDraft.current = query; else searchDraft.current = query;
         setLinkEntry(link); setQuery(link ? linkDraft.current : searchDraft.current);
         setSelectedId(null); setPage(link && directListing ? "listing" : "search");
@@ -604,11 +615,37 @@ export function App() {
         });
     }
 
+    function cancelPricing() {
+        if (!pricingAbort.current) return;
+        pricingAbort.current?.abort(); pricingAbort.current = null; pricingRevision.current += 1;
+        setPricingBusy(false); setPricingNote("Pricing retries stopped. Existing results and assessments are kept.");
+    }
+    async function retryPrices(tickets: string[]) {
+        if (pricingAbort.current || !tickets.length) return;
+        const controller = new AbortController(); pricingAbort.current = controller;
+        const revision = ++pricingRevision.current;
+        setPricingBusy(true); setPricingNote("");
+        try {
+            const response = await retryPricingBatch(tickets.slice(0, PRICING_RETRY_LIMIT), targets, includeOffers, controller.signal);
+            if (controller.signal.aborted || pricingRevision.current !== revision) return;
+            const results = new Map(response.results.map((result) => [result.id, result]));
+            setListings((previous) => previous.map((listing) => {
+                const analysis = pricingAnalyses.current[listing.id];
+                const result = results.get(listing.id);
+                return !result || analysis?.status === "done" || analysis?.status === "loading" ? listing : applyPricingRetry(listing, result);
+            }));
+            const priced = response.results.filter((result) => result.screen.status !== "UNSCREENED").length;
+            setPricingNote(response.note ?? `Pricing updated for ${priced} of ${response.results.length} listings. Existing assessments were kept.`);
+        } catch (error) { if (!controller.signal.aborted && pricingRevision.current === revision) setPricingNote((error as Error).message); }
+        finally { if (pricingRevision.current === revision) { pricingAbort.current = null; setPricingBusy(false); } }
+    }
+
     // From the search box, or a quick pick with its own text.
     async function search(event?: FormEvent, text = query, onlyNew = false) {
         event?.preventDefault();
 
         if (!text.trim()) return;
+        cancelPricing(); setPricingNote("");
         setLinkEntry(false); searchDraft.current = text;
         setPage("search");
         setNewMode(onlyNew); setNewIds(new Set()); setNewChecked(0);
@@ -1157,7 +1194,7 @@ export function App() {
                         {/* Before the first search there's nothing to count, so phones skip the tabs. */}
                         <nav className={styles.workspaceNav} aria-label="Workspace">
                             <button type="button" aria-label="Search results" aria-pressed={page === "search"} onClick={() => { cancelLink(); setSelectedId(null); setPage("search"); }}>Results</button>
-                            <button type="button" aria-pressed={page === "shortlist"} onClick={() => { cancelLink(); setSelectedId(null); setPage("shortlist"); void loadShortlist(); }}>Shortlist ({shortlist.length})</button>
+                            <button type="button" aria-pressed={page === "shortlist"} onClick={() => { cancelLink(); cancelPricing(); setSelectedId(null); setPage("shortlist"); void loadShortlist(); }}>Shortlist ({shortlist.length})</button>
                             {(directListing || linkStatus !== "idle") && <button type="button" aria-pressed={page === "listing"} onClick={() => { setSelectedId(null); setPage("listing"); }}>Listing evaluation</button>}
                             {page === "search" && searchStatus !== "idle" && <button type="button" className={styles.findNew} disabled={searchStatus === "checking" || phase === "ai"} onClick={() => void search(undefined, lastQuery.current, true)}>Find new listings</button>}
                         </nav>
@@ -1434,7 +1471,8 @@ export function App() {
                             details={progressDetails}
                         />
                     )}
-                    {searchStatus !== "idle" && searchStatus !== "checking" && counts.unchecked > 0 && <p className={styles.discoveryNote} role="status">{counts.unchecked} listings couldn’t be fully screened. Open All for pricing or identity details.</p>}
+                    {searchStatus !== "idle" && searchStatus !== "checking" && <PricingRetries listings={listings} analyzed={new Set(Object.entries(analyses).filter(([, analysis]) => analysis.status === "done" || analysis.status === "loading").map(([id]) => id))}
+                        busy={pricingBusy} note={pricingNote} onRetry={(tickets) => void retryPrices(tickets)} onCancel={cancelPricing} />}
                     {newMode && <p className={styles.discoveryNote}>Checks one page of the 200 newest listings, screens up to 20 unseen listings and automatically starts up to {Math.min(5, autoSetting)} full AI analyses. Discovery stays within your saved limits; repeated scans share a one-minute search cache.</p>}
 
                     {needsWiderSearch && <div className={styles.searchUpdate} role="status">

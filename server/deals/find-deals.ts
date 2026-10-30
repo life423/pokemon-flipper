@@ -11,6 +11,8 @@ import { withTargets } from "../../shared/money/targets.ts";
 import { availablePhotoCount } from "../../shared/analysis-priority.ts";
 import type { ListingSummary, Screen, SearchIntent, Targets } from "../../shared/types.ts";
 import { criteriaMismatch, marketplaceQuery, searchAttributes } from "../../shared/search-criteria.ts";
+import { pricingRetries } from "./pricing-retries.ts";
+import type { PricingRetry } from "../../shared/pricing-retries.ts";
 
 // A search, the way eBay matches it, narrowed to the card searched for,
 // with every listing screened for free. eBay limits listing-detail
@@ -41,6 +43,7 @@ export interface SearchSummary {
 
 // The steps a listing goes through, passed in so tests can supply their own.
 export interface ScreenSteps {
+    deferPricing?: (listing: ListingSummary, input: ScreenInput, intent: SearchIntent | null) => PricingRetry | undefined;
     readTitle: typeof fillFromTitle;
     loadDetails: (itemId: string, listing?: Pick<ListingSummary, "images" | "title">) => Promise<ListingDetails>;
     check: (input: ScreenInput) => Promise<Screen>;
@@ -49,6 +52,7 @@ export interface ScreenSteps {
 
 export function screeningSteps(targets?: Targets, includeOffers = false, signal?: AbortSignal): ScreenSteps {
     return {
+        deferPricing: pricingRetries.register,
         readTitle: signal ? (listing) => fillFromTitle(listing, (title) => readTitle(title, signal)) : fillFromTitle,
         // Past the day's reserve, eBay refuses and the title's check stands.
         loadDetails: (itemId, listing) => getListingDetails(itemId, {
@@ -79,6 +83,15 @@ export async function screenListing(
     signal?: AbortSignal
 ): Promise<ListingSummary> {
     signal?.throwIfAborted();
+    let pricingInput: ScreenInput | undefined;
+    const check = (input: ScreenInput) => { pricingInput = input; return steps.check(input); };
+    const finish = (value: ListingSummary): ListingSummary => {
+        if (!value.match && value.screen && pricingInput && steps.deferPricing) {
+            const retry = steps.deferPricing(value, pricingInput, intent);
+            if (retry) return { ...value, screen: { ...value.screen, pricingRetry: retry } };
+        }
+        return value;
+    };
     const base = {
         price: listing.currentPrice,
         shipping: listing.shipping,
@@ -109,15 +122,16 @@ export async function screenListing(
     }
 
     const titleCriteria = searchAttributes(listing.title, fromTitle.aspects);
+    listing = { ...listing, listedAttributes: titleCriteria };
     const explicitMismatch = intent && criteriaMismatch(titleCriteria, intent, false);
     if (explicitMismatch) return { ...listing, match: explicitMismatch };
     const titleResult = (value: ListingSummary): ListingSummary => {
         const mismatch = intent && criteriaMismatch(titleCriteria, intent);
-        return mismatch ? { ...value, match: mismatch } : value;
+        return finish(mismatch ? { ...value, match: mismatch } : value);
     };
 
     const first = withFilled(
-        await steps.check({ ...base, title: listing.title, aspects: fromTitle.aspects, cardCondition: fromTitle.condition ?? null }),
+        await check({ ...base, title: listing.title, aspects: fromTitle.aspects, cardCondition: fromTitle.condition ?? null }),
         fromTitle.filled
     );
     signal?.throwIfAborted();
@@ -171,7 +185,7 @@ export async function screenListing(
     if (detailsMismatch) return { ...listing, match: detailsMismatch };
 
     const screen = withFilled(
-        await steps.check({
+        await check({
             ...base,
             title: details.title,
             aspects,
@@ -185,13 +199,14 @@ export async function screenListing(
 
     if (screen.junk) return { ...listing, match: "JUNK", screen };
 
-    return {
+    return finish({
         ...listing,
+        listedAttributes: searchAttributes(details.title, aspects),
         seller: details.seller ?? listing.seller,
         cardCondition: details.cardCondition,
         conditionNotes: details.conditionNotes,
         screen: { ...screen, evidence: { photos: availablePhotoCount(details.images ?? listing.images), mainPhoto: seen?.verdict === "MATCH" ? "MATCH" : seen?.verdict === "CANT_TELL" ? "CANT_TELL" : "UNKNOWN" } },
-    };
+    });
 }
 
 // onStart runs once the search is read and eBay has answered, and
