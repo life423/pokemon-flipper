@@ -103,7 +103,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
         </dl>
         {evaluation && <p className={styles.note} title={activity.detail}>{activity.label}{activity.recentSales !== null ? ` · ${activity.recentSales} observed ${activity.recentSales === 1 ? "sale" : "sales"} / 30 days` : ""}</p>}
         <div className={styles.actions}><p className={styles.openHint}>View analysis <span aria-hidden="true">↗</span></p>
-            {onSave && <button type="button" className={styles.save} onClick={() => { if (!saving) onSave(); }} aria-disabled={saving} aria-pressed={saved} aria-label={`${saved ? "Remove" : "Save"} ${title} ${saved ? "from" : "to"} shortlist`}>{saving ? "Saving…" : saved ? "Saved ✓" : "Save"}</button>}
+            {onSave && <button type="button" className={styles.save} onClick={() => { if (!saving) onSave(); }} aria-disabled={saving} aria-pressed={saved} aria-label={saving ? `Saving… ${title}` : saved ? `Saved: remove ${title} from shortlist` : `Save ${title} to shortlist`}>{saving ? "Saving…" : saved ? <>Saved <span aria-hidden="true">✓</span></> : "Save"}</button>}
         </div>
     </article>;
 }

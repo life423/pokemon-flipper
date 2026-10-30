@@ -21,6 +21,7 @@ import { listingEvidenceKey } from "../shared/listing-evidence.ts";
 import { searchHistory } from "./search/history.ts";
 import { discoverNewListings } from "./deals/new-listings.ts";
 import { searchFailureMessage } from "./deals/errors.ts";
+import { resolveListingLink, ListingLinkError } from "./listings/resolve.ts";
 
 const app = express();
 
@@ -61,6 +62,18 @@ const PORT = Number(process.env.PORT || 3000);
 const isProduction = process.env.NODE_ENV === "production";
 
 app.use(express.json());
+
+// Only extract a validated eBay identifier; never fetch the submitted URL.
+// Resolve current terms before the client starts the existing paid analysis.
+app.post("/api/listings/resolve", async (req, res) => {
+    try { res.json(await resolveListingLink(req.body?.input)); }
+    catch (error) {
+        const missing = error instanceof EbayError && [404, 410].includes(error.status);
+        res.status(error instanceof ListingLinkError ? error.status : missing ? 404 : error instanceof ProviderError ? 503 : 502).json({
+            error: error instanceof ListingLinkError || error instanceof ProviderError ? error.message
+                : missing ? "Listing not found or no longer available. No AI analysis was started." : "Could not load this listing from eBay. Please try again." });
+    }
+});
 
 app.get("/api/shortlist", async (_req, res) => {
     try { res.json({ entries: await shortlistStore.list() }); }

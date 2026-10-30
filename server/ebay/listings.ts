@@ -61,6 +61,7 @@ interface EbayItem {
 
 // Full details for analysis.
 export interface ListingDetails {
+    itemGroupType?: string;
     retrievedAt?: string;
     availability?: "ACTIVE" | "UNAVAILABLE" | "UNKNOWN";
     bestOffer?: boolean;
@@ -277,6 +278,7 @@ async function fetchListingDetails(itemId: string): Promise<ListingDetails> {
 
     return {
         retrievedAt: new Date().toISOString(),
+        itemGroupType: item.itemGroupType,
         availability: item.itemEndDate && Date.parse(item.itemEndDate) <= Date.now() || item.estimatedAvailabilities?.some((entry) => entry.estimatedAvailabilityStatus === "OUT_OF_STOCK")
             ? "UNAVAILABLE" : item.estimatedAvailabilities?.some((entry) => ["IN_STOCK", "LIMITED_STOCK"].includes(entry.estimatedAvailabilityStatus ?? "")) ? "ACTIVE" : "UNKNOWN",
         id: item.itemId,

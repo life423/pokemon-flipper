@@ -59,6 +59,7 @@ Three ways to flip a card are priced for every listing:
 
 ## What you get
 
+- **Evaluate a listing link:** choose **Evaluate eBay link**, paste or drop a full eBay.com listing link, then choose **Evaluate listing · paid**. Pasting a link in search mode also selects evaluation. Switching modes preserves both drafts. The app checks that one listing's current terms and photos, opens its analysis, and lets you save it. Item numbers also work. Tracking parameters are removed; a link evaluation does not start a broad search or overlooked-listing discovery.
 - **Shortlist:** save up to 100 listings with their latest local assessment, notes and your own bid/purchase ceiling. Saving and opening the shortlist make no paid/provider calls.
 - **Targeted refresh:** check one saved listing or up to ten selected listings. Current prices, shipping, bids, end time, photos and availability replace the snapshot. Unchanged photos reuse the assessment; changed photos require an explicit analysis. Unavailable listings retain their history but no purchase advice.
 - **Find new listings:** after a search, scan one page of the 200 newest listings. Previously seen IDs are skipped before screening, at most 20 unseen listings are screened per click, and at most five full analyses start automatically within your saved setting. Earlier results stay available in the other views.
@@ -196,10 +197,16 @@ sync. Back up these files along with the rest of `data/`. For isolated tests,
 `POKEMON_FLIPPER_DATA_DIR` selects another data directory. See
 [implementation and verification](docs/shortlist-discovery-2026-10-29.md).
 
+**Direct links.** Each deliberate link submission checks current eBay details,
+then reuses those details for the standard analysis. Matching saved title/photo
+assessments avoid another AI charge. Invalid links and unsupported variations
+make no provider request; obvious non-single-card listings, unavailable listings
+and missing photos stop before analysis. See [supported inputs and live checks](docs/listing-links-2026-10-30.md).
+
 ## Testing
 
 ```bash
-npm test            # 311 tests
+npm test            # 318 tests
 npm run typecheck   # server, shared code, scripts, and the page
 ```
 

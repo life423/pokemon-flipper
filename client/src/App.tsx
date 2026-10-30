@@ -5,11 +5,12 @@ import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { analysisConcurrency, canAutoAnalyze, meetsMinimumGrade, resultGroup, type ResultGroup } from "../../shared/analysis.ts";
 import { compareAnalysisPriority } from "../../shared/analysis-priority.ts";
 import { withFreshListing } from "../../shared/fresh-listing.ts";
+import { looksLikeListingLink, parseListingLink } from "../../shared/listing-link.ts";
 import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.ts";
 import { offerFor, offerWorthMaking } from "../../shared/money/offer.ts";
 import { compareListingEvidence, listingSignals } from "../../shared/signals.ts";
 import { name } from "./format";
-import { evaluateListing, fetchEbayUsage, fetchSetYears, reviewListingPhotos, streamDeals, streamNewDeals, fetchShortlist, saveListing, removeSavedListing, updateSavedListing, refreshSavedListings, type DealsMessage } from "./api";
+import { evaluateListing, fetchEbayUsage, fetchSetYears, reviewListingPhotos, streamDeals, streamNewDeals, fetchShortlist, saveListing, removeSavedListing, updateSavedListing, refreshSavedListings, resolveListingLink, type DealsMessage } from "./api";
 import type { ShortlistEntry } from "../../shared/shortlist.ts";
 import { ShortlistView } from "./components/ShortlistView";
 import type { DeeperReviewState } from "./components/PhotoReview";
@@ -209,7 +210,12 @@ function Segmented<T extends string>({
 
 export function App() {
     const now = useNow(30_000);
-    const [page, setPage] = useState<"search" | "shortlist">("search");
+    const [page, setPage] = useState<"search" | "shortlist" | "listing">("search");
+    const [directListing, setDirectListing] = useState<ListingSummary | null>(null);
+    const [linkStatus, setLinkStatus] = useState<"idle" | "loading" | "error">("idle");
+    const [linkError, setLinkError] = useState("");
+    const linkRequest = useRef<AbortController | null>(null);
+    const linkRevision = useRef(0);
     const [shortlist, setShortlist] = useState<ShortlistEntry[]>([]);
     const [shortlistLoading, setShortlistLoading] = useState(true);
     const [shortlistError, setShortlistError] = useState("");
@@ -238,9 +244,21 @@ export function App() {
     useEffect(() => { if (!saveNotice || saveNotice.error) return; const timer = window.setTimeout(() => setSaveNotice(null), 5000); return () => window.clearTimeout(timer); }, [saveNotice]);
 
     const [query, setQuery] = useState("");
+    const [linkEntry, setLinkEntry] = useState(false);
+    const searchDraft = useRef("");
+    const linkDraft = useRef("");
+    const linkInput = linkEntry || looksLikeListingLink(query);
+    const changeQuery = (text: string) => {
+        if (!linkInput && looksLikeListingLink(text)) searchDraft.current = query;
+        if (linkEntry || looksLikeListingLink(text)) linkDraft.current = text;
+        else searchDraft.current = text;
+        setQuery(text);
+    };
     const [rawListings, setListings] = useState<ListingSummary[]>([]);
     const latestListings = useRef(new Map<string, ListingSummary>());
-    latestListings.current = new Map((page === "search" ? [...shortlist.map((entry) => entry.listing), ...rawListings] : [...rawListings, ...shortlist.map((entry) => entry.listing)]).map((listing) => [listing.id, listing]));
+    latestListings.current = new Map((page === "search" ? [...(directListing ? [directListing] : []), ...shortlist.map((entry) => entry.listing), ...rawListings]
+        : page === "listing" ? [...rawListings, ...shortlist.map((entry) => entry.listing), ...(directListing ? [directListing] : [])]
+            : [...rawListings, ...(directListing ? [directListing] : []), ...shortlist.map((entry) => entry.listing)]).map((listing) => [listing.id, listing]));
     const [total, setTotal] = useState<number | null>(null);
     const [summary, setSummary] = useState<SearchSummary | null>(null);
 
@@ -380,7 +398,7 @@ export function App() {
         }
 
         return repriced;
-    }, [rawAnalyses, targets, rawListings, shortlist, page, now]);
+    }, [rawAnalyses, targets, rawListings, shortlist, directListing, page, now]);
 
     const toggleSaved = async (listing: ListingSummary) => {
         if (activeSaves.current.has(listing.id)) return;
@@ -414,6 +432,7 @@ export function App() {
             const byId = new Map(result.entries.map((entry) => [entry.id, entry]));
             setShortlist((previous) => previous.flatMap((entry) => ids.includes(entry.id) ? byId.has(entry.id) ? [byId.get(entry.id)!] : [] : [entry]));
             setListings((previous) => previous.map((listing) => ids.includes(listing.id) ? byId.get(listing.id)?.listing ?? listing : listing));
+            setDirectListing((previous) => previous && ids.includes(previous.id) ? byId.get(previous.id)?.listing ?? previous : previous);
             setAnalyses((previous) => { const next = { ...previous }; for (const id of ids) { const entry = byId.get(id); if (result.errors.some((error) => error.id === id)) continue;
                 if (entry?.evaluation) next[id] = { status: "done", evidenceKey: listingEvidenceKey(entry.listing), evaluation: entry.evaluation }; else delete next[id]; } return next; });
             setRefreshErrors((previous) => { const next = { ...previous }; for (const id of ids) delete next[id]; for (const error of result.errors) next[error.id] = error.message; return next; });
@@ -471,6 +490,7 @@ export function App() {
                 const updated = withFreshListing(current, evaluation);
                 if (updated !== current) {
                     latestListings.current.set(listing.id, updated);
+                    setDirectListing((previous) => previous?.id === listing.id ? withFreshListing(previous, evaluation) : previous);
                     setListings((previous) => previous.map((item) => item.id === listing.id ? withFreshListing(item, evaluation) : item));
                     setShortlist((previous) => previous.map((entry) => entry.id === listing.id ? { ...entry, listing: withFreshListing(entry.listing, evaluation) } : entry));
                 }
@@ -520,6 +540,47 @@ export function App() {
         }
     }, [runAnalysis, loadShortlist]);
 
+    const cancelLink = () => {
+        linkRequest.current?.abort(); linkRequest.current = null; linkRevision.current += 1; setLinkStatus("idle");
+    };
+    const openListingLink = async (input: string) => {
+        if (linkRequest.current) return;
+        setLinkEntry(true);
+        setSelectedId(null); setPage("listing"); setLinkError("");
+        if (!parseListingLink(input)) { setLinkStatus("error"); setLinkError("Paste a full ebay.com/itm/ listing link or its item number."); return; }
+        const itemId = parseListingLink(input)!.itemId;
+        if (activeAnalyses.current.has(itemId) && directListing?.id === itemId) { openPanel(itemId); return; }
+        if (searchStatus === "checking") stopSearch();
+        const controller = new AbortController(); linkRequest.current = controller;
+        const revision = ++linkRevision.current; setLinkStatus("loading");
+        try {
+            const listing = await resolveListingLink(input, controller.signal);
+            if (controller.signal.aborted || linkRevision.current !== revision) return;
+            setQuery((previous) => previous.trim() === input.trim() ? listing.url : previous);
+            setDirectListing(listing); latestListings.current.set(listing.id, listing);
+            setListings((previous) => previous.map((item) => item.id === listing.id ? listing : item));
+            setLinkStatus("idle"); openPanel(listing.id);
+            // The explicit submit authorizes this one analysis, independent of
+            // the search's automatic-analysis budget. No search/discovery starts.
+            void runAnalysis(listing);
+        } catch (error) {
+            if (!controller.signal.aborted && linkRevision.current === revision) { setLinkStatus("error"); setLinkError((error as Error).message); }
+        } finally { if (linkRevision.current === revision) linkRequest.current = null; refreshUsage(); }
+    };
+    const submitSearch = (event: FormEvent) => {
+        event.preventDefault();
+        if (linkInput) { if (!linkWorking) void openListingLink(query); }
+        else { cancelLink(); void search(undefined, query); }
+    };
+    const chooseEntry = (link: boolean) => {
+        cancelLink();
+        if (linkInput) linkDraft.current = query; else searchDraft.current = query;
+        setLinkEntry(link); setQuery(link ? linkDraft.current : searchDraft.current);
+        setSelectedId(null); setPage(link && directListing ? "listing" : "search");
+        setLinkError("");
+        window.requestAnimationFrame(() => { searchInput.current?.focus(); searchInput.current?.select(); });
+    };
+
     const [recentSearches, setRecentSearches] = useState<string[]>(readRecentSearches);
 
     function rememberSearch(text: string) {
@@ -546,6 +607,7 @@ export function App() {
         event?.preventDefault();
 
         if (!text.trim()) return;
+        setLinkEntry(false); searchDraft.current = text;
         setPage("search");
         setNewMode(onlyNew); setNewIds(new Set()); setNewChecked(0);
 
@@ -623,7 +685,7 @@ export function App() {
     // The AI looks at the most promising candidates on its own, a couple
     // at a time, up to this search's budget.
     useEffect(() => {
-        if (page === "shortlist") return;
+        if (page !== "search") return;
         const running = Object.values(analyses).filter((analysis) => analysis.status === "loading").length;
         let remaining = budget - autoQueued.current.size;
         if (remaining <= 0) return;
@@ -753,7 +815,7 @@ export function App() {
         };
     }, [listings, analyses, newMode, newIds]);
 
-    const selected = (page === "shortlist" ? shortlist.map((entry) => entry.listing) : listings).find((listing) => listing.id === selectedId) ?? null;
+    const selected = (page === "shortlist" ? shortlist.map((entry) => entry.listing) : page === "listing" ? directListing ? [directListing] : [] : listings).find((listing) => listing.id === selectedId) ?? null;
 
     // Filters narrowing the results, shown as a count on the Filters button.
     const activeFilters = [typeFilter !== "all", kindFilter !== "all", maxPrice !== "", minPrice !== "", minGrade > 0, sort !== "best"].filter(
@@ -994,6 +1056,8 @@ export function App() {
         </>
     );
 
+    const incomingItemId = parseListingLink(query)?.itemId;
+    const linkWorking = linkStatus === "loading" || Boolean(incomingItemId && directListing?.id === incomingItemId && analyses[incomingItemId]?.status === "loading");
     return (
         <div className={styles.shell}>
             <div className={styles.layout}>
@@ -1024,16 +1088,26 @@ export function App() {
                                 {activeFilters > 0 && <span className={styles.menuBadge}>{activeFilters}</span>}
                             </button>
 
-                            <form className={styles.searchRow} role="search" onSubmit={search}>
+                            <form className={styles.searchRow} role="search" onSubmit={submitSearch}>
+                                <div className={styles.entryModes} role="group" aria-label="Search cards or evaluate a listing">
+                                    <button type="button" aria-pressed={!linkInput} onClick={() => chooseEntry(false)}>Search cards</button>
+                                    <button type="button" aria-pressed={linkInput} onClick={() => chooseEntry(true)}>Evaluate eBay link</button>
+                                </div>
                                 <label className={styles.searchField}>
                                     <SearchIcon className={styles.searchIcon} />
                                     <input
                                         ref={searchInput}
                                         type="search"
                                         value={query}
-                                        onChange={(event) => setQuery(event.target.value)}
-                                        placeholder="Search cards, sets, grades, or keywords"
-                                        aria-label="Search cards"
+                                        onChange={(event) => changeQuery(event.target.value)}
+                                        placeholder={linkInput ? "Paste eBay link" : "Card, set or grade"}
+                                        aria-label={linkInput ? "eBay listing link" : "Search cards"}
+                                        aria-describedby="listing-input-hint"
+                                        onDragOver={(event) => { if (event.dataTransfer.types.some((type) => type === "text/uri-list" || type === "text/plain")) event.preventDefault(); }}
+                                        onDrop={(event) => {
+                                            const input = (event.dataTransfer.getData("text/uri-list") || event.dataTransfer.getData("text/plain")).split(/\r?\n/).find((line) => line.trim() && !line.startsWith("#")) ?? "";
+                                            if (looksLikeListingLink(input)) { event.preventDefault(); changeQuery(input.trim()); searchInput.current?.focus(); }
+                                        }}
                                         aria-keyshortcuts="Meta+K Control+K"
                                     />
                                     {query && (
@@ -1041,7 +1115,7 @@ export function App() {
                                             type="button"
                                             className={styles.clearSearch}
                                             onClick={() => {
-                                                setQuery("");
+                                                changeQuery("");
                                                 searchInput.current?.focus();
                                             }}
                                             aria-label="Clear search"
@@ -1053,34 +1127,36 @@ export function App() {
                                         {SHORTCUT}
                                     </kbd>
                                     {/* Phones: the search button sits inside the field. */}
-                                    <button
+                                    {!linkInput && <button
                                         type="submit"
                                         className={`${styles.searchSubmit} ${styles.narrowOnly}`}
                                         aria-label="Find deals"
                                         aria-busy={searchStatus === "checking"}
                                     >
                                         {searchStatus === "checking" ? <span className={styles.spinner} /> : <ArrowIcon />}
-                                    </button>
+                                    </button>}
                                 </label>
-                                <button type="submit" className={`${styles.primary} ${styles.wideOnly}`}>
-                                    {searchStatus === "checking" ? (
+                                <button type="submit" className={`${styles.primary} ${linkInput ? styles.linkPrimary : styles.wideOnly}`} aria-label={linkInput ? linkWorking ? "Evaluating…" : "Evaluate listing · paid" : "Find deals"} aria-disabled={linkInput && linkWorking}>
+                                    {(linkInput ? linkWorking : searchStatus === "checking") ? (
                                         <span className={styles.spinner} aria-hidden="true" />
                                     ) : (
                                         <SearchIcon className={styles.buttonIcon} />
                                     )}
-                                    Find deals
+                                    {linkInput ? linkWorking ? "Evaluating…" : "Evaluate listing · paid" : "Find deals"}
                                 </button>
+                                <p className={styles.inputHint} id="listing-input-hint">{linkInput ? "Paste or drop a link. Uses paid AI." : "Search eBay, or evaluate a listing you’ve found."}</p>
                             </form>
                         </div>
 
                         {/* Before the first search there's nothing to count, so phones skip the tabs. */}
                         <nav className={styles.workspaceNav} aria-label="Workspace">
-                            <button type="button" aria-label="Search results" aria-pressed={page === "search"} onClick={() => { setSelectedId(null); setPage("search"); }}>Results</button>
-                            <button type="button" aria-pressed={page === "shortlist"} onClick={() => { setSelectedId(null); setPage("shortlist"); void loadShortlist(); }}>Shortlist ({shortlist.length})</button>
+                            <button type="button" aria-label="Search results" aria-pressed={page === "search"} onClick={() => { cancelLink(); setSelectedId(null); setPage("search"); }}>Results</button>
+                            <button type="button" aria-pressed={page === "shortlist"} onClick={() => { cancelLink(); setSelectedId(null); setPage("shortlist"); void loadShortlist(); }}>Shortlist ({shortlist.length})</button>
+                            {(directListing || linkStatus !== "idle") && <button type="button" aria-pressed={page === "listing"} onClick={() => { setSelectedId(null); setPage("listing"); }}>Listing evaluation</button>}
                             {page === "search" && searchStatus !== "idle" && <button type="button" className={styles.findNew} disabled={searchStatus === "checking" || phase === "ai"} onClick={() => void search(undefined, lastQuery.current, true)}>Find new listings</button>}
                         </nav>
                         {saveNotice && <p className={saveNotice.error ? styles.warning : styles.saveNotice} role={saveNotice.error ? "alert" : "status"}>{saveNotice.text}</p>}
-                        <div className={styles.controlPanel} hidden={page === "shortlist"} data-idle={searchStatus === "idle" || undefined}>
+                        <div className={styles.controlPanel} hidden={page !== "search" || searchStatus === "idle"} data-idle={searchStatus === "idle" || undefined}>
                             <div className={styles.controlRow}>
                                 {/* Every view remains visible in wrapping tabs. */}
                                 <div className={styles.tabs}>
@@ -1314,7 +1390,16 @@ export function App() {
                     {page === "shortlist" ? <ShortlistView entries={shortlist} loading={shortlistLoading} error={shortlistError} refreshing={refreshingSaved} refreshErrors={refreshErrors}
                         onRetry={() => void loadShortlist()} onRefresh={refreshSaved} onRemove={removeSaved} onUpdate={updateSaved} now={now}
                         renderCard={(entry) => <DealCard listing={entry.listing} analysis={analyses[entry.id]} selected={entry.id === selectedId} now={now} years={setYearsByKey} targets={targets} minGrade={minGrade} photoReviewState={photoReviews[entry.id]}
-                            onOpen={() => openPanel(entry.id)} />} /> : <>
+                            onOpen={() => openPanel(entry.id)} />} /> : page === "listing" ? <section className={styles.linkEvaluation} aria-labelledby="link-evaluation-heading">
+                        <h2 id="link-evaluation-heading">Listing evaluation</h2>
+                        {linkStatus === "loading" && <div className={styles.linkLoading} role="status"><p>Reading the listing from eBay…</p><button type="button" className={styles.secondary} onClick={() => { cancelLink(); if (!directListing) setPage("search"); }}>Cancel</button></div>}
+                        {linkStatus === "error" && <p role="alert" className={styles.warning}>{linkError}{directListing ? " Your previous listing is still shown below." : ""}</p>}
+                        {directListing && linkStatus !== "loading" && <div className={styles.directCard}><DealCard listing={directListing} analysis={analyses[directListing.id]} selected={directListing.id === selectedId}
+                            now={now} years={setYearsByKey} targets={targets} minGrade={0} photoReviewState={photoReviews[directListing.id]}
+                            saved={shortlist.some((entry) => entry.id === directListing.id)} saving={savingIds.has(directListing.id)} onSave={() => void toggleSaved(directListing)}
+                            onOpen={() => openPanel(directListing.id)} /></div>}
+                        {!directListing && linkStatus === "idle" && <p>Paste an eBay listing link above, then choose Evaluate listing.</p>}
+                    </section> : <>
                     {searchStatus !== "idle" && (
                         <SearchProgress
                             phase={phase}
@@ -1353,9 +1438,10 @@ export function App() {
                     </div>}
 
                     {searchStatus === "idle" && (
-                        <EmptyState>
+                        <EmptyState title={linkInput ? "Check a listing" : "Find your next flip"}
+                            text={linkInput ? "Paste its eBay link above for a photo assessment, resale estimates and a price limit." : "Search for cards across eBay, or evaluate a listing you’ve already found."}>
                             {/* One tap to a search: recent ones, or a few to start with. */}
-                            <div className={styles.quickPicks}>
+                            {!linkInput && <div className={styles.quickPicks}>
                                 <p>{recentSearches.length > 0 ? "Recent searches" : "Try a search"}</p>
                                 <div className={styles.quickChips}>
                                     {(recentSearches.length > 0 ? recentSearches : STARTER_SEARCHES).map((text) => (
@@ -1373,7 +1459,7 @@ export function App() {
                                         </button>
                                     ))}
                                 </div>
-                            </div>
+                            </div>}
                         </EmptyState>
                     )}
 
@@ -1429,7 +1515,7 @@ export function App() {
                     <DetailPanel
                         listing={selected}
                         closing={panelClosing}
-                        minGrade={minGrade}
+                        minGrade={page === "listing" ? 0 : minGrade}
                         targets={targets}
                         analysis={analyses[selected.id]}
                         now={now}

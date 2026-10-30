@@ -1,6 +1,17 @@
 .shell {
     min-height: 100dvh;
 }
+.inputHint { flex: 1 0 100%; color: var(--text-muted); font-size: var(--text-sm); line-height: 1.5; }
+.entryModes { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.entryModes button { min-height: var(--tap); padding: var(--space-2) var(--space-3); border: 1px solid transparent; border-radius: var(--radius-control); background: transparent; color: var(--text-muted); font: inherit; font-size: var(--text-sm); font-weight: 650; cursor: pointer; }
+.entryModes button[aria-pressed="true"] { color: var(--action-text); border-color: var(--border); background: var(--surface-alt); }
+@media (hover: hover) { .entryModes button:hover { color: var(--text); background: var(--surface); } }
+.linkEvaluation { display: grid; gap: var(--space-4); margin-top: var(--space-4); }
+.linkEvaluation > h2 { font-size: var(--text-xl); }
+.linkLoading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.directCard { width: 100%; max-width: 34rem; }
+.linkPrimary { max-width: 100%; }
+.searchRow button[aria-disabled="true"] { opacity: .65; cursor: progress; }
 .workspaceNav { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .workspaceNav button { min-height: var(--tap); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); color: var(--text-muted); cursor: pointer; font-size: var(--text-sm); }
 .workspaceNav button[aria-pressed="true"] { color: var(--text); border-color: var(--accent); background: var(--surface-alt); }
@@ -425,7 +436,7 @@
     font-weight: 700;
 }
 
-@media (max-width: 39.99rem) {
+@media (max-width: 63.99rem) {
     .topRow {
         grid-template-columns: minmax(0, 1fr) auto;
         grid-template-areas:
@@ -523,6 +534,12 @@
     background: transparent;
     border: 0;
     outline: none;
+}
+
+.searchField input::-webkit-search-cancel-button,
+.searchField input::-webkit-search-decoration {
+    -webkit-appearance: none;
+    appearance: none;
 }
 
 .shortcut {
@@ -727,6 +744,14 @@
 
 /* Phones: no panel chrome or tagline, and no keyboard shortcut to show. */
 @media (max-width: 39.99rem) {
+    .brand { flex-wrap: wrap; }
+    .brand > div { min-width: 0; }
+    .brand .title { white-space: normal; overflow-wrap: anywhere; }
+    .linkPrimary {
+        flex: 1 0 100%;
+        justify-content: center;
+        padding-block: var(--space-2);
+    }
     .controlPanel {
         padding: 0;
         background: none;
@@ -820,8 +845,8 @@
     flex: none;
     display: grid;
     place-items: center;
-    width: 32px;
-    height: 32px;
+    width: 44px;
+    height: 44px;
     background: transparent;
     border: 0;
     border-radius: 50%;

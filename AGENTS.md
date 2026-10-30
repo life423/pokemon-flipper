@@ -3,6 +3,37 @@
 Updated October 30, 2026. This file records the user's agreed requirements so
 future work can continue without losing the conversation context.
 
+## October 30 direct listing links
+
+The user requested pasting/dropping a listing link into the app for direct
+evaluation and supplied eBay item 267743966894 (Mewtwo). Work is on
+`codex/listing-link-evaluation`. The user subsequently authorized committing the
+feature and UI changes, merging into `main`, and pushing to GitHub. Consult Git
+for the resulting revision and remote synchronization. No deployment was
+requested. Read `docs/listing-links-2026-10-30.md`.
+
+- Reuse the main search field: keywords still search, recognized links/item IDs
+  show an explicit paid evaluation action. Dropping a link fills the field but
+  does not start paid work until submitted. Show a separate Listing evaluation
+  workspace and preserve search results and shortlist actions.
+- The user explicitly requested visible link-entry affordances with a clean,
+  responsive UI. Keep the Search cards / Evaluate eBay link choices visible,
+  preserve separate drafts, and require explicit submission for paid work.
+  Use a full-width evaluation button on phones, 44px clear/mode targets and
+  full-row input on tablets. Hide empty result controls before the first search;
+  financial targets remain available in Menu. Preserve text-enlargement reflow.
+- Validate on both client and server. Extract a strict eBay.com item ID, remove
+  tracking, and use the existing Browse API. Never fetch arbitrary submitted
+  URLs. Variations, obvious lots/proxies, ended listings and absent photos stop
+  before paid AI. Current details feed the existing title/photo/assessment gates.
+- One direct listing does not launch search/discovery or inherit search result
+  filters. It does use the user's financial targets. Successful analyses remain
+  reusable; duplicate resolution/evaluation work shares the existing guards.
+- Live verification used the supplied Mewtwo link, real paid analysis, reuse,
+  saving, cancellation, malformed/not-found handling, request counts and actual
+  phone/tablet/desktop renders. Keep its observed PASS separate from a claim of
+  market accuracy. Preserve the user's preference for real API validation.
+
 ## October 30 live API validation and correctness
 
 The user authorized committing the fixes and shortlist/discovery features,

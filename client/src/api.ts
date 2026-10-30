@@ -95,6 +95,10 @@ export function streamNewDeals(query: string, options: { minPrice: number; signa
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query, knownIds: options.knownIds.slice(-500) }) });
 }
 
+export function resolveListingLink(input: string, signal?: AbortSignal): Promise<ListingSummary> {
+    return request("/api/listings/resolve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ input }), signal });
+}
+
 export async function fetchShortlist(): Promise<ShortlistEntry[]> { return (await request<{ entries: ShortlistEntry[] }>("/api/shortlist")).entries; }
 export function saveListing(listing: ListingSummary): Promise<ShortlistEntry> {
     return request("/api/shortlist", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ listing }) });
