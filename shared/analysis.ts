@@ -9,11 +9,13 @@ export function canAutoAnalyze(listing: ListingSummary): boolean {
 
 export type ResultGroup = "deals" | "offers" | "candidates" | "longShots" | "review";
 
-export function resultGroup(listing: ListingSummary, evaluation: Evaluation | null, includeOffers = false): ResultGroup | null {
+export function resultGroup(listing: ListingSummary, evaluation: Evaluation | null, includeOffers = false, analysisFailed = false): ResultGroup | null {
     const verdict = evaluation?.underwriting?.verdict;
     if (verdict?.startsWith("BUY")) return evaluation?.rating?.level === "LONG_SHOT" ? "longShots" : "deals";
     if (includeOffers && verdict === "PASS" && offerWorthMaking(offerFor(listing, evaluation?.underwriting?.best?.maxBid))) return "offers";
     if (verdict === "NEEDS_REVIEW" || verdict === "CANT_PRICE") return "review";
+    // An incomplete check is unresolved, never a priced rejection or a queued analysis.
+    if (!evaluation && (analysisFailed || listing.screen?.status === "UNSCREENED")) return "review";
     if (!evaluation && listing.screen?.priceAnomaly && !listing.screen.priceAnomaly.photoChecked) return "review";
     if (!evaluation && listing.mistakes?.length && listing.screen?.status !== "CANDIDATE") return "review";
     if (!evaluation && listing.screen?.status === "CANDIDATE") return listing.screen.longShot ? "longShots" : "candidates";

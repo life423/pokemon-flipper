@@ -57,6 +57,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
     const subtitle = card?.name ? [card.set, yearOf(years, card.set), card.printing !== "UNLIMITED" ? card.printingLabel : null].filter(Boolean).join(" · ") : listing.isGraded ? "Graded card" : "Raw card";
     const longShot = evaluation?.rating?.level === "LONG_SHOT" || screen?.longShot;
     const [badge, tone] = analysis?.status === "loading" ? ["Analyzing", "pending"]
+        : analysis?.status === "error" ? ["Analysis failed", "watch"]
         : decision?.status === "ENDED" ? ["Ended", "quiet"]
         : decision?.status === "OVER_LIMIT" ? ["Over limit", "pass"]
         : decision?.status === "PROVISIONAL" ? ["Your review needed", "watch"]

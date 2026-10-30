@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode, type Ref } from "react";
 import { prefersReducedMotion, transitionName, withViewTransition } from "./motion";
 import type { EbayUsage, Evaluation, ListingSummary, RatingLevel, SearchIntent, Targets } from "./types";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
@@ -195,16 +195,18 @@ function Segmented<T extends string>({
     value,
     options,
     onChange,
+    buttonRef,
 }: {
     label: string;
     value: T;
     options: [T, ReactNode][];
     onChange: (value: T) => void;
+    buttonRef?: (value: T) => Ref<HTMLButtonElement> | undefined;
 }) {
     return (
         <div className={styles.segmented} role="group" aria-label={label}>
             {options.map(([option, text]) => (
-                <button key={option} type="button" aria-pressed={value === option} onClick={() => onChange(option)}>
+                <button key={option} ref={buttonRef?.(option)} type="button" aria-pressed={value === option} onClick={() => onChange(option)}>
                     {text}
                 </button>
             ))}
@@ -670,7 +672,7 @@ export function App() {
         setSummary(null);
         setSelectedId(null);
         setBudget(onlyNew ? Math.min(5, autoSetting) : autoSetting);
-        setView(onlyNew ? "new" : "deals");
+        setView(onlyNew ? "new" : "all");
         setSearchStatus("checking");
         setSearchError("");
         setSearchedMinPrice(Math.max(0, Number(minPrice) || 0));
@@ -788,7 +790,7 @@ export function App() {
 
         for (const listing of filtered) {
             const evaluation = evaluationOf(analyses[listing.id]);
-            const group = resultGroup(listing, evaluation, includeOffers);
+            const group = resultGroup(listing, evaluation, includeOffers, analyses[listing.id]?.status === "error");
             if (group) grouped[group].push(listing);
         }
 
@@ -914,6 +916,7 @@ export function App() {
         const count = groups[key].length;
         return <span className={`${styles.countPill} ${count > 0 ? (COUNT_TONES[key] ?? styles.count) : styles.count}`}>{count}</span>;
     };
+    const allTab = useRef<HTMLButtonElement>(null);
 
     // ⌘K (Ctrl+K elsewhere) jumps to search from anywhere.
     const searchInput = useRef<HTMLInputElement>(null);
@@ -1205,6 +1208,7 @@ export function App() {
                                 <div className={styles.tabs}>
                                     <Segmented
                                         label="Show"
+                                        buttonRef={(key) => key === "all" ? allTab : undefined}
                                         value={view}
                                         onChange={setView}
                                         options={availableViews.map((key) => [
@@ -1452,7 +1456,7 @@ export function App() {
                             ebayTotal={summary?.total ?? null}
                             checked={newMode ? newChecked : digStatus === "idle" ? listings.length : (total ?? 0) + digChecked}
                             total={total === null ? null : total + digTotal}
-                            ai={{ done: aiDone, target: aiTarget, analyzing: counts.analyzing, waiting: counts.waiting }}
+                            ai={{ done: aiDone, target: aiTarget, analyzing: counts.analyzing, waiting: counts.waiting, failed: startedAnalyses.filter((analysis) => analysis.status === "error").length }}
                             stats={{
                                 junk: (summary?.skipped ?? 0) + counts.junk,
                                 dropped: counts.dropped,
@@ -1471,7 +1475,7 @@ export function App() {
                             details={progressDetails}
                         />
                     )}
-                    {searchStatus !== "idle" && searchStatus !== "checking" && <PricingRetries listings={listings} analyzed={new Set(Object.entries(analyses).filter(([, analysis]) => analysis.status === "done" || analysis.status === "loading").map(([id]) => id))}
+                    {searchStatus !== "idle" && <PricingRetries listings={listings} searching={searchStatus === "checking"} analyzed={new Set(Object.entries(analyses).filter(([, analysis]) => analysis.status === "done" || analysis.status === "loading").map(([id]) => id))}
                         busy={pricingBusy} note={pricingNote} onRetry={(tickets) => void retryPrices(tickets)} onCancel={cancelPricing} />}
                     {newMode && <p className={styles.discoveryNote}>Checks one page of the 200 newest listings, screens up to 20 unseen listings and automatically starts up to {Math.min(5, autoSetting)} full AI analyses. Discovery stays within your saved limits; repeated scans share a one-minute search cache.</p>}
 
@@ -1513,7 +1517,12 @@ export function App() {
                         searchStatus !== "error" &&
                         visible.length === 0 &&
                         !(searchStatus === "checking" && listings.length === 0) &&
-                        (searchStatus === "checking" && view === "deals" ? (
+                        (view === "deals" && groups.all.length > 0 ? (
+                            <div className={styles.searchUpdate} role="status">
+                                <p>Found {groups.all.length.toLocaleString()} listings. No confirmed deals yet.{groups.review.length > 0 ? ` ${groups.review.length} need review; incomplete checks do not establish a deal.` : ""}</p>
+                                <button type="button" className={styles.secondary} onClick={() => { withViewTransition(() => setView("all")); allTab.current?.focus(); }}>View found listings</button>
+                            </div>
+                        ) : searchStatus === "checking" && view === "deals" ? (
                             <EmptyState
                                 framed
                                 title="No deals yet"
@@ -1523,6 +1532,9 @@ export function App() {
                             <p className={styles.status}>{emptyText[view]}</p>
                         ))}
 
+                    {view === "all" && visible.length > 0 && <p className={styles.discoveryNote}>
+                        {filtered.filter((listing) => evaluationOf(analyses[listing.id])?.photoCheck).length} AI photo reviews complete · {filtered.filter((listing) => !analyses[listing.id] && listing.screen && listing.screen.status !== "UNSCREENED").length} screened only. Automatic analysis focuses on promising candidates within your AI limit.
+                    </p>}
                     <div className={styles.results}>
                         {/* Before the first results: placeholders in the shape of cards. */}
                         {searchStatus === "checking" &&

@@ -20,7 +20,7 @@ interface Props {
     // The free check: listings checked of those that match the search.
     checked: number;
     total: number | null;
-    ai: { done: number; target: number; analyzing: number; waiting: number };
+    ai: { done: number; target: number; analyzing: number; waiting: number; failed: number };
     stats: { junk: number; dropped: number; unchecked: number; deals: number };
     usage: { text: string; note: string; braking: boolean } | null;
     onStop: () => void;
@@ -95,11 +95,13 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
 
     const caption =
         phase === "ai"
-            ? `${ai.done} of ${ai.target} candidates analyzed`
+            ? `${ai.done} of ${ai.target} analysis attempts finished`
             : phase === "discovering"
               ? "Checking extra search coverage…"
             : phase === "finding"
               ? "Finding listings..."
+            : phase === "done"
+              ? `${checked.toLocaleString()} checks completed`
               : `${checked.toLocaleString()} of ${(total ?? 0).toLocaleString()} checks completed`;
 
     // What's happening right now, in a few words.
@@ -118,14 +120,16 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
                   ? `${ai.waiting} ${ai.waiting === 1 ? "candidate is" : "candidates are"} waiting for the AI.`
                   : phase === "stopped"
                     ? "Nothing more is being checked."
-                    : "The AI has looked at every candidate.";
+                    : ai.failed > 0
+                      ? `${ai.failed} AI ${ai.failed === 1 ? "analysis failed" : "analyses failed"}; see Review.`
+                      : "Automatic analysis finished. Screened-only listings have not had full photo analysis.";
 
     const compact =
         phase === "error"
             ? (error ?? "Search failed")
             : [
-                  percentText,
-                  `${checked.toLocaleString()}/${(total ?? 0).toLocaleString()} checked`,
+                  phase === "done" ? "" : percentText,
+                  phase === "done" ? `${checked.toLocaleString()} checks` : `${checked.toLocaleString()}/${(total ?? 0).toLocaleString()} checked`,
                   `${stats.deals} ${stats.deals === 1 ? "deal" : "deals"} found`,
               ]
                   .filter(Boolean)

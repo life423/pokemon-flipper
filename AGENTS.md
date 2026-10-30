@@ -3,6 +3,29 @@
 Updated October 30, 2026. This file records the user's agreed requirements so
 future work can continue without losing the conversation context.
 
+## October 30 result visibility and assessment audit
+
+The user requested finishing the audit and result visibility fixes with mobile
+verification. Developed on `codex/search-result-visibility` from `1b2eb12`.
+The user subsequently authorized committing the changes, merging into `main`
+and pushing to GitHub. Consult Git for delivery status. Read
+`docs/result-visibility-audit-2026-10-30.md` for evidence and limitations.
+
+- New keyword searches start in All; explicit view selections survive streaming.
+  Empty Deals links to found listings. New-listing discovery still opens New.
+- Incomplete screening and failed analysis belong in Review, not invisible
+  outcomes or Waiting. Preserve confirmed Deal/profit and identity safeguards.
+- Show incomplete pricing during search, but wait for search completion before
+  manual pricing retries. Distinguish completed photo reviews from screening;
+  search completion does not imply every listing received a paid assessment.
+- Keep test faults and mutations off the user's active server: use a separate
+  port and POKEMON_FLIPPER_DATA_DIR, copying named caches when needed.
+- Validation: 346 unit tests, typechecks/build, 74 recalculations of 37 saved
+  assessments, prior live Aquapolis/pricing recovery evidence, and 28 final
+  browser checks including seven axe scans. Controlled UI states replay actual
+  captured data; isolated saved-assessment and shortlist endpoints stay real.
+  Marketplace/model accuracy is sampled, not certified for every result.
+
 ## October 30 pricing retries, card details and motion
 
 The user requested pricing retries and visible grade/finish on every card while

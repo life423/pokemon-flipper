@@ -770,7 +770,7 @@
 
     /* Compact tabs, so four fit across a phone. */
     .controlPanel .segmented button {
-        min-height: 42px;
+        min-height: var(--tap);
         padding: 0 0.6rem;
         font-size: var(--text-sm);
     }
