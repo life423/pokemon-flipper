@@ -24,7 +24,7 @@ export function createPricingRetries({
     let busy = false;
     let lastRunAt = 0;
     const retryable = (issue?: PricingIssue) => issue && ["RATE_LIMIT", "TEMPORARY"].includes(issue.kind);
-    const hint = (job: Job): PricingRetry => ({ ticket: job.token, snapshotKey: pricingSnapshotKey(job.listing), retryAt: new Date(job.nextAt).toISOString(), attemptsLeft: Math.max(0, MAX_ATTEMPTS - job.attempts) });
+    const hint = (job: Job): PricingRetry => ({ ticket: job.token, snapshotKey: pricingSnapshotKey(job.listing), retryAt: new Date(job.nextAt).toISOString(), attemptsLeft: Math.max(0, MAX_ATTEMPTS - job.attempts), expiresAt: new Date(job.expires).toISOString() });
     const result = (job: Job) => ({ id: job.listing.id, snapshotKey: pricingSnapshotKey(job.listing), match: job.match,
         screen: { ...job.screen, pricingRetry: retryable(job.screen.pricingIssue) ? hint(job) : undefined } });
     return {

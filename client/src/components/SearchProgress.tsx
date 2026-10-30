@@ -2,13 +2,14 @@ import { useState, type ReactNode } from "react";
 import { CheckIcon, ChevronIcon, InfoIcon, SearchIcon, StackIcon, StopIcon } from "./Icons";
 import { Tween, wholeNumber } from "./Tween";
 import styles from "./SearchProgress.module.css";
+import type { PricingRecoveryProgress } from "../../../shared/pricing-retries.ts";
 
 // Where a search is: finding listings on eBay, the free check, the AI,
 // then done. Or stopped, or failed.
-export type SearchPhase = "finding" | "filtering" | "discovering" | "ai" | "done" | "stopped" | "error";
+export type SearchPhase = "finding" | "filtering" | "discovering" | "pricing" | "ai" | "done" | "stopped" | "error";
 
 const STEPS = ["Finding listings", "Filtering listings", "AI analysis", "Finalizing results"];
-const STEP_OF: Record<SearchPhase, number> = { finding: 0, filtering: 1, discovering: 1, ai: 2, done: 4, stopped: -1, error: -1 };
+const STEP_OF: Record<SearchPhase, number> = { finding: 0, filtering: 1, discovering: 1, pricing: 1, ai: 2, done: 4, stopped: -1, error: -1 };
 const COLLAPSED_KEY = "searchProgressCollapsed";
 
 interface Props {
@@ -21,6 +22,7 @@ interface Props {
     checked: number;
     total: number | null;
     ai: { done: number; target: number; analyzing: number; waiting: number; failed: number };
+    pricing?: PricingRecoveryProgress | null;
     stats: { junk: number; dropped: number; unchecked: number; deals: number };
     usage: { text: string; note: string; braking: boolean } | null;
     onStop: () => void;
@@ -40,7 +42,7 @@ function readCollapsed(): boolean {
 
 // The search's progress, expanded with every step and count, or collapsed
 // to one line to leave room for results.
-export function SearchProgress({ phase, query, error, ebayTotal, checked, total, ai, stats, usage, onStop, actions, details }: Props) {
+export function SearchProgress({ phase, query, error, ebayTotal, checked, total, ai, pricing, stats, usage, onStop, actions, details }: Props) {
     const [collapsed, setCollapsed] = useState(readCollapsed);
 
     const toggle = () => {
@@ -54,12 +56,12 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
         });
     };
 
-    const running = phase === "finding" || phase === "filtering" || phase === "discovering" || phase === "ai";
+    const running = phase === "finding" || phase === "filtering" || phase === "discovering" || phase === "pricing" || phase === "ai";
     const step = STEP_OF[phase];
 
     // How far along: the free check while it runs, then the AI.
     const percent =
-        phase === "finding" || phase === "discovering"
+        phase === "finding" || phase === "discovering" || phase === "pricing"
             ? null
             : phase === "ai"
               ? ai.target > 0
@@ -76,6 +78,7 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
         finding: "Searching eBay",
         filtering: "Searching eBay",
         discovering: "Looking for overlooked listings",
+        pricing: "Recovering temporary price lookups",
         ai: "AI analysis",
         done: "Search complete",
         stopped: "Search stopped",
@@ -89,12 +92,14 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
               ? `${checked.toLocaleString()} listing and photo checks for \u201c${query}\u201d`
               : phase === "stopped"
                 ? `Stopped after ${checked.toLocaleString()} of ${(total ?? checked).toLocaleString()} checks. Results so far stay below.`
+                : phase === "pricing" ? `Automatically recovering prices for “${query}”`
                 : phase === "ai"
                   ? `Checking the best candidates for \u201c${query}\u201d`
                   : `Scanning listings for \u201c${query}\u201d`;
 
     const caption =
-        phase === "ai"
+        phase === "pricing" ? `${pricing?.priced ?? 0} prices recovered · ${pricing?.pending ?? 0} pending`
+        : phase === "ai"
             ? `${ai.done} of ${ai.target} analysis attempts finished`
             : phase === "discovering"
               ? "Checking extra search coverage…"
@@ -106,7 +111,8 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
 
     // What's happening right now, in a few words.
     const activity =
-            phase === "discovering"
+            phase === "pricing" ? "Temporary failures retry automatically after the provider cooldown. Results remain available below."
+            : phase === "discovering"
                 ? "Automatic discovery is running; results stay available below."
             : phase === "finding"
             ? "Searching eBay..."
@@ -129,7 +135,7 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
             ? (error ?? "Search failed")
             : [
                   phase === "done" ? "" : percentText,
-                  phase === "done" ? `${checked.toLocaleString()} checks` : `${checked.toLocaleString()}/${(total ?? 0).toLocaleString()} checked`,
+                  phase === "pricing" ? `${pricing?.priced ?? 0} prices recovered · ${pricing?.pending ?? 0} pending` : phase === "done" ? `${checked.toLocaleString()} checks` : `${checked.toLocaleString()}/${(total ?? 0).toLocaleString()} checked`,
                   `${stats.deals} ${stats.deals === 1 ? "deal" : "deals"} found`,
               ]
                   .filter(Boolean)
@@ -149,7 +155,7 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
                     {collapsed ? (
                         <>
                             <p className={styles.compactTitle}>
-                                {phase === "done" ? "Done:" : phase === "stopped" ? "Stopped:" : phase === "error" ? "Search incomplete:" : "Searching"} “{query}”
+                                {phase === "done" ? "Done:" : phase === "pricing" ? "Recovering prices:" : phase === "stopped" ? "Stopped:" : phase === "error" ? "Search incomplete:" : "Searching"} “{query}”
                             </p>
                             <p className={styles.sub}>{compact}</p>
                             {phase !== "error" && <ProgressBar percent={percent} thin />}

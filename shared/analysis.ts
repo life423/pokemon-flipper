@@ -1,5 +1,6 @@
 import type { Evaluation, ListingSummary } from "./types.ts";
 import { offerFor, offerWorthMaking } from "./money/offer.ts";
+import { canRetryPricing } from "./pricing-retries.ts";
 
 // Automatic analysis and its progress counts use the same eligibility rule.
 export function canAutoAnalyze(listing: ListingSummary): boolean {
@@ -15,7 +16,9 @@ export function resultGroup(listing: ListingSummary, evaluation: Evaluation | nu
     if (includeOffers && verdict === "PASS" && offerWorthMaking(offerFor(listing, evaluation?.underwriting?.best?.maxBid))) return "offers";
     if (verdict === "NEEDS_REVIEW" || verdict === "CANT_PRICE") return "review";
     // An incomplete check is unresolved, never a priced rejection or a queued analysis.
-    if (!evaluation && (analysisFailed || listing.screen?.status === "UNSCREENED")) return "review";
+    if (!evaluation && analysisFailed) return "review";
+    if (!evaluation && canRetryPricing(listing)) return "candidates";
+    if (!evaluation && listing.screen?.status === "UNSCREENED") return "review";
     if (!evaluation && listing.screen?.priceAnomaly && !listing.screen.priceAnomaly.photoChecked) return "review";
     if (!evaluation && listing.mistakes?.length && listing.screen?.status !== "CANDIDATE") return "review";
     if (!evaluation && listing.screen?.status === "CANDIDATE") return listing.screen.longShot ? "longShots" : "candidates";

@@ -38,6 +38,7 @@ import { verifyShadowless } from "../ai/shadowless-check.ts";
 import { photoReviewKey } from "./deeper-review.ts";
 import { listingEvidenceKey } from "../../shared/listing-evidence.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
+import { withPricingRecovery } from "../pricing/recover.ts";
 
 // eBay allows 24 photos; the ones past the first few are often the
 // close-ups that matter most.
@@ -57,7 +58,7 @@ async function gradedPricesByGrader(
 
     for (const grader of GRADERS) {
         try {
-            byGrader[grader] = await gradedPricesFor(card, identity, gradeRange, { fetchComps, checkComps, grader });
+            byGrader[grader] = await withPricingRecovery(() => gradedPricesFor(card, identity, gradeRange, { fetchComps, checkComps, grader }));
         } catch (error) {
             byGrader[grader] = {
                 status: "PRICE_UNAVAILABLE",
@@ -78,12 +79,12 @@ async function slabPricesFor(card: PricedCard | null, identity: Identity, slab: 
     }
 
     try {
-        return await compsForGrade(card, identity, {
+        return await withPricingRecovery(() => compsForGrade(card, identity, {
             grader,
             grade,
             fetchComps,
             checkComps,
-        });
+        }));
     } catch (error) {
         return {
             status: "PRICE_UNAVAILABLE",
@@ -247,7 +248,7 @@ async function evaluateOnce(
             const fronts = checkedPhotos.images.filter((image) => image.usable && !image.isStockImage && (image.view === "FRONT" || image.view === "FRONT_DETAIL"));
             if (!await verifyShadowless(fronts.map((image) => photoUrls[image.number - 1]))) photoIdentity.printing = undefined;
         }
-        const { identity, card } = await identifyCard(listing, checkedPhotos, { lookupCards, photoIdentity });
+        const { identity, card } = await identifyCard(listing, checkedPhotos, { lookupCards: query => withPricingRecovery(() => lookupCards(query)), photoIdentity });
 
         identifiedCard = card;
         evaluation.identity = identity;

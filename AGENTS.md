@@ -3,6 +3,38 @@
 Updated October 30, 2026. This file records the user's agreed requirements so
 future work can continue without losing the conversation context.
 
+## October 30 Neo Discovery automation follow-up
+
+The user requested a real `neo discovery holo` test, questioned screening/cache
+behavior, and clarified that routine failures should recover automatically.
+Developed on `codex/automatic-pricing-recovery` from `baaf804`. The user
+subsequently authorized committing the changes, merging into `main` and pushing
+to GitHub. Consult Git for delivery status. Read
+`docs/neo-discovery-automation-2026-10-30.md`.
+
+- Temporary screening-price failures recover within the cancellable search,
+  including new-listing discovery, using trusted tickets and guarded updates.
+  Keep batches of five, provider cooldowns, five-second batch spacing, two
+  automatic attempts per listing, 300-listing cap and a 20-minute window.
+  The existing queue's global pacing/mutex/three-attempt limit still applies.
+- Show temporary price work in Waiting with automatic-recovery progress, not
+  immediate manual Review. Genuine ambiguity/missing evidence still needs care.
+  Never manufacture Deals to clear the backlog or expand the user's AI cap.
+- Full assessments can resume a typed temporary price failure once after a
+  cooldown of at most 90 seconds, without repeating completed photo/condition
+  work. Keep existing comp checks and account/credit safeguards.
+- Match Unown letter forms through species metadata plus exact card number.
+  Empty card-name results use a five-minute negative cache; preserve successful
+  price caches and unchanged-photo assessments. Expired tickets cannot retry.
+- Two actual 100-match samples had 50 and 9 incomplete screenings respectively.
+  The first had 31 rate-limit cases and 14 Unown lookup failures; the second was
+  warm and had no temporary failures, so do not attribute every improvement to
+  automatic recovery. Three fresh pricing comparisons matched cached values.
+- Validation: 361 tests, typechecks/build, 48 browser checks with 11 axe scans,
+  real raw/slab assessments, and separate controlled screening/full-assessment
+  recovery. Main data/shortlist stay separate from test mutations. No physical
+  phone, universal valuation accuracy or production performance certification.
+
 ## October 30 result visibility and assessment audit
 
 The user requested finishing the audit and result visibility fixes with mobile

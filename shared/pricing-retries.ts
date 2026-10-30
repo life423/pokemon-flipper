@@ -11,6 +11,16 @@ export interface PricingRetry {
     snapshotKey: string;
     retryAt: string;
     attemptsLeft: number;
+    expiresAt?: string;
+}
+export interface PricingRecoveryProgress {
+    status: "checking" | "done";
+    total: number;
+    pending: number;
+    checked: number;
+    priced: number;
+    retryAt: string | null;
+    note?: string;
 }
 export interface PricingRetryResult {
     results: { id: string; snapshotKey: string; screen: Screen; match?: ListingSummary["match"] }[];
@@ -22,7 +32,7 @@ export function pricingSnapshotKey(listing: ListingSummary): string {
 export function canRetryPricing(listing: ListingSummary, now = Date.now()): boolean {
     const retry = listing.screen?.pricingRetry;
     return !listing.match && listing.availability !== "UNAVAILABLE" && (!listing.endTime || Date.parse(listing.endTime) > now) && listing.screen?.status === "UNSCREENED" &&
-        Boolean(retry && retry.attemptsLeft > 0 && retry.snapshotKey === pricingSnapshotKey(listing)) &&
+        Boolean(retry && retry.attemptsLeft > 0 && (!retry.expiresAt || Date.parse(retry.expiresAt) > now) && retry.snapshotKey === pricingSnapshotKey(listing)) &&
         ["RATE_LIMIT", "TEMPORARY"].includes(listing.screen?.pricingIssue?.kind ?? "");
 }
 export function applyPricingRetry(listing: ListingSummary, result: PricingRetryResult["results"][number]): ListingSummary {

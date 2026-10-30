@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import type { AnalysisState } from "../App";
+import { canRetryPricing } from "../../../shared/pricing-retries.ts";
 import type { ListingSummary, Targets } from "../types";
 import { dollars, timeLeft, name } from "../format";
 import { ceilingLabel } from "../../../shared/format.ts";
@@ -68,6 +69,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
         : verdict === "NEEDS_REVIEW" ? ["Your review needed", "watch"]
         : verdict === "CANT_PRICE" ? ["Can't price", "watch"]
         : verdict === "PASS" ? ["Pass", "pass"]
+        : !evaluation && canRetryPricing(listing, now) ? ["Waiting for price", "pending"]
         : pricePending ? ["Verify price", "watch"]
         : mistakes.length ? ["Photo lead", "watch"]
         : screen?.status === "CANDIDATE" ? [auction ? "Auction watch" : "Possible", "pending"]

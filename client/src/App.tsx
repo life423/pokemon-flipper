@@ -7,7 +7,7 @@ import { compareAnalysisPriority } from "../../shared/analysis-priority.ts";
 import { withFreshListing } from "../../shared/fresh-listing.ts";
 import { looksLikeListingLink, parseListingLink } from "../../shared/listing-link.ts";
 import { describeSearchCriteria, evaluatedCriteriaMismatch } from "../../shared/search-criteria.ts";
-import { applyPricingRetry, PRICING_RETRY_LIMIT } from "../../shared/pricing-retries.ts";
+import { applyPricingRetry, PRICING_RETRY_LIMIT, type PricingRecoveryProgress } from "../../shared/pricing-retries.ts";
 import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.ts";
 import { offerFor, offerWorthMaking } from "../../shared/money/offer.ts";
 import { compareListingEvidence, listingSignals } from "../../shared/signals.ts";
@@ -263,6 +263,7 @@ export function App() {
     const [rawListings, setListings] = useState<ListingSummary[]>([]);
     const [pricingBusy, setPricingBusy] = useState(false);
     const [pricingNote, setPricingNote] = useState("");
+    const [pricingRecovery, setPricingRecovery] = useState<PricingRecoveryProgress | null>(null);
     const pricingAbort = useRef<AbortController | null>(null);
     const pricingRevision = useRef(0);
     useEffect(() => () => { pricingAbort.current?.abort(); }, []);
@@ -647,7 +648,7 @@ export function App() {
         event?.preventDefault();
 
         if (!text.trim()) return;
-        cancelPricing(); setPricingNote("");
+        cancelPricing(); setPricingNote(""); setPricingRecovery(null);
         setLinkEntry(false); searchDraft.current = text;
         setPage("search");
         setNewMode(onlyNew); setNewIds(new Set()); setNewChecked(0);
@@ -694,6 +695,14 @@ export function App() {
                     setDigTotal(message.total);
                     setDigChecked(message.checked);
                     setDigError(message.note ?? null);
+                }
+                if (message.type === "pricing") setPricingRecovery(message);
+                if (message.type === "pricing-listing" && message.listing.screen) {
+                    const result = { id: message.listing.id, snapshotKey: message.snapshotKey, screen: message.listing.screen, match: message.listing.match };
+                    setListings((previous) => previous.map((listing) => {
+                        const analysis = pricingAnalyses.current[listing.id];
+                        return listing.id !== result.id || analysis?.status === "done" || analysis?.status === "loading" ? listing : applyPricingRetry(listing, result);
+                    }));
                 }
             };
             if (onlyNew) await streamNewDeals(text, { minPrice: Math.max(0, Number(minPrice) || 0), signal: controller.signal, targets, includeOffers, knownIds: rawListings.map((listing) => listing.id) }, receive);
@@ -897,7 +906,7 @@ export function App() {
                 : counts.waiting > 0
                   ? `No deals yet. ${counts.waiting} ${counts.waiting === 1 ? "candidate hasn't" : "candidates haven't"} been analyzed: see Waiting.`
                   : "No deals in this search at the current prices.",
-        candidates: "Nothing waiting for the AI.",
+        candidates: "Nothing waiting for pricing or AI analysis.",
         offers: "No offer opportunities within 10% of asking. Seller acceptance is never assumed.",
         longShots: "No long-shot auctions.",
         review: "Nothing needs review.",
@@ -1023,7 +1032,7 @@ export function App() {
             : stopped
               ? "stopped"
               : searchStatus === "checking"
-                ? summary
+                ? pricingRecovery?.status === "checking" ? "pricing" : summary
                     ? digStatus === "checking" ? "discovering" : "filtering"
                     : "finding"
                 : aiBusy
@@ -1457,6 +1466,7 @@ export function App() {
                             checked={newMode ? newChecked : digStatus === "idle" ? listings.length : (total ?? 0) + digChecked}
                             total={total === null ? null : total + digTotal}
                             ai={{ done: aiDone, target: aiTarget, analyzing: counts.analyzing, waiting: counts.waiting, failed: startedAnalyses.filter((analysis) => analysis.status === "error").length }}
+                            pricing={pricingRecovery}
                             stats={{
                                 junk: (summary?.skipped ?? 0) + counts.junk,
                                 dropped: counts.dropped,
@@ -1475,7 +1485,7 @@ export function App() {
                             details={progressDetails}
                         />
                     )}
-                    {searchStatus !== "idle" && <PricingRetries listings={listings} searching={searchStatus === "checking"} analyzed={new Set(Object.entries(analyses).filter(([, analysis]) => analysis.status === "done" || analysis.status === "loading").map(([id]) => id))}
+                    {searchStatus !== "idle" && <PricingRetries listings={listings} searching={searchStatus === "checking"} recovery={pricingRecovery} analyzed={new Set(Object.entries(analyses).filter(([, analysis]) => analysis.status === "done" || analysis.status === "loading").map(([id]) => id))}
                         busy={pricingBusy} note={pricingNote} onRetry={(tickets) => void retryPrices(tickets)} onCancel={cancelPricing} />}
                     {newMode && <p className={styles.discoveryNote}>Checks one page of the 200 newest listings, screens up to 20 unseen listings and automatically starts up to {Math.min(5, autoSetting)} full AI analyses. Discovery stays within your saved limits; repeated scans share a one-minute search cache.</p>}
 

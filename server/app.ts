@@ -124,7 +124,9 @@ app.post("/api/deals/new", async (req, res) => {
         const known: unknown = req.body?.knownIds ?? [];
         if (!query || query.length > 300 || !Array.isArray(known) || known.length > 500 || known.some((id) => typeof id !== "string" || id.length > 120)) throw new Error("A search and up to 500 known listing IDs are required.");
         await discoverNewListings(query, { signal: controller.signal, targets: searchTargets(req), includeOffers: req.query.offers === "1", minPrice: Math.max(0, Number(req.query.min) || 0),
-            onStart: (summary) => send({ type: "start", ...summary }), onListing: (listing) => send({ type: "listing", listing }) }, known as string[]);
+            onStart: (summary) => send({ type: "start", ...summary }), onListing: (listing) => send({ type: "listing", listing }),
+            onPricing: (progress) => send({ type: "pricing", ...progress }),
+            onPricingListing: (listing, snapshotKey) => send({ type: "pricing-listing", listing, snapshotKey }) }, known as string[]);
         send({ type: "done" });
     } catch (error) { if (!controller.signal.aborted) send({ type: "error", error: (error as Error).message }); }
     res.end();
@@ -176,6 +178,8 @@ app.get("/api/deals", async (req, res) => {
             onStart: (summary) => send({ type: "start", ...summary }),
             onListing: (listing) => { seen.add(listing.id); send({ type: "listing", listing }); },
             onDiscovery: (progress) => send({ type: "discovery", ...progress }),
+            onPricing: (progress) => send({ type: "pricing", ...progress }),
+            onPricingListing: (listing, snapshotKey) => send({ type: "pricing-listing", listing, snapshotKey }),
         });
         await searchHistory.remember(searchText(req), Math.max(0, Number(req.query.min) || 0), [...seen]).catch((error) => console.error("Search history was not saved", error));
         send({ type: "done" });

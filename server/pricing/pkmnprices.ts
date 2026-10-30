@@ -1,5 +1,6 @@
 import { readCache, writeCache } from "../lib/cache.ts";
-import { normalizeWords, sameCardNumber, sameSetFamily, setSearchTerm } from "../identity/card-identity.ts";
+import { sameCardNumber, sameSetFamily, setSearchTerm } from "../identity/card-identity.ts";
+import { pricingSearchName } from "./search-name.ts";
 import { conditionOf } from "./raw-prices.ts";
 import { cardNumberOf, cardVariants } from "./records.ts";
 import type { CardRecord, Comp, FetchComps, LookupCards } from "./types.ts";
@@ -40,7 +41,12 @@ async function apiGet(path: string, maxAgeHours = DAY): Promise<ApiBody> {
 }
 
 async function load(path: string, maxAgeHours: number): Promise<ApiBody> {
-    const cached = await readCache(`pkmnprices:${path}`, maxAgeHours);
+    let cached = await readCache(`pkmnprices:${path}`, maxAgeHours);
+    // A successful but empty name search should not hide a newly available
+    // record all day. Positive metadata and priced responses keep their TTLs.
+    if (path.startsWith("/cards?") && Array.isArray(cached?.data) && cached.data.length === 0) {
+        cached = await readCache(`pkmnprices:${path}`, Math.min(maxAgeHours, 5 / 60));
+    }
 
     if (cached) return cached;
 
@@ -160,7 +166,7 @@ export const lookupCards: LookupCards = async ({ set, name, cardNumber }) => {
     const familySets: { id: number; name: string }[] = (sets.data ?? []).filter((s: { name: string }) =>
         sameSetFamily(s.name, set)
     );
-    const nameTerm = normalizeWords(name).replace(/\bholo\b/g, "").trim();
+    const nameTerm = pricingSearchName(name);
     const cards: CardRecord[] = [];
 
     for (const familySet of familySets) {

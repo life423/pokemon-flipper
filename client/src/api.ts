@@ -1,6 +1,6 @@
 import type { DeeperPhotoReview, EbayUsage, Evaluation, ListingSummary, SearchIntent, Targets } from "./types";
 import type { ShortlistEntry, RefreshResult } from "../../shared/shortlist.ts";
-import type { PricingRetryResult } from "../../shared/pricing-retries.ts";
+import type { PricingRetryResult, PricingRecoveryProgress } from "../../shared/pricing-retries.ts";
 
 export function retryPricingBatch(tickets: string[], targets: Targets, includeOffers: boolean, signal: AbortSignal): Promise<PricingRetryResult> {
     return request(`/api/pricing/retry?profit=${targets.minProfit}&roi=${targets.minRoi}&offers=${includeOffers ? 1 : 0}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tickets }), signal });
@@ -31,6 +31,8 @@ export type DealsMessage =
     | { type: "start"; total: number; found: number; count: number; skipped: number; intent: SearchIntent; mode?: "new"; deferred?: number; previouslySeen?: number }
     | { type: "listing"; listing: ListingSummary }
     | { type: "discovery"; status: "checking" | "done" | "error"; checked: number; total: number; note?: string }
+    | ({ type: "pricing" } & PricingRecoveryProgress)
+    | { type: "pricing-listing"; listing: ListingSummary; snapshotKey: string }
     | { type: "done" }
     | { type: "error"; error: string };
 

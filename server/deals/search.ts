@@ -1,5 +1,8 @@
 import { findDeals, type SearchSummary } from "./find-deals.ts";
 import { digDeeper } from "./dig.ts";
+import { recoverSearchPricing } from "./recover-pricing.ts";
+import type { ListingSummary } from "../../shared/types.ts";
+import type { PricingRecoveryProgress } from "../../shared/pricing-retries.ts";
 
 export interface DiscoveryProgress {
     status: "checking" | "done" | "error";
@@ -12,14 +15,19 @@ export interface DiscoveryProgress {
 // search, shares its criteria, and never checks the same listing twice.
 export async function searchWithDiscovery(
     search: string,
-    options: NonNullable<Parameters<typeof findDeals>[1]> & { onDiscovery?: (progress: DiscoveryProgress) => void } = {},
-    steps = { find: findDeals, discover: digDeeper }
+    options: NonNullable<Parameters<typeof findDeals>[1]> & { onDiscovery?: (progress: DiscoveryProgress) => void; onPricing?: (progress: PricingRecoveryProgress) => void;
+        onPricingListing?: (listing: ListingSummary, snapshotKey: string) => void } = {},
+    steps: { find: typeof findDeals; discover: typeof digDeeper; recover?: typeof recoverSearchPricing } = { find: findDeals, discover: digDeeper, recover: recoverSearchPricing }
 ): Promise<void> {
     let summary: SearchSummary | undefined;
+    const snapshots = new Map<string, ListingSummary>();
+    const emit = (listing: ListingSummary) => { snapshots.set(listing.id, listing); options.onListing?.(listing); };
     const listings = await steps.find(search, {
         ...options,
+        onListing: emit,
         onStart: (value) => { summary = value; options.onStart?.(value); },
     });
+    for (const listing of listings) if (!snapshots.has(listing.id)) snapshots.set(listing.id, listing);
     if (options.signal?.aborted) return;
     let checked = 0;
     let total = 0;
@@ -27,6 +35,7 @@ export async function searchWithDiscovery(
     try {
         await steps.discover(search, {
             ...options,
+            onListing: emit,
             intent: summary?.intent,
             excludeIds: listings.map((listing) => listing.id),
             primaryListings: listings,
@@ -48,4 +57,9 @@ export async function searchWithDiscovery(
             note: error instanceof Error ? error.message : "Extra discovery couldn't finish.",
         });
     }
+    if (!options.signal?.aborted) await steps.recover?.([...snapshots.values()], {
+        signal: options.signal, targets: options.targets, includeOffers: options.includeOffers,
+        onListing: (listing, snapshotKey) => { snapshots.set(listing.id, listing);
+            if (options.onPricingListing) options.onPricingListing(listing, snapshotKey); else options.onListing?.(listing); }, onProgress: options.onPricing,
+    });
 }
