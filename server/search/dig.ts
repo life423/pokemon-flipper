@@ -1,6 +1,7 @@
 import { runStructured, MODEL } from "../ai/openai.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import type { FoundHow, SearchIntent } from "../../shared/types.ts";
+import { marketplaceQuery } from "../../shared/search-criteria.ts";
 
 // The extra eBay searches Dig deeper runs, aimed at single cards the plain
 // search misses: misspelled names, number-only titles, and the wrong
@@ -75,10 +76,10 @@ export async function digQueries(search: string, intent: SearchIntent, signal?: 
     return [
         ...misspellings.map((word) => ({ query: `${word} ${set}`.trim(), how: "MISSPELLED" as const })),
         ...numbers.map((number) => ({ query: `${number} holo`, how: "NUMBER_ONLY" as const })),
-        { query: search, how: "WRONG_CATEGORY", anyCategory: true },
-        ...(set ? [{ query: `${set} card`, how: "PHOTO_SHOWS_IT" as const }] : []),
+        { query: marketplaceQuery(search, intent), how: "WRONG_CATEGORY", anyCategory: true },
+        ...(set && intent.graded !== true ? [{ query: `${set} card`, how: "PHOTO_SHOWS_IT" as const }] : []),
         ...(intent.cardName && set ? [{ query: intent.cardName, how: "PHOTO_SHOWS_IT" as const }] : []),
-        ...(/base set|neo |team rocket|gym |fossil|jungle|vintage|199\d/i.test(`${search} ${set}`)
+        ...(intent.graded !== true && /base set|neo |team rocket|gym |fossil|jungle|vintage|199\d/i.test(`${search} ${set}`)
             ? [{ query: "old card 1999", how: "PHOTO_SHOWS_IT" as const }]
             : []),
     ];

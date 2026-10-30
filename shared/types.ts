@@ -86,6 +86,13 @@ export interface SearchIntent {
     cardNumber: string | null;
     printing: Printing | null;
     graded: boolean | null;
+    // Requested slab grade, not a predicted grade for a raw card.
+    grader?: string | null;
+    minGrade?: number | null;
+    maxGrade?: number | null;
+    finish?: "HOLO" | "NON_HOLO" | "REVERSE_HOLO" | null;
+    // Compact marketplace keywords; conversational operators stay in criteria.
+    keywords?: string;
     // Words a title has to contain to be this card, like ["charizard"].
     titleWords: string[];
     // Read by the AI, or by plain rules when the AI isn't available.
@@ -136,7 +143,7 @@ export interface ListingSummary {
     conditionNotes?: string[];
     screen?: Screen;
     // Set when the free check shows it isn't the card searched for.
-    match?: "OTHER_SET" | "OTHER_CARD" | "OTHER_PRINTING" | "OTHER_LANGUAGE" | "JUNK";
+    match?: "OTHER_SET" | "OTHER_CARD" | "OTHER_PRINTING" | "OTHER_LANGUAGE" | "OTHER_GRADER" | "OTHER_GRADE" | "OTHER_FINISH" | "UNCONFIRMED_CRITERIA" | "JUNK";
 }
 
 // ---- Photos and condition (the AI's findings, after the code rules) ----

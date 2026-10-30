@@ -6,6 +6,7 @@ import { analysisConcurrency, canAutoAnalyze, meetsMinimumGrade, resultGroup, ty
 import { compareAnalysisPriority } from "../../shared/analysis-priority.ts";
 import { withFreshListing } from "../../shared/fresh-listing.ts";
 import { looksLikeListingLink, parseListingLink } from "../../shared/listing-link.ts";
+import { describeSearchCriteria, evaluatedCriteriaMismatch } from "../../shared/search-criteria.ts";
 import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.ts";
 import { offerFor, offerWorthMaking } from "../../shared/money/offer.ts";
 import { compareListingEvidence, listingSignals } from "../../shared/signals.ts";
@@ -53,7 +54,7 @@ const RECENT_KEY = "recentSearches";
 const RECENT_LIMIT = 6;
 
 // Offered before there are recent searches.
-const STARTER_SEARCHES = ["1999 charizard", "neo genesis lugia", "base set blastoise", "dark charizard team rocket"];
+const STARTER_SEARCHES = ["aquapolis cards psa 7 or better holo", "1999 charizard", "neo genesis lugia", "base set blastoise"];
 
 function readRecentSearches(): string[] {
     try {
@@ -111,13 +112,14 @@ const AUTO_KEY = "aiPerSearch";
 
 // "1st Edition Charizard from Base Set, graded": how the search was read.
 function describeIntent(intent: SearchIntent): string {
-    let text = [intent.printing ? name(intent.printing) : null, intent.cardName ?? "listings for this search"]
+    let text = [intent.printing ? name(intent.printing) : null, intent.cardName ?? (intent.sets.length ? "cards" : "listings for this search")]
         .filter(Boolean)
         .join(" ");
 
     if (intent.sets.length > 0) text += ` from ${intent.sets.join(" or ")}`;
     if (intent.cardNumber) text += ` #${intent.cardNumber}`;
-    if (intent.graded !== null) text += intent.graded ? ", graded" : ", raw";
+    const criteria = describeSearchCriteria(intent);
+    if (criteria.length) text += ` · ${criteria.join(" · ")}`;
 
     return text;
 }
@@ -728,6 +730,10 @@ export function App() {
             // Another set, card, or printing than the one searched for, including
             // a reprint the photos gave away.
             .filter((listing) => !listing.match && !evaluationOf(analyses[listing.id])?.identity?.notThisCard)
+            .filter((listing) => {
+                const evaluation = evaluationOf(analyses[listing.id]);
+                return page !== "search" || !summary?.intent || !evaluation || !evaluatedCriteriaMismatch(evaluation, summary.intent);
+            })
             .filter((listing) => listing.availability !== "UNAVAILABLE")
             .filter((listing) => typeFilter === "all" || listing.buyingOption === typeFilter)
             .filter((listing) => kindFilter === "all" || listing.isGraded === (kindFilter === "graded"))
@@ -738,7 +744,7 @@ export function App() {
             .filter((listing) => (listing.currentPrice ?? 0) <= limit)
             .filter((listing) => listing.buyingOption !== "FIXED_PRICE" || (listing.currentPrice ?? 0) >= floor)
             .filter((listing) => !listing.endTime || Date.parse(listing.endTime) > now);
-    }, [listings, analyses, typeFilter, kindFilter, maxPrice, minPrice, minGrade, now]);
+    }, [listings, analyses, typeFilter, kindFilter, maxPrice, minPrice, minGrade, now, page, summary]);
 
     const groups = useMemo(() => {
         const grouped: Record<ResultGroup, ListingSummary[]> = { deals: [], offers: [], candidates: [], longShots: [], review: [] };
@@ -804,7 +810,8 @@ export function App() {
                 !(listing.screen.priceAnomaly && !listing.screen.priceAnomaly.photoChecked)).length,
             mismatched: listings.filter(
                 (listing) =>
-                    (listing.match && listing.match !== "JUNK") || Boolean(evaluationOf(analyses[listing.id])?.identity?.notThisCard)
+                    (listing.match && listing.match !== "JUNK") || Boolean(evaluationOf(analyses[listing.id])?.identity?.notThisCard) ||
+                    Boolean(page === "search" && summary?.intent && evaluationOf(analyses[listing.id]) && evaluatedCriteriaMismatch(evaluationOf(analyses[listing.id])!, summary.intent))
             ).length,
             // Junk the AI spotted in titles; the free rules' count comes with the search.
             junk: listings.filter((listing) => listing.match === "JUNK").length,
@@ -813,7 +820,7 @@ export function App() {
                 (listing) => (!newMode || newIds.has(listing.id)) && canAutoAnalyze(listing) && !analyses[listing.id]
             ).length,
         };
-    }, [listings, analyses, newMode, newIds]);
+    }, [listings, analyses, newMode, newIds, page, summary]);
 
     const selected = (page === "shortlist" ? shortlist.map((entry) => entry.listing) : page === "listing" ? directListing ? [directListing] : [] : listings).find((listing) => listing.id === selectedId) ?? null;
 
@@ -1016,8 +1023,7 @@ export function App() {
                 {summary.count.toLocaleString()} are {describeIntent(summary.intent)}.
             </p>}
             <p>
-                {counts.candidates} could be profitable at best; {counts.mismatched} set aside as other sets, cards, or
-                languages.
+                {counts.candidates} could be profitable at best; {counts.mismatched} set aside as other cards, sets, languages or search criteria.
             </p>
             <p>A new search takes a few minutes; repeats are quick.</p>
         </>
@@ -1144,7 +1150,7 @@ export function App() {
                                     )}
                                     {linkInput ? linkWorking ? "Evaluating…" : "Evaluate listing · paid" : "Find deals"}
                                 </button>
-                                <p className={styles.inputHint} id="listing-input-hint">{linkInput ? "Paste or drop a link. Uses paid AI." : "Search eBay, or evaluate a listing you’ve found."}</p>
+                                <p className={styles.inputHint} id="listing-input-hint">{linkInput ? "Paste or drop a link. Uses paid AI." : "Try “Aquapolis PSA 7 or better holo”, or evaluate an eBay link."}</p>
                             </form>
                         </div>
 
@@ -1400,6 +1406,7 @@ export function App() {
                             onOpen={() => openPanel(directListing.id)} /></div>}
                         {!directListing && linkStatus === "idle" && <p>Paste an eBay listing link above, then choose Evaluate listing.</p>}
                     </section> : <>
+                    {searchStatus !== "idle" && summary && <p className={styles.searchMeaning} role="status">Looking for: {describeIntent(summary.intent)}.{(summary.intent.grader || summary.intent.minGrade != null || summary.intent.finish) ? " Requested grader, slab grade and finish must match; unconfirmed listings are set aside." : ""}</p>}
                     {searchStatus !== "idle" && (
                         <SearchProgress
                             phase={phase}
@@ -1427,6 +1434,7 @@ export function App() {
                             details={progressDetails}
                         />
                     )}
+                    {searchStatus !== "idle" && searchStatus !== "checking" && counts.unchecked > 0 && <p className={styles.discoveryNote} role="status">{counts.unchecked} listings couldn’t be fully screened. Open All for pricing or identity details.</p>}
                     {newMode && <p className={styles.discoveryNote}>Checks one page of the 200 newest listings, screens up to 20 unseen listings and automatically starts up to {Math.min(5, autoSetting)} full AI analyses. Discovery stays within your saved limits; repeated scans share a one-minute search cache.</p>}
 
                     {needsWiderSearch && <div className={styles.searchUpdate} role="status">

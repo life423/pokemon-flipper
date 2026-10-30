@@ -90,6 +90,7 @@ export function photoFitsSearch(photo: PhotoInspection, intent: SearchIntent): b
     if (intent.sets.length && !intent.sets.some((set) => sameSetFamily(card.set, set))) return false;
     if (intent.cardNumber && !sameCardNumber(card.cardNumber, intent.cardNumber)) return false;
     if (intent.printing && photoPrinting(photo.printingMarks, { shadowMatters: sameSetFamily(card.set, "Base Set") }) !== intent.printing) return false;
+    if (intent.finish && card.finish !== intent.finish) return false;
     return true;
 }
 

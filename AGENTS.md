@@ -3,6 +3,37 @@
 Updated October 30, 2026. This file records the user's agreed requirements so
 future work can continue without losing the conversation context.
 
+## October 30 flexible natural-language search
+
+The user requested flexible queries such as “aquapolis cards psa 7 or better
+holo”. Implemented on `codex/flexible-search` from main `4173839`. The user
+subsequently authorized committing the changes, merging into `main`, and pushing
+to GitHub. Consult Git for the resulting revision and remote synchronization.
+No deployment was requested. Read
+`docs/flexible-search-2026-10-30.md` for scope and live verification.
+
+- Interpret card/set, grader, inclusive slab-grade bounds and finish; show the
+  reading visibly. A grade range must not become an exact-grade eBay keyword.
+  Holo excludes reverse holo and non-holo. Numeric common operators retain a
+  deterministic fallback; existing card/set interpretation still uses the model.
+- Reject known grade/grader/finish conflicts before pricing/photo work, and
+  repeat checks against item specifics, discovery and final photo assessments.
+  Unknown required criteria cannot queue full automatic analysis. Never use a
+  raw card's predicted grade as a requested existing slab grade. Direct links
+  remain independent of keyword search constraints.
+- Keep one cached intent request, existing title/comp/photo caches, concurrency,
+  reserve, cancellation and automatic-analysis settings. Broad graded-set
+  discovery needs one targeted extra query rather than unrelated raw searches.
+- Live Aquapolis verification returned matching PSA 7/8/9/10 cards, but 73 were
+  unpriced or incompletely screened (65 affected by provider cooldown). Do not
+  equate zero Deals with a fully priced marketplace. The UI now reports partial
+  screening and points to All. Follow provider cooldowns; do not force retries.
+- Validation: 331 unit tests, typechecks/build, four real intent queries, 14 live
+  browser checks (five axe scans), one real paid slab analysis, and six UI-only
+  checks (four axe scans) replaying the captured real stream. Touch phone,
+  tablet, desktop and enlarged-text screenshots were inspected. This is not a
+  physical-device or production performance certification.
+
 ## October 30 direct listing links
 
 The user requested pasting/dropping a listing link into the app for direct

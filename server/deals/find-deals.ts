@@ -10,6 +10,7 @@ import { prescreen, type ScreenInput } from "./prescreen.ts";
 import { withTargets } from "../../shared/money/targets.ts";
 import { availablePhotoCount } from "../../shared/analysis-priority.ts";
 import type { ListingSummary, Screen, SearchIntent, Targets } from "../../shared/types.ts";
+import { criteriaMismatch, marketplaceQuery, searchAttributes } from "../../shared/search-criteria.ts";
 
 // A search, the way eBay matches it, narrowed to the card searched for,
 // with every listing screened for free. eBay limits listing-detail
@@ -107,6 +108,14 @@ export async function screenListing(
         return { ...listing, match: "OTHER_SET" };
     }
 
+    const titleCriteria = searchAttributes(listing.title, fromTitle.aspects);
+    const explicitMismatch = intent && criteriaMismatch(titleCriteria, intent, false);
+    if (explicitMismatch) return { ...listing, match: explicitMismatch };
+    const titleResult = (value: ListingSummary): ListingSummary => {
+        const mismatch = intent && criteriaMismatch(titleCriteria, intent);
+        return mismatch ? { ...value, match: mismatch } : value;
+    };
+
     const first = withFilled(
         await steps.check({ ...base, title: listing.title, aspects: fromTitle.aspects, cardCondition: fromTitle.condition ?? null }),
         fromTitle.filled
@@ -115,7 +124,7 @@ export async function screenListing(
 
     // Explicit junk stays excluded; a low price alone waits for bounded discovery.
     if (first.junk) return { ...listing, match: "JUNK", screen: first };
-    if (first.priceAnomaly && !first.priceAnomaly.photoChecked) return { ...listing, screen: first };
+    if (first.priceAnomaly && !first.priceAnomaly.photoChecked) return titleResult({ ...listing, screen: first });
 
     // A candidate's main photo, checked against the card it claims before any
     // eBay request or full analysis. Long-shot auctions aren't worth it.
@@ -136,7 +145,7 @@ export async function screenListing(
 
     // Dropped on its title alone: no eBay detail request.
     if (first.status !== "CANDIDATE" && !first.incomplete) {
-        return { ...listing, screen: { ...first, evidence: { photos: availablePhotoCount(listing.images), mainPhoto: seen?.verdict === "MATCH" ? "MATCH" : seen?.verdict === "CANT_TELL" ? "CANT_TELL" : "UNKNOWN" } } };
+        return titleResult({ ...listing, screen: { ...first, evidence: { photos: availablePhotoCount(listing.images), mainPhoto: seen?.verdict === "MATCH" ? "MATCH" : seen?.verdict === "CANT_TELL" ? "CANT_TELL" : "UNKNOWN" } } });
     }
 
     let details: ListingDetails;
@@ -146,7 +155,7 @@ export async function screenListing(
     } catch {
         signal?.throwIfAborted();
         // Out of eBay requests, or the listing is gone: the title's check stands.
-        return { ...listing, screen: { ...first, evidence: { photos: availablePhotoCount(listing.images), mainPhoto: seen?.verdict === "MATCH" ? "MATCH" : seen?.verdict === "CANT_TELL" ? "CANT_TELL" : "UNKNOWN" } } };
+        return titleResult({ ...listing, screen: { ...first, evidence: { photos: availablePhotoCount(listing.images), mainPhoto: seen?.verdict === "MATCH" ? "MATCH" : seen?.verdict === "CANT_TELL" ? "CANT_TELL" : "UNKNOWN" } } });
     }
     signal?.throwIfAborted();
 
@@ -157,6 +166,9 @@ export async function screenListing(
     if (!isEnglish(aspects.Language)) {
         return { ...listing, match: "OTHER_LANGUAGE" };
     }
+    if (intent && !setMatches(aspects.Set, intent)) return { ...listing, match: "OTHER_SET" };
+    const detailsMismatch = intent && criteriaMismatch(searchAttributes(details.title, aspects), intent);
+    if (detailsMismatch) return { ...listing, match: detailsMismatch };
 
     const screen = withFilled(
         await steps.check({
@@ -215,7 +227,7 @@ export async function findDeals(
     const intent = await readSearch(search, signal);
     if (signal?.aborted) return [];
     const limit = Math.min(MOST_RESULTS, Math.max(200, Math.round(maxResults / 200) * 200));
-    const { listings, total, skipped } = await searchListings(search, { maxResults: newOnly ? 200 : limit, signal, ...(newOnly ? { sort: "newlyListed" as const, keepReserve: true } : {}) });
+    const { listings, total, skipped } = await searchListings(marketplaceQuery(search, intent), { maxResults: newOnly ? 200 : limit, signal, ...(newOnly ? { sort: "newlyListed" as const, keepReserve: true } : {}) });
     if (signal?.aborted) return [];
     const now = Date.now();
     const requestsBefore = detailRequestCount();
@@ -227,6 +239,7 @@ export async function findDeals(
         (listing) =>
             titleMatches(listing.title, intent) &&
             gradingMatches(listing.isGraded, intent) &&
+            !criteriaMismatch(searchAttributes(listing.title), intent, false) &&
             !(listing.buyingOption === "FIXED_PRICE" && (listing.currentPrice ?? 0) < minPrice)
     );
 

@@ -10,6 +10,7 @@ import type { PhotoMatch } from "../ai/photo-match.ts";
 import { analysisConcurrency } from "../../shared/analysis.ts";
 import { compareAnalysisPriority } from "../../shared/analysis-priority.ts";
 import type { FoundHow, ListingSummary, SearchIntent, Targets } from "../../shared/types.ts";
+import { criteriaMismatch, searchAttributes } from "../../shared/search-criteria.ts";
 
 // Dig deeper: single cards a plain search misses, where the hidden deals
 // are: misspelled or vague titles, number-only titles, and the wrong eBay
@@ -47,6 +48,7 @@ function photoSteps(seen: PhotoFind, intent: SearchIntent, steps: ScreenSteps): 
             if (seen.inspection?.card.name ?? intent.cardName) aspects["Card Name"] = (seen.inspection?.card.name ?? intent.cardName)!;
             if (seen.set) aspects.Set = seen.set;
             if (seen.cardNumber) aspects["Card Number"] = seen.cardNumber;
+            if (seen.inspection?.card.finish && seen.inspection.card.finish !== "UNKNOWN") aspects.Finish = seen.inspection.card.finish;
 
             return { ...read, aspects };
         },
@@ -152,6 +154,7 @@ export async function digDeeper(
     const eligible = [...found.values()].filter(
         ({ listing }) =>
             gradingMatches(listing.isGraded, intent) &&
+            !criteriaMismatch({ ...searchAttributes(listing.title), finish: null }, { ...intent, finish: null }, false) &&
             (!listing.endTime || Date.parse(listing.endTime) > now) &&
             !(listing.buyingOption === "FIXED_PRICE" && (listing.currentPrice ?? 0) < minPrice)
     );
