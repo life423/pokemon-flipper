@@ -68,6 +68,8 @@ Three ways to flip a card are priced for every listing:
 - **Find new listings:** after a search, scan one page of the 200 newest listings. Previously seen IDs are skipped before screening, at most 20 unseen listings are screened per click, and at most five full analyses start automatically within your saved setting. Earlier results stay available in the other views.
 - **A verdict for every listing:** buy raw, buy and grade, buy graded, pass, needs review, or can't price.
 - **A max bid:** the most you can pay and still clear your targets after eBay fees, sales tax, shipping, and grading costs.
+- **Resale evidence:** raw cards use a recent eBay sold median when at least three sales explicitly match the printing, finish and condition. Otherwise the condition-specific TCGplayer market price remains a labeled fallback. Open Prices to inspect the matched sales. Graded cards prefer 90-day sales when at least three match, with a labeled 180-day fallback for sparse grades. Only USD sales enter the money math.
+- **Trading activity:** a full assessment shows recorded eBay sales over 30 days, active selling days and average recorded sales per day. Counts cover the same printing, with raw conditions or slab grades combined. They measure provider observations, not total market volume or guaranteed time to sell; volume availability depends on the provider plan.
 - **Your targets, live:** set a minimum profit and minimum return in the toolbar (or *Any*). Every max bid, verdict, and ranking recalculates instantly, with no new lookups.
 - **Ratings:** *Strong*, *Good*, or *Thin*, from plain rules: room under the max bid, the outcome at the low end of the grade range, how many sales back the price, photo confidence, and seller feedback. Every concern is listed.
 - **Bargain signals:** signs a listing is overlooked or mispriced because of how it was listed: photos showing a pricier printing than the title says, a misspelled name, no set or number, missing item details, weak photos of an identifiable card, auctions with almost no bids or ending in the middle of the night, new sellers. Each listing gets a score with the reasons, and **Most overlooked first** sorts by it. A signal is never a buy: the photos and the money math still decide.
@@ -103,7 +105,9 @@ cp .env.example .env    # then fill in your keys
 npm run dev
 ```
 
-Open **http://localhost:3000** and search for a card.
+Open **http://localhost:3017** and search for a card. This app uses its own port
+so it can run alongside Ascend Avoid on port 3000. Startup never kills another
+process; if 3017 is already occupied, use the running instance or set `PORT`.
 
 The server reads `.env` at startup. After adding or changing keys, restart
 `npm run dev`. eBay requires a matching Production app ID and cert ID. Missing or
@@ -122,7 +126,7 @@ rejected eBay credentials now appear as an actionable search error.
 | `EBAY_SHIP_TO_ZIP` | No | Lets eBay quote calculated shipping to your ZIP |
 | `OPENAI_MODEL` | No | Overrides the default model |
 | `POKEMON_PRICE_TRACKER_API_KEY` | No | A second price source, kept as a cross-check |
-| `PORT` | No | Server port, 3000 by default |
+| `PORT` | No | Server port, 3017 by default |
 
 **Money settings, in [`shared/money/config.ts`](shared/money/config.ts)**
 
@@ -132,8 +136,7 @@ eBay fees, sales tax, shipping costs, PSA and CGC service levels, and default ta
 
 | Command | What it does |
 | --- | --- |
-| `npm run dev` | Frees port 3000, then runs the app with live reload |
-| `npm run kill-ports` | Stops whatever is using port 3000 |
+| `npm run dev` | Runs the app with live reload; never stops another app |
 | `npm test` | Runs the test suite; no paid API calls |
 | `npm run typecheck` | Type-checks the server and the page |
 | `npm run build` | Builds the page for production |
@@ -169,7 +172,7 @@ Everything is TypeScript. The server runs through [tsx](https://tsx.is), and the
 
 **eBay.** The Browse API allows 5,000 requests a day per app by default. The app keeps its use low:
 
-- The free check runs on search results with AI-read titles; only listings that pass get an eBay detail request. That's about 300 requests per new 1,000-result search instead of 1,000.
+- Screening starts with search results and AI-read titles. Candidates, incomplete identities and borderline listings whose unknown shipping could change eligibility get listing details. A borderline shipping check requests a fresh quote; missing quotes still use the explicit $7 assumption. Shipping caches are separated by destination ZIP.
 - Searches are saved for 10 minutes and listing details for a week. Analyzing a listing you've already searched usually costs no eBay request at all.
 - Repricing a completed analysis, filtering loaded results and sorting make no
   eBay requests. Lower targets can qualify additional automatic analyses within
@@ -182,7 +185,9 @@ eBay raises the limit through its free [Application Growth Check](https://develo
 
 **OpenAI.** Reading a search is one call, saved for a month. Titles are read 25 per call and saved for good. Comp checks are batched per card and grade and saved per sale. A full photo analysis is a few vision calls; its answers are saved per listing and reused until the photos change. Every candidate that lands in **Waiting** is analyzed automatically, best first, three at a time; long-shot auctions are skipped. The **AI per search** setting can cap that, or turn it off.
 
-**pkmnprices.** Credits are charged per row returned. Responses are saved for a day.
+**pkmnprices.** Credits are charged per row returned. Card/market-price responses are saved for a day; recent eBay sales and sales-volume responses for six hours. Raw evidence samples at most two pages (40 sales) per printing over 90 days, shared across listings. Volume uses one bounded 30-row page per printing/raw-or-graded scope and labels incomplete coverage. An unavailable plan feature does not block working price lookups. No background polling is added.
+
+Saved shortlist valuations from an older pricing version or more than six hours ago do not supply current advice. Opening them refreshes the valuation, reusing valid unchanged photo assessments. The full-analysis setting still controls automatic search evaluations.
 
 **Saved listings and new inventory.** Saves, notes, ceilings and removals use local
 storage on the app server, with no provider call. Targeted refresh runs at most two
@@ -217,7 +222,7 @@ The tests cover identity and printing rules, comp filtering, the money math, rat
 
 ## Known gaps
 
-- **PSA prices aren't verified yet.** eBay fees (13.6% plus $0.40), shipping costs, the 8.25% purchase tax, and CGC's fees are matched to real orders and published prices; PSA's in [`shared/money/config.ts`](shared/money/config.ts) still need checking.
+- **PSA fees need account verification.** Public service levels were checked against PSA's October 30 schedule, including available Standard and the current Express fee. PSA remains unverified against your invoice/account. Your recorded 13.6% eBay fee, shipping assumptions, purchase tax and CGC schedule remain configurable in [`shared/money/config.ts`](shared/money/config.ts).
 - **Printings named only in item details.** The free check reads titles, so a slab whose seller writes *Shadowless* or *1st Edition* only in the item details is checked as Unlimited at first.
 - **BGS and SGC slabs** aren't priced yet, and **non-English cards** are skipped.
 - **Grade odds are a fixed rule:** the likely grade counts most and each grade away counts less. It isn't yet measured against real grading results.

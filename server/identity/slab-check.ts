@@ -1,4 +1,4 @@
-import type { PhotoCheck, Slab } from "../../shared/types.ts";
+import type { PhotoCheck, Slab, SlabReading } from "../../shared/types.ts";
 import { normalizeText } from "../ebay/filters.ts";
 import { gradeQualifier as qualifierOf } from "../../shared/grade-qualifier.ts";
 
@@ -40,11 +40,22 @@ function digits(text: unknown): string | null {
     return value || null;
 }
 
+export function normalizeSlabReading(reading: SlabReading | null | undefined): SlabReading | null {
+    if (!reading) return null;
+    const grader = graderCode(reading.grader);
+    const grade = normalizeGrade(reading.grade);
+    return { ...reading, grader, grade, gradeQualifier: qualifierOf(reading.gradeQualifier, grader, grade),
+        // New prompts require concrete evidence for POSSIBLE. Empty evidence
+        // means no suspicious sign was identified, not external certification.
+        // Legacy answers without this field retain their original caution.
+        authenticity: reading.authenticity === "POSSIBLE" && Array.isArray(reading.authenticityEvidence) && reading.authenticityEvidence.length === 0 ? "NONE_SEEN" : reading.authenticity };
+}
+
 export function checkSlab(
     photoCheck: Pick<PhotoCheck, "slab" | "images">,
     aspects: Record<string, string> = {}
 ): Slab {
-    const slab = photoCheck.slab;
+    const slab = normalizeSlabReading(photoCheck.slab);
 
     if (!slab?.present) {
         return {

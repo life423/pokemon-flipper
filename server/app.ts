@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { setYears } from "./pricing/price-tracker.ts";
+import { evaluationFailure } from "./analysis/failure.ts";
 import http from "node:http";
 import path from "node:path";
 import express from "express";
@@ -23,6 +24,8 @@ import { discoverNewListings } from "./deals/new-listings.ts";
 import { searchFailureMessage } from "./deals/errors.ts";
 import { resolveListingLink, ListingLinkError } from "./listings/resolve.ts";
 import { pricingRetries, PricingRetryError } from "./deals/pricing-retries.ts";
+import { localApi, validSearchRequest } from "./lib/local-api.ts";
+import { aiUsageToday } from "./ai/usage.ts";
 
 const app = express();
 
@@ -59,10 +62,17 @@ function searchTargets(req: express.Request) {
     };
 }
 const server = http.createServer(app);
-const PORT = Number(process.env.PORT || 3000);
+const PORT = Number(process.env.PORT || 3017);
 const isProduction = process.env.NODE_ENV === "production";
 
+app.use("/api", localApi);
 app.use(express.json());
+app.get(["/api/deals", "/api/dig"], validSearchRequest);
+app.post("/api/deals/new", validSearchRequest);
+app.get("/api/ai-usage", async (_req, res) => {
+    try { res.json(await aiUsageToday()); }
+    catch { res.status(500).json({ error: "AI usage could not be read. Provider operations are unchanged." }); }
+});
 
 app.post("/api/pricing/retry", async (req, res) => {
     const controller = new AbortController();
@@ -154,7 +164,7 @@ app.get("/api/ebay-usage", async (req, res) => {
     res.json(await ebayUsage());
 });
 
-// Every listing in a search, screened for free (no AI): what each one
+// Every listing in a search, screened with rules, prices and AI title/comp reads: what each one
 // is worth at its best, and whether it could clear your targets.
 // Streamed as one JSON object per line, so the page fills in as listings
 // are checked.
@@ -219,14 +229,14 @@ app.get("/api/dig", async (req, res) => {
     res.end();
 });
 
-// Paid unless the listing's saved answer is reused: up to three
-// vision requests. ?fresh=1 ignores the saved answer.
+// Paid stages can include photos, condition opinions, focused identity work
+// and comparable checks. Saved stages are reused; ?fresh=1 asks again.
 app.post("/api/listings/:id/evaluate", async (req, res) => {
     try {
         const current = currentState(req.body);
         const evaluation = await evaluateListing(req.params.id, {
             fresh: req.query.fresh === "1",
-            current,
+            current: req.query.refreshTerms === "1" ? null : current,
         });
         const evidenceKey = listingEvidenceKey({ title: req.query.fresh === "1" ? evaluation.listing.title : current?.title ?? evaluation.listing.title,
             images: req.query.fresh === "1" ? evaluation.listing.photos ?? [] : current?.images ?? evaluation.listing.photos ?? [] });
@@ -236,13 +246,8 @@ app.post("/api/listings/:id/evaluate", async (req, res) => {
     } catch (error) {
         console.error(error);
 
-        const notFound = error instanceof EbayError && error.status === 404;
-
-        res.status(notFound ? 404 : error instanceof ProviderError ? 503 : 500).json({
-            error: notFound
-                ? "Listing not found or no longer available"
-                : error instanceof ProviderError ? error.message : "Listing evaluation failed",
-        });
+        const failure = evaluationFailure(error);
+        res.status(failure.status).json(failure);
     }
 });
 
@@ -317,7 +322,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
 }
 
 server.on("error", (error) => {
-    console.error(`Couldn't start on port ${PORT}: ${error.message}`);
+    console.error(`Couldn't start on port ${PORT}: ${error.message}. Use the existing app instance or choose another PORT; no other process was stopped.`);
     process.exit(1);
 });
 

@@ -2,11 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import { prefersReducedMotion, transitionName, withViewTransition } from "./motion";
 import type { EbayUsage, Evaluation, ListingSummary, RatingLevel, SearchIntent, Targets } from "./types";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
+import { currentPriceEvidence } from "../../shared/pricing-freshness.ts";
+import type { AiUsageDay } from "../../shared/ai-usage.ts";
+import { fetchAiUsage } from "./api";
 import { analysisConcurrency, canAutoAnalyze, meetsMinimumGrade, resultGroup, type ResultGroup } from "../../shared/analysis.ts";
 import { compareAnalysisPriority } from "../../shared/analysis-priority.ts";
 import { withFreshListing } from "../../shared/fresh-listing.ts";
 import { looksLikeListingLink, parseListingLink } from "../../shared/listing-link.ts";
-import { describeSearchCriteria, evaluatedCriteriaMismatch } from "../../shared/search-criteria.ts";
+import { describeSearchCriteria, evaluatedCriteriaMismatch, withResolvedCriteria } from "../../shared/search-criteria.ts";
 import { applyPricingRetry, PRICING_RETRY_LIMIT, type PricingRecoveryProgress } from "../../shared/pricing-retries.ts";
 import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.ts";
 import { offerFor, offerWorthMaking } from "../../shared/money/offer.ts";
@@ -329,8 +332,10 @@ export function App() {
 
     // Today's eBay allowance, checked on load and after each search.
     const [usage, setUsage] = useState<EbayUsage | null>(null);
+    const [aiUsage, setAiUsage] = useState<AiUsageDay | null>(null);
     const refreshUsage = useCallback(() => {
         fetchEbayUsage().then(setUsage, () => {});
+        fetchAiUsage().then(setAiUsage, () => {});
     }, []);
 
     useEffect(refreshUsage, [refreshUsage]);
@@ -380,10 +385,13 @@ export function App() {
     // Everything re-priced for your targets, from numbers already fetched.
     const listings = useMemo(
         () =>
-            rawListings.map((listing) =>
-                listing.screen ? { ...listing, screen: retargetScreen(listing.screen, listing.currentPrice, targets, undefined, includeOffers) } : listing
-            ),
-        [rawListings, targets, includeOffers]
+            rawListings.map((listing) => {
+                const analysis = rawAnalyses[listing.id];
+                const evaluation = analysis?.status === "done" && analysis.evidenceKey === listingEvidenceKey(listing) ? analysis.evaluation : undefined;
+                const resolved = withResolvedCriteria(listing, evaluation, summary?.intent);
+                return resolved.screen ? { ...resolved, screen: retargetScreen(resolved.screen, resolved.currentPrice, targets, undefined, includeOffers) } : resolved;
+            }),
+        [rawListings, rawAnalyses, summary, targets, includeOffers]
     );
 
     const analyses = useMemo(() => {
@@ -399,7 +407,7 @@ export function App() {
                     : analysis;
         }
         for (const entry of shortlist) {
-            if (!entry.evaluation || repriced[entry.id]) continue;
+            if (!entry.evaluation || !currentPriceEvidence(entry.evaluation, now) || repriced[entry.id]) continue;
             const current = currentListings.get(entry.id) ?? entry.listing;
             if (listingEvidenceKey(current) !== listingEvidenceKey(entry.listing)) continue;
             repriced[entry.id] = { status: "done", evidenceKey: listingEvidenceKey(current), evaluation: retargetEvaluation(entry.evaluation, targets, current) };
@@ -448,7 +456,7 @@ export function App() {
             setListings((previous) => previous.map((listing) => ids.includes(listing.id) ? byId.get(listing.id)?.listing ?? listing : listing));
             setDirectListing((previous) => previous && ids.includes(previous.id) ? byId.get(previous.id)?.listing ?? previous : previous);
             setAnalyses((previous) => { const next = { ...previous }; for (const id of ids) { const entry = byId.get(id); if (result.errors.some((error) => error.id === id)) continue;
-                if (entry?.evaluation) next[id] = { status: "done", evidenceKey: listingEvidenceKey(entry.listing), evaluation: entry.evaluation }; else delete next[id]; } return next; });
+                if (entry?.evaluation && currentPriceEvidence(entry.evaluation)) next[id] = { status: "done", evidenceKey: listingEvidenceKey(entry.listing), evaluation: entry.evaluation }; else delete next[id]; } return next; });
             setRefreshErrors((previous) => { const next = { ...previous }; for (const id of ids) delete next[id]; for (const error of result.errors) next[error.id] = error.message; return next; });
             setSaveNotice({ text: result.errors.length ? `${result.errors.length} refresh ${result.errors.length === 1 ? "failed" : "checks failed"}. Previous snapshots kept for those listings.` : "Selected listings refreshed. No AI analysis was started.", error: Boolean(result.errors.length) });
             refreshUsage();
@@ -520,6 +528,7 @@ export function App() {
             setAnalysisOutcomes((previous) => [...previous.slice(-7), false]);
         } finally {
             activeAnalyses.current.delete(listing.id);
+            refreshUsage();
             const pending = pendingAnalyses.current.get(listing.id);
             pendingAnalyses.current.delete(listing.id);
             const current = latestListings.current.get(listing.id);
@@ -527,7 +536,7 @@ export function App() {
                 void runAnalysis(current, pending.fresh);
             }
         }
-    }, [loadShortlist]);
+    }, [loadShortlist, refreshUsage]);
 
     const runPhotoReview = useCallback(async (listing: ListingSummary, evaluation: Evaluation) => {
         const key = evaluation.photoReviewKey;
@@ -669,6 +678,10 @@ export function App() {
         autoQueued.current = new Set();
         pendingAnalyses.current.clear();
         if (!onlyNew) setListings([]);
+        // A new explicit search refreshes stale prices without discarding paid
+        // photo work on the server or adding an idle background refresh loop.
+        if (!onlyNew) setAnalyses(previous => Object.fromEntries(Object.entries(previous).filter(([itemId, analysis]) =>
+            analysis.status === "done" ? currentPriceEvidence(analysis.evaluation) : analysis.status === "loading" && activeAnalyses.current.has(itemId))));
         setTotal(null);
         setSummary(null);
         setSelectedId(null);
@@ -741,7 +754,9 @@ export function App() {
         if (remaining <= 0) return;
 
         const waiting = listings
-            // Long-shot auctions aren't worth the AI.
+            // Resolve metadata and unusual prices as they arrive too. Auction
+            // likelihood affects presentation and priority, not permission to
+            // inspect the actual card within the user's analysis budget.
             .filter((listing) => (!newMode || newIds.has(listing.id)) && canAutoAnalyze(listing) && !analyses[listing.id] &&
                 !activeAnalyses.current.has(listing.id) && !activePhotoReviews.current.has(listing.id))
             .sort((a, b) => compareAnalysisPriority(a, b, targets));
@@ -1072,7 +1087,7 @@ export function App() {
                 {summary.count.toLocaleString()} are {describeIntent(summary.intent)}.
             </p>}
             <p>
-                {counts.candidates} could be profitable at best; {counts.mismatched} set aside as other cards, sets, languages or search criteria.
+                {counts.candidates} listings are eligible for AI analysis; {counts.mismatched} set aside as other cards, sets, languages or search criteria.
             </p>
             <p>A new search takes a few minutes; repeats are quick.</p>
         </>
@@ -1266,7 +1281,7 @@ export function App() {
                                     <span>Minimum Buy It Now price</span>
                                     <span className={styles.affix}><span>$</span><input type="number" min="0" inputMode="decimal" placeholder="Any" value={minPrice} onChange={(event) => changeMinPrice(event.target.value)} /></span>
                                 </label>
-                                <label className={styles.field} title="Raw cards use the upper end of the AI PSA-style grade range. Slabs use their label grade. Applies after analysis; potential is not a guarantee.">
+                                <label className={styles.field} title="Raw cards use the upper end of the AI grade range. Slabs use their label grade. Applies after analysis.">
                                     <span>Minimum potential grade</span>
                                     <select value={minGrade} onChange={(event) => changeMinGrade(Number(event.target.value))}>
                                         <option value={0}>Any grade</option>
@@ -1408,7 +1423,7 @@ export function App() {
                                         {Array.from({ length: 10 }, (_, index) => index + 1).map((grade) => <option key={grade} value={grade}>{grade} or above</option>)}
                                     </select>
                                 </label>
-                                <p className={styles.usage}>Uses the upper end of the AI grade range after analysis. Potential is not a guarantee; check the likely grade and photo confidence.</p>
+                                <p className={styles.usage}>Uses the upper end of the AI grade range after analysis. Slabs use their label grade.</p>
                             </section>
 
                             <section className={styles.drawerSection}>
@@ -1432,13 +1447,19 @@ export function App() {
                                     <select value={autoSetting} onChange={(event) => changeAutoSetting(Number(event.target.value))}>
                                         {AUTO_OPTIONS.map((option) => (
                                             <option key={option} value={option}>
-                                                {option === ALL ? "All waiting" : option === 0 ? "Off" : `Top ${option}`}
+                                                {option === ALL ? "All matching" : option === 0 ? "Off" : `Top ${option}`}
                                             </option>
                                         ))}
                                     </select>
                                 </label>
-                                <p className={styles.usage}>Automatic discovery is included in every search. Screening and discovery may use cached or paid AI photo checks; this limit controls full condition analyses.</p>
+                                <p className={styles.usage}>AI checks matching listings even when preliminary prices are missing or above target. Stronger opportunities go first. This limit controls full assessments; screening and discovery can also use paid checks.</p>
                                 {usage && <p className={styles.usage}>{describeUsage(usage)}</p>}
+                            </section>
+                            <section className={styles.drawerSection}>
+                                <h3>AI usage</h3>
+                                <p className={styles.usage}>{aiUsage ? `${aiUsage.calls} API calls recorded on ${aiUsage.dayUtc} (UTC)` : "Usage will appear after the local log is available."}</p>
+                                {aiUsage && <details className={styles.aiUsage}><summary>View calls by task and model</summary><ul>{aiUsage.stages.map(stage => <li key={`${stage.step}:${stage.model}`}><strong>{stage.step}</strong><br />{stage.model} · {stage.calls} calls{stage.failed ? ` · ${stage.failed} failed` : ""}<br />{(stage.inputTokens + stage.outputTokens).toLocaleString()} tokens · {stage.images} image inputs</li>)}</ul></details>}
+                                <p className={styles.usage}>Local server totals since logging began. Retries count separately; reused answers add no request. This is usage telemetry, not a billing statement.</p>
                             </section>
                         </Drawer>
                     </header>
@@ -1446,7 +1467,7 @@ export function App() {
                     {page === "shortlist" ? <ShortlistView entries={shortlist} loading={shortlistLoading} error={shortlistError} refreshing={refreshingSaved} refreshErrors={refreshErrors}
                         onRetry={() => void loadShortlist()} onRefresh={refreshSaved} onRemove={removeSaved} onUpdate={updateSaved} now={now}
                         renderCard={(entry) => <DealCard listing={entry.listing} analysis={analyses[entry.id]} selected={entry.id === selectedId} now={now} years={setYearsByKey} targets={targets} minGrade={minGrade} photoReviewState={photoReviews[entry.id]}
-                            onOpen={() => openPanel(entry.id)} />} /> : page === "listing" ? <section className={styles.linkEvaluation} aria-labelledby="link-evaluation-heading">
+                            onOpen={() => { openPanel(entry.id); if (!analyses[entry.id]) void runAnalysis(entry.listing); }} />} /> : page === "listing" ? <section className={styles.linkEvaluation} aria-labelledby="link-evaluation-heading">
                         <h2 id="link-evaluation-heading">Listing evaluation</h2>
                         {linkStatus === "loading" && <div className={styles.linkLoading} role="status"><p>Reading the listing from eBay…</p><button type="button" className={styles.secondary} onClick={() => { cancelLink(); if (!directListing) setPage("search"); }}>Cancel</button></div>}
                         {linkStatus === "error" && <p role="alert" className={styles.warning}>{linkError}{directListing ? " Your previous listing is still shown below." : ""}</p>}

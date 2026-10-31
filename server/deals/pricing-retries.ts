@@ -2,9 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { PRICING_RETRY_LIMIT, pricingSnapshotKey, type PricingIssue, type PricingRetry, type PricingRetryResult } from "../../shared/pricing-retries.ts";
 import type { ListingSummary, Screen, SearchIntent, Targets } from "../../shared/types.ts";
 import { prescreen, type ScreenInput } from "./prescreen.ts";
-import { lookupCards, fetchComps, pricingCooldown } from "../pricing/pkmnprices.ts";
+import { lookupCards, fetchComps, fetchRawComps, pricingCooldown } from "../pricing/pkmnprices.ts";
 import { withTargets } from "../../shared/money/targets.ts";
 import { cardMismatch } from "../search/relevance.ts";
+import { checkComps } from "../ai/comp-checker.ts";
+import { criteriaMismatch, searchAttributes } from "../../shared/search-criteria.ts";
 
 const MAX_ATTEMPTS = 3;
 const TTL_MS = 30 * 60_000;
@@ -14,7 +16,7 @@ export class PricingRetryError extends Error {
 }
 interface Job { token: string; listing: ListingSummary; input: ScreenInput; intent: SearchIntent | null; screen: Screen; match?: ListingSummary["match"]; nextAt: number; attempts: number; expires: number }
 export function createPricingRetries({
-    price = (input: ScreenInput, targets: Targets, includeOffers: boolean) => prescreen(input, { lookupCards, fetchComps, config: withTargets(targets), includeOffers }),
+    price = (input: ScreenInput, targets: Targets, includeOffers: boolean) => prescreen(input, { lookupCards, fetchComps, fetchRawComps, checkComps, config: withTargets(targets), includeOffers }),
     cooldown = pricingCooldown,
     now = () => Date.now(),
     wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
@@ -29,7 +31,7 @@ export function createPricingRetries({
         screen: { ...job.screen, pricingRetry: retryable(job.screen.pricingIssue) ? hint(job) : undefined } });
     return {
         register(listing: ListingSummary, input: ScreenInput, intent: SearchIntent | null): PricingRetry | undefined {
-            if (listing.match || !retryable(listing.screen?.pricingIssue)) return undefined;
+            if (listing.match && listing.match !== "UNCONFIRMED_CRITERIA" || !retryable(listing.screen?.pricingIssue)) return undefined;
             for (const [token, job] of jobs) if (job.expires <= now() && !busy) jobs.delete(token);
             for (const [key, token] of keys) if (!jobs.has(token)) keys.delete(key);
             const key = createHash("sha256").update(JSON.stringify([pricingSnapshotKey(listing), input, intent])).digest("hex");
@@ -84,7 +86,10 @@ export function createPricingRetries({
                         job.screen = { ...updated, evidence: previous.evidence, filledFromTitle: previous.filledFromTitle };
                     }
                     catch { job.screen = { ...job.screen, pricingIssue: { kind: "TEMPORARY", retryAt: new Date(now() + 30_000).toISOString() }, reason: "The pricing retry could not finish. Your previous result is kept." }; }
-                    job.match = job.intent ? cardMismatch(job.screen, job.intent) ?? undefined : undefined;
+                    job.match = job.intent ? cardMismatch(job.screen, job.intent) ?? criteriaMismatch(job.listing.listedAttributes ?? searchAttributes(job.input.title, job.input.aspects), job.intent) ?? undefined : undefined;
+                    if (job.match === "UNCONFIRMED_CRITERIA" && !job.screen.pricingIssue) job.screen = {
+                        ...job.screen, status: "UNSCREENED", needsAnalysis: job.intent?.finish && !job.listing.listedAttributes?.finish ? "FINISH" : "SLAB_LABEL",
+                    };
                     const issueAt = Date.parse(job.screen.pricingIssue?.retryAt ?? "");
                     job.nextAt = Math.max(now() + (job.screen.pricingIssue ? 30_000 : 60_000), Number.isFinite(issueAt) ? issueAt : 0);
                     if (job.screen.pricingIssue) blocked = job.screen.pricingIssue;

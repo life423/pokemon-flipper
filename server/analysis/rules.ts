@@ -2,6 +2,7 @@ import { CONDITION_AREAS as AREAS, RAW_CONDITIONS } from "../../shared/condition
 import type { Condition, PhotoCheck, PhotoReport, SetAsideAnswer } from "../../shared/types.ts";
 import type { GradingMode } from "./types.ts";
 import { cleanPhotoCard } from "../ai/photo-card-schema.ts";
+import { normalizeSlabReading } from "../identity/slab-check.ts";
 
 // Code-enforced rules on the model's answers. The model reports what it
 // sees; these decide how much grading the evidence allows, and anything
@@ -84,7 +85,7 @@ export function applyPhotoCheckRules(photoCheck: PhotoCheck, photoCount: number)
         return valid;
     });
 
-    const checked = { ...photoCheck, images, ...(photoCheck.cardIdentity ? { cardIdentity: cleanPhotoCard(photoCheck.cardIdentity) } : {}) };
+    const checked = { ...photoCheck, images, slab: normalizeSlabReading(photoCheck.slab), ...(photoCheck.cardIdentity ? { cardIdentity: cleanPhotoCard(photoCheck.cardIdentity) } : {}) };
 
     if (!hasCloseUps(checked) && checked.confidence === "HIGH") {
         checked.confidence = "MEDIUM";
@@ -209,6 +210,9 @@ export function applyConditionRules(
     if (!allClear && condition.confidence === "HIGH") {
         condition.confidence = "MEDIUM";
     }
+    if (condition.creases === "PRESENT") condition.rawCondition = "DAMAGED";
+    if (condition.rawCondition === "MINT" && (gradingMode !== "FULL" || !closeUps || !allClear || condition.confidence !== "HIGH" ||
+        [condition.corners, condition.edges, condition.surface].some(area => !["NONE", "MINOR"].includes(area.severity)))) condition.rawCondition = "UNKNOWN";
 
     return condition;
 }

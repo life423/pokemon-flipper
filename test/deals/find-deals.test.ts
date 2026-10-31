@@ -106,22 +106,22 @@ test("a listing the check calls junk is skipped before any eBay request", async 
     assert.equal(s.calls.details, 0);
 });
 
-test("an incomplete unusually cheap listing waits for bounded photo discovery without requesting details", async () => {
+test("an incomplete unusually cheap listing can queue full AI immediately without a preliminary detail request", async () => {
     const pending = { referencePrice: 315, photoChecked: false };
     const s = steps([screen("UNSCREENED", { incomplete: true, priceAnomaly: pending })]);
     const result = await screenListing(listing("Lugia", { currentPrice: 5, images: ["photo"] }), s);
     assert.equal(result.match, undefined);
     assert.equal(result.screen.priceAnomaly.photoChecked, false);
-    assert.equal(canAutoAnalyze(result), false);
+    assert.equal(canAutoAnalyze(result), true);
     assert.equal(s.calls.details, 0);
     assert.equal(s.calls.photos ?? 0, 0);
 });
 
-test("an unusually cheap card needs an explicit photo match before full automatic analysis", async () => {
+test("an inconclusive preliminary photo can queue full AI, while an explicit mismatch stays excluded", async () => {
     for (const verdict of ["CANT_TELL", "MISMATCH", null]) {
         const s = steps([screen("CANDIDATE", { card: { name: "Lugia" }, priceAnomaly: { referencePrice: 315, photoChecked: true } })], { photoAnswer: verdict ? { verdict, problems: [] } : null });
         const result = await screenListing(listing("Lugia", { currentPrice: 5, images: ["photo"] }), s);
-        assert.equal(canAutoAnalyze(result), false);
+        assert.equal(canAutoAnalyze(result), verdict !== "MISMATCH");
         assert.equal(s.calls.details, 0);
         if (verdict === "MISMATCH") assert.equal(result.match, "OTHER_CARD");
     }

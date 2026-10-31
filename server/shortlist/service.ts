@@ -1,4 +1,4 @@
-import { getListingDetails, type ListingDetails } from "../ebay/listings.ts";
+import { getListingDetails, listingCacheKey, type ListingDetails } from "../ebay/listings.ts";
 import { loadSaved } from "../analysis/store.ts";
 import { ANALYSIS_VERSION } from "../ai/openai.ts";
 import { createLimiter } from "../lib/concurrency.ts";
@@ -14,7 +14,7 @@ import { readCache } from "../lib/cache.ts";
 import { withFreshListing } from "../../shared/fresh-listing.ts";
 import { searchAttributes } from "../../shared/search-criteria.ts";
 
-export function createShortlistService({ store = shortlistStore, details = getListingDetails, load = loadSaved, cached = (id: string) => readCache<ListingDetails>(`ebay:item:${id}`, 24 * 7), now = () => Date.now() } = {}) {
+export function createShortlistService({ store = shortlistStore, details = getListingDetails, load = loadSaved, cached = (id: string) => readCache<ListingDetails>(listingCacheKey(id), 24 * 7), now = () => Date.now() } = {}) {
     const limit = createLimiter(2);
     const share = createSingleFlight();
     const failures = new Map<string, { until: number; message: string }>();

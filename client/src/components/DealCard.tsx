@@ -16,6 +16,7 @@ import { GradingComparison } from "./GradingComparison";
 import { PhotoReview, type DeeperReviewState } from "./PhotoReview";
 import styles from "./DealCard.module.css";
 import { cardDetails } from "../../../shared/card-details.ts";
+import { claimedCondition, CONDITION_NAMES } from "../../../shared/conditions.ts";
 
 interface Props {
     index?: number;
@@ -73,20 +74,21 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
         : pricePending ? ["Verify price", "watch"]
         : mistakes.length ? ["Photo lead", "watch"]
         : screen?.status === "CANDIDATE" ? [auction ? "Auction watch" : "Possible", "pending"]
-        : screen?.status === "DROPPED" ? ["Above limit", "quiet"] : ["Unverified", "quiet"];
+        : screen?.status === "DROPPED" ? ["Preliminary: above target", "quiet"] : ["Unverified", "quiet"];
     const seller = listing.seller;
     const sellerText = seller?.feedbackScore === 0 ? "New seller" : seller?.feedbackPercentage != null
         ? `${seller.feedbackPercentage}% · ${seller.feedbackScore == null ? "rating count unavailable" : `${seller.feedbackScore < 1000 ? seller.feedbackScore.toLocaleString() : COMPACT.format(seller.feedbackScore)} ratings`}` : "Not available";
     const ceiling = best?.maxBid ?? (!evaluation ? screen?.bestCase?.maxBid : null);
     return <article className={`${styles.card} ${selected ? styles.selected : ""}`} data-tone={tone}
         style={{ "--i": Math.min(index, 10), viewTransitionName: transitionName } as CSSProperties}>
-        <button type="button" className={styles.hit} onClick={onOpen} aria-label={`Open ${title}, ${details.source}: ${details.grade}, ${details.finish}`} />
+        <button type="button" className={styles.hit} onClick={onOpen} aria-label={`Open ${title}, ${auction ? "Auction" : "Buy It Now"}, ${details.source}: ${details.grade}, ${details.finish}`} />
         <header className={styles.head}>
             <div className={styles.photo}>{listing.images[0] && <img src={listing.images[0]} alt="" loading="lazy" />}</div>
-            <div className={styles.identity}><h2>{title}</h2><p>{subtitle}</p><p className={styles.details}><span>{details.source}: </span>{details.grade} · {details.finish}</p></div>
+            <div className={styles.identity}><p className={styles.saleType}>{auction ? "Auction" : "Buy It Now"}</p><h2>{title}</h2><p>{subtitle}</p><p className={styles.details}><span>{details.source}: </span>{details.grade} · {details.finish}</p></div>
             <span className={styles.badge}>{badge}</span>
         </header>
         <PhotoReview compact evaluation={evaluation} listing={listing} state={photoReviewState} phase={analysis?.status === "loading" || analysis?.status === "error" ? analysis.status : undefined} />
+        {evaluation?.underwriting?.verdict === "CANT_PRICE" && <p className={styles.note}>{evaluation.underwriting.reasons[0]}</p>}
         {!evaluation && screen?.status === "UNSCREENED" && <p className={styles.note}>{screen.pricingIssue?.kind === "RATE_LIMIT" ? "Pricing paused for provider cooldown." : screen.pricingIssue?.kind === "TEMPORARY" ? "Price lookup temporarily unavailable." : screen.pricingIssue?.kind === "CREDITS" ? "Pricing unavailable. Check provider credits." : screen.pricingIssue?.kind === "CONFIG" ? "Pricing unavailable. Check provider setup." : screen.reason}</p>}
         {auction && evaluation ? <AuctionSummary evaluation={evaluation} targets={targets} now={now} /> : <>
             <div className={styles.money}>
@@ -95,18 +97,21 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
             </div>
             {best && <p className={styles.note}>{best.label} · total invested {dollars(best.cost)} · includes tax, shipping{best.path === "GRADE" ? " and grading" : ""}. Sale fees are included in net profit.</p>}
             {ceiling != null && <p className={styles.limit}>{best ? ceilingLabel(listing.buyingOption) : "Unverified screening ceiling"}: {dollars(ceiling)}</p>}
-            <p className={styles.note}>{auction ? `${timeLeft(listing.endTime, now) ?? "End time unavailable"} · ${listing.bids} bids · ` : ""}{listing.shipping === null ? "Shipping not quoted" : listing.shipping === 0 ? "Free shipping" : `${dollars(listing.shipping)} shipping`}</p>
+            <p className={styles.note}>{auction ? `${timeLeft(listing.endTime, now) ?? "End time unavailable"} · ${listing.bids} bids · ` : ""}{listing.shipping === null ? `Shipping not quoted · ${dollars(MONEY_CONFIG.buying.assumedShippingWhenUnknown)} assumed in estimates` : listing.shipping === 0 ? "Free shipping" : `${dollars(listing.shipping)} shipping`}</p>
         </>}
         {pricePending && <p className={styles.notice}>Unusually low price. Awaiting photo verification.</p>}
         {offer && offerNumbers && <p className={styles.notice}>Offer {dollars(offer.offer)} · est. profit {signed(offerNumbers.profit)} if accepted. Acceptance is unknown.</p>}
         {mistakes[0] && <p className={styles.note}>{mistakes[0].detail}</p>}
+        {best?.path === "RAW" && <p className={styles.note}>Estimated resale {dollars(best.salePrice)} · {name(best.priceCondition ?? "UNKNOWN")} · {evaluation?.rawPricing?.prices?.find(price => price.condition === best.priceCondition)?.basis === "EBAY_SOLD" ? "eBay sold median" : "market-price fallback"}.</p>}
+        {best?.path === "GRADED_RESALE" && evaluation?.slabPricing?.activeReference && !evaluation.slabPricing.summary?.count && <p className={styles.note}>Resale target {dollars(best.salePrice)} · below photo-checked Buy It Now competition.</p>}
         {evaluation?.condition && <GradingComparison evaluation={evaluation} />}
+        {evaluation?.condition && claimedCondition(evaluation.listing.cardCondition) && <p className={styles.note}>Seller says: {CONDITION_NAMES[claimedCondition(evaluation.listing.cardCondition)!]} · AI assesses: {name(evaluation.condition.rawCondition)}</p>}
         {minGrade > 0 && evidence && <p className={styles.note}>{evidence.target}</p>}
         <dl className={styles.facts}>
             <div><dt>Seller</dt><dd>{sellerText}</dd></div>
             <div><dt>AI raw condition</dt><dd>{evaluation?.condition ? name(evaluation.condition.rawCondition) : evaluation?.slab ? "Certified slab" : "Not assessed"}</dd></div>
         </dl>
-        {evaluation && <p className={styles.note} title={activity.detail}>{activity.label}{activity.recentSales !== null ? ` · ${activity.recentSales} observed ${activity.recentSales === 1 ? "sale" : "sales"} / 30 days` : ""}</p>}
+        {evaluation && <p className={styles.note} title={activity.detail}>{activity.label}{activity.recentSales !== null ? ` · ${activity.recentSales} ${activity.scope === "MATCHED" ? "matching sold comps" : evaluation.marketActivity?.scope === "RAW" ? "sales across raw conditions" : "sales across all grades"} / 30 days` : ""}</p>}
         <div className={styles.actions}><p className={styles.openHint}>View analysis <span aria-hidden="true">↗</span></p>
             {onSave && <button type="button" className={styles.save} onClick={() => { if (!saving) onSave(); }} aria-disabled={saving} aria-pressed={saved} aria-label={saving ? `Saving… ${title}` : saved ? `Saved: remove ${title} from shortlist` : `Save ${title} to shortlist`}>{saving ? "Saving…" : saved ? <>Saved <span className={styles.savedMark} aria-hidden="true">✓</span></> : "Save"}</button>}
         </div>

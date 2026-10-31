@@ -38,6 +38,8 @@ export function auctionDecision(evaluation: Evaluation, targets: Targets = MONEY
     const benchmark = sorted.length ? {
         price: sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2,
         low: sorted[0], high: sorted.at(-1)!, count: sorted.length, source: "Dated sold comps",
+    } : evaluation.slab?.status === "OK" && evaluation.slabPricing?.activeReference ? {
+        price: evaluation.slabPricing.activeReference.lowestTotal, low: null, high: null, count: null, source: "Photo-checked current Buy It Now competition, including shipping",
     } : !evaluation.slab && evaluation.identity?.status === "IDENTIFIED" && evaluation.condition && evaluation.condition.confidence !== "LOW" && evaluation.condition.authenticity.concern === "NONE_SEEN" && raw?.status === "PRICED" && raw.salePrice && evaluation.condition.rawCondition !== "UNKNOWN" ? {
         price: raw.salePrice, low: null, high: null, count: null, source: `Raw market quote${raw.priceCondition ? ` · ${raw.priceCondition.toLowerCase().replaceAll("_", " ")}` : ""}`,
     } : null;

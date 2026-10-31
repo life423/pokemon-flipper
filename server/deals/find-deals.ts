@@ -1,5 +1,5 @@
 import { detailRequestCount, getListingDetails, searchListings, type ListingDetails } from "../ebay/listings.ts";
-import { lookupCards, fetchComps } from "../pricing/pkmnprices.ts";
+import { lookupCards, fetchComps, fetchRawComps } from "../pricing/pkmnprices.ts";
 import { mapLimit } from "../lib/concurrency.ts";
 import { readSearch } from "../search/intent.ts";
 import { cardMismatch, gradingMatches, isEnglish, setMatches, titleMatches } from "../search/relevance.ts";
@@ -13,13 +13,22 @@ import type { ListingSummary, Screen, SearchIntent, Targets } from "../../shared
 import { criteriaMismatch, marketplaceQuery, searchAttributes } from "../../shared/search-criteria.ts";
 import { pricingRetries } from "./pricing-retries.ts";
 import type { PricingRetry } from "../../shared/pricing-retries.ts";
+import { retargetScreen } from "../../shared/money/targets.ts";
+import { MONEY_CONFIG, type MoneyConfig } from "../../shared/money/config.ts";
+
+// Zero shipping is an optimistic bound for deciding whether to request a
+// quote, never a replacement for an unknown quote in the actual valuation.
+export function shippingCouldChange(screen: Screen, price: number | null, config: MoneyConfig = MONEY_CONFIG, includeOffers = false): boolean {
+    if (screen.status !== "DROPPED" || !screen.money) return false;
+    return retargetScreen({ ...screen, money: { ...screen.money, shipping: 0 } }, price, config.targets, config, includeOffers).status === "CANDIDATE";
+}
 
 // A search, the way eBay matches it, narrowed to the card searched for,
-// with every listing screened for free. eBay limits listing-detail
+// with every listing screened using cached rules, prices and AI title reads. eBay limits listing-detail
 // requests per day, so the first check runs on the search result alone,
 // with its title read by the AI. Only listings that pass, or whose title
 // left something out, get their full eBay details and a second check.
-// Only candidates are worth the paid AI analysis.
+// Preliminary estimates rank full AI work rather than prohibit it.
 
 // eBay returns 200 a page in best-match order; later pages are mostly loose
 // matches, so 400 by default, and up to 1,000 when asked.
@@ -45,7 +54,8 @@ export interface SearchSummary {
 export interface ScreenSteps {
     deferPricing?: (listing: ListingSummary, input: ScreenInput, intent: SearchIntent | null) => PricingRetry | undefined;
     readTitle: typeof fillFromTitle;
-    loadDetails: (itemId: string, listing?: Pick<ListingSummary, "images" | "title">) => Promise<ListingDetails>;
+    loadDetails: (itemId: string, listing?: Pick<ListingSummary, "images" | "title">, freshShipping?: boolean) => Promise<ListingDetails>;
+    shippingCouldChange?: (screen: Screen, price: number | null) => boolean;
     check: (input: ScreenInput) => Promise<Screen>;
     matchPhoto: (imageUrl: string, card: ClaimedCard) => Promise<PhotoMatch | null>;
 }
@@ -53,14 +63,16 @@ export interface ScreenSteps {
 export function screeningSteps(targets?: Targets, includeOffers = false, signal?: AbortSignal): ScreenSteps {
     return {
         deferPricing: pricingRetries.register,
+        shippingCouldChange: (screen, price) => shippingCouldChange(screen, price, targets ? withTargets(targets) : MONEY_CONFIG, includeOffers),
         readTitle: signal ? (listing) => fillFromTitle(listing, (title) => readTitle(title, signal)) : fillFromTitle,
         // Past the day's reserve, eBay refuses and the title's check stands.
-        loadDetails: (itemId, listing) => getListingDetails(itemId, {
+        loadDetails: (itemId, listing, freshShipping) => getListingDetails(itemId, {
             keepReserve: true, expectedPhotos: listing?.images, expectedTitle: listing?.title,
+            ...(freshShipping ? { maxAgeHours: 0 } : {}),
         }),
         check: (input) =>
-            prescreen(input, { lookupCards, fetchComps, checkComps, config: targets ? withTargets(targets) : undefined, includeOffers }).catch((error: Error) =>
-                unscreened(`The free check failed: ${error.message}`)
+            prescreen(input, { lookupCards, fetchComps, fetchRawComps, checkComps, config: targets ? withTargets(targets) : undefined, includeOffers }).catch((error: Error) =>
+                unscreened(`Screening failed: ${error.message}`)
             ),
         matchPhoto: matchMainPhoto,
     };
@@ -86,7 +98,7 @@ export async function screenListing(
     let pricingInput: ScreenInput | undefined;
     const check = (input: ScreenInput) => { pricingInput = input; return steps.check(input); };
     const finish = (value: ListingSummary): ListingSummary => {
-        if (!value.match && value.screen && pricingInput && steps.deferPricing) {
+        if ((!value.match || value.match === "UNCONFIRMED_CRITERIA") && value.screen && pricingInput && steps.deferPricing) {
             const retry = steps.deferPricing(value, pricingInput, intent);
             if (retry) return { ...value, screen: { ...value.screen, pricingRetry: retry } };
         }
@@ -127,6 +139,7 @@ export async function screenListing(
     if (explicitMismatch) return { ...listing, match: explicitMismatch };
     const titleResult = (value: ListingSummary): ListingSummary => {
         const mismatch = intent && criteriaMismatch(titleCriteria, intent);
+        if (mismatch === "UNCONFIRMED_CRITERIA" && value.screen && !value.screen.pricingIssue) value = { ...value, screen: { ...value.screen, status: "UNSCREENED", needsAnalysis: intent?.finish && !titleCriteria.finish ? "FINISH" : "SLAB_LABEL" } };
         return finish(mismatch ? { ...value, match: mismatch } : value);
     };
 
@@ -136,7 +149,7 @@ export async function screenListing(
     );
     signal?.throwIfAborted();
 
-    // Explicit junk stays excluded; a low price alone waits for bounded discovery.
+    // Explicit junk stays excluded; unusually low prices can enter full AI verification.
     if (first.junk) return { ...listing, match: "JUNK", screen: first };
     if (first.priceAnomaly && !first.priceAnomaly.photoChecked) return titleResult({ ...listing, screen: first });
 
@@ -158,14 +171,15 @@ export async function screenListing(
     }
 
     // Dropped on its title alone: no eBay detail request.
-    if (first.status !== "CANDIDATE" && !first.incomplete) {
+    const needsShippingQuote = listing.shipping === null && steps.shippingCouldChange?.(first, listing.currentPrice) === true;
+    if (first.status !== "CANDIDATE" && !first.incomplete && !needsShippingQuote) {
         return titleResult({ ...listing, screen: { ...first, evidence: { photos: availablePhotoCount(listing.images), mainPhoto: seen?.verdict === "MATCH" ? "MATCH" : seen?.verdict === "CANT_TELL" ? "CANT_TELL" : "UNKNOWN" } } });
     }
 
     let details: ListingDetails;
 
     try {
-        details = await steps.loadDetails(listing.id, listing);
+        details = await steps.loadDetails(listing.id, listing, needsShippingQuote);
     } catch {
         signal?.throwIfAborted();
         // Out of eBay requests, or the listing is gone: the title's check stands.
@@ -181,8 +195,9 @@ export async function screenListing(
         return { ...listing, match: "OTHER_LANGUAGE" };
     }
     if (intent && !setMatches(aspects.Set, intent)) return { ...listing, match: "OTHER_SET" };
-    const detailsMismatch = intent && criteriaMismatch(searchAttributes(details.title, aspects), intent);
-    if (detailsMismatch) return { ...listing, match: detailsMismatch };
+    const detailAttributes = searchAttributes(details.title, aspects);
+    const detailsMismatch = intent && criteriaMismatch(detailAttributes, intent);
+    if (detailsMismatch && detailsMismatch !== "UNCONFIRMED_CRITERIA") return { ...listing, match: detailsMismatch };
 
     const screen = withFilled(
         await check({
@@ -201,11 +216,13 @@ export async function screenListing(
 
     return finish({
         ...listing,
+        ...(detailsMismatch ? { match: detailsMismatch } : {}),
+        shipping: listing.shipping ?? details.shipping,
         listedAttributes: searchAttributes(details.title, aspects),
         seller: details.seller ?? listing.seller,
         cardCondition: details.cardCondition,
         conditionNotes: details.conditionNotes,
-        screen: { ...screen, evidence: { photos: availablePhotoCount(details.images ?? listing.images), mainPhoto: seen?.verdict === "MATCH" ? "MATCH" : seen?.verdict === "CANT_TELL" ? "CANT_TELL" : "UNKNOWN" } },
+        screen: { ...screen, ...(detailsMismatch && !screen.pricingIssue ? { status: "UNSCREENED" as const, needsAnalysis: intent?.finish && !detailAttributes.finish ? "FINISH" as const : "SLAB_LABEL" as const } : {}), evidence: { photos: availablePhotoCount(details.images ?? listing.images), mainPhoto: seen?.verdict === "MATCH" ? "MATCH" : seen?.verdict === "CANT_TELL" ? "CANT_TELL" : "UNKNOWN" } },
     });
 }
 

@@ -81,6 +81,11 @@ test("nothing is priced before the card is identified", () => {
     assert.equal(rawPricesFor(null, identified({ printing: "UNKNOWN" })).status, "PRICE_UNAVAILABLE");
 });
 
+test("zero, negative and non-finite feed entries are unavailable prices, not resale values", () => {
+    const card = zenith([usd("Holofoil", "Near Mint", 0), usd("Holofoil", "Lightly Played", -1), usd("Holofoil", "Moderately Played", Number.NaN)]);
+    assert.equal(rawPricesFor(card, identified({ hasEditions: false, finish: "HOLO" })).status, "PRICE_UNAVAILABLE");
+});
+
 test("PokemonPriceTracker records are read the same way", () => {
     const card = fromPokemonPriceTracker({
         tcgPlayerId: "86903",

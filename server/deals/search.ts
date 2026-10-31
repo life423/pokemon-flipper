@@ -1,6 +1,7 @@
 import { findDeals, type SearchSummary } from "./find-deals.ts";
 import { digDeeper } from "./dig.ts";
-import { recoverSearchPricing } from "./recover-pricing.ts";
+import { recoverSearchPricing, RECOVERY_LISTING_LIMIT } from "./recover-pricing.ts";
+import { canRetryPricing } from "../../shared/pricing-retries.ts";
 import type { ListingSummary } from "../../shared/types.ts";
 import type { PricingRecoveryProgress } from "../../shared/pricing-retries.ts";
 
@@ -29,6 +30,18 @@ export async function searchWithDiscovery(
     });
     for (const listing of listings) if (!snapshots.has(listing.id)) snapshots.set(listing.id, listing);
     if (options.signal?.aborted) return;
+    const recover = (rows: ListingSummary[]) => steps.recover?.(rows, {
+        signal: options.signal, targets: options.targets, includeOffers: options.includeOffers,
+        onListing: (listing, snapshotKey) => { snapshots.set(listing.id, listing);
+            if (options.onPricingListing) options.onPricingListing(listing, snapshotKey); else options.onListing?.(listing); }, onProgress: options.onPricing,
+    });
+    // Recover known provider failures before spending on unrelated discovery
+    // photos. Otherwise a large temporary backlog looks like manual Review for
+    // several minutes while the app inspects yet more unpriceable inventory.
+    const primaryPending = [...snapshots.values()].filter(row => canRetryPricing(row));
+    if (primaryPending.length) await recover(primaryPending);
+    if (options.signal?.aborted) return;
+    const attempted = new Set(primaryPending.map(row => row.id));
     let checked = 0;
     let total = 0;
     options.onDiscovery?.({ status: "checking", checked, total });
@@ -38,7 +51,7 @@ export async function searchWithDiscovery(
             onListing: emit,
             intent: summary?.intent,
             excludeIds: listings.map((listing) => listing.id),
-            primaryListings: listings,
+            primaryListings: [...snapshots.values()],
             onStart: (value) => {
                 total = value.total;
                 options.onDiscovery?.({ status: "checking", checked, total });
@@ -57,9 +70,7 @@ export async function searchWithDiscovery(
             note: error instanceof Error ? error.message : "Extra discovery couldn't finish.",
         });
     }
-    if (!options.signal?.aborted) await steps.recover?.([...snapshots.values()], {
-        signal: options.signal, targets: options.targets, includeOffers: options.includeOffers,
-        onListing: (listing, snapshotKey) => { snapshots.set(listing.id, listing);
-            if (options.onPricingListing) options.onPricingListing(listing, snapshotKey); else options.onListing?.(listing); }, onProgress: options.onPricing,
-    });
+    const remaining = Math.max(0, RECOVERY_LISTING_LIMIT - Math.min(primaryPending.length, RECOVERY_LISTING_LIMIT));
+    const extraPending = [...snapshots.values()].filter(row => !attempted.has(row.id) && canRetryPricing(row)).slice(0, remaining);
+    if (!options.signal?.aborted && extraPending.length) await recover(extraPending);
 }

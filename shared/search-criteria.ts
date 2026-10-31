@@ -1,4 +1,5 @@
 import type { Evaluation, ListingSummary, SearchIntent } from "./types.ts";
+import { finishClaim } from "./finish.ts";
 
 type Finish = NonNullable<SearchIntent["finish"]>;
 const GRADER = "(?:psa|cgc|bgs|sgc|tag)";
@@ -6,10 +7,8 @@ const GRADE = "(10|[1-9](?:\\.5)?)(?![\\d./])";
 const textOf = (value: string) => value.normalize("NFKC").toLowerCase().replace(/[–—]/g, "-");
 
 export function finishIn(text: string): Finish | null {
-    const value = textOf(text).replace(/_/g, " ");
-    if (/\bnon[ -]?(?:holo(?:graphic)?s?|foils?)\b/.test(value)) return "NON_HOLO";
-    if (/\b(?:reverse[ -]?(?:holo(?:graphic)?s?|foils?)?|rh)\b/.test(value)) return "REVERSE_HOLO";
-    return /\b(?:holo(?:graphic)?s?|foils?)\b/.test(value) ? "HOLO" : null;
+    const finish = finishClaim(text);
+    return finish === "NOT_STATED" || finish === "CONFLICTING" ? null : finish;
 }
 
 // Reliable common operators still work if the language-model request fails.
@@ -73,6 +72,13 @@ export function evaluatedCriteriaMismatch(evaluation: Evaluation, intent: Search
     const finish = finishIn(evaluation.identity?.finish ?? "");
     if (finish) attributes.finish = finish;
     return Boolean(criteriaMismatch(attributes, intent));
+}
+
+// Only an unknown criterion can be settled here; explicit mismatches remain
+// excluded. A predicted raw grade never substitutes for a read slab label.
+export function withResolvedCriteria(listing: ListingSummary, evaluation: Evaluation | undefined, intent: SearchIntent | undefined): ListingSummary {
+    return listing.match === "UNCONFIRMED_CRITERIA" && evaluation?.identity?.status === "IDENTIFIED" && !evaluation.identity.notThisCard && intent && !evaluatedCriteriaMismatch(evaluation, intent)
+        ? { ...listing, match: undefined } : listing;
 }
 
 export function describeSearchCriteria(intent: SearchIntent): string[] {

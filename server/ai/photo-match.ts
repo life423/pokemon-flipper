@@ -1,6 +1,7 @@
 import { runStructured, MODEL } from "./openai.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { createLimiter } from "../lib/concurrency.ts";
+import { createSingleFlight } from "../lib/single-flight.ts";
 import type { Screen } from "../../shared/types.ts";
 
 // A quick look at a candidate's main photo before any eBay detail request
@@ -12,6 +13,7 @@ const YEAR_HOURS = 24 * 365;
 
 // Main photos are checked alongside a whole search's free checks.
 const limit = createLimiter(4);
+const share = createSingleFlight();
 
 export type ClaimedCard = NonNullable<Screen["card"]>;
 
@@ -62,6 +64,7 @@ Separately, report the printing marks as the photo shows them, never from the li
 
 export async function matchMainPhoto(imageUrl: string, card: ClaimedCard): Promise<PhotoMatch | null> {
     const key = `photo-match:v${MATCH_VERSION}:${MODEL}:${imageUrl}:${[card.set, card.cardNumber, card.name].join("|").toLowerCase()}`;
+    return share(key, async () => {
     const saved = await readCache<PhotoMatch>(key, YEAR_HOURS);
 
     if (saved) return saved;
@@ -85,4 +88,5 @@ export async function matchMainPhoto(imageUrl: string, card: ClaimedCard): Promi
         console.error(`Main photo check failed: ${(error as Error).message}`);
         return null;
     }
+    });
 }

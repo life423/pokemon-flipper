@@ -27,6 +27,14 @@ export const DETAILS_MAX_AGE_HOURS = 24 * 7;
 let detailRequests = 0;
 const shareDetails = createSingleFlight();
 
+// Quotes are destination-specific. Adding/changing a ZIP must not reuse a
+// quote (or a missing quote) fetched for another destination.
+export function shippingCacheScope(): string {
+    const zip = process.env.EBAY_SHIP_TO_ZIP?.trim();
+    return zip ? `:ship-to:${encodeURIComponent(zip)}` : "";
+}
+export const listingCacheKey = (itemId: string) => `ebay:item:${itemId}${shippingCacheScope()}`;
+
 export function detailRequestCount(): number {
     return detailRequests;
 }
@@ -88,7 +96,9 @@ export interface ListingDetails {
 }
 
 function toAmount(amount: Amount | undefined): number | null {
-    return amount ? Number(amount.value) : null;
+    if (!amount || amount.currency !== "USD" || typeof amount.value !== "string" || !amount.value.trim()) return null;
+    const value = Number(amount.value);
+    return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 function toSeller(seller: EbayItem["seller"]): Seller | null {
@@ -149,11 +159,11 @@ export async function searchListings(
         keepReserve = false,
         signal,
         sort,
-    }: { maxResults?: number; anyCategory?: boolean; keepReserve?: boolean; signal?: AbortSignal; sort?: "newlyListed" } = {}
+    }: { maxResults?: number; anyCategory?: boolean; keepReserve?: boolean; signal?: AbortSignal; sort?: "newlyListed" | "price" } = {}
 ): Promise<{ listings: ListingSummary[]; total: number; skipped: number }> {
     const scope = anyCategory ? "any" : "cards";
     signal?.throwIfAborted();
-    const key = `ebay:search:${maxResults}:${scope}:${sort ? `${sort}:` : ""}${normalizeText(search).trim()}`;
+    const key = `ebay:search:${maxResults}:${scope}:${sort ? `${sort}:` : ""}${normalizeText(search).trim()}${shippingCacheScope()}`;
     const saved = await readCache<{ listings: ListingSummary[]; total: number; skipped: number }>(key, sort ? 1 / 60 : SEARCH_MAX_AGE_HOURS);
     signal?.throwIfAborted();
 
@@ -226,7 +236,7 @@ export async function getListingDetails(
         maxAgeHours?: number; keepReserve?: boolean; expectedPhotos?: readonly string[]; expectedTitle?: string;
     } = {}
 ): Promise<ListingDetails> {
-    const key = `ebay:item:${itemId}`;
+    const key = listingCacheKey(itemId);
 
     if (maxAgeHours > 0) {
         const saved = await readCache<ListingDetails>(key, maxAgeHours);

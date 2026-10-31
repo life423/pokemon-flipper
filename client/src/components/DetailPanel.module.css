@@ -253,6 +253,8 @@
 
 .details summary {
     display: flex;
+    min-height: var(--tap);
+    align-items: center;
     flex-wrap: wrap;
     justify-content: space-between;
     gap: var(--space-2);
@@ -274,16 +276,17 @@
 
 .sales li {
     display: grid;
-    grid-template-columns: auto auto 1fr;
+    grid-template-columns: auto 1fr;
     gap: var(--space-2);
     align-items: baseline;
 }
 
 .sales a,
 .sales span:last-child {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    grid-column: 1 / -1;
+    min-height: var(--tap);
+    align-content: center;
+    overflow-wrap: anywhere;
 }
 
 .salePrice {

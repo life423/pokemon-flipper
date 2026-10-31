@@ -17,7 +17,8 @@ function waitFor(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 // Recovery belongs to the user's cancellable search. It uses only trusted
-// pricing tickets: no extra eBay search, photos, title reads or AI comp checks.
+// pricing tickets: no extra eBay search, photos or title reads. Newly available
+// sold evidence can receive a cached/deduplicated AI comp check when needed.
 export async function recoverSearchPricing(
     listings: ListingSummary[],
     options: { signal?: AbortSignal; targets?: Targets; includeOffers?: boolean;

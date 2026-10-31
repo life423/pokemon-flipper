@@ -23,7 +23,7 @@ function priced(evaluation: ReturnType<typeof cardEvaluation>, grader: Grader = 
 
 test("every grading scenario is covered by the service tier, even when a lower grade is worth more", () => {
     for (const [grader, prices, tier, fee] of [
-        ["PSA", [2000, 1000, 1400], "Express", 175],
+        ["PSA", [2000, 1000, 1400], "Express", 199],
         ["CGC", [4000, 500, 900], "Express", 100],
     ] as const) {
         const path = priced(nonmonotonic(grader, [...prices]), grader);
@@ -94,8 +94,8 @@ test("a missing grade never inherits an observed lower-grade premium to create a
     evaluation.gradedPricing.PSA!.byGrade!.push(salesSummary("PSA", 7, [1000, 1000, 1000]));
     const supported = retargetEvaluation(evaluation, any);
     assert.equal(supported.underwriting?.verdict, "PASS");
-    assert.equal(supported.underwriting?.best?.profit, -214.5);
-    assert.equal(supported.underwriting?.best?.maxBid, 801);
+    assert.equal(supported.underwriting?.best?.profit, -238.5);
+    assert.equal(supported.underwriting?.best?.maxBid, 779);
     assert.ok(priced(supported).outlook?.every((entry) => entry.filledFrom === null));
     evaluation.rawPricing = { status: "PRICED", prices: [{ condition: "LIGHTLY_PLAYED", price: 2000, updatedAt: null }] };
     evaluation.gradedPricing.PSA!.byGrade = evaluation.gradedPricing.PSA!.byGrade!.filter((entry) => entry.grade !== 7);

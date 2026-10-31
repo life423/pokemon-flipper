@@ -6,6 +6,7 @@ import {
     printingLabel,
     readyForPricing,
     titleDecidesPrinting,
+    finishOfVariant,
 } from "../identity/card-identity.ts";
 import { canPrice, variantFor } from "./raw-prices.ts";
 import { gradeQualifier } from "../../shared/grade-qualifier.ts";
@@ -41,6 +42,8 @@ export interface CompCriteria {
     grader: string;
     grade: number | string;
     now: number;
+    windowDays?: 90 | 180;
+    finish?: string;
 }
 
 // Only recent sales price a card.
@@ -63,7 +66,7 @@ function titleAgrees(claim: PrintingClaim, printing: PrintingOrUnknown): boolean
 }
 
 // Why a comp's printing doesn't match, or null when it does.
-function printingProblem(comp: Comp, printing: PrintingOrUnknown, setName: string | null | undefined): string | null {
+export function printingProblem(comp: Comp, printing: PrintingOrUnknown, setName: string | null | undefined): string | null {
     const claim = printingClaimFromText(comp.title);
 
     // Where the labels are known to be wrong, the title decides:
@@ -87,12 +90,14 @@ function printingProblem(comp: Comp, printing: PrintingOrUnknown, setName: strin
 }
 
 // Why a comp can't price this card, or null when it can.
-export function compProblem(comp: Comp, { printing, setName, grader, grade, now }: CompCriteria): string | null {
+export function compProblem(comp: Comp, { printing, setName, grader, grade, now, windowDays = RECENT_DAYS, finish }: CompCriteria): string | null {
     if (comp.attribution !== "exact") return "shared with another card";
+    if (comp.currency && comp.currency !== "USD") return "not a USD sale";
 
     const mismatch = printingProblem(comp, printing, setName);
 
     if (mismatch) return mismatch;
+    if (finish && ["HOLO", "NON_HOLO", "REVERSE_HOLO"].includes(finish) && finishOfVariant(comp.variant ?? "") !== finish) return "another finish";
     if (lookAlikeProblem(comp.title, setName)) return "title names another product";
     if (noveltyIn(comp.title)) return "metal or novelty card";
     if (comp.grader !== grader || comp.grade !== String(grade)) return "different grade";
@@ -103,7 +108,7 @@ export function compProblem(comp: Comp, { printing, setName, grader, grade, now 
 
     if (!Number.isFinite(ageDays)) return "invalid sale date";
     if (ageDays < 0) return "future sale date";
-    if (!(ageDays <= RECENT_DAYS)) return "older than 180 days";
+    if (!(ageDays <= windowDays)) return `older than ${windowDays} days`;
 
     return null;
 }
@@ -168,17 +173,20 @@ export function summarizeComps(
         grade: criteria.grade,
         count: kept.length,
         median: prices.length > 0 ? median(prices) : null,
+        mean: prices.length > 0 ? Math.round(prices.reduce((sum, price) => sum + price, 0) / prices.length * 100) / 100 : null,
         low: prices[0] ?? null,
         high: prices.at(-1) ?? null,
         newestSale: kept.map((comp) => comp.sold_at).sort().at(-1) ?? null,
         confidence: confidenceFor(kept.length),
         dropped,
         sales: kept.map((comp) => ({
+            ...(comp.photoCondition ? { photoCondition: comp.photoCondition, sellerCondition: comp.sellerCondition } : {}),
             price: comp.price,
             soldAt: comp.sold_at,
             title: comp.title,
             url: comp.listing_url ?? null,
         })),
+        windowDays: criteria.windowDays ?? RECENT_DAYS,
         ...(kept.length > 0 && kept.every((comp) => verdicts?.has(comp)) ? { checkedByAI: true } : {}),
     };
 }
@@ -192,8 +200,12 @@ async function checkedSummary(
 ): Promise<CompSummary> {
     const passing = comps.filter((comp) => compProblem(comp, criteria) === null);
     const verdicts = checkComps && passing.length > 0 ? await checkComps(passing, target) : undefined;
-
-    return summarizeComps(comps, criteria, verdicts);
+    // Prefer the current market when it has several matches; sparse grades
+    // can still use the explicitly labeled 180-day fallback. Never choose a
+    // window based on whether its median makes the listing profitable.
+    const recent = passing.filter(sale => (criteria.now - Date.parse(sale.sold_at)) / DAY_MS <= 90 && verdicts?.get(sale)?.keep !== false);
+    const windowDays = recent.length >= 3 ? 90 : 180;
+    return summarizeComps(comps, { ...criteria, windowDays }, verdicts);
 }
 
 function compTarget(card: PricedCard, identity: Identity, variant: PricedVariant, grader: string, grade: number | string): CompTarget {
@@ -204,6 +216,7 @@ function compTarget(card: PricedCard, identity: Identity, variant: PricedVariant
         printingLabel: printingLabel(identity.printing, identity.set),
         grader,
         grade: String(grade),
+        finish: variant.finish,
     };
 }
 
@@ -279,7 +292,7 @@ export async function gradedPricesFor(
         byGrade.push(
             await checkedSummary(
                 comps,
-                { printing: identity.printing, setName: variant.setName, grader, grade, now },
+                { printing: identity.printing, setName: variant.setName, finish: variant.finish, grader, grade, now },
                 compTarget(card, identity, variant, grader, grade),
                 checkComps
             )
@@ -326,7 +339,7 @@ export async function compsForGrade(
 
     const summary = await checkedSummary(
         comps,
-        { printing: identity.printing, setName: variant.setName, grader, grade, now },
+        { printing: identity.printing, setName: variant.setName, finish: variant.finish, grader, grade, now },
         compTarget(card, identity, variant, grader, grade),
         checkComps
     );

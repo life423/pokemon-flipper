@@ -82,6 +82,7 @@
     overflow-wrap: anywhere;
 }
 .identity .details { color: var(--text); font-size: var(--text-sm); line-height: 1.5; }
+.identity .saleType { margin: 0 0 var(--space-1); color: var(--action-text); font-weight: 650; }
 .details span { color: var(--text-muted); }
 
 .badge  {

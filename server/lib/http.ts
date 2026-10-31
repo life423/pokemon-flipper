@@ -1,6 +1,9 @@
 // Bound the whole response, including its body, so a stalled provider cannot
 // occupy a concurrency slot indefinitely. No automatic retry spends requests.
-export class ProviderError extends Error {}
+export class ProviderError extends Error {
+    readonly retryAfterMs?: number;
+    constructor(message: string, options?: ErrorOptions & { retryAfterMs?: number }) { super(message, options); this.retryAfterMs = options?.retryAfterMs; }
+}
 
 export async function fetchJson(
     url: string,

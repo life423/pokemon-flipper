@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { DATA_DIR } from "./paths.ts";
+import { writeJsonAtomic } from "./atomic-json.ts";
 
 // Saved API responses and AI readings, so the same lookup isn't paid for
 // (or rate-limited) twice. Each caller picks how long its answers last.
@@ -17,16 +18,12 @@ export async function readCache<T = any>(key: string, maxAgeHours: number): Prom
     try {
         const saved = JSON.parse(await fs.readFile(cacheFile(key), "utf8"));
         const ageHours = (Date.now() - Date.parse(saved.savedAt)) / 3600000;
-        return ageHours < maxAgeHours ? saved.data : null;
+        return Number.isFinite(ageHours) && ageHours >= 0 && ageHours < maxAgeHours ? saved.data : null;
     } catch {
         return null;
     }
 }
 
 export async function writeCache(key: string, data: unknown): Promise<void> {
-    await fs.mkdir(CACHE_DIR, { recursive: true });
-    await fs.writeFile(
-        cacheFile(key),
-        JSON.stringify({ key, savedAt: new Date().toISOString(), data })
-    );
+    await writeJsonAtomic(cacheFile(key), { key, savedAt: new Date(Date.now()).toISOString(), data });
 }

@@ -2,18 +2,19 @@ import { createHash } from "node:crypto";
 import { ANALYSIS_VERSION } from "../ai/openai.ts";
 import { reviewPhotosDeeper, type DeeperAnswer } from "../ai/deeper-photo-review.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
-import { loadSaved, saveRecord, photoFingerprint } from "./store.ts";
+import { loadSaved, saveRecord, photoFingerprint, withAssessmentLock } from "./store.ts";
 import { applyConditionRules, applyPhotoCheckRules, getGradingMode, hasCloseUps } from "./rules.ts";
 import { planDeeperPhotos } from "../../shared/photo-review.ts";
 import type { DeeperPhotoReview } from "../../shared/types.ts";
 import type { SavedRecord } from "./types.ts";
+import { reconcileIdentityReadings } from "./resolve-evidence.ts";
 
 const DEEP_VERSION = "focused-photos-1";
 export class PhotoReviewError extends Error {
     constructor(message: string, readonly status = 409) { super(message); }
 }
 export function photoReviewKey(record: SavedRecord): string {
-    return createHash("sha256").update(JSON.stringify([DEEP_VERSION, record.version, record.photoFingerprint, record.reviewContext?.title, record.photoCheck?.result, record.assessment?.result])).digest("hex");
+    return createHash("sha256").update(JSON.stringify([DEEP_VERSION, record.version, record.photoFingerprint, record.reviewContext?.title, record.photoCheck?.result, record.assessment?.result, record.identityPasses?.map(pass => pass.result) ?? null])).digest("hex");
 }
 
 export function cleanDeeperAnswer(answer: DeeperAnswer, numbers: number[]): DeeperAnswer {
@@ -33,7 +34,7 @@ export function createDeeperPhotoReviewer({ load = loadSaved, save = saveRecord,
     // If disk storage fails after a paid answer, retry the write without paying
     // again. Bound this temporary recovery cache; successful writes remove it.
     const unsaved = new Map<string, DeeperPhotoReview>();
-    return (itemId: string, expectedKey: string): Promise<DeeperPhotoReview> => share(`${itemId}:${expectedKey}`, async () => {
+    return (itemId: string, expectedKey: string): Promise<DeeperPhotoReview> => share(`${itemId}:${expectedKey}`, () => withAssessmentLock(itemId, async () => {
         const record = await load(itemId);
         if (!record?.photoCheck || !record.reviewContext || record.version !== ANALYSIS_VERSION || photoFingerprint(record.reviewContext.photos) !== record.photoFingerprint || photoReviewKey(record) !== expectedKey) {
             throw new PhotoReviewError("The photos or saved assessment changed. Reopen the listing before requesting a deeper review.");
@@ -42,7 +43,8 @@ export function createDeeperPhotoReviewer({ load = loadSaved, save = saveRecord,
             unsaved.delete(expectedKey);
             return record.deeperPhotoReview;
         }
-        const checked = applyPhotoCheckRules(record.photoCheck.result, record.reviewContext.photos.length);
+        const original = applyPhotoCheckRules(record.photoCheck.result, record.reviewContext.photos.length);
+        const checked = record.identityPasses?.length ? reconcileIdentityReadings(original, record.identityPasses.map(pass => pass.result)).check : original;
         const plan = planDeeperPhotos(checked, record.reviewContext.photos);
         if (!plan.photos.length) throw new PhotoReviewError(plan.reason!, 422);
         const { mode } = getGradingMode(checked);
@@ -72,6 +74,6 @@ export function createDeeperPhotoReviewer({ load = loadSaved, save = saveRecord,
         await save(itemId, { ...latest, deeperPhotoReview });
         unsaved.delete(expectedKey);
         return deeperPhotoReview;
-    });
+    }));
 }
 export const reviewListingPhotos = createDeeperPhotoReviewer();

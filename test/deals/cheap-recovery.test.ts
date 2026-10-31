@@ -35,8 +35,8 @@ async function recovery({ inspection = photo, verdict = "MATCH", abortPhoto = fa
     assert.equal(counts.comps, 0);
     assert.equal(counts.mismatchCheck, 0);
     assert.equal(primary.match, undefined);
-    assert.equal(canAutoAnalyze(primary), false);
-    assert.equal(resultGroup(primary, null), "review");
+    assert.equal(canAutoAnalyze(primary), true, "the full photo check can verify an unusual price immediately");
+    assert.equal(resultGroup(primary, null), "candidates");
     const recovered = [];
     await digDeeper("Mewtwo Base Set", { intent, primaryListings: [primary], excludeIds: [primary.id], signal: controller.signal, onListing: (value) => recovered.push(value) }, {
         plan: async () => [], readIntent: async () => intent,
@@ -82,7 +82,7 @@ test("mismatch or inconclusive independent checks stop before comp and eBay deta
         assert.equal(counts.details, 0);
         assert.equal(counts.comps, 0);
         assert.equal(counts.mismatchCheck, 1);
-        assert.ok(recovered.every((value) => !canAutoAnalyze(value)));
+        assert.ok(recovered.every((value) => canAutoAnalyze(value) === (verdict !== "MISMATCH")));
         if (verdict === "MISMATCH") assert.equal(recovered[0].match, "OTHER_CARD");
     }
 });

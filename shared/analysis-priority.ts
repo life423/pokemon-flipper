@@ -65,5 +65,6 @@ export function comparePriority(a: AnalysisPriority, b: AnalysisPriority): numbe
 }
 
 export function compareAnalysisPriority(a: ListingSummary, b: ListingSummary, targets?: Targets): number {
-    return comparePriority(analysisPriority(a, targets), analysisPriority(b, targets)) || a.id.localeCompare(b.id);
+    return Number(a.screen?.status === "DROPPED") - Number(b.screen?.status === "DROPPED") ||
+        Number(Boolean(a.screen?.longShot)) - Number(Boolean(b.screen?.longShot)) || comparePriority(analysisPriority(a, targets), analysisPriority(b, targets)) || a.id.localeCompare(b.id);
 }

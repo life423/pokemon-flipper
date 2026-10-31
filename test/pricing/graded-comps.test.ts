@@ -363,3 +363,20 @@ test("ordinary CGC descriptions do not exclude otherwise matching exact-grade co
     assert.equal(summarizeComps([{ ...ordinary, grader: "PSA" }], target).count, 0);
     assert.equal(summarizeComps([{ ...ordinary, title: `${ordinary.title} (OC)` }], target).count, 0);
 });
+
+test("USD graded prices prefer 90-day evidence when sufficient, including a falling market", async () => {
+    const { identity, card } = await identifyCard({ title: "Lugia Neo Genesis 9/111 Holo Unlimited", aspects: { Set: "Neo Genesis", "Card Number": "9/111", "Card Name": "Lugia", Language: "English" } }, photos("Lugia", "9/111"), { lookupCards: async () => [LUGIA] });
+    for (const recent of [1000, 4000]) {
+        const older = [1, 2, 3, 4].map(i => comp(2000, `2026-05-0${i}`, "Unlimited Holofoil", "Lugia Neo Genesis PSA 9"));
+        const current = [1, 2, 3].map(i => comp(recent, `2026-09-0${i}`, "Unlimited Holofoil", "Lugia Neo Genesis PSA 9", { currency: "USD" }));
+        const result = await compsForGrade(card, identity, { grader: "PSA", grade: 9, now: NOW, fetchComps: async () => [...older, ...current, comp(1, "2026-09-05", "Unlimited Holofoil", "Lugia Neo Genesis PSA 9", { currency: "EUR" }), comp(900, "2026-09-05", "Unlimited Reverse Holofoil", "Lugia Neo Genesis PSA 9")] });
+        assert.equal(result.summary.windowDays, 90);
+        assert.equal(result.summary.count, 3);
+        assert.equal(result.summary.median, recent);
+        assert.equal(result.summary.dropped["not a USD sale"], 1);
+        assert.equal(result.summary.dropped["another finish"], 1);
+    }
+    const sparse = await compsForGrade(card, identity, { grader: "PSA", grade: 9, now: NOW, fetchComps: async () => [comp(2000, "2026-05-01", "Unlimited Holofoil", "Lugia Neo Genesis PSA 9")] });
+    assert.equal(sparse.summary.windowDays, 180);
+    assert.equal(sparse.summary.median, 2000);
+});

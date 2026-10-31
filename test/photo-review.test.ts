@@ -13,6 +13,24 @@ function deep(impact: DeeperPhotoReview["findings"][number]["impact"]): DeeperPh
         findings: [{ area: "IDENTITY", impact, observation: "The printing mark contradicts the initial reading.", photoNumbers: [1] }], requestedPhotos: [], usage: { inputTokens: 1, outputTokens: 1 } };
 }
 const any = { minProfit: 0, minRoi: 0 };
+test("readable verified slabs keep incidental glare as notes, but identity, case and deeper concerns still need review", () => {
+    const e = cardEvaluation(); e.condition = null; e.gradingMode = "BLOCKED";
+    e.modeReasons = ["The card is already graded."];
+    e.photoCheck!.confidence = "LOW";
+    e.photoCheck!.missingViews = ["Angled raw surface"];
+    e.photoCheck!.images[0].obscuresCondition = true;
+    e.photoCheck!.images[0].issues = ["Plastic reflections obscure tiny raw scratches."];
+    e.slab = { status: "OK", grader: "PSA", grade: "7", gradeQualifier: null, certNumber: "123", certUrl: null, labelText: "PSA 7", caseCondition: "SCUFFED", reasons: [], concerns: [] };
+    const status = photoReviewStatus(e);
+    assert.equal(status.needsYourReview, false);
+    assert.deepEqual(status.photoNotes, ["Plastic reflections obscure tiny raw scratches."]);
+    e.slab.status = "NEEDS_REVIEW"; e.slab.reasons = ["Case is cracked."];
+    assert.ok(photoReviewStatus(e).reasons.includes("Case is cracked."));
+    e.slab.status = "OK"; e.slab.reasons = []; e.identity!.status = "NEEDS_REVIEW"; e.identity!.reasons = ["Card number differs."];
+    assert.ok(photoReviewStatus(e).reasons.includes("Card number differs."));
+    e.identity!.status = "IDENTIFIED"; e.deeperPhotoReview = deep("NEW_CONCERN");
+    assert.equal(photoReviewStatus(e).needsYourReview, true);
+});
 test("a completed low-confidence AI review is distinguished from pending and preliminary photo checks", () => {
     const e = cardEvaluation(); e.condition!.confidence = "LOW"; e.condition!.gradeRange.likely = null;
     const status = photoReviewStatus(e);

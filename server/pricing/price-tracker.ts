@@ -3,6 +3,11 @@ import { conditionOf } from "./raw-prices.ts";
 import { cardVariants } from "./records.ts";
 import type { CardRecord } from "./types.ts";
 import { setKey } from "../../shared/sets.ts";
+import { fetchJson } from "../lib/http.ts";
+import { createLimiter } from "../lib/concurrency.ts";
+import { createSingleFlight } from "../lib/single-flight.ts";
+const limit = createLimiter(2);
+const share = createSingleFlight();
 
 // PokemonPriceTracker. Kept as a cross-check: its raw prices are split
 // by printing, but its graded sales mix printings.
@@ -54,10 +59,9 @@ async function trackerGet(path: string): Promise<{ data?: unknown; metadata?: { 
         throw new Error("POKEMON_PRICE_TRACKER_API_KEY is not set");
     }
 
-    const response = await fetch(`${BASE}${path}`, {
+    const { response, body } = await limit(() => fetchJson(`${BASE}${path}`, {
         headers: { Authorization: `Bearer ${apiKey}` },
-    });
-    const body = await response.json().catch(() => ({}));
+    }, { service: "PokemonPriceTracker" }));
 
     if (!response.ok) {
         throw new Error(
@@ -71,6 +75,7 @@ async function trackerGet(path: string): Promise<{ data?: unknown; metadata?: { 
 export async function lookupCards({ set, name }: { set: string; name: string }): Promise<CardRecord[]> {
     const params = new URLSearchParams({ set, search: name, limit: String(SEARCH_LIMIT) });
     const key = `pokemonpricetracker:cards?${params}`;
+    return share(key, async () => {
     const cached = await readCache<TrackerCard[]>(key, 24);
 
     if (cached) return cached.map(fromPokemonPriceTracker);
@@ -80,6 +85,7 @@ export async function lookupCards({ set, name }: { set: string; name: string }):
 
     await writeCache(key, cards);
     return cards.map(fromPokemonPriceTracker);
+    });
 }
 
 const YEARS_KEY = "pokemonpricetracker:set-years";
@@ -90,6 +96,7 @@ const MOST_SET_PAGES = 20;
 // Each English set's release year, by set key (shared/sets.ts), for every
 // set PokemonPriceTracker knows. Saved for a month: sets don't change.
 export async function setYears(): Promise<Record<string, number>> {
+    return share(YEARS_KEY, async () => {
     const cached = await readCache<Record<string, number>>(YEARS_KEY, MONTH_HOURS);
 
     if (cached) return cached;
@@ -114,4 +121,5 @@ export async function setYears(): Promise<Record<string, number>> {
 
     await writeCache(YEARS_KEY, years);
     return years;
+    });
 }

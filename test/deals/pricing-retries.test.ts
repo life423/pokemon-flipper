@@ -16,6 +16,22 @@ const priced = () => ({ status: "DROPPED", reason: "Above limit", card: { name: 
 const input = () => ({ title: "Aquapolis Nidoking Holo PSA 9", aspects: { Set: "Aquapolis", "Card Name": "Nidoking", "Card Number": "H18/H32", "Professional Grader": "PSA", Grade: "9" }, price: 200, shipping: 5, isGraded: true, cardCondition: null, buyingOption: "FIXED_PRICE" });
 const listing = (id = "one") => ({ id, title: input().title, images: ["https://i.ebayimg.com/images/g/test/s-l500.jpg"], isGraded: true, listedAttributes: { grader: "PSA", grade: 9, finish: "HOLO" }, currentPrice: 200, shipping: 5, bids: 0, endTime: null, buyingOption: "FIXED_PRICE", url: "https://www.ebay.com/itm/267743966894", seller: null, screen: pending() });
 
+test("an unknown finish does not suppress temporary pricing recovery or become an assumed match", async () => {
+    let time = TIME;
+    const queue = createPricingRetries({ now: () => time, cooldown: () => null, price: async () => priced() });
+    const row = { ...listing(), match: "UNCONFIRMED_CRITERIA", listedAttributes: { grader: "PSA", grade: 9, finish: null } };
+    const intent = { cardName: null, sets: ["Aquapolis"], cardNumber: null, printing: null, graded: true, titleWords: [], grader: "PSA", minGrade: 9, maxGrade: 9, finish: "HOLO", source: "rules" };
+    const ticket = queue.register(row, input(), intent);
+    assert.ok(ticket);
+    assert.equal(canRetryPricing({ ...row, screen: { ...row.screen, pricingRetry: ticket } }, time), true);
+    assert.equal(canRetryPricing({ ...row, match: "OTHER_FINISH", screen: { ...row.screen, pricingRetry: ticket } }, time), false);
+    time += 31000;
+    const recovered = (await queue.retry([ticket.ticket], targets, false)).results[0];
+    assert.equal(recovered.match, "UNCONFIRMED_CRITERIA");
+    assert.equal(recovered.screen.needsAnalysis, "FINISH");
+    assert.equal(recovered.screen.pricingIssue, undefined);
+});
+
 test("only typed temporary pricing failures are retryable, not identity/no-comp problems", async () => {
     const deps = { lookupCards: async () => { throw new PricingProviderError("rate limited", "RATE_LIMIT", TIME + 30_000); }, fetchComps: async () => [] };
     const screen = await prescreen(input(), deps);

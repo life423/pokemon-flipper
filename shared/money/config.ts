@@ -56,7 +56,7 @@ export const MONEY_CONFIG: MoneyConfig = {
         // Matches an eBay purchase: $26.49 tax on $315 plus $6.07 shipping, Oct 2026.
         buying: true,
         grading: {
-            // Not yet checked against psacard.com or an invoice.
+            // Public rates checked Oct 30, 2026; not verified on your invoice.
             PSA: false,
             // Matches cgccards.com Services & Fees, Oct 2026 (no membership discount).
             CGC: true,
@@ -70,12 +70,13 @@ export const MONEY_CONFIG: MoneyConfig = {
         minRoi: 0.25,
     },
 
-    // The free first check, before any paid AI, assumes each raw card
+    // Preliminary screening, before full photo assessment, assumes each raw card
     // at its best: the seller's own condition call, and the best grade
     // a card in that condition could reach. These are guesses to tune,
     // not data. They only decide which listings get analyzed.
     prescreen: {
         bestGrade: {
+            MINT: 9,
             NEAR_MINT: 9,
             LIGHTLY_PLAYED: 6,
             MODERATELY_PLAYED: 4,
@@ -126,11 +127,13 @@ export const MONEY_CONFIG: MoneyConfig = {
         // math uses the cheapest level whose cap covers the card's value
         // in any modeled grade outcome.
         PSA: [
-            { tier: "Standard", fee: 59.99, maxDeclaredValue: null },
-            { tier: "Regular", fee: 79.99, maxDeclaredValue: 1499 },
-            { tier: "Express", fee: 175, maxDeclaredValue: 2499 },
-            { tier: "Super Express", fee: 349, maxDeclaredValue: 4999 },
-            { tier: "Walk-Through", fee: 599, maxDeclaredValue: 9999 },
+            // psacard.com/services/tradingcardgrading, Oct 30, 2026.
+            // Value submissions are paused; Standard is available.
+            { tier: "Standard", fee: 59.99, maxDeclaredValue: 1000 },
+            { tier: "Priority", fee: 79.99, maxDeclaredValue: 1500 },
+            { tier: "Express", fee: 199, maxDeclaredValue: 2500 },
+            { tier: "Super Express", fee: 349, maxDeclaredValue: 5000 },
+            { tier: "Premier", fee: 599, maxDeclaredValue: 10000 },
         ],
         CGC: [
             { tier: "Economy", fee: 20, maxDeclaredValue: 1000 },

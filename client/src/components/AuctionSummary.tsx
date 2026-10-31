@@ -25,12 +25,12 @@ export function AuctionSummary({ evaluation, targets, now }: { evaluation: Evalu
             </dl>
         </div>}
         <div className={styles.market}>
-            <span className={styles.label}>Closing price guide</span>
+            <span className={styles.label}>{evaluation.slabPricing?.activeReference && !evaluation.slabPricing.summary?.count ? "Current Buy It Now competition" : "Closing price guide"}</span>
             <strong>{decision.benchmark ? dollars(decision.benchmark.price) : "Unavailable"}</strong>
-            <p>{decision.benchmark ? `${decision.benchmark.source}${decision.benchmark.count !== null ? ` · ${decision.benchmark.count} sales` : ""}. Actual bidding may finish above or below this reference.` : "No reliable condition-matched reference. A graded resale value is not the raw auction price."}</p>
+            <p>{decision.benchmark ? `${decision.benchmark.source}${decision.benchmark.count !== null ? ` · ${decision.benchmark.count} sales` : ""}.` : "No condition-matched closing-price reference available."}</p>
             {decision.benchmark?.low !== null && decision.benchmark?.low !== undefined && <p>Observed sales: {dollars(decision.benchmark.low)}–{dollars(decision.benchmark.high)}</p>}
         </div>
         <p className={styles.terms}>{timeLeft(evaluation.listing.endTime, now) ?? "End time not available"} · {evaluation.listing.bids} {evaluation.listing.bids === 1 ? "bid" : "bids"} · {evaluation.listing.shipping === null ? `${dollars(evaluation.underwriting?.best?.shipping ?? MONEY_CONFIG.buying.assumedShippingWhenUnknown)} shipping assumed` : `${dollars(evaluation.listing.shipping)} shipping`}</p>
-        <p className={styles.note}>The limit is the item bid. Total invested includes tax, shipping and any grading costs. No bid is submitted by this app.</p>
+        <p className={styles.note}>The limit is the item bid. Total invested includes tax, shipping and any grading costs.</p>
     </div>;
 }

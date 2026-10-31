@@ -4,8 +4,7 @@
   "description": "Find eBay Pokémon card listings worth flipping, priced to the exact printing, with a max bid for every one.",
   "main": "server/app.ts",
   "scripts": {
-    "dev": "npm run kill-ports && tsx watch --clear-screen=false server/app.ts",
-    "kill-ports": "kill-port 3000 || true",
+    "dev": "tsx watch --clear-screen=false server/app.ts",
     "start": "node --import tsx scripts/start.mjs",
     "test": "node --import tsx --test \"test/**/*.test.*\"",
     "evaluate": "tsx scripts/evaluate.ts",
@@ -30,7 +29,6 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^4.7.0",
-    "kill-port": "^2.0.1",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^6.4.5"

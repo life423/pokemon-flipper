@@ -24,11 +24,11 @@ import { AuctionSummary } from "./AuctionSummary";
 import { GradingComparison } from "./GradingComparison";
 import { PhotoGallery } from "./PhotoGallery";
 import { PhotoReview, type DeeperReviewState } from "./PhotoReview";
-import { CONDITION_AREAS } from "../../../shared/conditions.ts";
+import { CONDITION_AREAS, RAW_CONDITIONS, CONDITION_NAMES, CONDITION_DEFINITIONS } from "../../../shared/conditions.ts";
 import { returnText } from "../../../shared/card-presentation.ts";
 import { ceilingLabel } from "../../../shared/format.ts";
 import { describeOffer, numbersAtOffer, offerFor } from "../../../shared/money/offer.ts";
-import { resaleActivity } from "../../../shared/liquidity.ts";
+import { resaleActivity, matchedSoldActivity } from "../../../shared/liquidity.ts";
 import { photoEvidence } from "../../../shared/photo-evidence.ts";
 import { listingSignals } from "../../../shared/signals.ts";
 import { writeOfferNote } from "../api";
@@ -77,6 +77,7 @@ export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closin
                     </button>
                 </header>
 
+                {analysis?.status === "done" && <FinancialDecision evaluation={analysis.evaluation} targets={targets} now={now} />}
                 <PhotoReview listing={listing} evaluation={analysis?.status === "done" ? analysis.evaluation : null}
                     phase={analysis?.status === "loading" || analysis?.status === "error" ? analysis.status : undefined}
                     state={photoReviewState} onReview={unavailable ? undefined : onPhotoReview} />
@@ -120,7 +121,6 @@ export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closin
                         evaluation={analysis.evaluation}
                         now={now}
                         minGrade={minGrade}
-                        targets={targets}
                         onReanalyze={() => onAnalyze(true)}
                         reviewing={photoReviewState?.status === "loading" || unavailable}
                     />
@@ -190,7 +190,6 @@ function Analysis({
     now,
     onReanalyze,
     minGrade,
-    targets,
     reviewing,
 }: {
     listing: ListingSummary;
@@ -198,7 +197,6 @@ function Analysis({
     now: number;
     onReanalyze: () => void;
     minGrade: number;
-    targets: Targets;
     reviewing: boolean;
 }) {
     const tokens = evaluation.usage.reduce(
@@ -209,21 +207,10 @@ function Analysis({
 
     return (
         <>
-            {evaluation.underwriting && (
-                evaluation.listing.buyingOption === "AUCTION" ? (
-                    <Section title="Auction decision">
-                        <AuctionSummary evaluation={evaluation} targets={targets} now={now} />
-                        <Notes items={evaluation.underwriting.reasons} />
-                        <Notes items={evaluation.underwriting.assumptions} tone="muted" />
-                        <Notes items={evaluation.rating?.concerns ?? []} tone="bad" />
-                    </Section>
-                ) : <VerdictSection underwriting={evaluation.underwriting} evaluation={evaluation} now={now} />
-            )}
             {evaluation.condition && <Section title="PSA and CGC comparison"><GradingComparison evaluation={evaluation} expanded /></Section>}
             <Section title="Photo evidence and grading confidence">
                 <p>Assessment confidence: {name(evidence.confidence)}. {evidence.coverage}.</p>
-                <p>{evidence.target}</p>
-                <p className={styles.small}>Confidence describes the photo assessment. The chance of receiving a particular PSA grade is not calibrated.</p>
+                {!evaluation.slab && minGrade > 0 && <p>{evidence.target}</p>}
                 <Notes items={evidence.issues} tone="muted" />
             </Section>
 
@@ -242,6 +229,18 @@ function Analysis({
             <Section title="Resale activity">
                 <p>{resaleActivity(evaluation, now).label}</p>
                 <p className={styles.small}>{resaleActivity(evaluation, now).detail}</p>
+                {(() => { const matched = matchedSoldActivity(evaluation, now); return matched && <><h4 className={styles.subTitle}>Matched sold listings · {matched.scope}</h4><Pairs rows={[
+                    ["Observed / 7 days", String(matched.last7)], ["Observed / 30 days", String(matched.last30)], ["Observed / 90 days", String(matched.last90)],
+                    ["Matching sample", `${matched.returned} sales / ${matched.windowDays}-day lookup`], ["Latest matching sale", matched.newest ?? "None in returned sample"],
+                ]} /></>; })()}
+                {evaluation.marketActivity?.status === "AVAILABLE" && <h4 className={styles.subTitle}>Broader activity · {evaluation.marketActivity.scope === "RAW" ? "all raw conditions" : "all graders and grades"}</h4>}
+                {evaluation.marketActivity?.status === "AVAILABLE" && <Pairs rows={[
+                    ["Recorded eBay sales / 30 days", `${evaluation.marketActivity.complete ? "" : "At least "}${evaluation.marketActivity.observedSales}`],
+                    ["Average recorded sales / day", evaluation.marketActivity.dailyAverage.toFixed(evaluation.marketActivity.dailyAverage < 1 ? 2 : 1)],
+                    ["Days with recorded sales", `${evaluation.marketActivity.activeDays} / 30`],
+                    ["Latest recorded sale", evaluation.marketActivity.newestSale ?? "None recorded"],
+                ]} />}
+                {evaluation.marketActivity?.status === "UNAVAILABLE" && <p className={styles.small}>{evaluation.marketActivity.reason}</p>}
             </Section>
             <ListingSection listing={listing} evaluation={evaluation} />
             {evaluation.identity && <IdentitySection identity={evaluation.identity} isSlab={Boolean(evaluation.slab)} />}
@@ -251,6 +250,7 @@ function Analysis({
             {(evaluation.rawPricing || evaluation.gradedPricing) && (
                 <PricesSection raw={evaluation.rawPricing} graded={evaluation.gradedPricing} />
             )}
+            {evaluation.rawPricing?.crossCheckNote && <p className={styles.small}>{evaluation.rawPricing.crossCheckNote}</p>}
 
             {evaluation.photoCheck && <PhotosSection evaluation={evaluation} photoCheck={evaluation.photoCheck} />}
 
@@ -269,6 +269,16 @@ function Analysis({
     );
 }
 
+function FinancialDecision({ evaluation, targets, now }: { evaluation: Evaluation; targets: Targets; now: number }) {
+    if (!evaluation.underwriting) return null;
+    return evaluation.listing.buyingOption === "AUCTION" ? <Section title="Auction decision">
+        <AuctionSummary evaluation={evaluation} targets={targets} now={now} />
+        <Notes items={evaluation.underwriting.reasons} />
+        <Notes items={evaluation.underwriting.assumptions} tone="muted" />
+        <Notes items={evaluation.rating?.concerns ?? []} tone="bad" />
+    </Section> : <VerdictSection underwriting={evaluation.underwriting} evaluation={evaluation} now={now} />;
+}
+
 function VerdictSection({
     underwriting,
     evaluation,
@@ -285,8 +295,14 @@ function VerdictSection({
 
     const rows: [string, ReactNode][] = [
         [listing.buyingOption === "AUCTION" ? `Current bid (${listing.bids} bids)` : "Buy It Now", dollars(listing.price)],
-        ["Shipping", listing.shipping === null ? "Not quoted" : dollars(listing.shipping)],
+        ["Shipping", listing.shipping === null ? `Not quoted · ${dollars(MONEY_CONFIG.buying.assumedShippingWhenUnknown)} assumed` : dollars(listing.shipping)],
     ];
+    if (best?.path === "RAW") {
+        const quote = evaluation.rawPricing?.prices?.find(price => price.condition === best.priceCondition);
+        rows.push(["Raw sale estimate before fees", dollars(best.salePrice)]);
+        rows.push(["Resale evidence", best.pricingNotes?.length ? "Conservative adjusted market fallback" : quote?.basis === "EBAY_SOLD" ? `${quote.comps?.count ?? "Matched"} eBay sold comps` : "TCGplayer market fallback"]);
+        rows.push(["Net sale proceeds after fees and shipping", dollars(best.expectedNet)]);
+    }
 
     if (room !== null) {
         // An auction's bid days before the end says nothing about the outcome.
@@ -299,12 +315,13 @@ function VerdictSection({
         // An auction's bid will rise, so its profit is shown at the max bid.
         const auction = listing.buyingOption === "AUCTION";
         const profit = auction ? best.profitAtMaxBid : best.profit;
-        const roi = auction ? best.roiAtMaxBid : best.roi;
+        const investment = auction ? best.costAtMaxBid : best.cost;
+        const roi = investment && profit !== null ? profit / investment : null;
 
         rows.push([
             auction ? "Est. profit at max bid" : (profit ?? 0) < 0 ? "Est. net loss at asking" : "Est. net profit at asking",
             <span className={(profit ?? 0) >= 0 ? styles.good : styles.bad}>
-                {dollars(profit === null ? null : Math.abs(profit))} ({percent(roi)} return on total cost)
+                {dollars(profit === null ? null : Math.abs(profit))} ({returnText(roi)} return on total cost)
             </span>,
         ]);
         if (!auction) rows.push(["Est. total invested", dollars(best.cost)]);
@@ -340,7 +357,7 @@ function VerdictSection({
 
             {best?.maxBid !== undefined && (
                 <div className={styles.hero}>
-                    <span className={styles.heroLabel}>{ceilingLabel(listing.buyingOption)}</span>
+                    <span className={styles.heroLabel}>{ceilingLabel(listing.buyingOption)} · {best.label}</span>
                     {/* Green to buy, purple to grade: the verdict's color, not today's bid. */}
                     <span
                         className={`${styles.heroValue} ${
@@ -358,6 +375,7 @@ function VerdictSection({
             )}
 
             <Pairs rows={rows} />
+            <Notes items={best?.pricingNotes ?? []} tone="muted" />
             {evaluation.rating && (
                 <>
                     <Notes items={evaluation.rating.strengths} tone="good" />
@@ -548,7 +566,7 @@ function ListingSection({ listing, evaluation }: { listing: ListingSummary; eval
     }
     if (screen?.bestCase) {
         rows.push([
-            "Free check, at best",
+            "Preliminary screening estimate",
             `${dollars(screen.bestCase.maxBid)} ${ceilingLabel(listing.buyingOption).toLowerCase()} (${screen.assumed})`,
         ]);
     }
@@ -627,6 +645,12 @@ function SlabSection({ slab, pricing }: { slab: Slab; pricing: SlabPricing | nul
             <Notes items={slab.reasons} tone="bad" />
             <Notes items={slab.concerns} tone="muted" />
             {pricing?.summary && <CompsRow summary={pricing.summary} />}
+            {pricing?.activeReference && <div>
+                <p><strong>Current Buy It Now competition</strong></p>
+                <p>Resale target {dollars(pricing.activeReference.resalePrice)} · {percent(pricing.activeReference.discountRate)} below the cheapest matching item plus shipping ({dollars(pricing.activeReference.lowestTotal)}).</p>
+                <p className={styles.small}>Slab photos and labels checked · sellers have 100+ feedback and at least 98.5% positive · checked {new Date(pricing.activeReference.checkedAt).toLocaleString()}.</p>
+                <ul>{pricing.activeReference.listings.map(comp => <li key={comp.id}><a className={styles.listingLink} href={comp.url} target="_blank" rel="noopener noreferrer">{comp.title}</a><p>{dollars(comp.total)} including shipping · {comp.seller.username} · {comp.seller.feedbackPercentage}% positive</p></li>)}</ul>
+            </div>}
             {pricing && pricing.status !== "PRICED" && <p className={styles.muted}>{pricing.reason}</p>}
         </Section>
     );
@@ -637,6 +661,8 @@ function ConditionSection({ evaluation, condition }: { evaluation: Evaluation; c
 
     return (
         <Section title="Condition">
+            <p>Seller says: {evaluation.listing.cardCondition ?? "Not stated"} · AI assesses: <strong>{name(condition.rawCondition)}</strong></p>
+            <details className={styles.details}><summary>Our six condition definitions</summary><dl>{RAW_CONDITIONS.map(key => <div key={key}><dt><strong>{CONDITION_NAMES[key]}</strong></dt><dd>{CONDITION_DEFINITIONS[key]}</dd></div>)}</dl></details>
             <Pairs
                 rows={[
                     ["Grade range", `${describeRange(condition.gradeRange)} (${name(condition.confidence)} confidence)`],
@@ -696,7 +722,7 @@ function CompsRow({ summary }: { summary: CompSummary }) {
         <details className={styles.details}>
             <summary>
                 <span>
-                    {summary.grader} {summary.grade}
+                    {summary.grader === "RAW" ? `Raw · ${name(String(summary.grade))}` : `${summary.grader} ${summary.grade}`}
                 </span>
                 <span className={styles.compStats}>
                     {summary.count > 0
@@ -707,7 +733,7 @@ function CompsRow({ summary }: { summary: CompSummary }) {
 
             {summary.count > 0 && (
                 <p className={styles.small}>
-                    Range {dollars(summary.low)} to {dollars(summary.high)}. Newest sale {summary.newestSale}.
+                    {summary.mean != null ? `Average ${dollars(summary.mean)}. ` : ""}Range {dollars(summary.low)} to {dollars(summary.high)}. Newest sale {summary.newestSale}.{summary.windowDays ? ` Up to ${summary.windowDays} days of recent sales; at most 40 returned rows per lookup are sampled. The median drives the estimate.` : ""}
                 </p>
             )}
 
@@ -722,6 +748,7 @@ function CompsRow({ summary }: { summary: CompSummary }) {
                     <li key={`${sale.soldAt}-${index}`}>
                         <span className={styles.salePrice}>{dollars(sale.price)}</span>
                         <span className={styles.muted}>{sale.soldAt}</span>
+                        {sale.photoCondition && <span className={styles.muted}>Seller says: {sale.sellerCondition ? CONDITION_NAMES[sale.sellerCondition] : "Not stated"} · AI assesses: {CONDITION_NAMES[sale.photoCondition]}</span>}
                         {sale.url ? (
                             <a href={sale.url} target="_blank" rel="noopener noreferrer">
                                 {sale.title}
@@ -749,10 +776,15 @@ function PricesSection({
                 <>
                     <h4 className={styles.subTitle}>Raw{raw.printingLabel ? `, ${raw.printingLabel}` : ""}</h4>
                     {raw.status === "PRICED" ? (
-                        <Pairs rows={(raw.prices ?? []).map((price) => [name(price.condition), dollars(price.price)])} />
+                        <Pairs rows={RAW_CONDITIONS.map(condition => {
+                            const price = raw.prices?.find(entry => entry.condition === condition);
+                            return [CONDITION_NAMES[condition], !price ? "No supported price" : `${dollars(price.price)} · ${price.basis === "EBAY_SOLD" ? `eBay sold median (${price.comps?.count} ${raw.conditionEvidence === "AI_PHOTOS" ? "photo-assessed " : ""}sales)` : price.basis === "TCGPLAYER" || raw.source === "pkmnprices" ? "TCGplayer market fallback" : "Market feed"}`];
+                        })} />
                     ) : (
                         <p className={styles.muted}>{raw.reason}</p>
                     )}
+                    {raw.evidenceNote && <p className={styles.small}>{raw.evidenceNote}</p>}
+                    {raw.ebayComps?.filter(summary => summary.count > 0).map(summary => <CompsRow key={String(summary.grade)} summary={summary} />)}
                 </>
             )}
 

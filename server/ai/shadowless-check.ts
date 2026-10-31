@@ -1,4 +1,5 @@
-import { runStructured, MODEL } from "./openai.ts";
+import { runStructured } from "./openai.ts";
+import { VISION_MODEL } from "./policy.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
 import { fullSizePhoto } from "./photo-match.ts";
@@ -27,7 +28,7 @@ export function supportsShadowless(check: ShadowlessCheck): boolean {
 export async function verifyShadowless(urls: string[]): Promise<boolean> {
     const photos = [...new Set(urls.map(fullSizePhoto))].slice(0, 3);
     if (!photos.length) return false;
-    const key = `shadowless-check:v1:${MODEL}:${photos.join("|")}`;
+    const key = `shadowless-check:v1:${VISION_MODEL}:${photos.join("|")}`;
     return share(key, async () => {
         let check = await readCache<ShadowlessCheck>(key, 24 * 365);
         if (!check) {

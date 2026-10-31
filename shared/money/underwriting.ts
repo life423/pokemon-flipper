@@ -31,6 +31,7 @@ export const GRADERS: Grader[] = ["PSA", "CGC"];
 // one of these from the seller's details; the full analysis, from the
 // photos.
 export interface UnderwritingInput {
+    pricesCheckedAt?: string;
     deeperPhotoReview?: DeeperPhotoReview;
     listing: { price: number | null; shipping: number | null; availability?: string };
     identity: Identity | null;
@@ -232,7 +233,7 @@ function pricedPath(
 
 // Path 1: buy raw, resell raw at the assessed condition's price.
 export function rawPath(input: UnderwritingInput, listing: PricedListing, shipping: number, config: MoneyConfig): MoneyPath {
-    const label = "Resell raw";
+    const label = "Sell raw";
     const { rawPricing, condition } = input;
 
     if (rawPricing?.status !== "PRICED") {
@@ -249,15 +250,44 @@ export function rawPath(input: UnderwritingInput, listing: PricedListing, shippi
         .map((name) => rawPricing.prices?.find((price) => price.condition === name))
         .find((price) => price !== undefined);
 
-    if (!entry || !isRawCondition(entry.condition)) {
+    if (!entry || !isRawCondition(entry.condition) || !Number.isFinite(entry.price) || entry.price <= 0) {
         return unavailablePath("RAW", label, "There's no raw price at the assessed condition or below.");
     }
 
-    const net = netFromSale(entry.price, "raw", config.selling);
+    let salePrice = entry.price;
+    const pricingNotes: string[] = [];
+    if (entry.basis === "TCGPLAYER") {
+        if (entry.crossCheck && Number.isFinite(entry.crossCheck.price) && entry.crossCheck.price > 0 && entry.crossCheck.price < salePrice) {
+            salePrice = entry.crossCheck.price;
+            pricingNotes.push(`PokémonPriceTracker reports a lower matching condition/printing market quote of ${dollars(salePrice)}; it caps the primary TCGplayer fallback. This is a second market feed, not a separate sold transaction.`);
+        }
+        // A condition-specific market fallback is not a matched eBay sale.
+        // Prevent inverted condition quotes and checked slab evidence from
+        // making an unsupported raw premium look like executable profit.
+        const better = (rawPricing.prices ?? []).filter(price => isRawCondition(price.condition) &&
+            RAW_CONDITIONS.indexOf(price.condition) < RAW_CONDITIONS.indexOf(entry.condition as typeof condition.rawCondition) &&
+            Number.isFinite(price.price) && price.price > 0);
+        const ceiling = Math.min(salePrice, ...better.map(price => price.price));
+        if (ceiling < salePrice) { salePrice = ceiling; pricingNotes.push("The raw fallback exceeded a better-condition quote; the lower quote caps this estimate."); }
+        const reference = GRADERS.flatMap(grader => {
+            const prices = input.gradedPricing?.[grader];
+            if (prices?.status !== "PRICED" || prices.printing !== input.identity?.printing || prices.variant !== rawPricing.variant) return [];
+            return (prices.byGrade ?? []).filter(summary => {
+                const age = Date.parse(input.pricesCheckedAt ?? summary.newestSale ?? "") - Date.parse(summary.newestSale ?? "");
+                return Number(summary.grade) >= condition.gradeRange.low && Number(summary.grade) <= condition.gradeRange.high &&
+                    summary.count >= 2 && summary.median !== null && Number.isFinite(summary.median) && summary.median > 0 && age >= 0 && age <= 180 * 86400000;
+            }).map(summary => ({ grader, summary }));
+        }).sort((a, b) => a.summary.median! - b.summary.median!)[0];
+        if (reference && reference.summary.median! < salePrice) {
+            salePrice = reference.summary.median!;
+            pricingNotes.push(`The unsupported raw fallback of ${dollars(entry.price)} exceeds matched ${reference.grader} ${reference.summary.grade} sold evidence. This conservative raw estimate is capped at ${dollars(salePrice)} using ${reference.summary.count} sales (newest ${reference.summary.newestSale}); it is not a verified raw sold median.`);
+        }
+    }
+    const net = netFromSale(salePrice, "raw", config.selling);
 
     return pricedPath(
         { path: "RAW", label, expectedNet: net, downsideNet: net, fixedCosts: 0, listing, shipping, config },
-        { salePrice: entry.price, priceCondition: entry.condition }
+        { salePrice, priceCondition: entry.condition, ...(pricingNotes.length ? { pricingNotes } : {}) }
     );
 }
 
@@ -376,7 +406,8 @@ function underwriteSlab(
         return verdict("NEEDS_REVIEW", slab.reasons);
     }
 
-    if (slabPricing?.status !== "PRICED" || !slabPricing.summary) {
+    const active = slabPricing?.activeReference;
+    if (slabPricing?.status !== "PRICED" || !slabPricing.summary && !active) {
         return verdict(
             "CANT_PRICE",
             [slabPricing?.reason ?? `There are no ${slab.grader} ${slab.grade} sales to price with.`],
@@ -384,7 +415,13 @@ function underwriteSlab(
         );
     }
 
-    const path = gradedResalePath(listing, slabPricing.summary, shipping, config);
+    const path = slabPricing.summary && slabPricing.summary.count > 0 ? gradedResalePath(listing, slabPricing.summary, shipping, config)
+        : active && active.grader === slab.grader && active.grade === slab.grade && active.listings.length > 0 &&
+            Number.isFinite(active.resalePrice) && active.resalePrice > 0 && active.resalePrice <= active.lowestTotal ? pricedPath({
+            path: "GRADED_RESALE", label: `Resell as ${slab.grader} ${slab.grade}`, expectedNet: netFromSale(active.resalePrice, "graded", config.selling),
+            downsideNet: netFromSale(active.resalePrice, "graded", config.selling), fixedCosts: 0, listing, shipping, config,
+        }, { salePrice: active.resalePrice, pricingNotes: [`Current Buy It Now competition: ${active.listings.length} photo-checked matching slabs. Resale target is ${Math.round(active.discountRate * 100)}% below the cheapest item-plus-shipping total of ${dollars(active.lowestTotal)}.`] })
+        : unavailablePath("GRADED_RESALE", `Resell as ${slab.grader} ${slab.grade}`, "No usable sold or current-listing reference.");
 
     if (!isPriced(path)) {
         return { ...verdict("CANT_PRICE", [path.reason], assumptions), paths: [path] };
@@ -417,6 +454,10 @@ function underwriteBase(input: UnderwritingInput, config: MoneyConfig): Underwri
     if (typeof price !== "number") {
         return verdict("CANT_PRICE", ["The listing has no price."]);
     }
+    if (!Number.isFinite(price) || price < 0 || input.listing.shipping != null &&
+        (!Number.isFinite(input.listing.shipping) || input.listing.shipping < 0)) {
+        return verdict("CANT_PRICE", ["The purchase price or shipping amount is invalid; current USD terms are required."]);
+    }
 
     if (!readyForPricing(identity)) {
         return verdict("NEEDS_REVIEW", identity?.reasons?.length ? identity.reasons : ["The card isn't identified yet."]);
@@ -441,7 +482,7 @@ function underwriteBase(input: UnderwritingInput, config: MoneyConfig): Underwri
     const unchecked = [
         config.verified.selling ? null : "eBay fees and shipping",
         config.verified.buying ? null : "sales tax on purchases",
-        uncheckedGraders(config),
+        input.slab ? null : uncheckedGraders(config),
     ].filter(Boolean);
 
     if (unchecked.length > 0) {

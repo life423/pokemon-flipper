@@ -19,6 +19,34 @@ function pending(id: string, time = TIME): ListingSummary {
 }
 const priced = (): Screen => ({ status: "CANDIDATE", reason: null, card: null, bestCase: null, assumed: null });
 
+test("primary pricing recovers before discovery photos and only new failures get the tail recovery budget", async () => {
+    const row = pending("first", Date.now()); const extra = pending("extra", Date.now());
+    const order: string[] = [];
+    await searchWithDiscovery("Aquapolis PSA 7", {}, {
+        find: async (_query, options = {}) => { options.onListing?.(row); return [row]; },
+        recover: async (rows, options = {}) => {
+            order.push(`recover:${rows.map(r => r.id).join(",")}`);
+            for (const value of rows) options.onListing?.({ ...value, screen: priced() }, pricingSnapshotKey(value));
+        },
+        discover: async (_query, options = {}) => {
+            order.push("discovery");
+            assert.equal(options.primaryListings?.[0].screen?.status, "CANDIDATE");
+            options.onListing?.(extra);
+        },
+    });
+    assert.deepEqual(order, ["recover:first", "discovery", "recover:extra"]);
+});
+
+test("cancellation during primary price recovery stops extra discovery and retries", async () => {
+    const controller = new AbortController(); let discoveryCalls = 0;
+    await searchWithDiscovery("Aquapolis PSA 7", { signal: controller.signal }, {
+        find: async () => [pending("first", Date.now())],
+        recover: async () => { controller.abort(); },
+        discover: async () => { discoveryCalls++; },
+    });
+    assert.equal(discoveryCalls, 0);
+});
+
 test("automatic recovery waits for cooldown, batches at five, and streams recovered candidates without making Deals", async () => {
     let time = TIME; const rows = Array.from({ length: 12 }, (_, i) => pending(String(i))); const batches: string[][] = [];
     const updates: ListingSummary[] = []; const progress: PricingRecoveryProgress[] = [];

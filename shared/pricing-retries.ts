@@ -31,7 +31,7 @@ export function pricingSnapshotKey(listing: ListingSummary): string {
 }
 export function canRetryPricing(listing: ListingSummary, now = Date.now()): boolean {
     const retry = listing.screen?.pricingRetry;
-    return !listing.match && listing.availability !== "UNAVAILABLE" && (!listing.endTime || Date.parse(listing.endTime) > now) && listing.screen?.status === "UNSCREENED" &&
+    return (!listing.match || listing.match === "UNCONFIRMED_CRITERIA") && listing.availability !== "UNAVAILABLE" && (!listing.endTime || Date.parse(listing.endTime) > now) && listing.screen?.status === "UNSCREENED" &&
         Boolean(retry && retry.attemptsLeft > 0 && (!retry.expiresAt || Date.parse(retry.expiresAt) > now) && retry.snapshotKey === pricingSnapshotKey(listing)) &&
         ["RATE_LIMIT", "TEMPORARY"].includes(listing.screen?.pricingIssue?.kind ?? "");
 }

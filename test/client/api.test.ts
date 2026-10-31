@@ -1,6 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { streamDeals, streamDig } from "../../client/src/api.ts";
+import { streamDeals, streamDig, evaluateListing } from "../../client/src/api.ts";
+
+test("a fresh request resumes one interrupted connection without repaying completed photo work or trusting old browser terms", async t => {
+    const urls: string[] = [];
+    t.mock.method(globalThis, "fetch", async (url: string) => { urls.push(url); if (urls.length === 1) throw new TypeError("network error"); return Response.json({ listing: { id: "offline" } }); });
+    await evaluateListing({ id: "offline", title: "Old browser", images: [], currentPrice: 1, shipping: 0, bids: 0, endTime: null } as never, { fresh: true });
+    assert.match(urls[0], /fresh=1/); assert.match(urls[1], /refreshTerms=1/); assert.equal(urls.length, 2);
+});
+
+test("browser API calls identify the local app and display actionable validation errors", async t => {
+    t.mock.method(globalThis, "fetch", async (_url: unknown, init?: RequestInit) => {
+        assert.equal(new Headers(init?.headers).get("X-Pokemon-Flipper"), "1");
+        return Response.json({ error: "Enter a search between 1 and 300 characters." }, { status: 400 });
+    });
+    await assert.rejects(streamDeals("", { maxResults: 400, minPrice: 0 }, () => {}), /between 1 and 300/);
+});
 
 test("early EOF preserves delivered results but cannot become a completed search", async (t) => {
     t.mock.method(globalThis, "fetch", async () => new Response('{"type":"listing","listing":{"id":"kept"}}\n'));

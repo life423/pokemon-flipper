@@ -45,6 +45,7 @@ export function variantFor(
     card: PricedCard | null,
     identity: Identity
 ): { variant: PricedVariant; reason?: undefined } | { variant?: undefined; reason: string } {
+    if (identity.finish === "CONFLICTING") return { reason: "The finish evidence conflicts; it cannot safely select a price variant." };
     const name = printingLabel(identity.printing, identity.set);
     let matches = (card?.variants ?? []).filter((variant) => variant.printing === identity.printing);
 
@@ -83,7 +84,7 @@ export function rawPricesFor(card: PricedCard | null, identity: Identity): RawPr
     if (!variant || !card) return unavailable(reason ?? "There is no card to price.");
 
     const label = printingLabel(variant.printing, identity.set);
-    const prices = variant.prices.filter((entry) => typeof entry.price === "number");
+    const prices = variant.prices.filter((entry) => typeof entry.price === "number" && Number.isFinite(entry.price) && entry.price > 0);
 
     if (prices.length === 0) {
         return unavailable(`The ${label} printing has no current raw prices.`);

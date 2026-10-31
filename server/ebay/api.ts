@@ -91,8 +91,8 @@ export async function ebayGet<T>(path: string, { signal }: { signal?: AbortSigna
     };
 
     // Optional: lets eBay quote CALCULATED shipping to your ZIP.
-    if (process.env.EBAY_SHIP_TO_ZIP) {
-        headers["X-EBAY-C-ENDUSERCTX"] = `contextualLocation=country%3DUS%2Czip%3D${process.env.EBAY_SHIP_TO_ZIP}`;
+    if (process.env.EBAY_SHIP_TO_ZIP?.trim()) {
+        headers["X-EBAY-C-ENDUSERCTX"] = `contextualLocation=${encodeURIComponent(`country=US,zip=${process.env.EBAY_SHIP_TO_ZIP.trim()}`)}`;
     }
 
     const { response, body: data } = await fetchJson(`${EBAY_API}${path}`, { headers, signal }, { service: "eBay" });

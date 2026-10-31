@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkSlab, graderCode, normalizeGrade } from "../../server/identity/slab-check.ts";
+import { checkSlab, graderCode, normalizeGrade, normalizeSlabReading } from "../../server/identity/slab-check.ts";
 
 const slabPhotos = (overrides = {}) => ({
     photoSufficiency: "SUFFICIENT",
@@ -45,6 +45,13 @@ test("a readable slab that matches its item details passes, with a cert link", (
     assert.equal(slab.certUrl, "https://www.psacard.com/cert/12345678");
 });
 
+test("PSA ordinary grade descriptions are not special qualifiers; mixed or incorrect descriptions remain blocked", () => {
+    for (const [grade, gradeQualifier] of [["7", "NM"], ["7", "Near Mint"], ["8", "NM-MT"], ["9", "MINT"], ["10", "GEM-MT"], ["6", "EX-MT"]]) {
+        assert.equal(checkSlab(slabPhotos({ grade, gradeQualifier })).status, "OK");
+    }
+    for (const gradeQualifier of ["NM OC", "OC", "MK", "Authentic", "MINT"]) assert.equal(checkSlab(slabPhotos({ grade: "7", gradeQualifier })).status, "NEEDS_REVIEW");
+});
+
 test("item details that disagree with the label send it to review", () => {
     const wrongGrade = checkSlab(slabPhotos(), { ...ASPECTS, Grade: "10" });
     const wrongCert = checkSlab(slabPhotos(), { ...ASPECTS, "Certification Number": "99999999" });
@@ -67,6 +74,15 @@ test("\"None\" written as a qualifier isn't a qualifier", () => {
 
 test("a slab that looks fake is flagged as such", () => {
     assert.equal(checkSlab(slabPhotos({ authenticity: "LIKELY_FAKE" }), ASPECTS).status, "LIKELY_FAKE");
+});
+
+test("unsupported suspicion is not external verification and visible authenticity evidence remains blocking", () => {
+    const reading = slabPhotos({ authenticity: "POSSIBLE", authenticityEvidence: [] }).slab;
+    assert.equal(normalizeSlabReading(reading).authenticity, "NONE_SEEN");
+    assert.equal(checkSlab({ ...slabPhotos(), slab: reading }).status, "OK");
+    assert.equal(normalizeSlabReading({ ...reading, authenticityEvidence: ["A reseal seam is visible."] }).authenticity, "POSSIBLE");
+    assert.equal(normalizeSlabReading({ ...reading, authenticity: "LIKELY_FAKE" }).authenticity, "LIKELY_FAKE");
+    assert.equal(normalizeSlabReading({ ...reading, authenticityEvidence: undefined }).authenticity, "POSSIBLE");
 });
 
 test("stock-only or unusable slab photos require review even with a readable label", () => {

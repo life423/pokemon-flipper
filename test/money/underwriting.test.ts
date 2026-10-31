@@ -143,7 +143,7 @@ test("the max bid clears both the minimum profit and the minimum return", () => 
 
 test("Lugia at $300: grading with PSA clears the targets, reselling raw doesn't", () => {
     const result = underwrite(lugiaEvaluation(), CONFIG);
-    const raw = pathOf(result, "Resell raw");
+    const raw = pathOf(result, "Sell raw");
     const psa = pathOf(result, "Grade with PSA");
 
     assert.equal(result.verdict, "BUY_AND_GRADE");
@@ -190,7 +190,7 @@ test("raw prices fall back to a worse condition, never a better one", () => {
         CONFIG
     );
 
-    assert.equal(pathOf(result, "Resell raw").salePrice, 210.54);
+    assert.equal(pathOf(result, "Sell raw").salePrice, 210.54);
 });
 
 test("a card worth more than every service level's cap can't take the grading path", () => {
@@ -295,6 +295,6 @@ test("final raw pricing uses the AI's condition even when the seller calls it Ne
         rawPricing: { status: "PRICED", prices: [{ condition: "NEAR_MINT", price: 531.39 }, { condition: "HEAVILY_PLAYED", price: 70 }] },
     }), CONFIG);
     assert.equal(result.verdict, "PASS");
-    assert.equal(pathOf(result, "Resell raw").salePrice, 70);
-    assert.equal(pathOf(result, "Resell raw").priceCondition, "HEAVILY_PLAYED");
+    assert.equal(pathOf(result, "Sell raw").salePrice, 70);
+    assert.equal(pathOf(result, "Sell raw").priceCondition, "HEAVILY_PLAYED");
 });

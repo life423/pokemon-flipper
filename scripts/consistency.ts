@@ -1,7 +1,8 @@
 // Grades the same live listing several times at once and shows
 // how much the answers vary between runs.
 // Usage: npm run consistency -- <eBay link or item number> [runs]
-// Paid: every run makes up to two vision requests.
+// Paid: each run performs independent photo/condition readings and may resolve
+// identity gaps and assess sold-copy photos. Pricing/title caches remain shared.
 import "dotenv/config";
 import { evaluateListing } from "../server/analysis/evaluate.ts";
 import { toItemId } from "./item-id.ts";
@@ -16,7 +17,7 @@ if (!itemId || !Number.isInteger(runs) || runs < 2 || runs > 10) {
     process.exit(1);
 }
 
-console.log(`Grading ${itemId} ${runs} times at once. Paid: up to ${runs * 2} vision requests.`);
+console.log(`Grading ${itemId} ${runs} times independently. Paid photo, condition and optional resolution requests apply to each run.`);
 
 const started = Date.now();
 

@@ -36,17 +36,24 @@ export type PricedVariant = PricedCard["variants"][number];
 
 // One eBay sale, as pkmnprices returns it.
 export interface Comp {
+    photoCondition?: import("../../shared/conditions.ts").RawCondition;
+    conditionEvidence?: string[];
+    sellerCondition?: import("../../shared/conditions.ts").RawCondition | null;
     id?: string | number;
     price: number;
     sold_at: string;
     variant: string | null;
     title: string;
-    grader: string;
-    grade: string;
+    grader: string | null;
+    grade: string | null;
+    currency?: string;
+    sale_type?: "auction" | "fixed_price" | "best_offer_accepted" | null;
     grade_qualifier: string | null;
     attribution: "exact" | "shared" | "unknown";
     listing_url: string | null;
 }
+
+export type FetchRawComps = (recordId: CardRecord["id"], variant: string) => Promise<Comp[]>;
 
 export type LookupCards = (query: { set: string; name: string; cardNumber: string }) => Promise<CardRecord[]>;
 
@@ -57,6 +64,8 @@ export type FetchComps = (
 
 // The card a set of comps is priced for, as the comp checker reads it.
 export interface CompTarget {
+    conditionEvidence?: "AI_PHOTOS";
+    finish?: string;
     cardName: string;
     setName: string;
     cardNumber: string;

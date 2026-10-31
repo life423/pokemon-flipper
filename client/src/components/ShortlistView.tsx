@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import type { ShortlistEntry } from "../../../shared/shortlist.ts";
 import { REFRESH_LIMIT } from "../../../shared/shortlist.ts";
+import { currentPriceEvidence } from "../../../shared/pricing-freshness.ts";
 import { dollars } from "../format";
 import styles from "./ShortlistView.module.css";
 
@@ -35,6 +36,7 @@ export function ShortlistView({ entries, loading, error, refreshing, refreshErro
                 <p className={styles.small}>{entry.checkedAt ? `Last checked ${new Date(entry.checkedAt).toLocaleString()}` : `Saved ${new Date(entry.savedAt).toLocaleString()} · not refreshed`}</p>
                 {ended && <p className={styles.warning}>Unavailable or ended. Saved figures are historical.</p>}
                 {!ended && entry.needsAnalysis && <p className={styles.warning}>A current photo assessment is needed. Open analysis to review the listing.</p>}
+                {!ended && entry.evaluation && !currentPriceEvidence(entry.evaluation, now) && <p className={styles.warning}>Prices need an update. Open analysis to refresh; unchanged photo assessments can be reused.</p>}
                 {entry.checkedAt && entry.listing.availability === "UNKNOWN" && !ended && <p className={styles.small}>Availability was not confirmed. Check the listing on eBay.</p>}
                 {entry.ceiling !== null && entry.listing.currentPrice !== null && entry.listing.currentPrice > entry.ceiling && <p className={styles.warning}>Above your {dollars(entry.ceiling)} ceiling.</p>}
                 {refreshErrors[entry.id] && <p role="alert" className={styles.error}>{refreshErrors[entry.id]} Previous snapshot kept.</p>}

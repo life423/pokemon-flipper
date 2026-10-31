@@ -30,22 +30,25 @@ export function deeperPhotoConcerns(evaluation: Pick<Evaluation, "deeperPhotoRev
 export function photoReviewStatus(evaluation: Evaluation | null, listing?: ListingSummary) {
     if (!evaluation?.photoCheck) return {
         title: listing?.screen?.evidence?.mainPhoto === "MATCH" || listing?.mistakes?.length ? "AI preliminary photo check only" : "AI photo review not completed",
-        confidence: "UNKNOWN", checked: 0, total: listing?.images?.length ?? 0, reviewedAt: null, reasons: [] as string[], needsYourReview: false,
+        confidence: "UNKNOWN", checked: 0, total: listing?.images?.length ?? 0, reviewedAt: null, reasons: [] as string[], photoNotes: [] as string[], needsYourReview: false,
     };
     const check = evaluation.photoCheck;
     const confidence = photoAssessmentConfidence(evaluation);
     const newConcerns = deeperPhotoConcerns(evaluation);
     const reasons = [...newConcerns];
-    reasons.push(...check.images.filter((image) => image.obscuresCondition).flatMap((image) => image.issues));
+    const photoNotes = check.images.filter((image) => image.obscuresCondition).flatMap((image) => image.issues);
+    if (!evaluation.slab) reasons.push(...photoNotes);
     if (evaluation.identity?.status !== "IDENTIFIED") reasons.push(...(evaluation.identity?.reasons ?? ["The exact card identity is uncertain."]));
     if (evaluation.slab?.status !== "OK" && evaluation.slab) reasons.push(...evaluation.slab.reasons);
     if (!evaluation.slab && evaluation.condition?.gradeRange.likely === null) reasons.push("The photos do not support a single likely grade.");
     if (!evaluation.slab && !evaluation.condition) reasons.push("AI could not support a raw-condition or grade estimate.");
-    if (confidence === "LOW") reasons.push("Photo assessment confidence is low.");
-    reasons.push(...check.missingViews.map((view) => `Missing view: ${view.toLowerCase().replaceAll("_", " ")}.`));
-    if (!evaluation.slab) reasons.push(...evaluation.modeReasons);
+    if (!evaluation.slab) {
+        if (confidence === "LOW") reasons.push("Photo assessment confidence is low.");
+        reasons.push(...check.missingViews.map((view) => `Missing view: ${view.toLowerCase().replaceAll("_", " ")}.`));
+        reasons.push(...evaluation.modeReasons);
+    }
     const concerns = reasons.length > 0;
     return { title: "AI photo review complete", confidence, checked: check.images.length,
         total: evaluation.listing.photosInListing, reviewedAt: evaluation.answeredAt,
-        reasons: [...new Set(reasons)], needsYourReview: concerns };
+        reasons: [...new Set(reasons)], photoNotes: evaluation.slab ? [...new Set(photoNotes)] : [], needsYourReview: concerns };
 }

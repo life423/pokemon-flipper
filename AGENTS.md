@@ -1,7 +1,111 @@
 # Project memory and user preferences
 
-Updated October 30, 2026. This file records the user's agreed requirements so
+Updated October 31, 2026. This file records the user's agreed requirements so
 future work can continue without losing the conversation context.
+
+## October 31 pricing-gate and physical-identity corrections
+
+Developed on `codex/deal-screening-audit`. On October 31 the user authorized
+committing these fixes, merging into `main` and pushing to GitHub. Consult Git
+for delivery status. Read
+`docs/pricing-flow-audit-2026-10-31.md` and the saved deal-alert/roadmap report.
+The user explicitly wants preliminary pricing to be far less restrictive:
+use it to rank AI work, not to veto matching photographed listings above target.
+Missing exact-grade sold data may use photo-checked current Buy It Now competition
+of the same card/printing/finish/grader/grade. Keep sold data primary and current
+asking references distinct from transactions/liquidity. Compare item plus shipping,
+exclude self/duplicate certs, inspect physical labels and seller history, preserve
+the user's analysis budget and never inflate values simply to populate Deals.
+
+The user caught a false Shadowless PSA 8 Venusaur, item 257827112860, cert 51702940.
+Two agreeing AI border readings overrode its ordinary PSA label and selected
+Shadowless prices. Complete ordinary PSA English 1999 Base Set labels now prevent
+that upgrade; partial labels cannot authorize a premium. Real reevaluation reused
+saved photo work with zero new AI calls: Unlimited, $300 sold median, PASS at $350,
+-$131.34 after costs and $182 limit at $50/25%. Do not restore the old test that
+allowed unlabeled PSA slabs to become Shadowless from artwork guesses.
+
+Use six raw categories: Mint, Near Mint, Lightly Played, Moderately Played,
+Heavily Played, Damaged. Mint is PSA 9 terminology; Gem Mint is 10. Historical
+sold-copy photos, not seller claims, establish condition when available. Missing
+views remain unknown. Keep seller/AI comparisons useful and remove repetitive
+generic guarantee disclaimers. Certified slabs do not need raw-grading warnings
+or unusable raw-only deeper-review buttons. Card headers state Auction/Buy It Now.
+
+Normal port is **3017**. Port 3000 belongs to another app; never stop it. Keep
+isolated QA data separate. The 3018 test instance has been used interactively by
+the user: do not casually terminate it mid-search or overwrite its data. Latest
+complete unit run: 428 passing; typechecks/build pass. Live Aquapolis counts in
+the report precede the newest broader gate and active-comparison fallback, so
+do not misrepresent them as final release counts. The October 31 release request
+covers the pricing gate, current-listing comparisons, false Shadowless correction
+and their supporting audit/recovery changes.
+
+The corrected Venusaur direct-link UI passed 320/390/768/1440 checks. A controlled
+503 retried once successfully; a separate controlled missing-sold view rendered
+real current-listing evidence without changing the stored primary sold result.
+A final bounded live Venusaur PSA 8 search auto-analyzed five above-target
+listings: all completed and failed the selected $50/25% targets. This proves the
+broader gate, not that all 74 visible matches received full analysis. The normal
+3017 server and 3018 preview now run the correction; the old preview search was
+stopped before its backend update. Keep the user's preview tab available.
+
+## October 30 recent eBay resale, shipping and liquidity audit
+
+Current work is uncommitted on `codex/deal-screening-audit`, from `d7fd26f`.
+Read `docs/resale-pricing-audit-2026-10-30.md` for findings, evidence and limits.
+The user prioritized fixing shipping and accurate recent eBay resale evidence,
+and asked for observed trading activity. No market prediction was implemented.
+
+- Prefer a raw eBay median only with at least three explicit same-condition,
+  same-printing/finish USD sales within 90 days. Keep marked TCGplayer fallbacks;
+  never assume unstated raw condition is NM or inflate prices to create Deals.
+- Graded comps are USD only, same finish/grader/grade/printing. Prefer 90 days
+  when supported by three matches; otherwise label the 180-day fallback.
+- Shipping's zero-dollar optimistic bound only triggers a fresh quote check.
+  Missing shipping remains visibly assumed at $7. Cache by delivery destination.
+  A delivery ZIP has been requested but not supplied; do not invent one.
+- PSA Standard is available through $1000 at $59.99; current published caps/fees
+  apply, including $199 Express. Value is paused. Account verification remains
+  false. Preserve the user's effective eBay rate and all-grade cap coverage.
+- Volume means recorded eBay comps for the printing, all raw conditions or all
+  slab grades combined; it is not total volume, sell-through or promised speed.
+  Optional plan-gated volume must not disable working price lookups.
+- Reuse unchanged photo assessments while refreshing stale/legacy shortlist
+  pricing. Current pricing version is in `shared/pricing-freshness.ts`.
+- 381 tests, typechecks/build, 22 final browser checks/eight axe scans and three
+  listing-link checks pass. Live default-400 Neo search retained 157 matches;
+  all 18 eligible full assessments finished. Deals 0 at Any/Any and $50/25%;
+  Waiting 0; Review 15 (13 real screening gaps plus two full price gaps).
+  One real temporary pricing ticket recovered automatically. Real API/UI test
+  mutations used isolated data; the user's shortlist is preserved. The normal
+  app runs the tested production build on port 3000; isolated port 3001 is stopped.
+  Do not claim every listing was assessed.
+
+## Future proposal: market trends and forecasts
+
+On October 30 the user proposed, for later, using connected APIs to build our
+own historical card-price/sales charts and trend data, then score likely upward
+or downward movement using other relevant metrics too. This is a saved proposal,
+not an implemented feature or authorization to interrupt current validation.
+Keep exact printing/finish and raw condition or certified grader/grade separate.
+Show observed history, data coverage and confidence alongside any forecast;
+validate predictive scoring against past outcomes before it affects rankings.
+Keep current executable-profit calculations separate from hoped-for appreciation.
+
+## October 30 default-window Deals measurement
+
+The user requested another live `neo discovery holo` run after `d7fd26f`, with
+automatic recovery, mobile checks and an explicit Deals count. See
+`docs/neo-discovery-release-check-2026-10-30.md`. The default 400-result window
+produced 155 retained matches; all 10 eligible automatic full assessments
+completed, with 0 Deals under both Any/Any and $50/25% targets. There were 12
+genuine unresolved data/identity screens and no temporary failures left.
+One isolated controlled interruption recovered after 30 seconds; nine screening
+jobs resolved automatically, seven priced and two unavailable-data outcomes.
+The normal app/data were untouched. Supplementary phone/tablet/desktop and
+landscape checks passed, including six axe scans. This is a sampled app verdict,
+not a claim that every market listing was fully photo-assessed or unprofitable.
 
 ## October 30 Neo Discovery automation follow-up
 

@@ -22,6 +22,15 @@ const CGC_DESCRIPTIONS: Record<string, readonly string[]> = {
     "1.5": ["FAIR"],
     "1": ["POOR"],
 };
+// PSA's ordinary grade descriptions are not qualifiers such as OC or MK.
+// Source: https://www.psacard.com/gradingstandards
+const PSA_DESCRIPTIONS: Record<string, readonly string[]> = {
+    "10": ["GEMMT", "GEMMINT"], "9": ["MINT", "MT"],
+    "8": ["NMMT", "NMMINT", "NEARMINTMINT"], "7": ["NM", "NEARMINT"],
+    "6": ["EXMT", "EXCELLENTMINT"], "5": ["EX", "EXCELLENT"],
+    "4": ["VGEX", "VERYGOODEXCELLENT"], "3": ["VG", "VERYGOOD"],
+    "2": ["GOOD", "GD"], "1.5": ["FR", "FAIR"], "1": ["PR", "POOR"],
+};
 
 export function gradeQualifier(text: unknown, grader: string | null, grade: string | null): string | null {
     const value = String(text ?? "").trim();
@@ -31,6 +40,7 @@ export function gradeQualifier(text: unknown, grader: string | null, grade: stri
     // Pristine, Perfect or any other additional designation from a label.
     const description = value.toUpperCase().replace(/[\s/._-]+/g, "");
     if (grader === "CGC" && grade && CGC_DESCRIPTIONS[grade]?.includes(description)) return null;
+    if (grader === "PSA" && grade && PSA_DESCRIPTIONS[grade]?.includes(description)) return null;
 
     return value;
 }

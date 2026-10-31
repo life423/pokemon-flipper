@@ -3,7 +3,7 @@ import { sameCardNumber, sameSetFamily, setSearchTerm } from "../identity/card-i
 import { pricingSearchName } from "./search-name.ts";
 import { conditionOf } from "./raw-prices.ts";
 import { cardNumberOf, cardVariants } from "./records.ts";
-import type { CardRecord, Comp, FetchComps, LookupCards } from "./types.ts";
+import type { CardRecord, Comp, FetchComps, FetchRawComps, LookupCards } from "./types.ts";
 import { createLimiter } from "../lib/concurrency.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
 import { fetchJson, ProviderError } from "../lib/http.ts";
@@ -11,8 +11,8 @@ import { PricingProviderError, retryAfterMs } from "./errors.ts";
 import type { PricingIssue } from "../../shared/pricing-retries.ts";
 
 // pkmnprices.com: TCGplayer prices by printing and condition, and
-// individual eBay sold comps (sourced from PriceCharting). Every call
-// costs a credit per item returned, so responses are saved for a day.
+// individual eBay sold comps. Every call costs credits per returned item.
+// Positive metadata is saved for a day; sold pages for six hours.
 const BASE = "https://api.pkmnprices.com/v1";
 const DAY = 24;
 
@@ -27,6 +27,7 @@ const share = createSingleFlight();
 let coolingUntil = 0;
 let coolingKind: PricingIssue["kind"] = "RATE_LIMIT";
 let lastRequestAt = 0;
+class OptionalFeatureUnavailable extends Error {}
 export function pricingCooldown(): PricingIssue | null {
     return Date.now() < coolingUntil ? { kind: coolingKind, retryAt: new Date(coolingUntil).toISOString() } : null;
 }
@@ -44,7 +45,7 @@ async function load(path: string, maxAgeHours: number): Promise<ApiBody> {
     let cached = await readCache(`pkmnprices:${path}`, maxAgeHours);
     // A successful but empty name search should not hide a newly available
     // record all day. Positive metadata and priced responses keep their TTLs.
-    if (path.startsWith("/cards?") && Array.isArray(cached?.data) && cached.data.length === 0) {
+    if ((path.startsWith("/cards?") || path.includes("/listings/ebay?")) && Array.isArray(cached?.data) && cached.data.length === 0) {
         cached = await readCache(`pkmnprices:${path}`, Math.min(maxAgeHours, 5 / 60));
     }
 
@@ -100,6 +101,9 @@ async function load(path: string, maxAgeHours: number): Promise<ApiBody> {
 async function finish(path: string, response: Response, body: ApiBody): Promise<ApiBody> {
     if (!response.ok) {
         const message = `pkmnprices request failed (${response.status}): ${body.error?.message ?? "unknown error"}`;
+        // Volume is plan-gated. Its absence must not disable otherwise working
+        // card prices or sold comps through the global pricing cooldown.
+        if (response.status === 403 && path.includes("/sales/volume?")) throw new OptionalFeatureUnavailable(message);
         if (response.status >= 500 || [401, 403].includes(response.status)) {
             coolingKind = response.status >= 500 ? "TEMPORARY" : "CONFIG";
             coolingUntil = Math.max(coolingUntil, Date.now() + 30_000);
@@ -193,11 +197,43 @@ export const fetchComps: FetchComps = async (recordId, { grader, grade, variant 
         grade: String(grade),
         limit: "20",
         sort: "date_desc",
+        period: "180d",
     });
 
     if (variant) params.set("variant", variant);
 
-    const body = await apiGet(`/cards/${recordId}/listings/ebay?${params}`);
-
-    return (body.data ?? []) as Comp[];
+    const sales: Comp[] = [];
+    for (let page = 0; page < 2; page += 1) {
+        const body = await apiGet(`/cards/${recordId}/listings/ebay?${params}`, 6);
+        sales.push(...(body.data ?? []).filter((sale: Comp) => sale.currency === "USD"));
+        if (!body.pagination?.has_more || !body.pagination?.next_cursor) break;
+        params.set("cursor", body.pagination.next_cursor);
+    }
+    return [...new Map(sales.map(sale => [sale.id ?? sale.listing_url ?? JSON.stringify(sale), sale])).values()];
 };
+
+// At most 40 recent raw comps per printing, shared by every listing and
+// condition. Bound the pagination; never mistake this sample for volume.
+export const fetchRawComps: FetchRawComps = async (recordId, variant) => {
+    const params = new URLSearchParams({ graded: "false", period: "90d", sort: "date_desc", limit: "20", variant });
+    const sales: Comp[] = [];
+    for (let page = 0; page < 2; page += 1) {
+        const body = await apiGet(`/cards/${recordId}/listings/ebay?${params}`, 6);
+        sales.push(...(body.data ?? []).filter((sale: Comp) => sale.currency === "USD"));
+        if (!body.pagination?.has_more || !body.pagination?.next_cursor) break;
+        params.set("cursor", body.pagination.next_cursor);
+    }
+    return sales;
+};
+
+export async function fetchSalesVolume(recordId: CardRecord["id"], variant: string, graded: boolean): Promise<{ data: unknown[]; pagination?: { total_pages?: number } }> {
+    const params = new URLSearchParams({ graded: String(graded), period: "30d", currency: "usd", variant, limit: "30" });
+    const path = `/cards/${recordId}/sales/volume?${params}`;
+    const deniedKey = `pkmnprices:optional-denied:${path}`;
+    if (await readCache(deniedKey, 15 / 60)) throw new OptionalFeatureUnavailable("Sales volume is unavailable on this provider plan.");
+    try { return await apiGet(path, 6); }
+    catch (error) {
+        if (error instanceof OptionalFeatureUnavailable) await writeCache(deniedKey, true);
+        throw error;
+    }
+}

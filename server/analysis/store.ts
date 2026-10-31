@@ -3,6 +3,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { DATA_DIR } from "../lib/paths.ts";
 import type { GradingMode, SavedAssessment, SavedRecord } from "./types.ts";
+import { writeJsonAtomic } from "../lib/atomic-json.ts";
+import { createKeyedLock } from "../lib/keyed-lock.ts";
+
+export const withAssessmentLock = createKeyedLock();
 
 // Saved model answers, one JSON file per listing in data/evaluations.
 // Each file holds the item ID, a fingerprint of the photos, and the
@@ -23,15 +27,14 @@ function fileFor(itemId: string): string {
 export async function loadSaved(itemId: string): Promise<SavedRecord | null> {
     try {
         return JSON.parse(await fs.readFile(fileFor(itemId), "utf8"));
-    } catch {
-        // Missing or unreadable: treat it as nothing saved.
-        return null;
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+        throw new Error("The saved photo assessment could not be read. It was kept; no replacement AI assessment was started.", { cause: error });
     }
 }
 
 export async function saveRecord(itemId: string, record: SavedRecord): Promise<void> {
-    await fs.mkdir(STORE_DIR, { recursive: true });
-    await fs.writeFile(fileFor(itemId), JSON.stringify(record, null, 2));
+    await writeJsonAtomic(fileFor(itemId), record);
 }
 
 // Title text is part of the model input too. Legacy records without that
@@ -53,10 +56,12 @@ export function reusableRecord(
 export function assessmentStillFits(
     savedAssessment: SavedAssessment | null,
     mode: GradingMode,
-    photoNumbers: number[]
+    photoNumbers: number[],
+    version?: string
 ): boolean {
     return (
         savedAssessment !== null &&
+        (!version || savedAssessment.version === version && savedAssessment.completedRuns === 2) &&
         savedAssessment.mode === mode &&
         savedAssessment.photoNumbers.join(",") === photoNumbers.join(",")
     );

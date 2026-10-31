@@ -1,8 +1,9 @@
 import { identifyCard, printingClaimFromText, readyForPricing } from "../identity/card-identity.ts";
 import { graderCode, normalizeGrade } from "../identity/slab-check.ts";
-import { rawPricesFor } from "../pricing/raw-prices.ts";
+import { rawPricesFor, variantFor } from "../pricing/raw-prices.ts";
 import { gradedPricesFor, compsForGrade } from "../pricing/graded-comps.ts";
-import type { CheckComps, FetchComps, LookupCards } from "../pricing/types.ts";
+import type { CheckComps, FetchComps, FetchRawComps, LookupCards } from "../pricing/types.ts";
+import { rawPricesWithSales } from "../pricing/raw-comps.ts";
 import { sellerCondition } from "../../shared/conditions.ts";
 import { GRADERS, netFromSale, underwrite, type UnderwritingInput } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG, type MoneyConfig } from "../../shared/money/config.ts";
@@ -13,10 +14,10 @@ import { usualPrice } from "../../shared/money/auction.ts";
 import { retargetScreen } from "../../shared/money/targets.ts";
 import { pricingIssue } from "../pricing/errors.ts";
 
-// The free first check, before any paid AI: what a listing is worth at
+// The preliminary check, before full photo assessment: what a listing is worth at
 // its best, from the seller's own details and the price data. A listing
-// that can't clear your targets even then is dropped. One that can is
-// only a candidate: the AI's look at the photos decides.
+// that can't clear targets is ranked below stronger leads, but can still receive
+// AI photo assessment. Seller claims never establish a final deal.
 
 // What the free check reads from a listing.
 export interface ScreenInput {
@@ -37,6 +38,7 @@ export interface ScreenInput {
 export interface ScreenDeps {
     lookupCards: LookupCards;
     fetchComps: FetchComps;
+    fetchRawComps?: FetchRawComps;
     // The AI's second look at comps; without it, the rules decide alone.
     checkComps?: CheckComps;
     config?: MoneyConfig;
@@ -133,8 +135,9 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
 
     if (!readyForPricing(identity)) {
         return screen("UNSCREENED", identity.reasons[0] ?? "The card couldn't be identified from the listing.", {
-            incomplete,
+            incomplete: incomplete || (!card && !lookupIssue),
             pricingIssue: lookupIssue,
+            ...(!lookupIssue && !identity.notThisCard ? { needsAnalysis: "IDENTITY" as const } : {}),
         });
     }
 
@@ -146,9 +149,15 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
         printingLabel: identity.printingLabel,
         availableFinishes: [...new Set(card?.variants.map((variant) => variant.finish) ?? [])],
     };
+    const variant = variantFor(card, identity);
+    if (!variant.variant) return screen("UNSCREENED", variant.reason, {
+        card: cardInfo, needsAnalysis: "FINISH", incomplete: true,
+    });
 
     // The card's cheapest price in any condition, from the lookup already made.
-    const rawPrices = rawPricesFor(card, identity);
+    const rawPrices = !listing.isGraded && deps.fetchRawComps
+        ? await rawPricesWithSales(card, identity, { fetchRawComps: deps.fetchRawComps, checkComps, now })
+        : rawPricesFor(card, identity);
     const floor =
         rawPrices.status === "PRICED" && rawPrices.prices?.length ? Math.min(...rawPrices.prices.map((p) => p.price)) : null;
 
@@ -159,11 +168,12 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
         return screen(
             "UNSCREENED",
             `At ${dollars(listing.price)}, it's far below the lowest quoted price of ${dollars(floor)}. Photo verification is required; price alone cannot establish a deal or a fake.`,
-            { card: cardInfo, priceAnomaly }
+            { card: cardInfo, priceAnomaly, needsAnalysis: "IDENTITY" }
         );
     }
 
     const input: UnderwritingInput = {
+        pricesCheckedAt: new Date(now).toISOString(),
         listing: { price: listing.price, shipping: listing.shipping },
         identity,
         condition: null,
@@ -182,6 +192,7 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
                 return screen("UNSCREENED", "The listing doesn't give the grader and grade.", {
                     card: cardInfo,
                     incomplete: true,
+                    needsAnalysis: "SLAB_LABEL",
                 });
             }
 
@@ -251,5 +262,6 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
         return retargetScreen(screen("DROPPED", reasons[0] ?? null, { card: cardInfo, bestCase, assumed, money, priceAnomaly }), listing.price, config.targets, config, includeOffers);
     }
 
-    return screen("UNSCREENED", reasons[0] ?? "It couldn't be priced.", { card: cardInfo, assumed, priceAnomaly });
+    return screen("UNSCREENED", reasons[0] ?? "It couldn't be priced.", { card: cardInfo, assumed, priceAnomaly,
+        ...(verdict === "CANT_PRICE" ? { needsAnalysis: "PRICE_EVIDENCE" as const } : {}) });
 }

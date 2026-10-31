@@ -230,7 +230,7 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
                                 </dd>
                             </div>
                             <div>
-                                <dt>Too expensive</dt>
+                                <dt>Above target in screening</dt>
                                 <dd>
                                     <Tween value={stats.dropped} format={wholeNumber} />
                                 </dd>

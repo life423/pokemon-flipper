@@ -90,7 +90,7 @@ test("the seller's own condition call caps the best case", async () => {
     const result = await prescreen(rawLugia({ cardCondition: "Lightly played (Excellent)" }), deps);
 
     assert.equal(result.status, "DROPPED");
-    assert.equal(result.bestCase.label, "Resell raw");
+    assert.equal(result.bestCase.label, "Sell raw");
     assert.equal(result.bestCase.maxBid, 271);
 });
 

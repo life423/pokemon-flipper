@@ -21,14 +21,14 @@ const MIN_FEEDBACK_PERCENT = 98;
 
 type RatingInput = Pick<
     Evaluation,
-    "listing" | "underwriting" | "condition" | "gradingMode" | "gradedPricing" | "slabPricing"
+    "listing" | "underwriting" | "condition" | "gradingMode" | "gradedPricing" | "slabPricing" | "rawPricing"
 >;
 
 // The sold comps behind the winning path's prices. Grades priced from a
 // lower grade's sales are left out: they add no sales of their own.
 function compsBehind(evaluation: RatingInput, best: PricedPath): CompSummary[] {
     if (best.path === "GRADED_RESALE") {
-        return evaluation.slabPricing?.summary ? [evaluation.slabPricing.summary] : [];
+        return evaluation.slabPricing?.summary?.count ? [evaluation.slabPricing.summary] : [];
     }
 
     if (best.path === "GRADE" && best.grader) {
@@ -82,7 +82,7 @@ export function rateDeal(evaluation: RatingInput): Rating | null {
     }
 
     if (best.path !== "RAW") {
-        const lowEnd = best.path === "GRADE" ? "in the lowest modeled resale scenario" : "at the lowest recent sale";
+        const lowEnd = best.path === "GRADE" ? "in the lowest modeled resale scenario" : evaluation.slabPricing?.activeReference ? "at the competing-listing resale target" : "at the lowest recent sale";
 
         if (best.downside >= 0) {
             strengths.push(`Still profitable ${lowEnd}.`);
@@ -92,6 +92,15 @@ export function rateDeal(evaluation: RatingInput): Rating | null {
     }
 
     const comps = compsBehind(evaluation, best);
+    if (best.path === "GRADED_RESALE" && evaluation.slabPricing?.activeReference && !evaluation.slabPricing.summary?.count) {
+        concerns.push("Resale uses photo-checked current Buy It Now competition; no matched sold-price estimate was available.");
+        notes.push(...(best.pricingNotes ?? []));
+    }
+    if (best.path === "RAW") {
+        const quote = evaluation.rawPricing?.prices?.find(price => price.condition === best.priceCondition);
+        if (quote?.basis === "TCGPLAYER") concerns.push("Raw resale uses a TCGplayer market fallback, not a verified eBay sold median.");
+        concerns.push(...(best.pricingNotes ?? []));
+    }
 
     if (comps.length > 0) {
         const rank = (summary: CompSummary) => CONFIDENCE_ORDER.indexOf(summary.confidence);

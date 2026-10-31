@@ -51,7 +51,7 @@ export function name(value: string | null | undefined): string {
 export type Tone = "buy" | "grade" | "review" | "pass" | "neutral";
 
 export const VERDICTS: Record<Verdict, { label: string; tone: Tone }> = {
-    BUY_RAW: { label: "Buy raw", tone: "buy" },
+    BUY_RAW: { label: "Sell raw", tone: "buy" },
     BUY_AND_GRADE: { label: "Buy and grade", tone: "grade" },
     BUY_GRADED: { label: "Buy graded", tone: "buy" },
     NEEDS_REVIEW: { label: "Needs review", tone: "review" },

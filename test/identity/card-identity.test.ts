@@ -554,9 +554,9 @@ test("in Base Set, a label without 1ST EDITION still rules 1st Edition out", asy
     assert.match(identity.reasons.join(" "), /label/);
 });
 
-test("in Base Set, a label that names no printing doesn't overrule Shadowless", async () => {
+test("a complete ordinary PSA Base Set label prevents a false Shadowless upgrade", async () => {
     const { listing, photos } = slabListing(
-        "PSA 8 Shadowless Charizard 4/102 Holo",
+        "PSA 8 Charizard 4/102 Holo",
         "1999 POKEMON GAME #4 CHARIZARD-HOLO NM-MT 8",
         { firstEditionStamp: "NOT_PRESENT", artBoxShadow: "ABSENT" }
     );
@@ -564,8 +564,26 @@ test("in Base Set, a label that names no printing doesn't overrule Shadowless", 
     const { identity } = await identifyCard(listing, photos, { lookupCards: BASE_FAMILY });
 
     assert.equal(identity.status, "IDENTIFIED");
-    assert.equal(identity.printing, "SHADOWLESS");
-    assert.equal(identity.evidence.label, "NOT_STATED");
+    assert.equal(identity.printing, "UNLIMITED");
+    assert.equal(identity.evidence.label, "UNLIMITED");
+    assert.equal(identity.evidence.photoSource, "PSA slab label");
+});
+
+test("repeated incorrect Shadowless photo readings cannot overrule the ordinary PSA label", async () => {
+    const { listing, photos } = slabListing("1999 Base Set Charizard Holo PSA 8", "1999 POKEMON GAME #4 CHARIZARD-HOLO NM-MT 8", { firstEditionStamp: "NOT_PRESENT", artBoxShadow: "ABSENT" });
+    photos.slab.grader = "PSA";
+    const { identity } = await identifyCard(listing, photos, { lookupCards: BASE_FAMILY,
+        photoIdentity: { name: "Charizard", set: "Base Set (Shadowless)", cardNumber: "4/102", finish: "HOLO", printing: "SHADOWLESS" } });
+    assert.equal(identity.status, "IDENTIFIED"); assert.equal(identity.printing, "UNLIMITED"); assert.equal(identity.set, "Base Set");
+    const partial = { ...photos, slab: { ...photos.slab, labelText: "PSA 8" } };
+    assert.equal((await identifyCard(listing, partial, { lookupCards: BASE_FAMILY })).identity.status, "NEEDS_REVIEW", "a partial label cannot authorize a premium");
+});
+
+test("corroborated physical identity can survive a missing catalog record without inventing prices", async () => {
+    const { identity, card } = await identifyCard(charizardListing(), charizardPhotos(), { lookupCards: async () => [],
+        photoIdentity: { name: "Charizard", set: "Base Set", cardNumber: "4/102", finish: "HOLO", printing: "UNLIMITED" } });
+    assert.equal(identity.status, "IDENTIFIED"); assert.equal(card, null);
+    assert.equal(rawPricesFor(card, identity).status, "PRICE_UNAVAILABLE");
 });
 
 test("a title that disagrees with the slab label goes to review", async () => {
@@ -597,6 +615,8 @@ test("look-alike reprints: the listing has to say which Classic Collection it is
 });
 
 test("metal cards are novelties, including PSA's Ultra Premium label", () => {
+    assert.equal(noveltyIn("Aquapolis 143 Metal Energy Reverse Foil PSA 7"), null);
+    assert.equal(titleContradiction("Aquapolis 143 Metal Energy Reverse Foil PSA 7", "Aquapolis", "143/147"), null);
     assert.ok(noveltyIn("2021 POKEMON CELEBRATIONS ULTRA-PREM COLL #4 CHARIZARD PSA 6"));
     assert.ok(noveltyIn("Charizard Gold Metal Card Celebrations"));
     assert.equal(noveltyIn("2021 Pokemon Celebrations Classic Collection Charizard 4/102"), null);

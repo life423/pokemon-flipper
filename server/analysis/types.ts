@@ -9,6 +9,8 @@ export interface Usage {
 
 // One condition answer kept for a listing, and the others set aside.
 export interface SavedAssessment {
+    version?: string;
+    completedRuns?: number;
     mode: GradingMode;
     photoNumbers: number[];
     result: Condition;
@@ -17,6 +19,8 @@ export interface SavedAssessment {
 
 // The model's answers for one listing, saved so they aren't paid for twice.
 export interface SavedRecord {
+    conditionRuns?: { version: string; mode: GradingMode; photoNumbers: number[]; answers: import("./condition-runs.ts").ConditionRun[] };
+    identityPasses?: { result: import("../ai/openai.ts").IdentityPhotoReading; usage: Usage }[];
     latestEvaluation?: { evidenceKey: string; evaluation: Evaluation };
     reviewContext?: { title: string; photos: string[] };
     deeperPhotoReview?: DeeperPhotoReview;

@@ -1,6 +1,11 @@
 import type { DeeperPhotoReview, EbayUsage, Evaluation, ListingSummary, SearchIntent, Targets } from "./types";
 import type { ShortlistEntry, RefreshResult } from "../../shared/shortlist.ts";
 import type { PricingRetryResult, PricingRecoveryProgress } from "../../shared/pricing-retries.ts";
+import type { AiUsageDay } from "../../shared/ai-usage.ts";
+export function fetchAiUsage(): Promise<AiUsageDay> { return request("/api/ai-usage"); }
+class ApiRequestError extends Error {
+    constructor(message: string, readonly retryable = false, readonly retryAfterMs = 1500) { super(message); }
+}
 
 export function retryPricingBatch(tickets: string[], targets: Targets, includeOffers: boolean, signal: AbortSignal): Promise<PricingRetryResult> {
     return request(`/api/pricing/retry?profit=${targets.minProfit}&roi=${targets.minRoi}&offers=${includeOffers ? 1 : 0}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tickets }), signal });
@@ -9,10 +14,12 @@ export function retryPricingBatch(tickets: string[], targets: Targets, includeOf
 // fetch, with a plain message when the server can't be reached at all.
 async function reach(url: string, init?: RequestInit): Promise<Response> {
     try {
-        return await fetch(url, init);
+        const headers = new Headers(init?.headers);
+        headers.set("X-Pokemon-Flipper", "1");
+        return await fetch(url, { ...init, headers });
     } catch (error) {
         if (init?.signal?.aborted) throw error;
-        throw new Error("Can't reach the app's server. Is npm run dev running?");
+        throw new ApiRequestError("The app connection was interrupted. Reconnecting to resume saved analysis.", true);
     }
 }
 
@@ -21,7 +28,8 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     const body = await response.json().catch(() => null);
 
     if (!response.ok) {
-        throw new Error(body?.error ?? `Request failed (${response.status})`);
+        throw new ApiRequestError(body?.error ?? `Request failed (${response.status})`, body?.retryable === true || body?.retryable === undefined && [502, 503, 504].includes(response.status),
+            Math.min(90_000, Math.max(1500, Number(body?.retryAfterMs) || 1500)));
     }
 
     return body as T;
@@ -48,7 +56,8 @@ async function streamLines<T extends { type: string }>(
     const response = await reach(url, { ...init, signal });
 
     if (!response.ok || !response.body) {
-        throw new Error(`Search failed (${response.status})`);
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.error ?? `Search failed (${response.status})`);
     }
 
     const reader = response.body.getReader();
@@ -150,10 +159,10 @@ export function fetchEbayUsage(): Promise<EbayUsage | null> {
 // after that. fresh asks the model again.
 // The listing's current price, bid, and end time go along, so the server
 // can use its saved details instead of asking eBay again.
-export function evaluateListing(listing: ListingSummary, { fresh = false } = {}): Promise<Evaluation> {
-    const query = fresh ? "?fresh=1" : "";
-
-    return request(`/api/listings/${encodeURIComponent(listing.id)}/evaluate${query}`, {
+export async function evaluateListing(listing: ListingSummary, { fresh = false } = {}): Promise<Evaluation> {
+    for (let attempt = 0; ; attempt++) {
+        const query = fresh ? attempt === 0 ? "?fresh=1" : "?refreshTerms=1" : "";
+        try { return await request(`/api/listings/${encodeURIComponent(listing.id)}/evaluate${query}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -164,7 +173,11 @@ export function evaluateListing(listing: ListingSummary, { fresh = false } = {})
             bids: listing.bids,
             endTime: listing.endTime,
         }),
-    });
+        }); } catch (error) {
+            if (attempt > 0 || !(error instanceof ApiRequestError) || !error.retryable) throw error;
+            await new Promise(resolve => setTimeout(resolve, error.retryAfterMs));
+        }
+    }
 }
 
 // Each set's release year, by set key (shared/sets.ts).

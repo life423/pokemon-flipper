@@ -1,5 +1,7 @@
 import { ebayGet } from "./api.ts";
 import type { EbayUsage } from "../../shared/types.ts";
+import { createSingleFlight } from "../lib/single-flight.ts";
+const share = createSingleFlight();
 
 // How much of today's eBay Browse allowance is left, from eBay's own count.
 // Asking uses eBay's Analytics API, which doesn't use up the allowance.
@@ -20,8 +22,9 @@ interface RateLimits {
 let saved: { usage: EbayUsage; at: number } | null = null;
 
 export async function ebayUsage({ fresh = false }: { fresh?: boolean } = {}): Promise<EbayUsage | null> {
+    if (saved?.usage.resetsAt && Date.parse(saved.usage.resetsAt) <= Date.now()) saved = null;
     if (!fresh && saved && Date.now() - saved.at < MAX_AGE_MS) return saved.usage;
-
+    return share("usage", async () => {
     try {
         const data = await ebayGet<RateLimits>("/developer/analytics/v1_beta/rate_limit/?api_name=Browse&api_context=buy");
         const rate = data.rateLimits
@@ -45,6 +48,7 @@ export async function ebayUsage({ fresh = false }: { fresh?: boolean } = {}): Pr
         console.error(`Couldn't read eBay's usage: ${(error as Error).message}`);
         return saved?.usage ?? null;
     }
+    });
 }
 
 // Between checks with eBay, each request this server sends comes off the

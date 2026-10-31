@@ -1,4 +1,3 @@
-import { MONEY_CONFIG } from "../../../shared/money/config.ts";
 import type { Evaluation } from "../types";
 import { dollars } from "../format";
 import { gradingRoutes } from "../../../shared/card-presentation.ts";
@@ -11,9 +10,10 @@ export function GradingComparison({ evaluation, expanded = false }: { evaluation
         <div className={styles.gradeRows}>{routes.map(({ grader, range, priced, reason }) => <div className={styles.gradeRoute} key={grader}>
             <div className={styles.gradeHead}><strong>{grader}{evaluation.underwriting?.best?.grader === grader ? " · selected" : ""}</strong><span>{range ? `${range.low}–${range.high}` : "Not assessed"}</span></div>
             <p className={styles.note}>{range ? range.likely !== null ? `Likely estimate ${range.likely}` : "Likely grade unknown" : "Awaiting photo analysis"}</p>
-            <p className={styles.routeValue}>{priced ? `Est. resale ${dollars(priced.expectedSale)}` : "Price unavailable"}</p>
+            <p className={styles.routeValue}>{priced ? `Graded sale estimate ${dollars(priced.expectedSale)}` : "Price unavailable"}</p>
+            {priced && <p className={`${styles.note} ${priced.profit < 0 ? styles.loss : styles.gain}`}>{priced.profit < 0 ? "Estimated loss" : "Estimated net profit"} {dollars(Math.abs(priced.profit))} {evaluation.listing.buyingOption === "AUCTION" ? "at current bid" : "at asking price"}</p>}
             {expanded && <><p className={styles.note}>{priced ? `Grading + shipping ${dollars(priced.fixedCosts)} · item limit ${dollars(priced.maxBid)}` : reason}</p></>}
         </div>)}</div>
-        <p className={styles.note}>Shared photo estimate; each grader uses separate fees and sale evidence.{!MONEY_CONFIG.verified.grading.PSA && " PSA fees are not yet verified against your account."}</p>
+        {evaluation.underwriting?.best?.path === "RAW" && <p className={styles.note}>Separate grading scenarios. Selected strategy: sell raw.</p>}
     </section>;
 }

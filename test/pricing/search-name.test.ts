@@ -8,6 +8,9 @@ test("Unown letter queries match provider naming without broadening unrelated na
     for (const name of ["Unown A", "Unown [A]", "Unown (I)", "Unown M holo"]) assert.equal(pricingSearchName(name), "unown");
     assert.equal(pricingSearchName("Unown VSTAR"), "unown vstar");
     assert.equal(pricingSearchName("Dark Espeon holo"), "dark espeon");
+    assert.equal(pricingSearchName("PRIMEAPE-REVERSE FOIL"), "primeape");
+    assert.equal(pricingSearchName("Kingdra Reverse Holofoil"), "kingdra");
+    assert.equal(pricingSearchName("Dark Espeon Non-Holo"), "dark espeon");
 });
 
 test("provider lookup for Unown A retains exact card-number selection", async t => {
@@ -15,6 +18,7 @@ test("provider lookup for Unown A retains exact card-number selection", async t 
     t.after(() => { if (previous === undefined) delete process.env.PKMNPRICES_API_KEY; else process.env.PKMNPRICES_API_KEY = previous; });
     t.mock.method(fs, "readFile", async () => { throw new Error("offline cache miss"); });
     t.mock.method(fs, "writeFile", async () => {}); t.mock.method(fs, "mkdir", async () => undefined);
+    t.mock.method(fs, "rename", async () => {}); t.mock.method(fs, "rm", async () => {});
     const paths: string[] = [];
     t.mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
         const parsed = new URL(String(url)); paths.push(parsed.pathname + parsed.search);

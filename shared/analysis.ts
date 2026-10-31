@@ -4,8 +4,17 @@ import { canRetryPricing } from "./pricing-retries.ts";
 
 // Automatic analysis and its progress counts use the same eligibility rule.
 export function canAutoAnalyze(listing: ListingSummary): boolean {
-    return !listing.match && !(listing.screen?.priceAnomaly && !listing.screen.priceAnomaly.photoChecked) &&
-        (listing.screen?.status === "CANDIDATE" || Boolean(listing.mistakes?.length)) && !listing.screen?.longShot;
+    if (!listing.images.length || listing.availability === "UNAVAILABLE" || listing.screen?.junk ||
+        listing.currentPrice === null || !Number.isFinite(listing.currentPrice) || listing.currentPrice < 0 ||
+        ["CONFIG", "CREDITS"].includes(listing.screen?.pricingIssue?.kind ?? "")) return false;
+    const temporaryPrice = ["TEMPORARY", "RATE_LIMIT"].includes(listing.screen?.pricingIssue?.kind ?? "");
+    const resolvable = Boolean(listing.screen?.status === "UNSCREENED" && (listing.screen.needsAnalysis || temporaryPrice));
+    const unusualPrice = Boolean(listing.screen?.priceAnomaly && listing.screen.status === "UNSCREENED");
+    // Seller condition and preliminary resale quotes rank work; they must not
+    // veto a photo assessment. The final underwriting still decides profit.
+    const preliminaryRejection = listing.screen?.status === "DROPPED" && Boolean(listing.screen.money);
+    return (!listing.match || listing.match === "UNCONFIRMED_CRITERIA" && resolvable) &&
+        (listing.screen?.status === "CANDIDATE" || preliminaryRejection || Boolean(listing.mistakes?.length) || resolvable || unusualPrice);
 }
 
 export type ResultGroup = "deals" | "offers" | "candidates" | "longShots" | "review";
@@ -18,6 +27,7 @@ export function resultGroup(listing: ListingSummary, evaluation: Evaluation | nu
     // An incomplete check is unresolved, never a priced rejection or a queued analysis.
     if (!evaluation && analysisFailed) return "review";
     if (!evaluation && canRetryPricing(listing)) return "candidates";
+    if (!evaluation && canAutoAnalyze(listing)) return "candidates";
     if (!evaluation && listing.screen?.status === "UNSCREENED") return "review";
     if (!evaluation && listing.screen?.priceAnomaly && !listing.screen.priceAnomaly.photoChecked) return "review";
     if (!evaluation && listing.mistakes?.length && listing.screen?.status !== "CANDIDATE") return "review";

@@ -1,5 +1,6 @@
 import { normalizeText } from "../ebay/filters.ts";
 import { PRINTINGS, isPrinting, readyForPricing } from "../../shared/identity.ts";
+import { finishClaim, type FinishClaim } from "../../shared/finish.ts";
 
 export { PRINTINGS, isPrinting, readyForPricing };
 import type { Identity, PhotoCheck, Printing } from "../../shared/types.ts";
@@ -7,7 +8,6 @@ import type { LookupCards, PricedCard, CardRecord, PrintingOrUnknown } from "../
 
 // A printing claim in seller text or on a label.
 export type PrintingClaim = Printing | "NOT_STATED" | "CONFLICTING";
-type FinishClaim = "HOLO" | "REVERSE_HOLO" | "NON_HOLO" | "NOT_STATED" | "CONFLICTING";
 
 export type { PrintingOrUnknown };
 
@@ -127,10 +127,10 @@ export function titleDecidesPrinting(setName: unknown): boolean {
 function parseNumberPart(part: string | undefined) {
     if (part === undefined || part === "") return null;
 
-    const match = part.match(/^([A-Z-]*?)0*(\d+)$/);
+    const match = part.match(/^([A-Z-]*?)0*(\d+)([A-Z]*)$/);
 
     return match
-        ? { prefix: match[1], value: Number(match[2]) }
+        ? { prefix: match[1] + (match[3] ? `:${match[3]}` : ""), value: Number(match[2]) }
         : { prefix: part, value: null };
 }
 
@@ -278,13 +278,7 @@ export function printingClaimFromText(text: unknown): PrintingClaim {
 }
 
 export function finishClaimFromText(text: unknown): FinishClaim {
-    const value = normalizeText(text);
-
-    if (/\breverse[\s-]*holo/.test(value)) return "REVERSE_HOLO";
-    if (/\bnon[\s-]*holo/.test(value)) return "NON_HOLO";
-    if (/\bholo/.test(value)) return "HOLO";
-
-    return "NOT_STATED";
+    return finishClaim(text);
 }
 
 function resolveFinish(fromItemDetails: FinishClaim, fromTitle: FinishClaim): FinishClaim {
@@ -328,12 +322,8 @@ export function mapVariantPrintings(variantNames: string[], setName: unknown): R
 }
 
 export function finishOfVariant(name: string): string {
-    const value = normalizeText(name);
-
-    if (/\breverse/.test(value)) return "REVERSE_HOLO";
-    if (/\bholo/.test(value)) return "HOLO";
-
-    return "NON_HOLO";
+    const claim = finishClaim(name);
+    return claim === "NOT_STATED" ? "NON_HOLO" : claim;
 }
 
 // Printing evidence in the photos
@@ -441,6 +431,19 @@ function aspectText(aspects: Record<string, string>, namePattern: RegExp): strin
         .filter(([name]) => namePattern.test(name))
         .map(([, value]) => value)
         .join(" ");
+}
+
+// PSA's readable English 1999 Base Set label names premium printings. A
+// complete ordinary label must not be upgraded by an uncertain artwork-shadow
+// reading, even when another model repeats the same visual mistake.
+export function psaBaseLabelPrinting(slab: PhotoCheck["slab"], card: { name: string | null; set: string | null; cardNumber: string | null }): Printing | null {
+    if (!slab?.present || normalizeWords(slab.grader) !== "psa" || !sameSetFamily(card.set, "Base Set") || !slab.labelText || !card.name || !card.cardNumber) return null;
+    const label = normalizeWords(slab.labelText);
+    const printedNumber = slab.labelText.match(/#\s*([a-z]?\d+[a-z]?)/i)?.[1];
+    if (!/1999\s+pokemon\s+game/.test(label) || !label.includes(normalizeWords(card.name)) ||
+        !printedNumber || !sameCardNumber(printedNumber, card.cardNumber)) return null;
+    const claim = printingClaimFromText(slab.labelText);
+    return claim === "NOT_STATED" ? "UNLIMITED" : isPrinting(claim) ? claim : null;
 }
 
 // Error and special versions ("Charizard (Black Dot Error)") share a
@@ -568,7 +571,7 @@ export function reprintShown(mark: string | null | undefined, setName: unknown):
 // Not cards from a set at all: novelty metal cards (the Ultra Premium
 // Collection's metal cards, which PSA labels "Ultra-Prem Coll"), Topps
 // cards, reprints, and fakes.
-const NOVELTY = /\b(reprint|replica|jumbo|oversized?|metal|topps|custom|proxy|fan ?made|gold (foil|plated)|upc|ultra[\s-]*prem(ium)?)\b/;
+const NOVELTY = /\b(reprint|replica|jumbo|oversized?|metal(?!\s+energy\b)|topps|custom|proxy|fan ?made|gold (foil|plated)|upc|ultra[\s-]*prem(ium)?)\b/;
 
 export function noveltyIn(text: unknown): string | null {
     return normalizeText(text).match(NOVELTY)?.[0] ?? null;
@@ -626,7 +629,7 @@ export async function identifyCard(
     listing: IdentityListing,
     photoCheck: IdentityPhotos,
     { lookupCards, photoIdentity }: { lookupCards: LookupCards; photoIdentity?: PhotoConfirmation }
-): Promise<{ identity: IdentityDraft; card: PricedCard | null }> {
+): Promise<{ identity: IdentityDraft; card: PricedCard | null; lookupFailed?: boolean }> {
     const sellerListing = listing;
     if (photoIdentity) {
         listing = {
@@ -693,7 +696,7 @@ export async function identifyCard(
             cardNumber: identity.listedCardNumber,
         });
     } catch (error) {
-        return needsReview(`The card lookup failed: ${(error as Error).message}`);
+        return { ...needsReview(`The card lookup failed: ${(error as Error).message}`), lookupFailed: true };
     }
 
     // The database never decides what the card is: every record has to
@@ -709,6 +712,22 @@ export async function identifyCard(
     );
 
     if (matches.length === 0) {
+        // Independently corroborated physical identity does not disappear just
+        // because a pricing catalog lacks this card. Alternative price sources
+        // still have to match that identity; no nearby record is substituted.
+        if (photoIdentity?.printing && photoIdentity.finish) {
+            identity.status = "IDENTIFIED";
+            identity.name = photoIdentity.name;
+            identity.set = photoIdentity.set;
+            identity.cardNumber = photoIdentity.cardNumber;
+            identity.printing = photoIdentity.printing;
+            identity.printingLabel = printingLabel(photoIdentity.printing, photoIdentity.set);
+            identity.finish = photoIdentity.finish;
+            identity.evidence = { title: printingClaimFromText(sellerListing.title), itemSpecifics: "NOT_STATED", photo: photoIdentity.printing,
+                photoSource: "Independent agreeing photo readings", photoNotes: photoCheck.printingMarks?.evidence ?? [] };
+            identity.reasons.push("Photos establish the identity; this exact card has no matching price-catalog record.");
+            return { identity, card: null };
+        }
         return needsReview(
             `No card in the price database matches ${identity.set} #${identity.listedCardNumber}.`
         );
@@ -744,10 +763,8 @@ export async function identifyCard(
         SHADOWLESS_SETS.has(setKey) || card.variants.some((v) => v.printing === "SHADOWLESS");
 
     const slab = photoCheck.slab?.present ? photoCheck.slab : null;
-    // Graders print 1ST EDITION on 1st Edition cards, so a legible label
-    // that names no printing rules 1st Edition out. In a set with no
-    // Shadowless printing, that makes the card Unlimited. In Base Set it
-    // doesn't settle Unlimited versus Shadowless.
+    // A complete PSA Base Set label identifies its printing independently of
+    // glare or model mistakes about the artwork border.
     const labelNamesNone =
         Boolean(slab?.labelText && printingClaimFromText(slab.labelText) === "NOT_STATED");
     let label: PrintingClaim = slab?.labelText ? printingClaimFromText(slab.labelText) : "NOT_STATED";
@@ -758,6 +775,16 @@ export async function identifyCard(
 
     let photo: PrintingOrUnknown = photoPrinting(photoCheck.printingMarks, { shadowMatters });
     let photoSource = "photos";
+    const psaLabel = psaBaseLabelPrinting(slab ? { ...slab, grader: slab.grader ?? (/\bpsa\b/i.test(sellerListing.title) ? "PSA" : null) } : null,
+        { name: card.name, set: identity.set, cardNumber: card.cardNumber });
+    if (psaLabel === "UNLIMITED" && photo !== "FIRST_EDITION") {
+        label = "UNLIMITED";
+        photo = "UNLIMITED";
+        photoSource = "PSA slab label";
+    }
+    if (slab && normalizeWords(slab.grader) === "psa" && shadowMatters && photo === "SHADOWLESS" && label !== "SHADOWLESS") {
+        return needsReview("The PSA label does not identify Shadowless. An artwork-shadow guess cannot authorize premium printing prices.", card);
+    }
 
     // Inside a slab the stamp and shadow can be hard to see, but graders
     // print 1st Edition and Shadowless on the label. A legible label that
@@ -773,7 +800,7 @@ export async function identifyCard(
         label,
         photo,
         photoSource,
-        photoNotes: photoCheck.printingMarks?.evidence ?? [],
+        photoNotes: photoSource === "PSA slab label" ? ["The readable PSA Base Set label names no premium printing. A conflicting artwork-shadow interpretation was not used."] : photoCheck.printingMarks?.evidence ?? [],
     };
     identity.evidence = evidence;
 
@@ -781,6 +808,10 @@ export async function identifyCard(
         finishClaimFromText(aspectText(aspects, /finish|feature/i)),
         finishClaimFromText(listing.title)
     );
+    // A legible slab label can supply a finish the seller omitted. Its grade,
+    // authenticity and case still pass the independent slab checks below.
+    const labelFinish = slab?.labelText ? finishClaim(slab.labelText) : "NOT_STATED";
+    if (labelFinish !== "NOT_STATED") identity.finish = resolveFinish(identity.finish as FinishClaim, labelFinish);
 
     // A reprint's mark on the artwork outranks anything the seller wrote.
     const reprint = reprintShown(photoCheck.printingMarks?.reprintMark, card.records[0]?.setName ?? identity.set);
@@ -809,7 +840,7 @@ export async function identifyCard(
 
     // Priced as a cheaper printing than the seller claims: say so.
     if (printing.reason) identity.reasons.push(printing.reason);
-    if (photoIdentity && (sellerListing.title !== listing.title)) identity.reasons.push("Identity is corroborated by independent discovery and full-photo readings; seller wording was not used as proof of the card.");
+    if (photoIdentity && (sellerListing.title !== listing.title)) identity.reasons.push("Card identity is corroborated by independent photo readings; printing follows the label and visible evidence.");
 
     if (labelNamesNone && printing.printing === "FIRST_EDITION") {
         return needsReview("The listing says 1st Edition, but the slab label doesn't.", card);

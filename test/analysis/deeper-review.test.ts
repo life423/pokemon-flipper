@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ANALYSIS_VERSION } from "../../server/ai/openai.ts";
-import { photoFingerprint } from "../../server/analysis/store.ts";
+import { photoFingerprint, withAssessmentLock } from "../../server/analysis/store.ts";
 import { createDeeperPhotoReviewer, photoReviewKey, cleanDeeperAnswer } from "../../server/analysis/deeper-review.ts";
 import { cardEvaluation } from "../fixtures/card-evaluation.ts";
 import type { SavedRecord } from "../../server/analysis/types.ts";
@@ -21,6 +21,30 @@ function fixture(review = async () => ({ result: answer(), usage: { inputTokens:
     const run = createDeeperPhotoReviewer({ load: async () => structuredClone(stored), save: async (_id, next) => { stored = structuredClone(next); saves++; }, review: async () => { calls++; return review(); }, now: () => "2026-10-26T13:00:00Z" });
     return { run, key: () => photoReviewKey(stored), get: () => stored, set: (next: SavedRecord) => { stored = next; }, calls: () => calls, saves: () => saves };
 }
+
+test("a full-assessment update waits for a focused review and preserves its new concerns", async () => {
+    let entered!: () => void, release!: () => void;
+    const ready = new Promise<void>(resolve => entered = resolve);
+    const gate = new Promise<void>(resolve => release = resolve);
+    const f = fixture(async () => { entered(); await gate; return { result: answer(), usage: { inputTokens: 1, outputTokens: 1 } }; });
+    const review = f.run("offline", f.key()); await ready;
+    let updated = false;
+    const full = withAssessmentLock("offline", async () => {
+        const latest = f.get(); assert.ok(latest.deeperPhotoReview);
+        f.set({ ...latest, latestEvaluation: { evidenceKey: "new-current-terms", evaluation: cardEvaluation() } }); updated = true;
+    });
+    assert.equal(updated, false); release(); await Promise.all([review, full]);
+    assert.ok(f.get().deeperPhotoReview); assert.equal(f.get().latestEvaluation?.evidenceKey, "new-current-terms");
+});
+
+test("a review queued behind a changed full assessment rejects its old key before paying", async () => {
+    const f = fixture(); const oldKey = f.key();
+    let release!: () => void, entered!: () => void;
+    const ready = new Promise<void>(resolve => entered = resolve); const gate = new Promise<void>(resolve => release = resolve);
+    const full = withAssessmentLock("offline", async () => { entered(); await gate; const next = structuredClone(f.get()); next.assessment!.result.gradeRange = { low: 1, likely: 2, high: 3 }; f.set(next); });
+    await ready; const review = f.run("offline", oldKey); const rejected = assert.rejects(review, /assessment changed/);
+    release(); await full; await rejected; assert.equal(f.calls(), 0);
+});
 
 test("duplicate clicks share one review; reopening the same saved review makes no model request", async (t) => {
     t.mock.method(globalThis, "fetch", () => { throw new Error("No network in regression"); });

@@ -2,8 +2,10 @@ import { getListingDetails } from "../ebay/listings.ts";
 import { fillFromTitle } from "../ai/title-reader.ts";
 import {
     ANALYSIS_VERSION,
+    CONDITION_VERSION,
     checkListingPhotos,
     assessCardCondition,
+    readIdentityPhotos,
 } from "../ai/openai.ts";
 import {
     photoFingerprint,
@@ -11,6 +13,7 @@ import {
     saveRecord,
     reusableRecord,
     assessmentStillFits,
+    withAssessmentLock,
 } from "./store.ts";
 import {
     applyConditionRules,
@@ -24,9 +27,14 @@ import {
 import type { SavedRecord } from "./types.ts";
 import type { PricedCard } from "../pricing/types.ts";
 import type { Evaluation, Grader, GradeRange, GradedPricing, Identity, Slab, SlabPricing } from "../../shared/types.ts";
-import { identifyCard } from "../identity/card-identity.ts";
-import { rawPricesFor } from "../pricing/raw-prices.ts";
-import { lookupCards, fetchComps } from "../pricing/pkmnprices.ts";
+import { identifyCard, readyForPricing } from "../identity/card-identity.ts";
+import { rawPricesWithSales } from "../pricing/raw-comps.ts";
+import { crossCheckRawPrices } from "../pricing/cross-check.ts";
+import { assessSoldCondition } from "../ai/sold-condition.ts";
+import { findActiveComparables } from "../pricing/active-comps.ts";
+import { lookupCards, fetchComps, fetchRawComps, fetchSalesVolume } from "../pricing/pkmnprices.ts";
+import { activityFor } from "../pricing/activity.ts";
+import { PRICING_VERSION } from "../../shared/pricing-freshness.ts";
 import { checkComps } from "../ai/comp-checker.ts";
 import { gradedPricesFor, compsForGrade } from "../pricing/graded-comps.ts";
 import { checkSlab } from "../identity/slab-check.ts";
@@ -36,8 +44,11 @@ import { savedPhotoInspection } from "../ai/photo-find.ts";
 import { confirmPhotoIdentity } from "../identity/photo-confirmation.ts";
 import { verifyShadowless } from "../ai/shadowless-check.ts";
 import { photoReviewKey } from "./deeper-review.ts";
+import { reconcileIdentityReadings } from "./resolve-evidence.ts";
 import { listingEvidenceKey } from "../../shared/listing-evidence.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
+import { completeConditionRuns } from "./condition-runs.ts";
+import { ProviderError } from "../lib/http.ts";
 import { withPricingRecovery } from "../pricing/recover.ts";
 
 // eBay allows 24 photos; the ones past the first few are often the
@@ -110,18 +121,15 @@ export interface CurrentState {
 
 interface EvaluationOptions { fresh?: boolean; remember?: boolean; current?: CurrentState | null }
 const shareEvaluations = createSingleFlight();
-const evaluationTails = new Map<string, Promise<void>>();
 
 // Identical requests share their entire evaluation. Different snapshots for the
 // same item wait, then reuse the first request's saved AI work when it still fits.
 export function evaluateListing(itemId: string, options: EvaluationOptions = {}): Promise<Evaluation> {
     const normalized = { fresh: options.fresh ?? false, remember: options.remember ?? true, current: options.fresh ? null : options.current ?? null };
-    return shareEvaluations(JSON.stringify([itemId, normalized]), () => {
-        const result = (evaluationTails.get(itemId) ?? Promise.resolve()).then(() => evaluateOnce(itemId, normalized));
-        const tail = result.then(() => {}, () => {});
-        evaluationTails.set(itemId, tail);
-        return result.finally(() => { if (evaluationTails.get(itemId) === tail) evaluationTails.delete(itemId); });
-    });
+    // The local consistency diagnostic intentionally asks for independent,
+    // unsaved readings. HTTP callers cannot set remember=false.
+    if (normalized.fresh && !normalized.remember) return evaluateOnce(itemId, normalized);
+    return shareEvaluations(JSON.stringify([itemId, normalized]), () => withAssessmentLock(itemId, () => evaluateOnce(itemId, normalized)));
 }
 
 async function evaluateOnce(
@@ -156,6 +164,10 @@ async function evaluateOnce(
     const photoUrls = listing.images.slice(0, MAX_PHOTOS);
 
     const evaluation: Evaluation = {
+        conditionVersion: CONDITION_VERSION,
+        assessmentVersion: ANALYSIS_VERSION,
+        pricingVersion: PRICING_VERSION,
+        pricesCheckedAt: new Date().toISOString(),
         listing: {
             id: listing.id,
             title: listing.title,
@@ -220,6 +232,7 @@ async function evaluateOnce(
     };
 
     let changed = false;
+    record.reviewContext = { title: listing.title, photos: photoUrls };
 
     if (record.photoCheck) {
         evaluation.reusedSteps.push("photoCheck");
@@ -228,9 +241,12 @@ async function evaluateOnce(
         record.photoCheck = { result: photoCheck.result, usage: photoCheck.usage };
         evaluation.usage.push({ step: "photoCheck", ...photoCheck.usage });
         changed = true;
+        record.answeredAt = new Date().toISOString();
+        if (remember) await saveRecord(listing.id, record);
     }
 
-    const checkedPhotos = applyPhotoCheckRules(record.photoCheck.result, photoUrls.length);
+    const originalPhotos = applyPhotoCheckRules(record.photoCheck.result, photoUrls.length);
+    let checkedPhotos = originalPhotos;
     evaluation.photoCheck = checkedPhotos;
 
     const { mode, reasons } = getGradingMode(checkedPhotos);
@@ -243,12 +259,54 @@ async function evaluateOnce(
 
     if (checkedPhotos.cardCount === "ONE") {
         const scan = await savedPhotoInspection(photoUrls[0]);
-        const photoIdentity = confirmPhotoIdentity(scan, checkedPhotos);
+        let photoIdentity = confirmPhotoIdentity(scan, checkedPhotos);
+        let finishConflict = false;
+        if (record.identityPasses?.length) {
+            const resolved = reconcileIdentityReadings(originalPhotos, record.identityPasses.map(pass => pass.result));
+            checkedPhotos = resolved.check;
+            finishConflict = resolved.finishConflict;
+            photoIdentity = resolved.confirmation ?? photoIdentity;
+            evaluation.reusedSteps.push("identityResolution");
+        }
         if (photoIdentity?.printing === "SHADOWLESS") {
             const fronts = checkedPhotos.images.filter((image) => image.usable && !image.isStockImage && (image.view === "FRONT" || image.view === "FRONT_DETAIL"));
             if (!await verifyShadowless(fronts.map((image) => photoUrls[image.number - 1]))) photoIdentity.printing = undefined;
         }
-        const { identity, card } = await identifyCard(listing, checkedPhotos, { lookupCards: query => withPricingRecovery(() => lookupCards(query)), photoIdentity });
+        const identify = async () => {
+            const result = await identifyCard(listing, checkedPhotos, { lookupCards: query => withPricingRecovery(() => lookupCards(query)), photoIdentity });
+            if (finishConflict) result.identity.finish = "CONFLICTING";
+            return result;
+        };
+        let identified = await identify();
+        const focusPhotos = checkedPhotos.images.filter(image => !image.isStockImage && image.usable && ["FRONT", "FRONT_DETAIL", ...(checkedPhotos.holder === "GRADED_SLAB" ? ["BACK"] : [])].includes(image.view))
+            .slice(0, 4).map(image => photoUrls[image.number - 1]);
+        while ((record.identityPasses?.length ?? 0) < 2 && focusPhotos.length && !identified.lookupFailed && !identified.identity.notThisCard) {
+            const finishGap = !["HOLO", "REVERSE_HOLO", "NON_HOLO"].includes(identified.identity.finish) && (identified.card?.variants.length ?? 0) > 1;
+            const labelGap = checkedPhotos.holder === "GRADED_SLAB" && (!checkedPhotos.slab?.grader || !checkedPhotos.slab.grade || !checkedPhotos.slab.labelText);
+            if (readyForPricing(identified.identity) && !finishGap && !labelGap) break;
+            try {
+                const answer = await readIdentityPhotos(focusPhotos, record.identityPasses?.length ?? 0, {
+                    unresolved: [...identified.identity.reasons, ...(finishGap ? ["Select the exact finish only if the photo or readable label supports it."] : []), ...(labelGap ? ["Read missing slab label fields from the actual label."] : [])],
+                    possibleFinishes: [...new Set(identified.card?.variants.map(variant => variant.name) ?? [])],
+                });
+                (record.identityPasses ??= []).push(answer);
+                evaluation.usage.push({ step: "identityResolution", ...answer.usage });
+                changed = true;
+                record.answeredAt = new Date().toISOString();
+                if (remember) await saveRecord(listing.id, record);
+                const resolved = reconcileIdentityReadings(originalPhotos, record.identityPasses.map(pass => pass.result));
+                checkedPhotos = resolved.check;
+                finishConflict = resolved.finishConflict;
+                photoIdentity = resolved.confirmation;
+                if (photoIdentity?.printing === "SHADOWLESS" && !await verifyShadowless(focusPhotos)) photoIdentity.printing = undefined;
+                identified = await identify();
+            } catch (error) {
+                console.error(`Focused identity reading could not finish: ${(error as Error).message}`);
+                break;
+            }
+        }
+        evaluation.photoCheck = checkedPhotos;
+        const { identity, card } = identified;
 
         identifiedCard = card;
         evaluation.identity = identity;
@@ -260,9 +318,12 @@ async function evaluateOnce(
 
             if (evaluation.slab.status === "OK") {
                 evaluation.slabPricing = await slabPricesFor(card, identity, evaluation.slab);
+                if (evaluation.slabPricing.status !== "PRICED") {
+                    const activeReference = await findActiveComparables(identity, evaluation.slab, listing.id);
+                    if (activeReference) evaluation.slabPricing = { ...evaluation.slabPricing, status: "PRICED", source: "ebay-active",
+                        printing: identity.printing, grader: evaluation.slab.grader!, grade: evaluation.slab.grade!, activeReference };
+                }
             }
-        } else {
-            evaluation.rawPricing = rawPricesFor(card, identity);
         }
     }
 
@@ -272,7 +333,7 @@ async function evaluateOnce(
         const photoNumbers = clearPhotos.map((photo) => photo.number);
         const closeUps = hasCloseUps(checkedPhotos);
 
-        if (assessmentStillFits(record.assessment, mode, photoNumbers)) {
+        if (assessmentStillFits(record.assessment, mode, photoNumbers, CONDITION_VERSION)) {
             evaluation.reusedSteps.push("condition");
         } else {
             const photos = clearPhotos.map((photo) => ({
@@ -280,15 +341,21 @@ async function evaluateOnce(
                 label: photo.view,
             }));
 
-            const answers = await Promise.all(
-                Array.from({ length: CONDITION_RUNS }, () =>
-                    assessCardCondition(listing, photos, mode)
-                )
-            );
-
-            for (const answer of answers) {
-                evaluation.usage.push({ step: "condition", ...answer.usage });
-            }
+            const previous = record.conditionRuns;
+            const existing = previous?.version === CONDITION_VERSION && previous.mode === mode && previous.photoNumbers.join(",") === photoNumbers.join(",") ? previous.answers : [];
+            const answers = await completeConditionRuns({ existing,
+                run: async () => {
+                    const answer = await assessCardCondition(listing, photos, mode);
+                    evaluation.usage.push({ step: "condition", ...answer.usage });
+                    if (!applyConditionRules(answer.result, mode, { closeUps })) throw new ProviderError("The AI condition range was incomplete; the missing assessment will be retried.");
+                    return answer;
+                },
+                checkpoint: async answers => {
+                    record.conditionRuns = { version: CONDITION_VERSION, mode, photoNumbers, answers };
+                    record.answeredAt = new Date().toISOString();
+                    if (remember) await saveRecord(listing.id, record);
+                },
+            });
 
             // Broken answers are dropped. Of the rest, the more cautious
             // one is kept and the others are set aside for reference.
@@ -300,12 +367,16 @@ async function evaluateOnce(
             record.assessment =
                 valid.length > 0
                     ? (() => {
-                          const kept = valid.reduce((a, b) => moreCautious(a, b));
+                          const selected = valid.reduce((a, b) => moreCautious(a, b));
+                          const kept = structuredClone(selected);
+                          if (valid.length < CONDITION_RUNS) { kept.confidence = kept.confidence === "HIGH" ? "MEDIUM" : kept.confidence; kept.limitations.push("One condition assessment completed; the second is unavailable."); }
                           return {
+                              version: CONDITION_VERSION,
+                              completedRuns: valid.length,
                               mode,
                               photoNumbers,
                               result: kept,
-                              setAside: results.filter((result) => result !== kept),
+                              setAside: results.filter((result) => result !== selected),
                           };
                       })()
                     : null;
@@ -337,6 +408,8 @@ async function evaluateOnce(
     }
 
     const context = { title: listing.title, photos: photoUrls };
+    if (identifiedCard && evaluation.identity && !evaluation.slab) evaluation.rawPricing = await rawPricesWithSales(identifiedCard, evaluation.identity, { fetchRawComps, checkComps, assessCondition: assessSoldCondition });
+    if (evaluation.rawPricing && evaluation.identity && evaluation.condition) evaluation.rawPricing = await crossCheckRawPrices(evaluation.rawPricing, evaluation.identity);
     record.reviewContext = context;
 
     if (changed) {
@@ -346,6 +419,9 @@ async function evaluateOnce(
     evaluation.answeredAt = record.answeredAt;
     if (remember) evaluation.photoReviewKey = photoReviewKey(record);
     if (record.deeperPhotoReview?.inputKey === evaluation.photoReviewKey) evaluation.deeperPhotoReview = record.deeperPhotoReview;
+    if (identifiedCard && evaluation.identity) {
+        evaluation.marketActivity = await activityFor(identifiedCard, evaluation.identity, Boolean(evaluation.slab), fetchSalesVolume);
+    }
     evaluation.underwriting = underwrite(evaluation);
     evaluation.rating = rateDeal(evaluation);
     if (remember) {

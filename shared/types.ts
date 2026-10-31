@@ -29,8 +29,9 @@ export interface Seller {
     feedbackScore: number | null;
 }
 
-// The free check, before any AI: the listing at its best.
+// Preliminary screening: seller-based estimates before full photo assessment.
 export interface Screen {
+    needsAnalysis?: "IDENTITY" | "FINISH" | "SLAB_LABEL" | "PRICE_EVIDENCE";
     status: "CANDIDATE" | "DROPPED" | "UNSCREENED";
     reason: string | null;
     pricingIssue?: PricingIssue;
@@ -57,7 +58,7 @@ export interface Screen {
         bestOffer?: boolean;
     };
     // An auction that will very likely end above even its best-case max
-    // bid. Not worth the AI.
+    // bid. Lower priority, but still eligible for AI.
     longShot?: boolean;
     requiresOffer?: boolean;
     priceAnomaly?: { referencePrice: number; photoChecked: boolean };
@@ -189,6 +190,7 @@ export interface PrintingMarks {
 
 // What the photos show of a graded case and its label.
 export interface SlabReading {
+    authenticityEvidence?: string[];
     present: boolean;
     grader: string | null;
     grade: string | null;
@@ -266,9 +268,12 @@ export interface Identity {
 // ---- Prices ----
 
 export interface RawPrice {
+    crossCheck?: { source: "pokemonPriceTracker"; price: number; updatedAt: string | null };
     condition: RawCondition | "UNKNOWN";
     price: number;
     updatedAt: string | null;
+    basis?: "EBAY_SOLD" | "TCGPLAYER";
+    comps?: CompSummary;
 }
 
 // Where a price came from and which database printing it is.
@@ -279,14 +284,36 @@ interface PriceSource {
 }
 
 export interface RawPricing extends PriceSource {
+    conditionEvidence?: "AI_PHOTOS" | "SELLER_TEXT";
+    reviewedSoldCopies?: number;
+    sampledSoldCopies?: number;
+    crossCheckNote?: string;
     status: PriceStatus;
     reason?: string;
     printingLabel?: string;
     finish?: string;
     prices?: RawPrice[];
+    ebayComps?: CompSummary[];
+    evidenceNote?: string;
+}
+
+export interface MarketActivity {
+    status: "AVAILABLE" | "UNAVAILABLE";
+    reason?: string;
+    scope: "RAW" | "GRADED";
+    variant: string;
+    periodDays: number;
+    observedSales: number;
+    activeDays: number;
+    dailyAverage: number;
+    newestSale: string | null;
+    checkedAt: string;
+    complete: boolean;
 }
 
 export interface CompSale {
+    photoCondition?: RawCondition;
+    sellerCondition?: RawCondition | null;
     price: number;
     soldAt: string;
     title: string;
@@ -294,6 +321,8 @@ export interface CompSale {
 }
 
 export interface CompSummary {
+    mean?: number | null;
+    windowDays?: number;
     grader: string;
     grade: number | string;
     count: number;
@@ -336,6 +365,29 @@ export interface SlabPricing extends PriceSource {
     grader?: string;
     grade?: number | string;
     summary?: CompSummary;
+    activeReference?: ActiveReference;
+}
+
+export interface ActiveComparable {
+    id: string;
+    title: string;
+    url: string;
+    price: number;
+    shipping: number;
+    total: number;
+    seller: Seller;
+    certNumber: string;
+    checkedAt: string;
+}
+
+export interface ActiveReference {
+    checkedAt: string;
+    grader: string;
+    grade: string;
+    lowestTotal: number;
+    resalePrice: number;
+    discountRate: number;
+    listings: ActiveComparable[];
 }
 
 // ---- Money ----
@@ -387,6 +439,7 @@ export interface PricedPath {
     grader?: Grader;
     salePrice?: number;
     priceCondition?: RawCondition;
+    pricingNotes?: string[];
     tier?: string;
     gradingFee?: number;
     expectedSale?: number;
@@ -453,6 +506,11 @@ export interface DeeperPhotoReview {
 }
 
 export interface Evaluation {
+    conditionVersion?: string;
+    assessmentVersion?: string;
+    pricingVersion?: string;
+    pricesCheckedAt?: string;
+    marketActivity?: MarketActivity;
     photoReviewKey?: string;
     deeperPhotoReview?: DeeperPhotoReview;
     listing: {

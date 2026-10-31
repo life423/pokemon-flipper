@@ -1004,3 +1004,5 @@
 @media (max-width: 39.999rem) {
     .searchPreferences.wideOnly { display: none; }
 }
+.aiUsage summary { min-height: var(--tap); align-content: center; cursor: pointer; }
+.aiUsage ul { padding-left: var(--space-4); display: grid; gap: var(--space-3); font-size: var(--text-sm); overflow-wrap: anywhere; }

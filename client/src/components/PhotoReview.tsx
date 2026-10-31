@@ -21,16 +21,17 @@ export function PhotoReview({ evaluation, listing, phase, compact = false, state
     const plan = evaluation ? planDeeperPhotos(evaluation.photoCheck, evaluation.listing.photos ?? listing.images) : null;
     const time = dateText(status.reviewedAt);
     return <section className={styles.review} aria-label="AI photo review">
-        <p className={styles.title}>{phase === "loading" ? "AI reviewing listing photos…" : phase === "error" ? "AI photo review failed" : status.title}</p>
+        <p className={styles.title}>{phase === "loading" ? "Analyzing photos and checking resale prices…" : phase === "error" ? "Listing analysis could not finish" : status.title}</p>
         {evaluation?.photoCheck && <p className={styles.meta}>{status.checked} of {status.total} photos checked · Photo confidence: {name(status.confidence)}{time ? ` · ${time}` : " · date unavailable"}</p>}
         {status.needsYourReview && <div className={styles.caution}>
             <strong>Your review needed</strong>
             {compact ? <p>{status.reasons[0]}</p> : <ul>{status.reasons.slice(0, 4).map((reason) => <li key={reason}>{reason}</li>)}</ul>}
         </div>}
+        {!compact && status.photoNotes.length > 0 && <details><summary>Photo notes</summary><ul>{status.photoNotes.map(note => <li key={note}>{note}</li>)}</ul></details>}
         {compact && deep && <p className={styles.meta}>Deeper AI review saved{dateText(deep.reviewedAt) ? ` · ${dateText(deep.reviewedAt)}` : ""}</p>}
         {compact && current?.status === "loading" && <p className={styles.meta} role="status">Deeper AI review in progress; initial assessment still shown.</p>}
         {compact && current?.status === "error" && <p className={styles.caution}>Deeper review failed; initial assessment kept. Open analysis for details.</p>}
-        {!compact && evaluation?.photoCheck && <>
+        {!compact && evaluation?.photoCheck && !evaluation.slab && <>
             {deep ? <div className={styles.deep}>
                 <h3>Deeper AI photo review</h3>
                 <p className={styles.meta}>{deep.photoNumbers.length} photos examined · {dateText(deep.reviewedAt)} · saved result</p>
