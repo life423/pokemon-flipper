@@ -3,6 +3,44 @@
 Updated November 1, 2026. This file records the user's agreed requirements so
 future work can continue without losing the conversation context.
 
+## November 1 stopping checkpoint
+
+The user requested pushing main and leaving a good stopping point. The tested
+authenticity fixes and live audit are released in main commit
+abe9b4973544bf2441517c250f91c6a7b2ce8769; origin/main was verified identical.
+This checkpoint is documentation only. No further implementation or paid API
+work was started. The only unrelated working-tree change is the unstaged
+.env.example deletion; preserve it and keep it out of commits.
+
+Resume in C:/Users/aiand/Documents/programming/pokemon-flipper, not the older
+empty pokemon-card-flipper workspace. Read
+docs/charizard-live-and-authenticity-prompts-2026-11-01.md first. Validation at
+the released code: 456 tests, both typechecks, build and diff checks pass.
+Real prompt checks resolved four authenticity holds to PASS; the identity-conflict
+control stayed in Review. The entire 479-listing search has not been rerun with
+the new prompt. Its baseline 7 Deals / 92 Review / 0 Waiting is not a post-fix
+measurement. Evidence remains ignored under data/reviews; no cache clear is needed.
+
+Recommended next work, pending the user's next instruction:
+1. Align Deals and review warnings with actual photo/grade evidence: all seven
+   baseline Deals show review warnings, and five lack a likely grade. Preserve
+   deterministic fees/profit and resolve incidental notes versus material gaps.
+2. Resolve printing/seller conflicts with independent identity evidence and
+   repricing; retain readable PSA-label safeguards and exact printing comparisons.
+3. Test server-owned analysis jobs to remove the long browser-POST bottleneck;
+   keep eBay daily reservations. Then measure a complete post-fix search.
+
+At this checkpoint no process was listening on port 3017. To resume the normal
+production app in PowerShell from the real repo, run these two lines:
+
+```powershell
+$env:PORT = '3017'
+npm start
+```
+
+Port 3000 belongs to another app; leave it alone. Isolated QA servers were stopped.
+The existing three-item shortlist was preserved during verification.
+
 ## November 1 live Charizard and authenticity prompt follow-up
 
 Developed on codex/authenticity-evidence-prompts, from main 1e7af1e. Read
