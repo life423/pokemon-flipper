@@ -1,5 +1,9 @@
 # Pricing and analysis flow audit - October 31, 2026
 
+This is the earlier merged pricing audit. The later local changes to concurrency,
+sampling, discovery, credit failures and eBay accounting supersede its limit
+descriptions: see [the throughput and live-test report](ai-throughput-and-base-set-check-2026-10-31.md).
+
 Developed on `codex/deal-screening-audit`; the user authorized committing,
 merging into `main` and pushing on October 31. Consult Git for delivery status.
 This report supersedes the

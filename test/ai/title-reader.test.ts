@@ -86,13 +86,13 @@ test("cancelled title batches waiting for an AI slot do not make paid requests",
         save: async () => {},
         read: async (titles) => {
             calls += 1;
-            if (calls === 4) started.resolve();
+            if (calls === 100) started.resolve();
             await release.promise;
             return titles.map(() => reading);
         },
     });
     const stopped = new AbortController();
-    const active = Array.from({ length: 100 }, (_, index) => read(`Active ${index}`));
+    const active = Array.from({ length: 2500 }, (_, index) => read(`Active ${index}`));
     const queued = Array.from({ length: 25 }, (_, index) => read(`Cancelled ${index}`, stopped.signal));
 
     await started.promise;
@@ -101,7 +101,7 @@ test("cancelled title batches waiting for an AI slot do not make paid requests",
 
     assert.ok((await Promise.all(active)).every((answer) => answer === reading));
     assert.deepEqual(await Promise.all(queued), Array(25).fill(null));
-    assert.equal(calls, 4);
+    assert.equal(calls, 100);
 });
 
 test("one cancelled search does not cancel a shared title needed by another search", async () => {

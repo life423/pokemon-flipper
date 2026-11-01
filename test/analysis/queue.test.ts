@@ -15,7 +15,7 @@ test("losing at asking is never a deal, and lowball offers are not opportunities
 test("AI concurrency grows with candidates, respects a cap, and backs off after failures", () => {
     assert.equal(analysisConcurrency(1), 1);
     assert.ok(analysisConcurrency(54) > 3);
-    assert.equal(analysisConcurrency(1000), 8);
+    assert.equal(analysisConcurrency(1000), 100);
     assert.ok(analysisConcurrency(54, [false, false]) < analysisConcurrency(54, [true, true]));
     assert.ok(analysisConcurrency(0, [false, false]) >= 1);
 });

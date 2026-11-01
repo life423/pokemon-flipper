@@ -19,7 +19,6 @@ import { criteriaMismatch, searchAttributes } from "../../shared/search-criteria
 // never shown.
 
 // Photo checks per dig, so a broad search can't run up the AI bill.
-const MAX_PHOTO_CHECKS = 120;
 
 export interface DigSummary {
     // Listings the extra searches turned up, and the searches run.
@@ -133,7 +132,7 @@ export async function digDeeper(
     const plan: DigQuery[] = await dependencies.plan(search, intent, signal);
     const found = new Map<string, { listing: ListingSummary; how: FoundHow; lane: number }>();
     const excluded = new Set(excludeIds);
-    // Seller claims can hide the value, so also inspect a bounded sample of
+    // Seller claims can hide the value, so also inspect the matching
     // initially rejected listings. Existing candidates already get full AI.
     for (const listing of primaryListings) {
         if ((!listing.isGraded || listing.screen?.priceAnomaly) && listing.match !== "JUNK" && listing.screen?.status !== "CANDIDATE" && listing.images[0]) {
@@ -158,19 +157,14 @@ export async function digDeeper(
             (!listing.endTime || Date.parse(listing.endTime) > now) &&
             !(listing.buyingOption === "FIXED_PRICE" && (listing.currentPrice ?? 0) < minPrice)
     );
-    // Share the photo budget across query families, so the initial results
-    // cannot consume every check before generic/misspelled titles get a turn.
-    const maximum = Math.min(MAX_PHOTO_CHECKS, Math.ceil(Math.sqrt(eligible.length)) * 4);
+    // Interleave families for early coverage, then inspect every eligible copy.
+    const maximum = eligible.length;
     const lanes = new Map<number, typeof eligible>();
     for (const item of eligible) {
         if (!lanes.has(item.lane)) lanes.set(item.lane, []);
         lanes.get(item.lane)!.push(item);
     }
     for (const lane of lanes.values()) lane.sort((a, b) => compareAnalysisPriority(a.listing, b.listing, targets));
-    // Unusually cheap listings share the existing photo ceiling. A flood of
-    // implausible prices cannot consume all discovery work or trigger details.
-    const anomalies = lanes.get(-1);
-    if (anomalies) lanes.set(-1, anomalies.slice(0, Math.ceil(maximum / 4)));
     const live: typeof eligible = [];
     while (live.length < maximum) {
         let added = false;
@@ -189,11 +183,9 @@ export async function digDeeper(
     const steps = dependencies.screening(targets, includeOffers, signal);
     let checked = 0;
 
-    let emptyChecks = 0;
     for (let offset = 0; offset < live.length;) {
         const concurrency = analysisConcurrency(live.length - offset);
         const batch = live.slice(offset, offset + concurrency * 2);
-        let useful = 0;
         await mapLimit(batch, concurrency, async ({ listing, how }) => {
             if (signal?.aborted) return;
             const result = await digListing(listing, how, intent, photoBudget, steps, signal, dependencies.findPhoto).catch((error: Error) => {
@@ -206,14 +198,12 @@ export async function digDeeper(
             if (result) {
                 const mismatch = result.match ?? cardMismatch(result.screen, intent);
                 onListing(mismatch ? { ...result, match: mismatch } : result);
-                if (!mismatch && (result.mistakes?.length || result.screen?.status === "CANDIDATE")) useful += 1;
             }
             checked += 1;
             onProgress(checked, live.length);
         });
         offset += batch.length;
-        emptyChecks = useful ? 0 : emptyChecks + batch.length;
-        if (signal?.aborted || emptyChecks >= 24) break;
+        if (signal?.aborted) break;
     }
     if (!signal?.aborted) onProgress(checked, checked);
 }

@@ -11,7 +11,7 @@ const GRADER_PATTERNS: [RegExp, string][] = [
     [/\bcgc\b|certified guaranty/, "CGC"],
     [/\bbgs\b|beckett/, "BGS"],
     [/\bsgc\b/, "SGC"],
-    [/\btag\b/, "TAG"],
+    [/\btag\b|technical authentication (?:and |& )?grading/, "TAG"],
 ];
 
 const CERT_URLS: Record<string, (cert: string) => string> = {
@@ -35,8 +35,10 @@ export function normalizeGrade(text: unknown): string | null {
     return match ? match[1] : null;
 }
 
-function digits(text: unknown): string | null {
-    const value = String(text ?? "").replace(/\D/g, "");
+export function normalizeCertNumber(text: unknown, grader: string | null): string | null {
+    // TAG certificate IDs contain letters; stripping them can merge different
+    // slabs or hide a disagreement between the listing and the photographed ID.
+    const value = String(text ?? "").toUpperCase().replace(grader === "TAG" ? /[^A-Z0-9]/g : /\D/g, "");
     return value || null;
 }
 
@@ -75,7 +77,7 @@ export function checkSlab(
     const grader = graderCode(slab.grader);
     const grade = normalizeGrade(slab.grade);
     const gradeQualifier = qualifierOf(slab.gradeQualifier, grader, grade);
-    const labelCert = digits(slab.certNumber);
+    const labelCert = normalizeCertNumber(slab.certNumber, grader);
     const reasons: string[] = [];
 
     // Slabs skip raw-card grading, but still need a real photo of this copy.
@@ -90,7 +92,7 @@ export function checkSlab(
     // The item details have to agree with the label.
     const listedGrader = graderCode(aspects["Professional Grader"]);
     const listedGrade = normalizeGrade(aspects.Grade);
-    const listedCert = digits(aspects["Certification Number"]);
+    const listedCert = normalizeCertNumber(aspects["Certification Number"], listedGrader ?? grader);
 
     if (listedGrader && grader && listedGrader !== grader) {
         reasons.push(`The item details say ${listedGrader}, but the label says ${grader}.`);

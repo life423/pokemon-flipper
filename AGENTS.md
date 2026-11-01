@@ -1,7 +1,67 @@
 # Project memory and user preferences
 
-Updated October 31, 2026. This file records the user's agreed requirements so
+Updated November 1, 2026. This file records the user's agreed requirements so
 future work can continue without losing the conversation context.
+
+## November 1 delivery
+
+The user authorized committing all latest throughput, eBay quota, credit-pause,
+existing-slab grader and Review-count fixes, merging into main and pushing to
+GitHub. The unrelated `.env.example` deletion must stay unstaged/uncommitted.
+Final delivery checks: 446 tests, both typechecks, production build and diff check
+pass. Two pricing-recovery tests now freeze their clock so fixture tickets don't
+expire as the calendar advances. Earlier "uncommitted" notes below describe the state before this request;
+consult Git for the resulting commit and delivery status. Live funded AI limits
+from the reports still apply; a successful build is not a new paid-provider run.
+
+## October 31 existing-slab grader correction
+
+BGS/TAG existing slabs now pass screening to exact-grader/grade sold pricing and
+automatic photo analysis, including absent sold data or coverage errors. The
+PSA/CGC `GRADERS` list is only raw submission services with configured fees; never
+use it to reject resale of already-certified slabs. Ordinary BGS/TAG grade words
+are not qualifiers; actual special tiers/conflicts remain distinct. Preserve TAG
+certificate letters in checks, self exclusion and deduplication. The Review note
+uses `groups.review.length` and the same filtered inventory as the tabs, rather
+than counting every incomplete preliminary screen. Pricing version is resale-8.
+
+Read `docs/existing-slab-grader-fix-2026-10-31.md`. 446 tests, typechecks and build
+pass. Evaluator/SDK/provider transport tests and browser scenarios use controlled
+fixtures, not real market opportunities. Phone/tablet/desktop counts agree;
+auction filtering removes the Review note at zero. No new funded AI run was
+attempted; prior live account exhaustion remains the last billing evidence.
+Local 3017 and preview 3018 restarted on this code; 3000 belongs to Ascend Avoid.
+Changes remain uncommitted alongside the preceding throughput follow-up.
+
+## October 31 AI-throughput follow-up
+
+Current local branch: `codex/base-set-e2e-validation`, from merged `78ef0c6`.
+Read `docs/ai-throughput-and-base-set-check-2026-10-31.md` before continuing.
+The user explicitly requested removing small AI throughput/sampling caps and using
+about 100 concurrent calls, while keeping the eBay daily allowance protected.
+The shared AI ceiling is now 100. Historical review covers all eligible fetched
+sales (source sample remains up to 40); discovery/current comparisons no longer
+stop at the previous small AI cutoffs. New-inventory scans screen all unseen
+matches in their 200-row page and honor the user's full-analysis selection.
+Do not restore hidden five-analysis or 12-copy limits. Keep exact-card/printing/
+grade and condition evidence requirements and deterministic money math.
+
+Every Browse request now reserves against a cross-process account ledger; optional
+requests preserve 10%, and no Browse calls pass the exhausted allowance. Cached
+historical photos remain usable. The normal and preview servers use this code.
+Main shortlist hash is unchanged. Port 3000 still belongs to Ascend Avoid.
+
+441 tests, typechecks/build and responsive checks pass. The prior live Base Set
+run finished only 30 of 194 eligible full analyses before the requested upgrade:
+Deals 0, Waiting 164, Review 15, All 193. Do not report this as a complete zero-deal
+test. The upgraded rerun encountered actual OpenAI `credit_balance_exhausted`
+responses on all 12 new AI attempts. No final Deals count or successful paid
+100-concurrent throughput has been verified. Credit exhaustion now pauses AI
+with unfinished cards in Waiting and a Resume button, rather than retrying it
+as a temporary rate limit. The isolated live services should be stopped when the
+verification turn ends; keep normal 3017 and the user's 3018 preview running.
+Changes from this follow-up remain local/uncommitted; the pre-existing deletion
+of `.env.example` is unrelated and must not be staged without user direction.
 
 ## October 31 pricing-gate and physical-identity corrections
 

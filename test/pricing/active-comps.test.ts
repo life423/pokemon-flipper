@@ -56,7 +56,7 @@ test("active fallback selects the lowest buyer total, excludes the subject and w
     assert.equal(underwrite(e).verdict, "CANT_PRICE", "another certified grade cannot supply a value");
 });
 
-test("competing listing work is bounded and auctions cannot provide instant-purchase references", async () => {
+test("all matching current candidates receive photo checks and auctions cannot provide instant-purchase references", async () => {
     const items = Array.from({ length: 12 }, (_, index) => listing(String(index), index + 10));
     items.unshift({ ...listing("auction", 1), buyingOption: "AUCTION" });
     let details = 0, photos = 0;
@@ -66,5 +66,25 @@ test("competing listing work is bounded and auctions cannot provide instant-purc
         cached: async () => null, save: async () => {}, savedAssessment: async () => null,
     });
     assert.equal(await find(identity, slab, "subject"), null);
-    assert.equal(details, 6); assert.equal(photos, 3);
+    assert.equal(details, 12); assert.equal(photos, 12);
+});
+
+test("BGS and TAG current comparisons retain exact graders, half grades and full certificate IDs", async () => {
+    for (const grader of ["BGS", "TAG"]) {
+        const subject: Slab = { ...slab, grader, grade: "6.5", certNumber: grader === "TAG" ? "A1234567" : "1234567" };
+        const items = ["self-cert", "a", "duplicate", "b"].map(id => ({ ...listing(id), title: `Venusaur Base Set 15/102 Holo ${grader} 6.5`, aspects: { "Professional Grader": grader, Grade: "6.5" } }));
+        const certs = grader === "TAG" ? ["a 1234567", "B1234567", "b 1234567", "C1234567"] : ["1234567", "2234567", "2234567", "3234567"];
+        const photos = (index: number) => ({ ...reading(), slab: { ...reading().slab!, grader, grade: "6.5", gradeQualifier: "EX MT+", certNumber: certs[index] } });
+        assert.equal(matchesActiveSlab(photos(1), items[1], identity, subject), true);
+        assert.equal(matchesActiveSlab({ ...photos(1), slab: { ...photos(1).slab, grader: "PSA" } }, items[1], identity, subject), false);
+        assert.equal(matchesActiveSlab({ ...photos(1), slab: { ...photos(1).slab, grade: "7" } }, items[1], identity, subject), false);
+        const find = createActiveComparableFinder({ search: async () => ({ listings: items.map(summary), total: items.length, skipped: 0 }),
+            details: async id => items.find(item => item.id === id)!, read: async (_urls, item) => ({ result: photos(items.indexOf(item)), usage: {} as any }),
+            cached: async () => null, save: async () => {}, savedAssessment: async () => null });
+        const reference = await find(identity, subject, "subject");
+        assert.equal(reference?.grader, grader);
+        assert.equal(reference?.grade, "6.5");
+        assert.equal(reference?.listings.length, 2, "self and duplicate certificates are excluded");
+        assert.deepEqual(new Set(reference?.listings.map(item => item.certNumber)), new Set([certs[1], certs[3]]));
+    }
 });

@@ -17,9 +17,10 @@ test("sold-copy classification requires actual identity, printing and visible co
 });
 test("ended listings can supply photos; concurrent requests and repeat opens share the saved visual reading", async () => {
     const saved = new Map<string, unknown>(); let detailsCalls = 0, aiCalls = 0;
+    const photos = Array.from({ length: 14 }, (_, index) => `sold-copy-view-${index}`);
     const assessor = createSoldConditionAssessor({
-        details: async () => { detailsCalls++; return { images: ["front", "detail", "back", "corners"], availability: "UNAVAILABLE" } as any; },
-        assess: async () => { aiCalls++; return { result: reading(), usage: { inputTokens: 10, outputTokens: 10 } }; },
+        details: async () => { detailsCalls++; return { images: photos, availability: "UNAVAILABLE" } as any; },
+        assess: async views => { aiCalls++; assert.deepEqual(views, photos, "do not hide views behind a four-photo sample"); return { result: reading(), usage: { inputTokens: 10, outputTokens: 10 } }; },
         cached: async <T>(key: string) => saved.get(key) as T ?? null,
         save: async (key, value) => { saved.set(key, value); },
     });
@@ -36,4 +37,18 @@ test("two medium readings may settle wear but cannot vote away missing views, da
     assert.equal(corroboratedSoldCondition({ ...a, backVisible: false }, a, identity, 4), null);
     assert.equal(corroboratedSoldCondition(a, { ...a, structuralDamage: true }, identity, 4), null);
     assert.equal(corroboratedSoldCondition({ ...a, condition: "MINT" }, { ...a, condition: "MINT" }, identity, 4), null);
+});
+
+test("historical reviews use the approved 100-worker ceiling rather than a hidden two-worker queue", async () => {
+    let active = 0, peak = 0, started = 0; let release!: () => void;
+    const gate = new Promise<void>(resolve => release = resolve);
+    const assessor = createSoldConditionAssessor({
+        details: async id => ({ images: [`${id}-front`, `${id}-back`] } as any),
+        assess: async () => { started++; active++; peak = Math.max(peak, active); await gate; active--; return { result: reading(), usage: { inputTokens: 1, outputTokens: 1 } }; },
+        cached: async () => null, save: async () => {},
+    });
+    const jobs = Array.from({ length: 105 }, (_, index) => assessor({ listing_url: `https://www.ebay.com/itm/${100000000000 + index}` } as Comp, identity));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(started, 100); release(); await Promise.all(jobs);
+    assert.equal(started, 105); assert.equal(peak, 100);
 });

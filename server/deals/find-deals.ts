@@ -15,6 +15,7 @@ import { pricingRetries } from "./pricing-retries.ts";
 import type { PricingRetry } from "../../shared/pricing-retries.ts";
 import { retargetScreen } from "../../shared/money/targets.ts";
 import { MONEY_CONFIG, type MoneyConfig } from "../../shared/money/config.ts";
+import { AI_CONCURRENCY } from "../../shared/work-limits.ts";
 
 // Zero shipping is an optimistic bound for deciding whether to request a
 // quote, never a replacement for an unknown quote in the actual valuation.
@@ -34,7 +35,7 @@ export function shippingCouldChange(screen: Screen, price: number | null, config
 // matches, so 400 by default, and up to 1,000 when asked.
 const DEFAULT_RESULTS = 400;
 const MOST_RESULTS = 1000;
-const PARALLEL_LISTINGS = 6;
+const PARALLEL_LISTINGS = AI_CONCURRENCY;
 
 export interface SearchSummary {
     mode?: "new";

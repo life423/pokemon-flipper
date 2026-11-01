@@ -26,7 +26,7 @@ export function supportsShadowless(check: ShadowlessCheck): boolean {
 // printing. PSA describes both the artwork border and thinner HP font:
 // https://www.psacard.com/info/tcg/pokemon-basics-guide
 export async function verifyShadowless(urls: string[]): Promise<boolean> {
-    const photos = [...new Set(urls.map(fullSizePhoto))].slice(0, 3);
+    const photos = [...new Set(urls.map(fullSizePhoto))];
     if (!photos.length) return false;
     const key = `shadowless-check:v1:${VISION_MODEL}:${photos.join("|")}`;
     return share(key, async () => {

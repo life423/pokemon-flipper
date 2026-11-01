@@ -4,7 +4,7 @@ import type { EbayUsage, Evaluation, ListingSummary, RatingLevel, SearchIntent, 
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { currentPriceEvidence } from "../../shared/pricing-freshness.ts";
 import type { AiUsageDay } from "../../shared/ai-usage.ts";
-import { fetchAiUsage } from "./api";
+import { fetchAiUsage, ApiRequestError } from "./api";
 import { analysisConcurrency, canAutoAnalyze, meetsMinimumGrade, resultGroup, type ResultGroup } from "../../shared/analysis.ts";
 import { compareAnalysisPriority } from "../../shared/analysis-priority.ts";
 import { withFreshListing } from "../../shared/fresh-listing.ts";
@@ -285,6 +285,8 @@ export function App() {
     const lastQuery = useRef("");
     const [searchStatus, setSearchStatus] = useState<"idle" | "checking" | "done" | "error">("idle");
     const [searchError, setSearchError] = useState("");
+    const [analysisBlocked, setAnalysisBlocked] = useState("");
+    const analysisPaused = useRef(false);
     // Release years by set, loaded once, for the cards' subtitles.
     const [setYearsByKey, setSetYearsByKey] = useState<Record<string, number>>({});
 
@@ -524,6 +526,13 @@ export function App() {
             setAnalysisOutcomes((previous) => [...previous.slice(-7), true]);
         } catch (error) {
             const message = error instanceof Error ? error.message : "Analysis failed";
+            if (error instanceof ApiRequestError && error.code === "AI_CREDITS") {
+                analysisPaused.current = true;
+                setAnalysisBlocked(message);
+                setBudget(0);
+                if (stillCurrent()) setAnalyses(previous => { const next = { ...previous }; delete next[listing.id]; return next; });
+                return;
+            }
             if (stillCurrent()) setAnalyses((previous) => ({ ...previous, [listing.id]: { status: "error", message, evidenceKey } }));
             setAnalysisOutcomes((previous) => [...previous.slice(-7), false]);
         } finally {
@@ -532,7 +541,7 @@ export function App() {
             const pending = pendingAnalyses.current.get(listing.id);
             pendingAnalyses.current.delete(listing.id);
             const current = latestListings.current.get(listing.id);
-            if (pending && current && listingEvidenceKey(pending.listing) === listingEvidenceKey(current)) {
+            if (!analysisPaused.current && pending && current && listingEvidenceKey(pending.listing) === listingEvidenceKey(current)) {
                 void runAnalysis(current, pending.fresh);
             }
         }
@@ -685,10 +694,12 @@ export function App() {
         setTotal(null);
         setSummary(null);
         setSelectedId(null);
-        setBudget(onlyNew ? Math.min(5, autoSetting) : autoSetting);
+        setBudget(autoSetting);
         setView(onlyNew ? "new" : "all");
         setSearchStatus("checking");
         setSearchError("");
+        setAnalysisBlocked("");
+        analysisPaused.current = false;
         setSearchedMinPrice(Math.max(0, Number(minPrice) || 0));
 
         try {
@@ -745,10 +756,10 @@ export function App() {
         }
     }
 
-    // The AI looks at the most promising candidates on its own, a couple
-    // at a time, up to this search's budget.
+    // Promising candidates go first, up to the shared concurrency ceiling and
+    // the user's selected full-analysis setting.
     useEffect(() => {
-        if (page !== "search") return;
+        if (page !== "search" || analysisPaused.current) return;
         const running = Object.values(analyses).filter((analysis) => analysis.status === "loading").length;
         let remaining = budget - autoQueued.current.size;
         if (remaining <= 0) return;
@@ -775,7 +786,7 @@ export function App() {
     function changeAutoSetting(value: number) {
         setAutoSetting(value);
         // Takes effect mid-search too: Off or a lower cap stops new analyses now.
-        const cap = newMode ? Math.min(5, value) : value;
+        const cap = value;
         setBudget(cap === ALL ? ALL : Math.max(autoQueued.current.size, cap));
 
         try {
@@ -1464,6 +1475,10 @@ export function App() {
                         </Drawer>
                     </header>
 
+                    {analysisBlocked && <div className={styles.searchUpdate} role="alert">
+                        <p>{analysisBlocked}</p>
+                        <button type="button" className={styles.secondary} onClick={() => { analysisPaused.current = false; setAnalysisBlocked(""); setBudget(autoSetting); if (page === "listing" && directListing) void runAnalysis(directListing); }}>Resume AI analysis</button>
+                    </div>}
                     {page === "shortlist" ? <ShortlistView entries={shortlist} loading={shortlistLoading} error={shortlistError} refreshing={refreshingSaved} refreshErrors={refreshErrors}
                         onRetry={() => void loadShortlist()} onRefresh={refreshSaved} onRemove={removeSaved} onUpdate={updateSaved} now={now}
                         renderCard={(entry) => <DealCard listing={entry.listing} analysis={analyses[entry.id]} selected={entry.id === selectedId} now={now} years={setYearsByKey} targets={targets} minGrade={minGrade} photoReviewState={photoReviews[entry.id]}
@@ -1506,9 +1521,9 @@ export function App() {
                             details={progressDetails}
                         />
                     )}
-                    {searchStatus !== "idle" && <PricingRetries listings={listings} searching={searchStatus === "checking"} recovery={pricingRecovery} analyzed={new Set(Object.entries(analyses).filter(([, analysis]) => analysis.status === "done" || analysis.status === "loading").map(([id]) => id))}
+                    {searchStatus !== "idle" && <PricingRetries listings={filtered} reviewCount={groups.review.length} searching={searchStatus === "checking"} recovery={pricingRecovery} analyzed={new Set(Object.entries(analyses).filter(([, analysis]) => analysis.status === "done" || analysis.status === "loading").map(([id]) => id))}
                         busy={pricingBusy} note={pricingNote} onRetry={(tickets) => void retryPrices(tickets)} onCancel={cancelPricing} />}
-                    {newMode && <p className={styles.discoveryNote}>Checks one page of the 200 newest listings, screens up to 20 unseen listings and automatically starts up to {Math.min(5, autoSetting)} full AI analyses. Discovery stays within your saved limits; repeated scans share a one-minute search cache.</p>}
+                    {newMode && <p className={styles.discoveryNote}>Checks the 200 newest listings and screens every unseen match. Full AI analysis follows your selected setting; repeated scans share a one-minute search cache.</p>}
 
                     {needsWiderSearch && <div className={styles.searchUpdate} role="status">
                         <p>This search excluded Buy It Now listings below ${searchedMinPrice}. Rerun it to include lower prices.</p>

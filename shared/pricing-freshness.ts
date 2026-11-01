@@ -2,7 +2,7 @@ import type { Evaluation } from "./types.ts";
 import { CONDITION_RULES_VERSION } from "./conditions.ts";
 
 // Pricing changes do not invalidate paid photo/condition assessments.
-export const PRICING_VERSION = "ebay-resale-6";
+export const PRICING_VERSION = "ebay-resale-8";
 export const PHOTO_REVIEW_REVISION = 10;
 export function currentPriceEvidence(evaluation: Evaluation, now = Date.now()): boolean {
     const age = now - Date.parse(evaluation.pricesCheckedAt ?? "");

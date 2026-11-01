@@ -41,13 +41,13 @@ test("a completed low-confidence AI review is distinguished from pending and pre
     assert.equal(photoReviewStatus(null, { screen: { evidence: { mainPhoto: "MATCH" } } } as never).title, "AI preliminary photo check only");
 });
 
-test("targeted photo selection deduplicates resolutions, excludes stock and limits paid input size", () => {
+test("targeted photo selection includes every usable view while excluding duplicates and stock", () => {
     const e = cardEvaluation(); const check = e.photoCheck!; check.cardCount = "ONE";
     const urls = Array.from({ length: 15 }, (_, i) => `https://i.ebayimg.com/images/g/${i}/s-l225.jpg`);
     check.images = urls.map((_, i) => ({ number: i + 1, view: i === 0 ? "FRONT" : i === 1 ? "BACK" : i === 2 ? "FRONT_DETAIL" : "BACK_DETAIL", usable: true, isStockImage: i === 14, issues: [] }));
     urls[4] = urls[0].replace("225", "1600");
     const plan = planDeeperPhotos(check, urls);
-    assert.equal(plan.photos.length, 8);
+    assert.equal(plan.photos.length, 13);
     assert.deepEqual(plan.photos.slice(0, 4).map((photo) => photo.view), ["FRONT", "BACK", "FRONT_DETAIL", "BACK_DETAIL"]);
     assert.ok(plan.photos.every((photo) => photo.number !== 5 && photo.number !== 15 && photo.url.includes("1600")));
     check.images[0].obscuresCondition = true;

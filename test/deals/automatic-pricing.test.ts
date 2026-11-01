@@ -47,7 +47,8 @@ test("cancellation during primary price recovery stops extra discovery and retri
     assert.equal(discoveryCalls, 0);
 });
 
-test("automatic recovery waits for cooldown, batches at five, and streams recovered candidates without making Deals", async () => {
+test("automatic recovery waits for cooldown, batches at five, and streams recovered candidates without making Deals", async t => {
+    t.mock.method(Date, "now", () => TIME);
     let time = TIME; const rows = Array.from({ length: 12 }, (_, i) => pending(String(i))); const batches: string[][] = [];
     const updates: ListingSummary[] = []; const progress: PricingRecoveryProgress[] = [];
     await recoverSearchPricing(rows, { onListing: l => updates.push(l), onProgress: p => progress.push(p) }, {
@@ -115,7 +116,8 @@ test("a broad search's automatic recovery is capped, deduplicated and snapshot c
     assert.equal(calls, RECOVERY_LISTING_LIMIT / 5); assert.equal(updates.length, RECOVERY_LISTING_LIMIT); assert.equal(progress.at(-1)?.pending, 4);
 });
 
-test("search recovery uses the guarded callback instead of replacing normal listing snapshots", async () => {
+test("search recovery uses the guarded callback instead of replacing normal listing snapshots", async t => {
+    t.mock.method(Date, "now", () => TIME);
     const row = pending("stream"); const initial: ListingSummary[] = []; const recovered: ListingSummary[] = [];
     await searchWithDiscovery("neo discovery holo", { onListing: l => initial.push(l), onPricingListing: (l, key) => {
         assert.equal(key, pricingSnapshotKey(row)); recovered.push(l);

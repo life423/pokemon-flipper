@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { prescreen } from "../../server/deals/prescreen.ts";
 import { sellerCondition } from "../../shared/conditions.ts";
 import { toCardRecord } from "../../server/pricing/pkmnprices.ts";
+import { canAutoAnalyze, resultGroup } from "../../shared/analysis.ts";
 
 const NOW = Date.parse("2026-09-30T00:00:00Z");
 
@@ -58,6 +59,31 @@ const rawLugia = (overrides = {}) => ({
     isGraded: false,
     cardCondition: "Near mint or better",
     ...overrides,
+});
+
+test("BGS and TAG slabs reach exact-grade pricing and automatic photo analysis even without sold data", async () => {
+    for (const grader of ["BGS", "TAG"]) {
+        const requests = [];
+        const input = rawLugia({ title: `Lugia Neo Genesis Unlimited Holo 9/111 ${grader} 6.5`, isGraded: true,
+            aspects: { ...rawLugia().aspects, "Professional Grader": grader, Grade: "6.5" }, price: 100 });
+        const screen = await prescreen(input, { ...deps, fetchComps: async (_id, target) => {
+            requests.push(target);
+            return PSA9.slice(0, 3).map(sale => ({ ...sale, title: input.title, grader, grade: "6.5", price: 1000 }));
+        } });
+        assert.ok(requests.length > 0);
+        assert.ok(requests.every(target => target.grader === grader && target.grade === "6.5"));
+        assert.equal(screen.status, "CANDIDATE");
+        assert.equal(screen.bestCase.label, `Resell as ${grader} 6.5`);
+        const row = { id: grader, title: input.title, currentPrice: input.price, images: ["front"], screen };
+        assert.equal(canAutoAnalyze(row), true);
+        assert.equal(resultGroup(row, null), "candidates");
+        const absent = await prescreen(input, { ...deps, fetchComps: async () => [] });
+        assert.equal(absent.needsAnalysis, "PRICE_EVIDENCE");
+        assert.equal(canAutoAnalyze({ ...row, screen: absent }), true);
+        assert.equal(resultGroup({ ...row, screen: absent }, null), "candidates");
+        const unavailable = await prescreen(input, { ...deps, fetchComps: async () => { throw new Error("No provider coverage for this grader"); } });
+        assert.equal(canAutoAnalyze({ ...row, screen: unavailable }), true, "provider coverage cannot block AI and current comparisons");
+    }
 });
 
 test("eBay's card conditions map to price conditions, and none means assume the best", () => {

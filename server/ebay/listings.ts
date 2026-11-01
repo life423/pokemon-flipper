@@ -1,7 +1,7 @@
 import { ebayGet, EbayError } from "./api.ts";
 import { exclusionReason, normalizeText } from "./filters.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
-import { countRequest, ebayUsage, EbayBudgetError } from "./usage.ts";
+import { ebayUsage, EbayBudgetError } from "./usage.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
 import { photoEvidenceKey, searchPhotosFitDetails } from "../../shared/listing-evidence.ts";
 import type { BuyingOption, ListingSummary, Seller } from "../../shared/types.ts";
@@ -197,9 +197,8 @@ export async function searchListings(
             ...(sort ? { sort } : {}),
         });
 
-        countRequest();
         const page = await ebayGet<{ itemSummaries?: EbayItem[]; total?: number }>(
-            `/buy/browse/v1/item_summary/search?${params}`, { signal }
+            `/buy/browse/v1/item_summary/search?${params}`, { signal, keepReserve }
         );
         signal?.throwIfAborted();
         const items = page.itemSummaries ?? [];
@@ -232,15 +231,15 @@ export async function searchListings(
 // (the free check's bulk lookups); a deliberate analysis still asks.
 export async function getListingDetails(
     itemId: string,
-    { maxAgeHours = DETAILS_MAX_AGE_HOURS, keepReserve = false, expectedPhotos, expectedTitle }: {
-        maxAgeHours?: number; keepReserve?: boolean; expectedPhotos?: readonly string[]; expectedTitle?: string;
+    { maxAgeHours = DETAILS_MAX_AGE_HOURS, keepReserve = false, expectedPhotos, expectedTitle, allowEndedCache = false }: {
+        maxAgeHours?: number; keepReserve?: boolean; expectedPhotos?: readonly string[]; expectedTitle?: string; allowEndedCache?: boolean;
     } = {}
 ): Promise<ListingDetails> {
     const key = listingCacheKey(itemId);
 
     if (maxAgeHours > 0) {
         const saved = await readCache<ListingDetails>(key, maxAgeHours);
-        if (saved && (saved.availability !== "UNAVAILABLE" || await readCache(key, 1 / 60)) && (expectedTitle === undefined || expectedTitle.trim() === saved.title.trim()) &&
+        if (saved && (allowEndedCache || saved.availability !== "UNAVAILABLE" || await readCache(key, 1 / 60)) && (expectedTitle === undefined || expectedTitle.trim() === saved.title.trim()) &&
             (expectedPhotos === undefined || (saved.searchPhotoKey !== undefined
                 ? saved.searchPhotoKey === photoEvidenceKey(expectedPhotos)
                 : searchPhotosFitDetails(expectedPhotos, saved.images)))) {
@@ -259,9 +258,8 @@ export async function getListingDetails(
     const evidence = expectedPhotos === undefined ? "" : photoEvidenceKey(expectedPhotos);
     return shareDetails(JSON.stringify([itemId, expectedTitle, evidence]), async () => {
         detailRequests += 1;
-        countRequest();
         let details: ListingDetails;
-        try { details = await fetchListingDetails(itemId); }
+        try { details = await fetchListingDetails(itemId, keepReserve); }
         catch (error) {
             if (error instanceof EbayError && [404, 410].includes(error.status)) {
                 const previous = await readCache<ListingDetails>(key, DETAILS_MAX_AGE_HOURS);
@@ -275,8 +273,8 @@ export async function getListingDetails(
     });
 }
 
-async function fetchListingDetails(itemId: string): Promise<ListingDetails> {
-    const item = await ebayGet<EbayItem>(`/buy/browse/v1/item/${encodeURIComponent(itemId)}`);
+async function fetchListingDetails(itemId: string, keepReserve = false): Promise<ListingDetails> {
+    const item = await ebayGet<EbayItem>(`/buy/browse/v1/item/${encodeURIComponent(itemId)}`, { keepReserve });
     const descriptors = item.conditionDescriptors ?? [];
 
     // eBay's structured condition fields, as item specifics.

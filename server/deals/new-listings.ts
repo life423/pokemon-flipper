@@ -6,7 +6,7 @@ import { recoverSearchPricing } from "./recover-pricing.ts";
 import type { ListingSummary } from "../../shared/types.ts";
 import type { PricingRecoveryProgress } from "../../shared/pricing-retries.ts";
 
-export const NEW_SCREEN_LIMIT = 20;
+export const NEW_SCREEN_LIMIT = 200;
 export function createNewListingDiscovery({ find = findDeals, history = searchHistory, usage = ebayUsage, recover = recoverSearchPricing } = {}) {
     const running = new Set<string>();
     return async (query: string, options: NonNullable<Parameters<typeof findDeals>[1]> & { onPricing?: (progress: PricingRecoveryProgress) => void;

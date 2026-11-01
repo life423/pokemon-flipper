@@ -1,6 +1,7 @@
 import { runStructured, MODEL } from "./openai.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { createLimiter } from "../lib/concurrency.ts";
+import { AI_CONCURRENCY } from "../../shared/work-limits.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
 import { COMP_DROP_REASONS, type CheckComps, type Comp, type CompTarget, type CompVerdict } from "../pricing/types.ts";
 
@@ -19,7 +20,7 @@ const shareChecks = createSingleFlight();
 const FOREVER_HOURS = 24 * 365 * 10;
 
 // Comp checks run alongside a whole search's free checks.
-const limit = createLimiter(4);
+const limit = createLimiter(AI_CONCURRENCY);
 
 const SCHEMA = {
     type: "object",

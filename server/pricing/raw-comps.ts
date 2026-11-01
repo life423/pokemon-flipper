@@ -4,6 +4,7 @@ import { rawPricesFor, variantFor } from "./raw-prices.ts";
 import { compProblem, summarizeComps } from "./graded-comps.ts";
 import type { CheckComps, Comp, FetchRawComps, PricedCard } from "./types.ts";
 import type { SoldConditionEvidence } from "../ai/sold-condition.ts";
+import { createSingleFlight } from "../lib/single-flight.ts";
 
 // Seller text is used only for screening/bootstrap. Final valuations classify
 // sold-copy photos independently; an unknown condition is never assumed NM.
@@ -35,7 +36,7 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
         if (assessCondition) {
             const eligible = sales.filter(sale => sale.currency === "USD" && sale.sale_type && !sale.grader && !sale.grade &&
                 !/\b(psa|cgc|bgs|sgc|tag|lot|bundle)\b/i.test(sale.title) && compProblem({ ...sale, grader: "RAW", grade: "ANY" },
-                    { printing: identity.printing, setName: variant.setName, finish: variant.finish, grader: "RAW", grade: "ANY", now, windowDays: 90 }) === null).slice(0, 12);
+                    { printing: identity.printing, setName: variant.setName, finish: variant.finish, grader: "RAW", grade: "ANY", now, windowDays: 90 }) === null);
             sales = (await Promise.all(eligible.map(async sale => {
                 const assessed = await assessCondition(sale, identity).catch(() => null);
                 return assessed ? { ...sale, photoCondition: assessed.condition, conditionEvidence: assessed.evidence, sellerCondition: compCondition(sale.title) } : null;
@@ -84,9 +85,21 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
         });
         return { ...fallback, status: prices.length ? "PRICED" : "PRICE_UNAVAILABLE", prices, ebayComps: summaries,
             conditionEvidence: assessCondition ? "AI_PHOTOS" : "SELLER_TEXT", reviewedSoldCopies: assessCondition ? sales.length : undefined, sampledSoldCopies,
-            evidenceNote: assessCondition ? `${sales.length} sold copies have accepted AI photo-condition assessments from ${sampledSoldCopies} returned records. Up to 12 copies receive photo review per card lookup; results are reused for unchanged photos. Three matched sales are required for an eBay median; other conditions retain a marked market fallback.`
+            evidenceNote: assessCondition ? `${sales.length} sold copies have accepted AI photo-condition assessments from ${sampledSoldCopies} returned records. All eligible returned copies receive photo review; results are reused for unchanged photos. Three matched sales are required for an eBay median; other conditions retain a marked market fallback.`
                 : "Screening uses seller-stated raw conditions. Final evaluations assess sold-copy photos where available. Up to 40 returned records over 90 days are sampled." };
     } catch {
         return { ...fallback, prices: fallback.prices?.map(p => ({ ...p, basis: "TCGPLAYER" })), evidenceNote: "eBay raw sales are temporarily unavailable; using the condition-specific TCGplayer market fallback." };
     }
+}
+
+// Multiple listings of one printing share the complete in-flight market job,
+// including filtering and comp checks. No completed quote is retained here:
+// provider freshness and photo-evidence caches remain responsible for reuse.
+export function createSharedRawSalesPricer(deps: Parameters<typeof rawPricesWithSales>[2]) {
+    const share = createSingleFlight();
+    return async (card: PricedCard | null, identity: Identity): Promise<RawPricing> => {
+        const key = JSON.stringify([card, identity.status, identity.name, identity.set, identity.cardNumber, identity.language, identity.printing, identity.finish]);
+        const result = await share(key, () => rawPricesWithSales(card, identity, deps));
+        return structuredClone(result);
+    };
 }

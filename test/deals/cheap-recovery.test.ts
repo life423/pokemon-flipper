@@ -107,7 +107,7 @@ test("very cheap slabs are eligible for the same bounded preliminary verificatio
     assert.equal(confirmed.counts.details, 1);
 });
 
-test("a flood of cheap listings shares at most a quarter of the existing discovery photo ceiling", async () => {
+test("cheap listings and alternate queries all receive discovery photo checks without a sampling quota", async () => {
     const checked = [];
     let planned = 0;
     const pending = { status: "UNSCREENED", priceAnomaly: { referencePrice: 80, photoChecked: false } };
@@ -122,10 +122,10 @@ test("a flood of cheap listings shares at most a quarter of the existing discove
             loadDetails: async () => ({ title: listing().title, aspects, images: ["front", "back"], shipping: 0, cardCondition: "Heavily played (Poor)", conditionNotes: [] }),
         }),
     });
-    assert.equal(checked.filter((url) => url.startsWith("cheap-")).length, Math.ceil(planned / 4));
+    assert.equal(checked.filter((url) => url.startsWith("cheap-")).length, 400);
     assert.ok(checked.some((url) => url.startsWith("cheap-")));
     assert.ok(checked.some((url) => url.startsWith("other-")));
-    assert.ok(checked.length <= 120);
+    assert.equal(checked.length, 600);
     assert.equal(checked.length, planned, "useful hits exercise the full budget rather than the early empty-scan stop");
     assert.equal(new Set(checked).size, checked.length);
 });

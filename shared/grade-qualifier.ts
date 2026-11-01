@@ -32,6 +32,24 @@ const PSA_DESCRIPTIONS: Record<string, readonly string[]> = {
     "2": ["GOOD", "GD"], "1.5": ["FR", "FAIR"], "1": ["PR", "POOR"],
 };
 
+// Ordinary descriptions only. Special 10 tiers remain distinct from plain
+// numeric-grade evidence (in particular BGS Black Label and TAG Pristine).
+// Sources: https://www.beckett.com/grading/scale
+//          https://taggrading.com/pages/scale
+const BGS_DESCRIPTIONS: Record<string, readonly string[]> = {
+    ...PSA_DESCRIPTIONS,
+    "10": [], "9.5": ["GEMMINT"],
+    "8.5": ["NMMT+", "NMMINT+", "NEARMINTMINT+"],
+    "7.5": ["NM+", "NEARMINT+"],
+    "6.5": ["EXMT+", "EXMINT+", "EXCELLENTMINT+"],
+    "6": ["EXMT", "EXMINT", "EXCELLENTMINT"],
+    "5.5": ["EX+", "EXCELLENT+"], "4.5": ["VGEX+", "VERYGOODEXCELLENT+"],
+    "3.5": ["VG+", "VERYGOOD+"], "2.5": ["GOOD+", "G+"], "2": ["GOOD", "G"],
+};
+const TAG_DESCRIPTIONS: Record<string, readonly string[]> = {
+    ...BGS_DESCRIPTIONS, "10": ["GEMMINT"], "9.5": [],
+};
+
 export function gradeQualifier(text: unknown, grader: string | null, grade: string | null): string | null {
     const value = String(text ?? "").trim();
     if (/^(none|n\/a|null)?$/i.test(value)) return null;
@@ -41,6 +59,8 @@ export function gradeQualifier(text: unknown, grader: string | null, grade: stri
     const description = value.toUpperCase().replace(/[\s/._-]+/g, "");
     if (grader === "CGC" && grade && CGC_DESCRIPTIONS[grade]?.includes(description)) return null;
     if (grader === "PSA" && grade && PSA_DESCRIPTIONS[grade]?.includes(description)) return null;
+    if (grader === "BGS" && grade && BGS_DESCRIPTIONS[grade]?.includes(description)) return null;
+    if (grader === "TAG" && grade && TAG_DESCRIPTIONS[grade]?.includes(description)) return null;
 
     return value;
 }

@@ -1,6 +1,7 @@
 import type { Evaluation, ListingSummary } from "./types.ts";
 import { offerFor, offerWorthMaking } from "./money/offer.ts";
 import { canRetryPricing } from "./pricing-retries.ts";
+import { AI_CONCURRENCY } from "./work-limits.ts";
 
 // Automatic analysis and its progress counts use the same eligibility rule.
 export function canAutoAnalyze(listing: ListingSummary): boolean {
@@ -38,7 +39,7 @@ export function resultGroup(listing: ListingSummary, evaluation: Evaluation | nu
 // Grow with eligible work, not irrelevant search results. Recent failures
 // reduce pressure; successful analyses gradually clear that feedback.
 export function analysisConcurrency(work: number, recentOutcomes: readonly boolean[] = []): number {
-    const demand = Math.min(8, Math.max(1, Math.ceil(Math.sqrt(Math.max(0, work)))));
+    const demand = Math.min(AI_CONCURRENCY, Math.max(1, Math.ceil(work)));
     const failures = recentOutcomes.filter((succeeded) => !succeeded).length;
     return Math.max(1, Math.floor(demand / (1 + failures)));
 }

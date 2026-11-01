@@ -1,6 +1,8 @@
 import { ebayGet } from "./api.ts";
 import type { EbayUsage } from "../../shared/types.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
+import { reserveDailyBrowseCall } from "./daily-budget.ts";
+export { EbayBudgetError } from "./daily-budget.ts";
 const share = createSingleFlight();
 
 // How much of today's eBay Browse allowance is left, from eBay's own count.
@@ -41,9 +43,13 @@ export async function ebayUsage({ fresh = false }: { fresh?: boolean } = {}): Pr
             resetsAt: rate.reset ?? null,
             braking: rate.remaining <= rate.limit * RESERVE_SHARE,
         };
-        saved = { usage, at: Date.now() };
+        // An expired Analytics period is not evidence that today's allowance
+        // refilled. Keep its expiry so the next read discards it normally.
+        const expired = usage.resetsAt && Date.parse(usage.resetsAt) <= Date.now();
+        const reconciled = expired ? usage : await reserveDailyBrowseCall(usage, false, false);
+        saved = { usage: reconciled, at: Date.now() };
 
-        return usage;
+        return reconciled;
     } catch (error) {
         console.error(`Couldn't read eBay's usage: ${(error as Error).message}`);
         return saved?.usage ?? null;
@@ -51,18 +57,10 @@ export async function ebayUsage({ fresh = false }: { fresh?: boolean } = {}): Pr
     });
 }
 
-// Between checks with eBay, each request this server sends comes off the
-// saved count.
-export function countRequest(): void {
-    if (!saved) return;
-
-    const remaining = Math.max(0, saved.usage.remaining - 1);
-    saved.usage = {
-        ...saved.usage,
-        used: saved.usage.used + 1,
-        remaining,
-        braking: remaining <= saved.usage.limit * RESERVE_SHARE,
-    };
+// Called at the actual Browse transport boundary, including nested historical
+// photos and comparisons. Cached reads and Analytics do not spend Browse calls.
+export async function reserveBrowseRequest(keepReserve = false): Promise<void> {
+    const snapshot = saved?.usage.resetsAt && Date.parse(saved.usage.resetsAt) <= Date.now() ? null : saved?.usage ?? null;
+    const usage = await reserveDailyBrowseCall(snapshot, keepReserve);
+    saved = { usage, at: saved?.at ?? 0 };
 }
-
-export class EbayBudgetError extends Error {}

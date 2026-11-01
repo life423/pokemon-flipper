@@ -11,7 +11,7 @@ import { offlineEbayCredentials } from "../fixtures/ebay-credentials.ts";
 test("seen listings persist per query and minimum price; discovery skips them before screening",async t=>{
     const folder=await fs.mkdtemp(path.join(os.tmpdir(),"pokemon-new-"));t.after(()=>fs.rm(folder,{recursive:true,force:true}));const history=createSearchHistory(path.join(folder,"history.json"));
     await history.remember("Vénusaur",10,["old"]);assert.deepEqual(await createSearchHistory(path.join(folder,"history.json")).seen("  venusaur ",10),["old"]);assert.deepEqual(await history.seen("venusaur",0),[]);
-    let calls=0;const discover=createNewListingDiscovery({history,usage:async()=>null,find:async(_query,options)=>{calls++;assert.equal(options?.newOnly?.limit,20);assert.ok(options?.newOnly?.excludeIds.includes("old"));assert.ok(options?.newOnly?.excludeIds.includes("client"));options?.onListing?.({id:"new"} as never);return [];}});
+    let calls=0;const discover=createNewListingDiscovery({history,usage:async()=>null,find:async(_query,options)=>{calls++;assert.equal(options?.newOnly?.limit,200);assert.ok(options?.newOnly?.excludeIds.includes("old"));assert.ok(options?.newOnly?.excludeIds.includes("client"));options?.onListing?.({id:"new"} as never);return [];}});
     await discover("venusaur",{minPrice:10},["client"]);assert.equal(calls,1);assert.deepEqual(await history.seen("venusaur",10),["old","new"]);
 });
 test("the reserve blocks discovery and overlapping scans cannot duplicate work",async()=>{

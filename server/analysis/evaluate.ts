@@ -28,7 +28,7 @@ import type { SavedRecord } from "./types.ts";
 import type { PricedCard } from "../pricing/types.ts";
 import type { Evaluation, Grader, GradeRange, GradedPricing, Identity, Slab, SlabPricing } from "../../shared/types.ts";
 import { identifyCard, readyForPricing } from "../identity/card-identity.ts";
-import { rawPricesWithSales } from "../pricing/raw-comps.ts";
+import { createSharedRawSalesPricer } from "../pricing/raw-comps.ts";
 import { crossCheckRawPrices } from "../pricing/cross-check.ts";
 import { assessSoldCondition } from "../ai/sold-condition.ts";
 import { findActiveComparables } from "../pricing/active-comps.ts";
@@ -58,6 +58,7 @@ const MAX_PHOTOS = 24;
 // A first look grades twice and keeps the more cautious answer, so
 // one optimistic run can't set the saved answer on its own.
 const CONDITION_RUNS = 2;
+const rawSalesPrices = createSharedRawSalesPricer({ fetchRawComps, checkComps, assessCondition: assessSoldCondition });
 
 // Verified sold comps from each grader, for an identified card.
 async function gradedPricesByGrader(
@@ -279,7 +280,7 @@ async function evaluateOnce(
         };
         let identified = await identify();
         const focusPhotos = checkedPhotos.images.filter(image => !image.isStockImage && image.usable && ["FRONT", "FRONT_DETAIL", ...(checkedPhotos.holder === "GRADED_SLAB" ? ["BACK"] : [])].includes(image.view))
-            .slice(0, 4).map(image => photoUrls[image.number - 1]);
+            .map(image => photoUrls[image.number - 1]);
         while ((record.identityPasses?.length ?? 0) < 2 && focusPhotos.length && !identified.lookupFailed && !identified.identity.notThisCard) {
             const finishGap = !["HOLO", "REVERSE_HOLO", "NON_HOLO"].includes(identified.identity.finish) && (identified.card?.variants.length ?? 0) > 1;
             const labelGap = checkedPhotos.holder === "GRADED_SLAB" && (!checkedPhotos.slab?.grader || !checkedPhotos.slab.grade || !checkedPhotos.slab.labelText);
@@ -408,7 +409,7 @@ async function evaluateOnce(
     }
 
     const context = { title: listing.title, photos: photoUrls };
-    if (identifiedCard && evaluation.identity && !evaluation.slab) evaluation.rawPricing = await rawPricesWithSales(identifiedCard, evaluation.identity, { fetchRawComps, checkComps, assessCondition: assessSoldCondition });
+    if (identifiedCard && evaluation.identity && !evaluation.slab) evaluation.rawPricing = await rawSalesPrices(identifiedCard, evaluation.identity);
     if (evaluation.rawPricing && evaluation.identity && evaluation.condition) evaluation.rawPricing = await crossCheckRawPrices(evaluation.rawPricing, evaluation.identity);
     record.reviewContext = context;
 

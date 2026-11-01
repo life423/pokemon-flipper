@@ -16,6 +16,23 @@ function item(value: ListingDetails) {
         localizedAspects: Object.entries(value.aspects).map(([name, value]) => ({ name, value })) };
 }
 
+test("historical sold photos reuse ended details while live availability still refreshes", async t => {
+    offlineEbayCredentials(t);
+    const start = Date.now(); let at = start, requests = 0;
+    t.mock.method(Date, "now", () => at);
+    const id = `v1|historical-photos-${start}|0`, saved = { ...details(id), availability: "UNAVAILABLE" as const };
+    await writeCache(`ebay:item:${id}`, saved);
+    t.mock.method(globalThis, "fetch", async (url: unknown) => {
+        if (String(url).includes("oauth2/token")) return Response.json({ access_token: "offline", expires_in: 3600 });
+        requests++; return Response.json(item(saved));
+    });
+    at += 120_000;
+    const historical = await getListingDetails(id, { maxAgeHours: 720, allowEndedCache: true });
+    assert.equal(historical.availability, "UNAVAILABLE"); assert.equal(requests, 0);
+    await getListingDetails(id);
+    assert.equal(requests, 1, "an ended-cache exception must not hide current availability changes");
+});
+
 test("unchanged legacy search photos reuse details, while changed, removed photos and title refresh once", async (t) => {
     offlineEbayCredentials(t);
     const id = `v1|freshness-${Date.now()}|0`;

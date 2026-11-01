@@ -9,7 +9,7 @@ import { GRADERS, netFromSale, underwrite, type UnderwritingInput } from "../../
 import { MONEY_CONFIG, type MoneyConfig } from "../../shared/money/config.ts";
 import { CONDITION_NAMES } from "../../shared/conditions.ts";
 import { dollars } from "../../shared/format.ts";
-import type { BuyingOption, CompSummary, Grader, Screen, Underwriting } from "../../shared/types.ts";
+import type { BuyingOption, CompSummary, Screen, Underwriting } from "../../shared/types.ts";
 import { usualPrice } from "../../shared/money/auction.ts";
 import { retargetScreen } from "../../shared/money/targets.ts";
 import { pricingIssue } from "../pricing/errors.ts";
@@ -196,10 +196,9 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
                 });
             }
 
-            if (!GRADERS.includes(grader as Grader)) {
-                return screen("UNSCREENED", `Only PSA and CGC slabs are priced so far, not ${grader}.`, { card: cardInfo });
-            }
-
+            // Existing slabs use their own recognized grader and exact grade.
+            // GRADERS describes raw-card submission services/fees, not which
+            // already-certified cards can be verified and resold.
             input.slab = { status: "OK", grader, grade, reasons: [], concerns: [] };
             input.slabPricing = await compsForGrade(card, identity, { grader, grade, fetchComps, checkComps, now });
             outcome = underwrite(input, config);
@@ -230,7 +229,10 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
             assumed = `${CONDITION_NAMES[rawCondition]}, grading ${grade} at best`;
         }
     } catch (error) {
-        return screen("UNSCREENED", `The price lookup failed: ${(error as Error).message}`, { card: cardInfo, priceAnomaly, pricingIssue: pricingIssue(error) });
+        return screen("UNSCREENED", `The price lookup failed: ${(error as Error).message}`, { card: cardInfo, priceAnomaly, pricingIssue: pricingIssue(error),
+            // A provider's missing/unsupported grader response must still allow
+            // photographed label verification and current-comparison fallback.
+            ...(listing.isGraded ? { needsAnalysis: "PRICE_EVIDENCE" as const } : {}) });
     }
 
     const { verdict, reasons, best, paths } = outcome;

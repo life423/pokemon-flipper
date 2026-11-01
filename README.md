@@ -25,7 +25,7 @@ Search for a card the way you would on eBay. The app checks every listing, ident
 
 ## How a search works
 
-Every search runs through a funnel, so the expensive steps only happen for listings that could actually make money.
+Each search prioritizes likely opportunities while giving matching photographed listings a full assessment, including those with missing or above-target preliminary prices.
 
 ```
 Your search          base set 1999 charizard
@@ -37,14 +37,14 @@ AI reads the search  → Charizard, Base Set, any printing
 eBay search          up to 1,000 results, the way eBay matches them
     │                listings that aren't this card are set aside
     ▼
-Free check           AI reads each title (set, number, grade, condition)
+Preliminary check    AI reads each title (set, number, grade, condition)
     │                and prices the listing at its best case
     ▼
-eBay details         only for listings that pass, then a second check
+eBay details         fetched when needed, within the shared daily allowance
     │
     ▼
 AI analysis          the photos: condition, printing marks, the slab label
-    │                (the most promising candidates, a few at a time)
+    │                (promising candidates first; up to 100 concurrent requests)
     ▼
 Money math           every resale path, a verdict, a max bid, and a rating
 ```
@@ -65,7 +65,7 @@ Three ways to flip a card are priced for every listing:
 - **Evaluate a listing link:** choose **Evaluate eBay link**, paste or drop a full eBay.com listing link, then choose **Evaluate listing · paid**. Pasting a link in search mode also selects evaluation. Switching modes preserves both drafts. The app checks that one listing's current terms and photos, opens its analysis, and lets you save it. Item numbers also work. Tracking parameters are removed; a link evaluation does not start a broad search or overlooked-listing discovery.
 - **Shortlist:** save up to 100 listings with their latest local assessment, notes and your own bid/purchase ceiling. Saving and opening the shortlist make no paid/provider calls.
 - **Targeted refresh:** check one saved listing or up to ten selected listings. Current prices, shipping, bids, end time, photos and availability replace the snapshot. Unchanged photos reuse the assessment; changed photos require an explicit analysis. Unavailable listings retain their history but no purchase advice.
-- **Find new listings:** after a search, scan one page of the 200 newest listings. Previously seen IDs are skipped before screening, at most 20 unseen listings are screened per click, and at most five full analyses start automatically within your saved setting. Earlier results stay available in the other views.
+- **Find new listings:** scan one page of the 200 newest listings, skip previously seen IDs and screen every unseen match. Full assessments follow your selected AI setting. Earlier results stay available.
 - **A verdict for every listing:** buy raw, buy and grade, buy graded, pass, needs review, or can't price.
 - **A max bid:** the most you can pay and still clear your targets after eBay fees, sales tax, shipping, and grading costs.
 - **Resale evidence:** raw cards use a recent eBay sold median when at least three sales explicitly match the printing, finish and condition. Otherwise the condition-specific TCGplayer market price remains a labeled fallback. Open Prices to inspect the matched sales. Graded cards prefer 90-day sales when at least three match, with a labeled 180-day fallback for sparse grades. Only USD sales enter the money math.
@@ -73,7 +73,7 @@ Three ways to flip a card are priced for every listing:
 - **Your targets, live:** set a minimum profit and minimum return in the toolbar (or *Any*). Every max bid, verdict, and ranking recalculates instantly, with no new lookups.
 - **Ratings:** *Strong*, *Good*, or *Thin*, from plain rules: room under the max bid, the outcome at the low end of the grade range, how many sales back the price, photo confidence, and seller feedback. Every concern is listed.
 - **Bargain signals:** signs a listing is overlooked or mispriced because of how it was listed: photos showing a pricier printing than the title says, a misspelled name, no set or number, missing item details, weak photos of an identifiable card, auctions with almost no bids or ending in the middle of the night, new sellers. Each listing gets a score with the reasons, and **Most overlooked first** sorts by it. A signal is never a buy: the photos and the money math still decide.
-- **Dig deeper:** after a search, a button that goes after single cards a plain search misses: misspelled names (the AI writes the likely misspellings), number-only titles, and listings in the wrong eBay category. The photo decides whether the card is there, then the usual checks run. **Hidden finds** shows only what still has genuine profit, labeled with how it was found. Lots are never shown. Up to 120 photo checks per dig.
+- **Dig deeper:** searches for single cards hidden behind misspellings, number-only titles and wrong categories. Every eligible returned photo can be checked; an unproductive streak does not end discovery early. eBay requests remain subject to the daily allowance. **Hidden finds** shows potential opportunities and how they were found. Lots stay excluded.
 - **Best Offer:** for a Buy It Now that takes offers, what to offer and where to walk away, plus a friendly note to send with it. Listings that would be a deal at a realistic offer show up in **Deals**.
 - **Honest auctions:** an auction is judged by how often the card actually sells as low as your max bid, not by today's bid. Auctions that will very likely end above it go to **Long shots**.
 - **The exact printing:** 1st Edition, Shadowless, and Unlimited are priced apart, and the title, item details, slab label, and photos have to agree.
@@ -179,11 +179,11 @@ Everything is TypeScript. The server runs through [tsx](https://tsx.is), and the
   the current AI budget. Widening the minimum Buy It Now price requires an explicit
   **Rerun search** to include previously excluded listings.
 - Searches fetch 400 results by default (eBay sorts by best match, so later pages are mostly loose matches). **Filters** can raise it to 1,000.
-- The page shows how many of today's requests are left, from eBay's own count. In the last 10% of the day's allowance, the free check stops fetching listing details and works from titles, so searches keep working until the allowance resets at midnight Pacific.
+- Each Browse request reserves a call at the transport boundary. A ledger shared by local instances of the same eBay account reconciles provider usage without resetting spent calls. Optional lookups preserve the last 10%; no Browse request is sent after exhaustion. Cached evidence remains usable. Provider reset times determine the reset; without a reported reset, accounting conservatively uses a 24-hour window.
 
 eBay raises the limit through its free [Application Growth Check](https://developer.ebay.com/grow/application-growth-check).
 
-**OpenAI.** Reading a search is one call, saved for a month. Titles are read 25 per call and saved for good. Comp checks are batched per card and grade and saved per sale. A full photo analysis is a few vision calls; its answers are saved per listing and reused until the photos change. Every candidate that lands in **Waiting** is analyzed automatically, best first, three at a time; long-shot auctions are skipped. The **AI per search** setting can cap that, or turn it off.
+**OpenAI.** AI stages share a 100-request ceiling; live-listing work takes priority over queued historical reviews. Titles remain batched 25 per request. All eligible sold copies in the fetched sample receive photo review, with concurrent listings sharing the complete market-evidence job. Unchanged assessments are reused. Your full-analysis setting remains available, including All matching and Off. Account credit exhaustion pauses new full analyses in Waiting with an explicit Resume action; it is not treated as a temporary rate limit. See [throughput changes and verification](docs/ai-throughput-and-base-set-check-2026-10-31.md).
 
 **pkmnprices.** Credits are charged per row returned. Card/market-price responses are saved for a day; recent eBay sales and sales-volume responses for six hours. Raw evidence samples at most two pages (40 sales) per printing over 90 days, shared across listings. Volume uses one bounded 30-row page per printing/raw-or-graded scope and labels incomplete coverage. An unavailable plan feature does not block working price lookups. No background polling is added.
 
@@ -194,10 +194,10 @@ storage on the app server, with no provider call. Targeted refresh runs at most 
 eBay detail requests at once, reuses successful checks for one minute, and backs
 off failed checks for 30 seconds. It preserves the daily reserve and never starts
 AI analysis. New inventory scans share a separate one-minute newest-search cache,
-remember seen IDs across restarts and screen at most 20 per action. Screening can
+remember seen IDs across restarts and screen every unseen match in the 200-row page. Screening can
 use paid title/photo checks and pricing lookups through the existing caches. The
-five-analysis cap applies to automatic full analyses; **Analyze 5 more (paid)** is
-an explicit continuation. There is no background polling.
+selected full-analysis setting applies without a separate five-analysis cutoff.
+There is no recurring inventory polling.
 
 The shortlist lives in `data/shortlist.json`; discovery history lives in
 `data/search-history.json`. They belong to this app installation, with no account
@@ -214,7 +214,7 @@ and missing photos stop before analysis. See [supported inputs and live checks](
 ## Testing
 
 ```bash
-npm test            # 345 tests
+npm test            # 446 tests
 npm run typecheck   # server, shared code, scripts, and the page
 ```
 

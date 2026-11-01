@@ -25,6 +25,8 @@ import type {
 // evaluation and money config, so the same inputs always give the same
 // verdict.
 
+// Raw-card submission services with configured grading fees. Existing slabs
+// are resold at their own verified grader/grade without a new submission fee.
 export const GRADERS: Grader[] = ["PSA", "CGC"];
 
 // What the money math reads from an evaluation. The free check builds

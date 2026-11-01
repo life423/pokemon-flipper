@@ -1,5 +1,5 @@
 import { runStructured } from "./openai.ts";
-import { VISION_MODEL } from "./policy.ts";
+import { VISION_MODEL, SOLD_REVIEW_CONCURRENCY } from "./policy.ts";
 import { PHOTO_CARD_SCHEMA, cleanPhotoCard } from "./photo-card-schema.ts";
 import { RAW_CONDITIONS, CONDITION_DEFINITIONS, CONDITION_RULES_VERSION, type RawCondition } from "../../shared/conditions.ts";
 import { getListingDetails } from "../ebay/listings.ts";
@@ -68,7 +68,7 @@ Mark frontVisible/backVisible only when usable views show that side of this copy
 });
 
 export function createSoldConditionAssessor({ details = getListingDetails, assess = review, cached = readCache, save = writeCache } = {}) {
-    const limit = createLimiter(2); const share = createSingleFlight();
+    const limit = createLimiter(SOLD_REVIEW_CONCURRENCY); const share = createSingleFlight();
     return (sale: Comp, identity: Identity): Promise<SoldConditionEvidence | null> => {
         const parsed = parseListingLink(sale.listing_url);
         if (!parsed) return Promise.resolve(null);
@@ -79,9 +79,8 @@ export function createSoldConditionAssessor({ details = getListingDetails, asses
             try {
                 // Ended listings are expected here. Browse sometimes retains
                 // their photos; an ended status is not a reason to discard them.
-                const listing = await details(parsed.itemId, { maxAgeHours: 24 * 30, keepReserve: true });
-                const photos = [...new Set([0, listing.images.length - 1, Math.floor(listing.images.length / 2), 1])]
-                    .map(index => listing.images[index]).filter((url): url is string => Boolean(url));
+                const listing = await details(parsed.itemId, { maxAgeHours: 24 * 30, keepReserve: true, allowEndedCache: true });
+                const photos = [...new Set(listing.images)].filter(Boolean).slice(0, 24);
                 if (!photos.length) return null;
                 const key = `sold-condition:v${CONDITION_RULES_VERSION}:${VISION_MODEL}:${target}:${JSON.stringify(photos)}`;
                 const stored = await cached<SavedSoldReading | SoldConditionReading>(key, 24 * 365);

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { compCondition, rawPricesWithSales } from "../../server/pricing/raw-comps.ts";
+import { compCondition, rawPricesWithSales, createSharedRawSalesPricer } from "../../server/pricing/raw-comps.ts";
 import { cardEvaluation } from "../fixtures/card-evaluation.ts";
 import { underwrite } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
@@ -71,14 +71,26 @@ test("photo-assessed conditions override seller claims and missing photos cannot
     assert.equal(raw.reviewedSoldCopies, 3); assert.equal(photoCalls, 4);
 });
 
-test("historical photo work is bounded and absent Mint evidence never invents a premium", async () => {
+test("every eligible returned sold copy is inspected and absent Mint evidence never invents a premium", async () => {
     let calls = 0;
     const raw = await rawPricesWithSales(card, identity, { now,
         fetchRawComps: async () => Array.from({ length: 17 }, (_, index) => sale(index + 1)),
         assessCondition: async () => { calls++; return null; },
     });
-    assert.equal(calls, 12);
+    assert.equal(calls, 17);
     assert.equal(raw.reviewedSoldCopies, 0);
     assert.equal(raw.prices?.find(price => price.condition === "MINT"), undefined);
     assert.equal(raw.prices?.find(price => price.condition === "LIGHTLY_PLAYED")?.price, 30);
+});
+
+test("concurrent listings share one complete sold-price job and later requests can refresh it", async () => {
+    let fetches = 0, reviews = 0; let release!: () => void;
+    const gate = new Promise<void>(resolve => release = resolve);
+    const price = createSharedRawSalesPricer({ now, fetchRawComps: async () => { fetches++; await gate; return Array.from({ length: 40 }, (_, index) => sale(index + 1)); },
+        assessCondition: async () => { reviews++; return { condition: "LIGHTLY_PLAYED", evidence: ["Visible whitening"], photoCount: 2 }; } });
+    const first = price(card, identity), duplicate = price(card, { ...identity, reasons: ["Different listing's evidence"] });
+    release(); const [a, b] = await Promise.all([first, duplicate]);
+    assert.equal(fetches, 1); assert.equal(reviews, 40); assert.equal(a.ebayComps?.find(row => row.grade === "LIGHTLY_PLAYED")?.count, 40);
+    a.prices![0].price = 999; assert.notEqual(b.prices![0].price, 999, "callers cannot alter another listing's price object");
+    await price(card, identity); assert.equal(fetches, 2, "sharing must not become an indefinite quote cache");
 });

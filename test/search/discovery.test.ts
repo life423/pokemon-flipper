@@ -95,7 +95,7 @@ test("extra checks deduplicate, retain auction minimum-price exemption, and excl
     assert.equal(photoCalls, 3);
 });
 
-test("automatic photo work is bounded and shared across query families rather than consumed by the first page", async () => {
+test("automatic photo work checks every eligible family even after a long unproductive streak", async () => {
     const photographed = [];
     let total;
     const makePage = (prefix) => Array.from({ length: 200 }, (_, index) => listing(`${prefix}-${index}`, { images: [`${prefix}-${index}`] }));
@@ -109,9 +109,8 @@ test("automatic photo work is bounded and shared across query families rather th
         findPhoto: async (image) => { photographed.push(image); return null; },
         screening: () => ({}),
     });
-    assert.ok(photographed.length <= 120);
-    assert.ok(photographed.length <= total);
-    assert.ok(photographed.length < 120, "empty discovery backs off before the full ceiling");
+    assert.equal(photographed.length, 600);
+    assert.equal(photographed.length, total);
     assert.equal(new Set(photographed).size, photographed.length);
     for (const prefix of ["primary", "generic", "wrong"]) assert.ok(photographed.some((image) => image.startsWith(prefix)));
 });

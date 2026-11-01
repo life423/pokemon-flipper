@@ -184,7 +184,7 @@
 .segmented button {
     flex: none;
     white-space: nowrap;
-    min-height: 34px;
+    min-height: var(--tap);
     padding: 0 0.85rem;
     border: 0;
     border-radius: var(--radius-pill);

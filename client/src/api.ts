@@ -3,8 +3,8 @@ import type { ShortlistEntry, RefreshResult } from "../../shared/shortlist.ts";
 import type { PricingRetryResult, PricingRecoveryProgress } from "../../shared/pricing-retries.ts";
 import type { AiUsageDay } from "../../shared/ai-usage.ts";
 export function fetchAiUsage(): Promise<AiUsageDay> { return request("/api/ai-usage"); }
-class ApiRequestError extends Error {
-    constructor(message: string, readonly retryable = false, readonly retryAfterMs = 1500) { super(message); }
+export class ApiRequestError extends Error {
+    constructor(message: string, readonly retryable = false, readonly retryAfterMs = 1500, readonly code?: string) { super(message); }
 }
 
 export function retryPricingBatch(tickets: string[], targets: Targets, includeOffers: boolean, signal: AbortSignal): Promise<PricingRetryResult> {
@@ -29,7 +29,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
     if (!response.ok) {
         throw new ApiRequestError(body?.error ?? `Request failed (${response.status})`, body?.retryable === true || body?.retryable === undefined && [502, 503, 504].includes(response.status),
-            Math.min(90_000, Math.max(1500, Number(body?.retryAfterMs) || 1500)));
+            Math.min(90_000, Math.max(1500, Number(body?.retryAfterMs) || 1500)), body?.code);
     }
 
     return body as T;

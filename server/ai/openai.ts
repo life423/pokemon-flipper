@@ -1,14 +1,16 @@
 import OpenAI from "openai";
+import { setTimeout as delay } from "node:timers/promises";
 import type { Condition, PhotoCheck } from "../../shared/types.ts";
 import type { GradingMode, Usage } from "../analysis/types.ts";
 import { createLimiter } from "../lib/concurrency.ts";
 import { ProviderError } from "../lib/http.ts";
 import { PHOTO_CARD_SCHEMA } from "./photo-card-schema.ts";
-import { aiPolicy, TEXT_MODEL, VISION_MODEL } from "./policy.ts";
+import { aiPolicy, TEXT_MODEL, VISION_MODEL, AI_REQUEST_CONCURRENCY } from "./policy.ts";
 import { trackedAiFetch } from "./usage.ts";
 import { PHOTO_REVIEW_REVISION } from "../../shared/pricing-freshness.ts";
 import { canRetryImageDownload, inlineEbayImage } from "./image-fallback.ts";
 import { RAW_CONDITIONS, CONDITION_NAMES, CONDITION_DEFINITIONS, CONDITION_RULES_VERSION } from "../../shared/conditions.ts";
+import { createAiCreditGate } from "./errors.ts";
 
 // A photo to send, with an optional label for the view it shows.
 export interface Photo {
@@ -36,13 +38,14 @@ export const CONDITION_VERSION = VISION_MODEL + "/condition-" + CONDITION_RULES_
 
 let client: OpenAI | null = null;
 // Shared across searches, photo analysis, title batches, and comp checks.
-const limitRequests = createLimiter(8);
+const limitRequests = createLimiter(AI_REQUEST_CONCURRENCY);
 let coolingUntil = 0;
+const creditGate = createAiCreditGate();
 
 // Created on first use, so the server still starts (and listings
 // still load) when OPENAI_API_KEY is missing.
 function getClient(): OpenAI {
-    client ??= new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 90_000, maxRetries: 1, fetch: trackedAiFetch });
+    client ??= new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 90_000, maxRetries: 0, fetch: trackedAiFetch });
     return client;
 }
 
@@ -122,18 +125,38 @@ export async function runStructured<T>({
 }): Promise<{ result: T; usage: Usage }> {
     const response = await limitRequests(async () => {
         signal?.throwIfAborted();
-        if (Date.now() < coolingUntil) throw new ProviderError("AI service is cooling down after a rate limit. Saved assessments still work; retry missing analyses later.", { retryAfterMs: coolingUntil - Date.now() });
+        creditGate.check();
+        // A provider cooldown defers queued work; it must not turn the entire
+        // waiting queue into failed reviews when concurrency is high.
+        while (Date.now() < coolingUntil) { creditGate.check(); await delay(Math.min(30_000, coolingUntil - Date.now()), undefined, { signal }); }
+        creditGate.check();
         const deadline = AbortSignal.timeout(120_000);
         const policy = aiPolicy(schemaName);
         const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
-        const send = (images: Photo[], retries = maxRetries) => getClient().responses.create({
+        const sendOnce = (images: Photo[]) => getClient().responses.create({
             model: policy.model,
             max_output_tokens: maxOutputTokens ?? policy.maxOutputTokens,
             ...(policy.supportsReasoning ? { reasoning: { effort: policy.effort } } : {}),
             metadata: { app_step: step },
             input: [{ role: "user" as const, content: [{ type: "input_text" as const, text: prompt }, ...photoInputs(images)] }],
             text: { format: { type: "json_schema" as const, name: schemaName, strict: true, schema } },
-        }, { signal: requestSignal, ...(retries !== undefined ? { maxRetries: retries } : {}) });
+        }, { signal: requestSignal, maxRetries: 0 });
+        const send = async (images: Photo[], retries = maxRetries ?? 1) => {
+            for (let attempt = 0; ; attempt++) {
+                creditGate.check();
+                try { return await sendOnce(images); }
+                catch (error) {
+                    creditGate.reject(error);
+                    const transient = error instanceof OpenAI.APIConnectionError || error instanceof OpenAI.APIError &&
+                        (error.status === 429 || error.status === 408 || error.status >= 500);
+                    if (!transient || attempt >= retries) throw error;
+                    const seconds = error instanceof OpenAI.APIError ? Number(error.headers?.get("retry-after")) : 0;
+                    const pause = error instanceof OpenAI.APIError && error.status === 429 ? seconds > 0 ? seconds * 1000 : 30_000 : 1500;
+                    if (error instanceof OpenAI.APIError && error.status === 429) coolingUntil = Math.max(coolingUntil, Date.now() + pause);
+                    await delay(pause, undefined, { signal: requestSignal });
+                }
+            }
+        };
         try {
             try { return await send(photos); }
             catch (error) {
@@ -151,6 +174,7 @@ export async function runStructured<T>({
             }
         } catch (error) {
             signal?.throwIfAborted();
+            creditGate.reject(error);
             if (deadline.aborted) throw new ProviderError(`${step} timed out after two minutes. Please retry later.`, { cause: error });
             if (error instanceof OpenAI.APIError && error.status === 429) {
                 const retrySeconds = Number(error.headers?.get("retry-after"));
@@ -159,7 +183,7 @@ export async function runStructured<T>({
             }
             throw error;
         }
-    });
+    }, schemaName === "sold_card_condition" ? -1 : 0);
 
     return {
         result: readStructuredOutput(response, step) as T,

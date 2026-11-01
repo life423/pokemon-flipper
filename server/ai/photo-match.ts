@@ -1,6 +1,7 @@
 import { runStructured, MODEL } from "./openai.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { createLimiter } from "../lib/concurrency.ts";
+import { AI_CONCURRENCY } from "../../shared/work-limits.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
 import type { Screen } from "../../shared/types.ts";
 
@@ -12,7 +13,7 @@ const MATCH_VERSION = 2;
 const YEAR_HOURS = 24 * 365;
 
 // Main photos are checked alongside a whole search's free checks.
-const limit = createLimiter(4);
+const limit = createLimiter(AI_CONCURRENCY);
 const share = createSingleFlight();
 
 export type ClaimedCard = NonNullable<Screen["card"]>;

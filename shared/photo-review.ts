@@ -1,7 +1,7 @@
 import type { Evaluation, ListingSummary, PhotoCheck } from "./types.ts";
 import { photoAssessmentConfidence } from "./photo-evidence.ts";
 
-export const DEEP_PHOTO_LIMIT = 8;
+export const DEEP_PHOTO_LIMIT = 24;
 export function planDeeperPhotos(check: PhotoCheck | null, photos: string[]) {
     if (!check || check.cardCount !== "ONE") return { photos: [], reason: "A completed photo check of one card is needed first." };
     const seen = new Set<string>();
