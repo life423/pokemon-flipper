@@ -49,7 +49,7 @@ export function createDeeperPhotoReviewer({ load = loadSaved, save = saveRecord,
         if (!plan.photos.length) throw new PhotoReviewError(plan.reason!, 422);
         const { mode } = getGradingMode(checked);
         const condition = mode !== "BLOCKED" && record.assessment
-            ? applyConditionRules(record.assessment.result, mode, { closeUps: hasCloseUps(checked) }) : null;
+            ? applyConditionRules(record.assessment.result, mode, { closeUps: hasCloseUps(checked), photoCount: record.assessment.photoNumbers.length }) : null;
         let deeperPhotoReview = unsaved.get(expectedKey);
         if (!deeperPhotoReview) {
             if ((retryAfter.get(expectedKey) ?? 0) > Date.now()) throw new PhotoReviewError("Wait 30 seconds before retrying this paid review. Your previous assessment is unchanged.", 429);

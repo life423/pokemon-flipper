@@ -3,6 +3,7 @@ import type { Condition, PhotoCheck, PhotoReport, SetAsideAnswer } from "../../s
 import type { GradingMode } from "./types.ts";
 import { cleanPhotoCard } from "../ai/photo-card-schema.ts";
 import { normalizeSlabReading } from "../identity/slab-check.ts";
+import { normalizeAuthenticity } from "./authenticity.ts";
 
 // Code-enforced rules on the model's answers. The model reports what it
 // sees; these decide how much grading the evidence allows, and anything
@@ -161,9 +162,13 @@ function isGrade(value: unknown): value is number {
 export function applyConditionRules(
     assessment: Condition,
     gradingMode: GradingMode,
-    { closeUps = false }: { closeUps?: boolean } = {}
+    { closeUps = false, photoCount }: { closeUps?: boolean; photoCount?: number } = {}
 ): Condition | null {
     const condition = structuredClone(assessment);
+    const authenticity = normalizeAuthenticity(condition.authenticity, photoCount);
+    if (!authenticity) return null;
+    condition.authenticity = authenticity;
+    condition.limitations = [...new Set([...condition.limitations, ...(authenticity.observations?.filter(item => item.judgment === "PHOTO_LIMITATION").map(item => item.observation) ?? [])])];
 
     // Whole-card photos can show a surface flaw, but they can't
     // prove there isn't one. A visible defect still counts.
@@ -174,7 +179,7 @@ export function applyConditionRules(
         if (condition.surface.severity === "NONE") {
             condition.surface.severity = "UNKNOWN";
         }
-        condition.limitations = [...condition.limitations, NO_CLOSE_UPS];
+        condition.limitations = [...new Set([...condition.limitations, NO_CLOSE_UPS])];
     }
 
     // An area no photo shows has unknown severity, whatever the model said.
@@ -215,4 +220,17 @@ export function applyConditionRules(
         [condition.corners, condition.edges, condition.surface].some(area => !["NONE", "MINOR"].includes(area.severity)))) condition.rawCondition = "UNKNOWN";
 
     return condition;
+}
+
+// Normalize each opinion before comparison: generic uncertainty must not defeat
+// a more cautious wear/grade assessment simply because it said POSSIBLE.
+export function selectConditionAssessment(answers: Condition[], mode: GradingMode,
+    options: { closeUps?: boolean; photoCount?: number } = {}) {
+    const valid = answers.flatMap(source => {
+        const result = applyConditionRules(source, mode, options);
+        return result ? [{ source, result }] : [];
+    });
+    if (!valid.length) return null;
+    const selected = valid.reduce((a, b) => moreCautious(a.result, b.result) === b.result ? b : a);
+    return { result: selected.result, validCount: valid.length, setAside: answers.filter(answer => answer !== selected.source) };
 }

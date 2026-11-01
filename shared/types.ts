@@ -2,6 +2,7 @@
 // both sides, so a renamed field fails the type check instead of
 // quietly blanking a number on the page.
 
+import type { AuthenticityObservation } from "./authenticity.ts";
 import type { RawCondition } from "./conditions.ts";
 import type { PricingIssue, PricingRetry } from "./pricing-retries.ts";
 
@@ -216,6 +217,8 @@ export interface GradeRange {
 }
 
 export interface Authenticity {
+    observations?: AuthenticityObservation[];
+    limitations?: string[];
     concern: "NONE_SEEN" | "POSSIBLE" | "LIKELY_FAKE";
     reasons: string[];
 }

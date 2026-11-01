@@ -3,6 +3,42 @@
 Updated November 1, 2026. This file records the user's agreed requirements so
 future work can continue without losing the conversation context.
 
+## November 1 live Charizard and authenticity prompt follow-up
+
+Developed on codex/authenticity-evidence-prompts, from main 1e7af1e. Read
+docs/charizard-live-and-authenticity-prompts-2026-11-01.md. The user requested
+funded 1999 charizard end-to-end verification with BGS/TAG, Review reasons and
+mobile, then asked for official OpenAI docs and better authenticity prompting.
+
+The full baseline finished 498 evaluation attempts, retaining 479 listings:
+7 Deals, 92 Review, 0 Waiting at $50/25%; Any/Any yielded 22 Deals. Thirty Review
+items primarily cite raw authenticity. All seven nominal Deals still show review
+warnings and five lack a likely grade: unresolved evidence/underwriting/UI quality
+work, not seven certified buying recommendations. BGS/TAG reached actual analysis.
+Do not attribute these baseline counts to the newer prompt or say every Review
+case is a false flag. The report categorizes all 92 mapped visible Review cards.
+
+Raw condition now has trusted Responses instructions, contrasting examples and
+photo-numbered structured authenticity observations. Separate visible suspicious
+manufacture from glare/missing detail, wear, overlays and different releases.
+Normalize both opinions before choosing cautious wear/grades. Unsupported alerts
+retry; real visible anomalies, identity conflicts and old unstructured concerns
+remain protected. A release mismatch alone is not counterfeit manufacture.
+Models/concurrency/pricing rules are unchanged. Only the raw-condition prompt
+revision is bumped; reuse original photo/identity checks and historical sold-copy
+categories. Do not clear all caches or regex-discard saved authenticity warnings.
+
+Four real formerly authenticity-held raw listings resolved to PASS at asking,
+not artificial Deals. A fifth different-release control remains NEEDS_REVIEW for
+title/item-specific conflict after removing unsupported fake manufacture wording.
+The prompt sample is targeted; no complete 479-listing post-prompt rerun. Paid
+diagnostics used isolated data, and the main shortlist hash stayed unchanged.
+456 tests, both typechecks, build and diff checks pass. Normal 3017 was restarted;
+isolated QA servers were stopped. Port 3000 belongs to another app. On November 1
+the user authorized committing these authenticity prompt fixes and audit changes,
+merging into main and pushing to GitHub. Consult Git for delivery status. Keep
+the unrelated .env.example deletion unstaged and outside the commit.
+
 ## November 1 delivery
 
 The user authorized committing all latest throughput, eBay quota, credit-pause,

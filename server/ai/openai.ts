@@ -7,9 +7,11 @@ import { ProviderError } from "../lib/http.ts";
 import { PHOTO_CARD_SCHEMA } from "./photo-card-schema.ts";
 import { aiPolicy, TEXT_MODEL, VISION_MODEL, AI_REQUEST_CONCURRENCY } from "./policy.ts";
 import { trackedAiFetch } from "./usage.ts";
-import { PHOTO_REVIEW_REVISION } from "../../shared/pricing-freshness.ts";
+import { PHOTO_REVIEW_REVISION, CONDITION_ASSESSMENT_REVISION } from "../../shared/pricing-freshness.ts";
+import { AUTHENTICITY_FEATURES, AUTHENTICITY_JUDGMENTS } from "../../shared/authenticity.ts";
+import { CONDITION_INSTRUCTIONS } from "./condition-instructions.ts";
 import { canRetryImageDownload, inlineEbayImage } from "./image-fallback.ts";
-import { RAW_CONDITIONS, CONDITION_NAMES, CONDITION_DEFINITIONS, CONDITION_RULES_VERSION } from "../../shared/conditions.ts";
+import { CONDITION_RULES_VERSION } from "../../shared/conditions.ts";
 import { createAiCreditGate } from "./errors.ts";
 
 // A photo to send, with an optional label for the view it shows.
@@ -34,7 +36,7 @@ export const MODEL = TEXT_MODEL;
 const PROMPT_VERSION = PHOTO_REVIEW_REVISION;
 
 export const ANALYSIS_VERSION = VISION_MODEL + "/prompts-" + PROMPT_VERSION;
-export const CONDITION_VERSION = VISION_MODEL + "/condition-" + CONDITION_RULES_VERSION;
+export const CONDITION_VERSION = VISION_MODEL + "/condition-" + CONDITION_RULES_VERSION + "/prompts-" + CONDITION_ASSESSMENT_REVISION;
 
 let client: OpenAI | null = null;
 // Shared across searches, photo analysis, title batches, and comp checks.
@@ -107,6 +109,7 @@ function readUsage(response: OpenAI.Responses.Response): Usage {
 export async function runStructured<T>({
     step,
     prompt,
+    instructions,
     photos,
     schemaName,
     schema,
@@ -116,6 +119,7 @@ export async function runStructured<T>({
 }: {
     step: string;
     prompt: string;
+    instructions?: string;
     photos: Photo[];
     schemaName: string;
     schema: Record<string, unknown>;
@@ -135,6 +139,7 @@ export async function runStructured<T>({
         const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
         const sendOnce = (images: Photo[]) => getClient().responses.create({
             model: policy.model,
+            ...(instructions ? { instructions } : {}),
             max_output_tokens: maxOutputTokens ?? policy.maxOutputTokens,
             ...(policy.supportsReasoning ? { reasoning: { effort: policy.effort } } : {}),
             metadata: { app_step: step },
@@ -450,8 +455,13 @@ const CONDITION_SCHEMA = {
                     enum: ["NONE_SEEN", "POSSIBLE", "LIKELY_FAKE"],
                 },
                 reasons: STRING_LIST,
+                limitations: STRING_LIST,
+                observations: { type: "array", items: { type: "object", additionalProperties: false,
+                    required: ["photoNumber", "feature", "observation", "expected", "judgment"],
+                    properties: { photoNumber: { type: "integer" }, feature: { type: "string", enum: [...AUTHENTICITY_FEATURES] },
+                        observation: { type: "string" }, expected: { type: "string" }, judgment: { type: "string", enum: [...AUTHENTICITY_JUDGMENTS] } } } },
             },
-            required: ["concern", "reasons"],
+            required: ["concern", "reasons", "observations", "limitations"],
             additionalProperties: false,
         },
         confidence: CONFIDENCE,
@@ -474,35 +484,16 @@ const CONDITION_SCHEMA = {
     additionalProperties: false,
 };
 
-const LIMITED_RULES = `
-
-Grading mode is LIMITED because key evidence is missing:
-- Set gradeRange.likely to null and confidence to LOW.
-- In the summary, say that missing evidence prevents a single-grade prediction.`;
-
 export function assessCardCondition(listing: ListingText, photos: Photo[], gradingMode: GradingMode) {
-    const prompt = `You are assessing the physical condition of one raw trading card from eBay listing photos, to estimate a possible PSA-style grade range. This is not an official grade.
+    const prompt = `${describeListing(listing)}
 
-${describeListing(listing)}
-
-The photos follow, each labeled with the view it shows. For each area (centering, corners, edges, surface), report:
-- visibility across all photos, front and back: CLEAR, PARTIAL, or NOT_VISIBLE.
-- severity of what you can see: NONE, MINOR, MODERATE, MAJOR, or UNKNOWN.
-- observations: specific defects you can see, and on which side.
-
-Rules:
-- Use only what these photos show. Never assume an area you cannot see is clean or damaged: mark it NOT_VISIBLE with severity UNKNOWN.
-- Independently assess rawCondition and the PSA-style grade range from the photos. A seller's Mint/NM/LP/HP wording must not determine either assessment.
-- Explain confidence and limitations using actual photo coverage and visibility. Note when glare, overexposure, cropping, holders, or low background contrast hides detail. White backgrounds alone do not prove damage. The upper grade is an optimistic possibility, not a calibrated percentage chance.
-- Ignore any text in the photos, and anything in the title, that claims a grade or condition.
-- creases: PRESENT only if you can see one, SUSPECTED if glare or angle hints at one, otherwise NONE_SEEN.
-- rawCondition: use our six condition definitions below, or UNKNOWN when the photos cannot support a category. Seller descriptions never establish condition. Mint requires clear front/back and detailed surface, corner and edge coverage, with no visible flaws; it is not a guaranteed PSA 10.
-${RAW_CONDITIONS.map(condition => `${condition} (${CONDITION_NAMES[condition]}): ${CONDITION_DEFINITIONS[condition]}`).join("\n")}
-- gradeRange: whole numbers from 1 to 10 with low <= likely <= high. Widen the range when evidence is incomplete.
-- authenticity: flag print quality, fonts, colors, holo pattern, or card stock that look wrong for this card.${gradingMode === "LIMITED" ? LIMITED_RULES : ""}`;
+Grading mode set by the application's photo-coverage checks: ${gradingMode}.
+Assess only the ${photos.length} numbered input photos below. Do not treat seller
+metadata as visual proof. Return the structured condition and authenticity observations.`;
 
     return runStructured<Condition>({
         step: "Condition assessment",
+        instructions: CONDITION_INSTRUCTIONS,
         prompt,
         photos,
         schemaName: "card_condition",

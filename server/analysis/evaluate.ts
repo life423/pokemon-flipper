@@ -21,7 +21,7 @@ import {
     getGradingMode,
     hasCloseUps,
     isClearPhoto,
-    moreCautious,
+    selectConditionAssessment,
     summarizeAnswer,
 } from "./rules.ts";
 import type { SavedRecord } from "./types.ts";
@@ -348,7 +348,7 @@ async function evaluateOnce(
                 run: async () => {
                     const answer = await assessCardCondition(listing, photos, mode);
                     evaluation.usage.push({ step: "condition", ...answer.usage });
-                    if (!applyConditionRules(answer.result, mode, { closeUps })) throw new ProviderError("The AI condition range was incomplete; the missing assessment will be retried.");
+                    if (!applyConditionRules(answer.result, mode, { closeUps, photoCount: photos.length })) throw new ProviderError("The AI condition or authenticity evidence was incomplete; the missing assessment will be retried.");
                     return answer;
                 },
                 checkpoint: async answers => {
@@ -361,23 +361,20 @@ async function evaluateOnce(
             // Broken answers are dropped. Of the rest, the more cautious
             // one is kept and the others are set aside for reference.
             const results = answers.map((answer) => answer.result);
-            const valid = results.filter(
-                (result) => applyConditionRules(result, mode, { closeUps }) !== null
-            );
+            const selected = selectConditionAssessment(results, mode, { closeUps, photoCount: photos.length });
 
             record.assessment =
-                valid.length > 0
+                selected !== null
                     ? (() => {
-                          const selected = valid.reduce((a, b) => moreCautious(a, b));
-                          const kept = structuredClone(selected);
-                          if (valid.length < CONDITION_RUNS) { kept.confidence = kept.confidence === "HIGH" ? "MEDIUM" : kept.confidence; kept.limitations.push("One condition assessment completed; the second is unavailable."); }
+                          const kept = structuredClone(selected.result);
+                          if (selected.validCount < CONDITION_RUNS) { kept.confidence = kept.confidence === "HIGH" ? "MEDIUM" : kept.confidence; kept.limitations.push("One condition assessment completed; the second is unavailable."); }
                           return {
                               version: CONDITION_VERSION,
-                              completedRuns: valid.length,
+                              completedRuns: selected.validCount,
                               mode,
                               photoNumbers,
                               result: kept,
-                              setAside: results.filter((result) => result !== selected),
+                              setAside: selected.setAside,
                           };
                       })()
                     : null;
@@ -386,7 +383,7 @@ async function evaluateOnce(
         }
 
         const condition = record.assessment
-            ? applyConditionRules(record.assessment.result, mode, { closeUps })
+            ? applyConditionRules(record.assessment.result, mode, { closeUps, photoCount: photoNumbers.length })
             : null;
 
         if (condition === null) {
