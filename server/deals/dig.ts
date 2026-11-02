@@ -4,7 +4,7 @@ import { readSearch } from "../search/intent.ts";
 import { cardMismatch, gradingMatches } from "../search/relevance.ts";
 import { digQueries, type DigQuery } from "../search/dig.ts";
 import { findCardInPhoto, describeWanted, photoFitsSearch, type PhotoFind } from "../ai/photo-find.ts";
-import { screeningSteps, screenListing, type ScreenSteps } from "./find-deals.ts";
+import { screeningSteps, screenListing, type ScreenSteps } from "./screen-listing.ts";
 import { sellerMistakes } from "./seller-mistakes.ts";
 import type { PhotoMatch } from "../ai/photo-match.ts";
 import { analysisConcurrency } from "../../shared/analysis.ts";

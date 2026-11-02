@@ -146,6 +146,9 @@ eBay fees, sales tax, shipping costs, PSA and CGC service levels, and default ta
 
 ## Project layout
 
+Start with the [workflow and code map](docs/architecture.md) to follow one
+listing from search through photo assessment, pricing, money rules and the UI.
+
 ```
 server/
   app.ts          API routes; serves the page
@@ -161,7 +164,12 @@ server/
 shared/
   money/          The money math, run by both the server and the page
   types.ts        One set of types for the server and the page
-client/           The React app (Vite)
+client/src/
+  App.tsx         Page, request, analysis-queue and cancellation coordination
+  analysis-state.ts Shared client loading/error/completed state
+  search/         Result selectors, saved preferences and search controls
+  components/     Cards, panels and other interface components
+    analysis/     Focused financial, evidence, price and offer detail sections
 scripts/          Command-line tools
 test/             Tests, in the same folders as server/ and shared/
 ```
@@ -214,7 +222,7 @@ and missing photos stop before analysis. See [supported inputs and live checks](
 ## Testing
 
 ```bash
-npm test            # 446 tests
+npm test            # 465 tests
 npm run typecheck   # server, shared code, scripts, and the page
 ```
 

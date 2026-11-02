@@ -1,5 +1,5 @@
 import type { CSSProperties } from "react";
-import type { AnalysisState } from "../App";
+import type { AnalysisState } from "../analysis-state";
 import { canRetryPricing } from "../../../shared/pricing-retries.ts";
 import type { ListingSummary, Targets } from "../types";
 import { dollars, timeLeft, name } from "../format";

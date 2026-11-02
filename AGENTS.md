@@ -1,7 +1,46 @@
 # Project memory and user preferences
 
-Updated November 1, 2026. This file records the user's agreed requirements so
+Updated November 2, 2026. This file records the user's agreed requirements so
 future work can continue without losing the conversation context.
+
+## November 2 codebase organization and current goal
+
+On this Mac, use `/Users/andrewclark/programming/pokemon-flipper`. The user
+explicitly confirmed that path. The older Documents/ChatGPT path is not the
+repository. November 1 Windows paths below describe that machine's checkpoint,
+not the working directory on this Mac.
+
+Local main was synchronized exactly to GitHub `1681cf6` before this work. Two
+older local-only commits remain on `backup/local-main-2026-11-02`; do not silently
+merge them into the newer workflow. The current behavior-preserving cleanup is
+on `refactor/workflow-organization`. The user authorized committing this
+checkpoint on November 2; no merge or push was requested. Validation: 465 tests,
+both type checks, build and diff checks pass; 14 before/after static rendering
+comparisons match exactly. No live provider requests were made.
+
+The user's business goal is to find eBay purchases that can be resold profitably
+within one or two months. They explicitly prioritize **raw resale, existing slab
+resale and raw-to-grade equally**. Fresh underpriced Buy It Now listings and
+profitable auction snipe ceilings are the key discovery workflows to examine
+next. The user asked to clean and organize the codebase before new feature work.
+This refactor does not implement a guaranteed resale horizon or new strategy.
+
+- Read `docs/architecture.md` for the current workflow and source reading order.
+- Search presentation/settings/selectors live in `client/src/search/`.
+  `App.tsx` retains network lifecycle, queue/cancellation and page coordination.
+- `client/src/analysis-state.ts` owns the shared client analysis state; leaf
+  components must not import that type from the App coordinator.
+- `DetailPanel.tsx` owns the panel shell. Its display sections now live under
+  `client/src/components/analysis/`, sharing the existing CSS module.
+- `server/deals/screen-listing.ts` owns per-listing screening;
+  `find-deals.ts` owns search orchestration and keeps compatibility exports.
+- `server/pricing/sold-comps.ts` owns shared sold-evidence rules;
+  `graded-comps.ts` owns graded lookup orchestration and compatibility exports.
+- Preserve prompts, models, response/cache versions, provider transports,
+  concurrency, daily quota reservations and deterministic money rules. Cleanup
+  is not permission to weaken evidence requirements or clear saved assessments.
+- No verified unused server modules were found; do not delete CLI tools or
+  historical reports merely because application code does not import them.
 
 ## November 1 stopping checkpoint
 

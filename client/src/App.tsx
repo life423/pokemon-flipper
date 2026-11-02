@@ -1,221 +1,50 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode, type Ref } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { prefersReducedMotion, transitionName, withViewTransition } from "./motion";
-import type { EbayUsage, Evaluation, ListingSummary, RatingLevel, SearchIntent, Targets } from "./types";
-import { MONEY_CONFIG } from "../../shared/money/config.ts";
+import type { EbayUsage, Evaluation, ListingSummary, Targets } from "./types";
 import { currentPriceEvidence } from "../../shared/pricing-freshness.ts";
 import type { AiUsageDay } from "../../shared/ai-usage.ts";
 import { fetchAiUsage, ApiRequestError } from "./api";
-import { analysisConcurrency, canAutoAnalyze, meetsMinimumGrade, resultGroup, type ResultGroup } from "../../shared/analysis.ts";
+import { analysisConcurrency, canAutoAnalyze } from "../../shared/analysis.ts";
 import { compareAnalysisPriority } from "../../shared/analysis-priority.ts";
 import { withFreshListing } from "../../shared/fresh-listing.ts";
 import { looksLikeListingLink, parseListingLink } from "../../shared/listing-link.ts";
-import { describeSearchCriteria, evaluatedCriteriaMismatch, withResolvedCriteria } from "../../shared/search-criteria.ts";
+import { withResolvedCriteria } from "../../shared/search-criteria.ts";
 import { applyPricingRetry, PRICING_RETRY_LIMIT, type PricingRecoveryProgress } from "../../shared/pricing-retries.ts";
 import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.ts";
-import { offerFor, offerWorthMaking } from "../../shared/money/offer.ts";
-import { compareListingEvidence, listingSignals } from "../../shared/signals.ts";
-import { name } from "./format";
 import { evaluateListing, fetchEbayUsage, fetchSetYears, reviewListingPhotos, streamDeals, streamNewDeals, fetchShortlist, saveListing, removeSavedListing, updateSavedListing, refreshSavedListings, resolveListingLink, retryPricingBatch, type DealsMessage } from "./api";
 import type { ShortlistEntry } from "../../shared/shortlist.ts";
 import { ShortlistView } from "./components/ShortlistView";
 import type { DeeperReviewState } from "./components/PhotoReview";
 import { DealCard } from "./components/DealCard";
 import { PricingRetries } from "./components/PricingRetries";
-import { Drawer } from "./components/Drawer";
 import { EmptyState } from "./components/EmptyState";
 import { SearchProgress, type SearchPhase } from "./components/SearchProgress";
-import { Dropdown } from "./components/Dropdown";
 import {
     ArrowIcon,
     ClockIcon,
     CloseIcon,
-    DollarIcon,
-    GridIcon,
-    ReviewIcon,
     SearchIcon,
-    SparkleIcon,
-    TagIcon,
-    TrendIcon,
 } from "./components/Icons";
 import { DetailPanel } from "./components/DetailPanel";
 import { useNow } from "./useNow";
 import { listingEvidenceKey } from "../../shared/listing-evidence.ts";
+import { SearchControls } from "./search/SearchControls";
+import type { AnalysisState } from "./analysis-state";
+import { filterSearchResults, groupSearchResults, sortSearchResults, countSearchResults, evaluationOf, type View, type SortKey, type TypeFilter, type KindFilter } from "./search/results";
+import { ALL, AUTO_KEY, RECENT_KEY, RECENT_LIMIT, STARTER_SEARCHES, readRecentSearches, readTargets, readAutoSetting, readResultsSetting, targetText } from "./search/settings";
+import { describeIntent, describeUsage } from "./search/presentation";
 import styles from "./App.module.css";
 
-export type AnalysisState = (
-    | { status: "loading"; startedAt: number }
-    | { status: "done"; evaluation: Evaluation }
-    | { status: "error"; message: string }
-) & { evidenceKey: string };
-
-type View = ResultGroup | "hidden" | "all" | "new";
+export type { AnalysisState } from "./analysis-state";
 
 // The views, in order, and what each is called everywhere it appears.
 // Long shots come late: auctions unlikely to end at a profitable price.
 const VIEWS: View[] = ["deals", "offers", "candidates", "review", "hidden", "longShots", "all"];
 
-// Recent searches, newest first, offered before the next search.
-const RECENT_KEY = "recentSearches";
-const RECENT_LIMIT = 6;
-
-// Offered before there are recent searches.
-const STARTER_SEARCHES = ["aquapolis cards psa 7 or better holo", "1999 charizard", "neo genesis lugia", "base set blastoise"];
-
-function readRecentSearches(): string[] {
-    try {
-        const saved = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
-        return Array.isArray(saved) ? saved.filter((item): item is string => typeof item === "string") : [];
-    } catch {
-        return [];
-    }
-}
-
-// Shorter tab names where phones need the room.
-const VIEW_SHORT: Partial<Record<View, string>> = { hidden: "Hidden" };
-const VIEW_ICONS: Record<View, ReactNode> = {
-    new: <SparkleIcon />,
-    deals: <TagIcon />,
-    offers: <DollarIcon />,
-    candidates: <ClockIcon />,
-    longShots: <TrendIcon />,
-    review: <ReviewIcon />,
-    hidden: <SparkleIcon />,
-    all: <GridIcon />,
-};
-
-// Quick picks in each target's dropdown: [box text, label]. Empty is Any.
-const TARGET_PRESETS: Record<"minProfit" | "minRoi", [string, string][]> = {
-    minProfit: [["", "Any"], ["25", "$25"], ["50", "$50"], ["100", "$100"], ["200", "$200"]],
-    minRoi: [["", "Any"], ["10", "10%"], ["25", "25%"], ["50", "50%"], ["100", "100%"]],
-};
-
 // The search shortcut, as this keyboard writes it.
 const SHORTCUT = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘ K" : "Ctrl K";
 
-const VIEW_NAMES: Record<View, string> = {
-    new: "New listings",
-    deals: "Deals",
-    offers: "Offers",
-    candidates: "Waiting",
-    longShots: "Long shots",
-    review: "Review",
-    hidden: "Hidden finds",
-    all: "All",
-};
-type SortKey = "best" | "overlooked" | "ending" | "priceLow" | "priceHigh";
-type TypeFilter = "all" | "AUCTION" | "FIXED_PRICE";
-type KindFilter = "all" | "raw" | "graded";
-
-// AI analyses at once, and per search unless you ask for more.
-// How many candidates the AI analyzes on its own per search: every one
-// that lands in Waiting by default, best first, or a cap, or none.
-const ALL = Number.POSITIVE_INFINITY;
-const AUTO_OPTIONS = [ALL, 20, 10, 5, 0];
-const DEFAULT_AUTO = ALL;
-// Saved under a new name, so an old cap doesn't hold over the new default.
-const AUTO_KEY = "aiPerSearch";
-
-// "1st Edition Charizard from Base Set, graded": how the search was read.
-function describeIntent(intent: SearchIntent): string {
-    let text = [intent.printing ? name(intent.printing) : null, intent.cardName ?? (intent.sets.length ? "cards" : "listings for this search")]
-        .filter(Boolean)
-        .join(" ");
-
-    if (intent.sets.length > 0) text += ` from ${intent.sets.join(" or ")}`;
-    if (intent.cardNumber) text += ` #${intent.cardNumber}`;
-    const criteria = describeSearchCriteria(intent);
-    if (criteria.length) text += ` · ${criteria.join(" · ")}`;
-
-    return text;
-}
-
 type SearchSummary = Extract<DealsMessage, { type: "start" }>;
-
-const LEVEL_ORDER: Record<RatingLevel, number> = { STRONG: 0, GOOD: 1, THIN: 2, LONG_SHOT: 3 };
-
-const evaluationOf = (analysis?: AnalysisState) => (analysis?.status === "done" ? analysis.evaluation : null);
-const isDeal = (evaluation: Evaluation | null) => evaluation?.underwriting?.verdict.startsWith("BUY") ?? false;
-
-const SORTS: Record<Exclude<SortKey, "best" | "overlooked">, (a: ListingSummary, b: ListingSummary) => number> = {
-    // Listings without an end date (most Buy It Now) go last.
-    ending: (a, b) =>
-        (a.endTime ? Date.parse(a.endTime) : Infinity) - (b.endTime ? Date.parse(b.endTime) : Infinity),
-    priceLow: (a, b) => (a.currentPrice ?? Infinity) - (b.currentPrice ?? Infinity),
-    priceHigh: (a, b) => (b.currentPrice ?? -Infinity) - (a.currentPrice ?? -Infinity),
-};
-
-// Your profit and return targets, saved between visits.
-function readTargets(): Targets {
-    try {
-        const saved = JSON.parse(localStorage.getItem("targets") ?? "null");
-        if (typeof saved?.minProfit === "number" && typeof saved?.minRoi === "number") return saved;
-    } catch {
-        // Unreadable: use the defaults.
-    }
-
-    return MONEY_CONFIG.targets;
-}
-
-// The boxes show whole dollars and percents, and stay empty for "any".
-const targetText = (targets: Targets) => ({
-    minProfit: targets.minProfit === 0 ? "" : String(targets.minProfit),
-    minRoi: targets.minRoi === 0 ? "" : String(Math.round(targets.minRoi * 100)),
-});
-
-// eBay results per search: later pages are mostly loose matches, and each
-// result can cost an eBay request, so 400 unless you ask for more.
-const RESULT_OPTIONS = [200, 400, 1000];
-const DEFAULT_RESULTS = 400;
-
-function readResultsSetting(): number {
-    try {
-        const saved = Number(localStorage.getItem("results"));
-        return RESULT_OPTIONS.includes(saved) ? saved : DEFAULT_RESULTS;
-    } catch {
-        return DEFAULT_RESULTS;
-    }
-}
-
-function describeUsage(usage: EbayUsage): string {
-    const left = `eBay today: ${usage.remaining.toLocaleString()} of ${usage.limit.toLocaleString()} requests left`;
-
-    return usage.braking
-        ? `${left}. Listings are checked from their titles only until it resets at midnight Pacific.`
-        : `${left}.`;
-}
-
-function readAutoSetting(): number {
-    try {
-        const saved = localStorage.getItem(AUTO_KEY);
-        return saved !== null && AUTO_OPTIONS.includes(Number(saved)) ? Number(saved) : DEFAULT_AUTO;
-    } catch {
-        return DEFAULT_AUTO;
-    }
-}
-
-function Segmented<T extends string>({
-    label,
-    value,
-    options,
-    onChange,
-    buttonRef,
-}: {
-    label: string;
-    value: T;
-    options: [T, ReactNode][];
-    onChange: (value: T) => void;
-    buttonRef?: (value: T) => Ref<HTMLButtonElement> | undefined;
-}) {
-    return (
-        <div className={styles.segmented} role="group" aria-label={label}>
-            {options.map(([option, text]) => (
-                <button key={option} ref={buttonRef?.(option)} type="button" aria-pressed={value === option} onClick={() => onChange(option)}>
-                    {text}
-                </button>
-            ))}
-        </div>
-    );
-}
 
 export function App() {
     const now = useNow(30_000);
@@ -796,105 +625,19 @@ export function App() {
         }
     }
 
-    const filtered = useMemo(() => {
-        const limit = maxPrice === "" ? Infinity : Number(maxPrice);
-        const floor = Number(minPrice) || 0;
+    const filtered = useMemo(
+        () => filterSearchResults({
+            listings, analyses, page, intent: summary?.intent, now,
+            filters: { typeFilter, kindFilter, maxPrice, minPrice, minGrade },
+        }),
+        [listings, analyses, typeFilter, kindFilter, maxPrice, minPrice, minGrade, now, page, summary]
+    );
 
-        return listings
-            // Another set, card, or printing than the one searched for, including
-            // a reprint the photos gave away.
-            .filter((listing) => !listing.match && !evaluationOf(analyses[listing.id])?.identity?.notThisCard)
-            .filter((listing) => {
-                const evaluation = evaluationOf(analyses[listing.id]);
-                return page !== "search" || !summary?.intent || !evaluation || !evaluatedCriteriaMismatch(evaluation, summary.intent);
-            })
-            .filter((listing) => listing.availability !== "UNAVAILABLE")
-            .filter((listing) => typeFilter === "all" || listing.buyingOption === typeFilter)
-            .filter((listing) => kindFilter === "all" || listing.isGraded === (kindFilter === "graded"))
-            .filter((listing) => {
-                const evaluation = evaluationOf(analyses[listing.id]);
-                return !evaluation || meetsMinimumGrade(evaluation, minGrade);
-            })
-            .filter((listing) => (listing.currentPrice ?? 0) <= limit)
-            .filter((listing) => listing.buyingOption !== "FIXED_PRICE" || (listing.currentPrice ?? 0) >= floor)
-            .filter((listing) => !listing.endTime || Date.parse(listing.endTime) > now);
-    }, [listings, analyses, typeFilter, kindFilter, maxPrice, minPrice, minGrade, now, page, summary]);
+    const groups = useMemo(() => groupSearchResults(filtered, analyses, includeOffers, newIds), [filtered, analyses, includeOffers, newIds]);
 
-    const groups = useMemo(() => {
-        const grouped: Record<ResultGroup, ListingSummary[]> = { deals: [], offers: [], candidates: [], longShots: [], review: [] };
+    const visible = useMemo(() => sortSearchResults(groups[view], analyses, sort, targets, now), [groups, view, sort, analyses, targets, now]);
 
-        for (const listing of filtered) {
-            const evaluation = evaluationOf(analyses[listing.id]);
-            const group = resultGroup(listing, evaluation, includeOffers, analyses[listing.id]?.status === "error");
-            if (group) grouped[group].push(listing);
-        }
-
-        // Turned up by Dig deeper, shown only while genuine profit still exists:
-        // a verified deal or offer, or a candidate still being checked.
-        const hidden = filtered.filter((listing) => {
-            if (!listing.found) return false;
-
-            const evaluation = evaluationOf(analyses[listing.id]);
-
-            if (evaluation) {
-                const verdict = evaluation.underwriting?.verdict;
-                return isDeal(evaluation) || (listing.mistakes?.length && verdict === "NEEDS_REVIEW") || (includeOffers && verdict === "PASS" && offerWorthMaking(offerFor(listing, evaluation.underwriting?.best?.maxBid)));
-            }
-
-            return listing.screen?.status === "CANDIDATE" || Boolean(listing.mistakes?.length);
-        });
-
-        return { ...grouped, hidden, all: filtered, new: filtered.filter((listing) => newIds.has(listing.id)) };
-    }, [filtered, analyses, includeOffers, newIds]);
-
-    const visible = useMemo(() => {
-        const compareBest = (a: ListingSummary, b: ListingSummary) => {
-            const ea = evaluationOf(analyses[a.id]);
-            const eb = evaluationOf(analyses[b.id]);
-            const ra = isDeal(ea) ? ea?.rating : null;
-            const rb = isDeal(eb) ? eb?.rating : null;
-
-            if (ra && rb) {
-                if (ra.level !== rb.level) return LEVEL_ORDER[ra.level] - LEVEL_ORDER[rb.level];
-                return (eb?.underwriting?.best?.profit ?? 0) - (ea?.underwriting?.best?.profit ?? 0);
-            }
-            if (ra) return -1;
-            if (rb) return 1;
-
-            return compareAnalysisPriority(a, b, targets);
-        };
-
-        // The listings with the strongest signs of being overlooked first.
-        const compareOverlooked = (a: ListingSummary, b: ListingSummary) => {
-            const verified = Number(isDeal(evaluationOf(analyses[b.id]))) - Number(isDeal(evaluationOf(analyses[a.id])));
-            return verified || compareListingEvidence(listingSignals(a, evaluationOf(analyses[a.id]), now), listingSignals(b, evaluationOf(analyses[b.id]), now)) || compareBest(a, b);
-        };
-
-        return [...groups[view]].sort(sort === "best" ? compareBest : sort === "overlooked" ? compareOverlooked : SORTS[sort]);
-    }, [groups, view, sort, analyses, targets, now]);
-
-    const counts = useMemo(() => {
-        const count = (status: string) => listings.filter((listing) => listing.screen?.status === status).length;
-        const analyzing = listings.filter((listing) => analyses[listing.id]?.status === "loading").length;
-
-        return {
-            candidates: listings.filter((listing) => (!newMode || newIds.has(listing.id)) && canAutoAnalyze(listing)).length,
-            dropped: count("DROPPED"),
-            unchecked: listings.filter((listing) => listing.screen?.status === "UNSCREENED" && !listing.match &&
-                !(listing.screen.priceAnomaly && !listing.screen.priceAnomaly.photoChecked)).length,
-            mismatched: listings.filter(
-                (listing) =>
-                    (listing.match && listing.match !== "JUNK") || Boolean(evaluationOf(analyses[listing.id])?.identity?.notThisCard) ||
-                    Boolean(page === "search" && summary?.intent && evaluationOf(analyses[listing.id]) && evaluatedCriteriaMismatch(evaluationOf(analyses[listing.id])!, summary.intent))
-            ).length,
-            // Junk the AI spotted in titles; the free rules' count comes with the search.
-            junk: listings.filter((listing) => listing.match === "JUNK").length,
-            analyzing,
-            waiting: listings.filter(
-                (listing) => (!newMode || newIds.has(listing.id)) && canAutoAnalyze(listing) && !analyses[listing.id]
-            ).length,
-        };
-    }, [listings, analyses, newMode, newIds, page, summary]);
+    const counts = useMemo(() => countSearchResults({ listings, analyses, newMode, newIds, page, intent: summary?.intent }), [listings, analyses, newMode, newIds, page, summary]);
 
     const selected = (page === "shortlist" ? shortlist.map((entry) => entry.listing) : page === "listing" ? directListing ? [directListing] : [] : listings).find((listing) => listing.id === selectedId) ?? null;
 
@@ -940,17 +683,6 @@ export function App() {
         all: "No listings match the filters.",
     };
 
-    // A view's count, in its color when it holds something worth a look:
-    // deals green, review amber, hidden finds blue.
-    const COUNT_TONES: Partial<Record<View, string>> = {
-        deals: styles.countBuy,
-        review: styles.countWatch,
-        hidden: styles.countAction,
-    };
-    const viewCount = (key: View) => {
-        const count = groups[key].length;
-        return <span className={`${styles.countPill} ${count > 0 ? (COUNT_TONES[key] ?? styles.count) : styles.count}`}>{count}</span>;
-    };
     const allTab = useRef<HTMLButtonElement>(null);
 
     // ⌘K (Ctrl+K elsewhere) jumps to search from anywhere.
@@ -969,82 +701,6 @@ export function App() {
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
     }, [drawerOpen, selectedId]);
-
-    // Each target's dropdown: quick picks, and a custom amount.
-    const targetMenu = (field: keyof Targets, close: () => void) => (
-        <div className={styles.targetMenu}>
-            <div className={styles.presets}>
-                {TARGET_PRESETS[field].map(([text, label]) => (
-                    <button
-                        key={label}
-                        type="button"
-                        aria-pressed={targetInputs[field] === text}
-                        onClick={() => {
-                            changeTarget(field, text);
-                            close();
-                        }}
-                    >
-                        {label}
-                    </button>
-                ))}
-            </div>
-            <label className={styles.field}>
-                <span>Custom</span>
-                <span className={styles.affix}>
-                    {field === "minProfit" && <span>$</span>}
-                    <input
-                        type="number"
-                        inputMode="decimal"
-                        min="0"
-                        step="5"
-                        placeholder="Any"
-                        value={targetInputs[field]}
-                        onChange={(event) => changeTarget(field, event.target.value)}
-                    />
-                    {field === "minRoi" && <span>%</span>}
-                </span>
-            </label>
-        </div>
-    );
-
-    // Everything narrowing the results, as removable chips under the toolbar.
-    const activeChips = [
-        targets.minProfit > 0 && {
-            key: "profit",
-            label: `Min profit ≥ $${targets.minProfit}`,
-            clear: () => changeTarget("minProfit", ""),
-        },
-        targets.minRoi > 0 && {
-            key: "roi",
-            label: `ROI ≥ ${Math.round(targets.minRoi * 100)}%`,
-            clear: () => changeTarget("minRoi", ""),
-        },
-        typeFilter !== "all" && {
-            key: "type",
-            label: typeFilter === "AUCTION" ? "Auctions only" : "Buy It Now only",
-            clear: () => withViewTransition(() => setTypeFilter("all")),
-        },
-        kindFilter !== "all" && {
-            key: "kind",
-            label: kindFilter === "raw" ? "Raw only" : "Graded only",
-            clear: () => withViewTransition(() => setKindFilter("all")),
-        },
-        minPrice !== "" && { key: "min", label: `Buy It Now ≥ $${minPrice}`, clear: () => changeMinPrice("") },
-        maxPrice !== "" && { key: "max", label: `Price ≤ $${maxPrice}`, clear: () => setMaxPrice("") },
-        minGrade > 0 && { key: "grade", label: `Potential grade ≥ ${minGrade}`, clear: () => changeMinGrade(0) },
-    ].filter((chip): chip is { key: string; label: string; clear: () => void } => Boolean(chip));
-
-    const clearAll = () => {
-        changeTarget("minProfit", "");
-        changeTarget("minRoi", "");
-        changeMinPrice("");
-        setMaxPrice("");
-        changeMinGrade(0);
-        withViewTransition(() => {
-            setTypeFilter("all");
-            setKindFilter("all");
-        });
-    };
 
     // Where the search is, for the progress panel: the free check, then the
     // AI on the best candidates, up to this search's budget.
@@ -1101,39 +757,6 @@ export function App() {
                 {counts.candidates} listings are eligible for AI analysis; {counts.mismatched} set aside as other cards, sets, languages or search criteria.
             </p>
             <p>A new search takes a few minutes; repeats are quick.</p>
-        </>
-    );
-
-    // Min profit and min ROI: in the toolbar on wide screens, in the drawer always.
-    const targetFields = (
-        <>
-            <label className={styles.target} title="Minimum profit after every cost">
-                {targetInputs.minProfit !== "" && <span>$</span>}
-                <input
-                    type="number"
-                    inputMode="decimal"
-                    min="0"
-                    step="5"
-                    placeholder="Any"
-                    value={targetInputs.minProfit}
-                    onChange={(event) => changeTarget("minProfit", event.target.value)}
-                    aria-label="Minimum profit, dollars"
-                />
-                <span>profit</span>
-            </label>
-            <label className={styles.target} title="Minimum return on everything you put in">
-                <input
-                    type="number"
-                    inputMode="decimal"
-                    min="0"
-                    step="5"
-                    placeholder="Any"
-                    value={targetInputs.minRoi}
-                    onChange={(event) => changeTarget("minRoi", event.target.value)}
-                    aria-label="Minimum return, percent"
-                />
-                <span>{targetInputs.minRoi === "" ? "ROI" : "% ROI"}</span>
-            </label>
         </>
     );
 
@@ -1237,242 +860,16 @@ export function App() {
                             {page === "search" && searchStatus !== "idle" && <button type="button" className={styles.findNew} disabled={searchStatus === "checking" || phase === "ai"} onClick={() => void search(undefined, lastQuery.current, true)}>Find new listings</button>}
                         </nav>
                         {saveNotice && <p className={saveNotice.error ? styles.warning : styles.saveNotice} role={saveNotice.error ? "alert" : "status"}>{saveNotice.text}</p>}
-                        <div className={styles.controlPanel} hidden={page !== "search" || searchStatus === "idle"} data-idle={searchStatus === "idle" || undefined}>
-                            <div className={styles.controlRow}>
-                                {/* Every view remains visible in wrapping tabs. */}
-                                <div className={styles.tabs}>
-                                    <Segmented
-                                        label="Show"
-                                        buttonRef={(key) => key === "all" ? allTab : undefined}
-                                        value={view}
-                                        onChange={setView}
-                                        options={availableViews.map((key) => [
-                                            key,
-                                            <span className={styles.tabLabel}>
-                                                {VIEW_ICONS[key]}
-                                                {VIEW_SHORT[key] ? (
-                                                    <>
-                                                        <span className={styles.wideOnly}>{VIEW_NAMES[key]}</span>
-                                                        <span className={styles.narrowOnly}>{VIEW_SHORT[key]}</span>
-                                                    </>
-                                                ) : (
-                                                    VIEW_NAMES[key]
-                                                )}
-                                                {viewCount(key)}
-                                            </span>,
-                                        ])}
-                                    />
-                                </div>
-
-                                {/* Wide screens: your deal criteria in view. Phones reach them through the menu. */}
-                                <div className={`${styles.criteria} ${styles.wideOnly}`}>
-                                    <Dropdown
-                                        icon={<DollarIcon />}
-                                        label="Min profit"
-                                        value={targets.minProfit > 0 ? `$${targets.minProfit}` : "Any"}
-                                    >
-                                        {(close) => targetMenu("minProfit", close)}
-                                    </Dropdown>
-                                    <Dropdown
-                                        icon={<TrendIcon />}
-                                        label="ROI"
-                                        value={targets.minRoi > 0 ? `${Math.round(targets.minRoi * 100)}%` : "Any"}
-                                    >
-                                        {(close) => targetMenu("minRoi", close)}
-                                    </Dropdown>
-                                </div>
-                            </div>
-
-                            <div className={`${styles.searchPreferences} ${styles.wideOnly}`}>
-                                <label className={styles.offerToggle} title="Include opportunities requiring an unaccepted offer, at most 10% below asking">
-                                    <span>Include Best Offers</span>
-                                    <input type="checkbox" role="switch" aria-label="Include Best Offer opportunities" checked={includeOffers} onChange={(event) => changeIncludeOffers(event.target.checked)} />
-                                </label>
-                                <label className={styles.field}>
-                                    <span>Minimum Buy It Now price</span>
-                                    <span className={styles.affix}><span>$</span><input type="number" min="0" inputMode="decimal" placeholder="Any" value={minPrice} onChange={(event) => changeMinPrice(event.target.value)} /></span>
-                                </label>
-                                <label className={styles.field} title="Raw cards use the upper end of the AI grade range. Slabs use their label grade. Applies after analysis.">
-                                    <span>Minimum potential grade</span>
-                                    <select value={minGrade} onChange={(event) => changeMinGrade(Number(event.target.value))}>
-                                        <option value={0}>Any grade</option>
-                                        {Array.from({ length: 10 }, (_, index) => index + 1).map((grade) => <option key={grade} value={grade}>{grade} or above</option>)}
-                                    </select>
-                                </label>
-                                {minGrade > 0 && <p className={styles.preferenceNote}>Includes cards whose upper estimated grade meets your target. Check the likely grade, confidence and photo evidence.</p>}
-                            </div>
-
-                            {/* What's narrowing the results, each one a click to remove. */}
-                            {activeChips.length > 0 && (
-                                <div className={styles.activeFilters}>
-                                    <span className={styles.activeLabel}>Active filters:</span>
-                                    {activeChips.map((chip) => (
-                                        <button
-                                            key={chip.key}
-                                            type="button"
-                                            className={styles.chip}
-                                            onClick={chip.clear}
-                                            aria-label={`Remove ${chip.label}`}
-                                        >
-                                            {chip.label}
-                                            <CloseIcon className={styles.chipIcon} />
-                                        </button>
-                                    ))}
-                                    {activeChips.length > 1 && (
-                                        <button type="button" className={styles.clearAll} onClick={clearAll}>
-                                            Clear all
-                                        </button>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-
-                        <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} title="Views and filters">
-                            <section className={styles.drawerSection}>
-                                <h3>Show</h3>
-                                <div className={styles.viewList}>
-                                    {availableViews.map((key) => (
-                                        <button
-                                            key={key}
-                                            type="button"
-                                            aria-current={view === key}
-                                            onClick={() => {
-                                                setView(key);
-                                                setDrawerOpen(false);
-                                            }}
-                                        >
-                                            {VIEW_NAMES[key]}
-                                            {viewCount(key)}
-                                        </button>
-                                    ))}
-                                </div>
-                            </section>
-
-                            <section className={styles.drawerSection}>
-                                <h3>Your targets</h3>
-                                <div className={styles.targets}>{targetFields}</div>
-                            </section>
-
-                            <section className={styles.drawerSection}>
-                                <h3>Filters</h3>
-                                <div className={styles.field}>
-                                    <span>Listing</span>
-                                    <Segmented
-                                        label="Listing type"
-                                        value={typeFilter}
-                                        onChange={(next) => withViewTransition(() => setTypeFilter(next))}
-                                        options={[
-                                            ["all", "Any"],
-                                            ["AUCTION", "Auctions"],
-                                            ["FIXED_PRICE", "Buy It Now"],
-                                        ]}
-                                    />
-                                </div>
-                                <div className={styles.field}>
-                                    <span>Card</span>
-                                    <Segmented
-                                        label="Raw or graded"
-                                        value={kindFilter}
-                                        onChange={(next) => withViewTransition(() => setKindFilter(next))}
-                                        options={[
-                                            ["all", "Any"],
-                                            ["raw", "Raw"],
-                                            ["graded", "Graded"],
-                                        ]}
-                                    />
-                                </div>
-                                <div className={styles.priceRange}>
-                                    <label className={styles.field}>
-                                        <span>Min price, Buy It Now</span>
-                                        <span className={styles.affix}>
-                                            <span>$</span>
-                                            <input
-                                                type="number"
-                                                inputMode="decimal"
-                                                min="0"
-                                                value={minPrice}
-                                                onChange={(event) => changeMinPrice(event.target.value)}
-                                                placeholder="Any"
-                                            />
-                                        </span>
-                                    </label>
-                                    <label className={styles.field}>
-                                        <span>Max price</span>
-                                        <span className={styles.affix}>
-                                            <span>$</span>
-                                            <input
-                                                type="number"
-                                                inputMode="decimal"
-                                                min="0"
-                                                value={maxPrice}
-                                                onChange={(event) => setMaxPrice(event.target.value)}
-                                                placeholder="Any"
-                                            />
-                                        </span>
-                                    </label>
-                                </div>
-                                <label className={styles.field}>
-                                    <span>Sort</span>
-                                    <select
-                                        value={sort}
-                                        onChange={(event) => {
-                                            const next = event.target.value as SortKey;
-                                            withViewTransition(() => setSort(next));
-                                        }}
-                                    >
-                                        <option value="best">Best deal first</option>
-                                        <option value="ending">Ending soonest</option>
-                                        <option value="priceLow">Price, low to high</option>
-                                        <option value="priceHigh">Price, high to low</option>
-                                        <option value="overlooked">Most overlooked first</option>
-                                    </select>
-                                </label>
-                                <label className={styles.field}>
-                                    <span>Minimum potential grade</span>
-                                    <select value={minGrade} onChange={(event) => changeMinGrade(Number(event.target.value))}>
-                                        <option value={0}>Any grade</option>
-                                        {Array.from({ length: 10 }, (_, index) => index + 1).map((grade) => <option key={grade} value={grade}>{grade} or above</option>)}
-                                    </select>
-                                </label>
-                                <p className={styles.usage}>Uses the upper end of the AI grade range after analysis. Slabs use their label grade.</p>
-                            </section>
-
-                            <section className={styles.drawerSection}>
-                                <h3>Each search</h3>
-                                <label className={styles.offerToggle}>
-                                    <span>Include deals requiring a Best Offer<small>Offers at most 10% below asking. Acceptance is unknown.</small></span>
-                                    <input type="checkbox" role="switch" checked={includeOffers} onChange={(event) => changeIncludeOffers(event.target.checked)} />
-                                </label>
-                                <label className={styles.field}>
-                                    <span>Results per search</span>
-                                    <select value={resultsSetting} onChange={(event) => changeResultsSetting(Number(event.target.value))}>
-                                        {RESULT_OPTIONS.map((option) => (
-                                            <option key={option} value={option}>
-                                                {option === 1000 ? "1,000 (more eBay requests)" : option}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </label>
-                                <label className={styles.field}>
-                                    <span>Full AI analyses per search</span>
-                                    <select value={autoSetting} onChange={(event) => changeAutoSetting(Number(event.target.value))}>
-                                        {AUTO_OPTIONS.map((option) => (
-                                            <option key={option} value={option}>
-                                                {option === ALL ? "All matching" : option === 0 ? "Off" : `Top ${option}`}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </label>
-                                <p className={styles.usage}>AI checks matching listings even when preliminary prices are missing or above target. Stronger opportunities go first. This limit controls full assessments; screening and discovery can also use paid checks.</p>
-                                {usage && <p className={styles.usage}>{describeUsage(usage)}</p>}
-                            </section>
-                            <section className={styles.drawerSection}>
-                                <h3>AI usage</h3>
-                                <p className={styles.usage}>{aiUsage ? `${aiUsage.calls} API calls recorded on ${aiUsage.dayUtc} (UTC)` : "Usage will appear after the local log is available."}</p>
-                                {aiUsage && <details className={styles.aiUsage}><summary>View calls by task and model</summary><ul>{aiUsage.stages.map(stage => <li key={`${stage.step}:${stage.model}`}><strong>{stage.step}</strong><br />{stage.model} · {stage.calls} calls{stage.failed ? ` · ${stage.failed} failed` : ""}<br />{(stage.inputTokens + stage.outputTokens).toLocaleString()} tokens · {stage.images} image inputs</li>)}</ul></details>}
-                                <p className={styles.usage}>Local server totals since logging began. Retries count separately; reused answers add no request. This is usage telemetry, not a billing statement.</p>
-                            </section>
-                        </Drawer>
+                        <SearchControls
+                            hidden={page !== "search" || searchStatus === "idle"}
+                            idle={searchStatus === "idle"}
+                            views={{ view, availableViews, groups, allTab, setView }}
+                            filters={{ typeFilter, kindFilter, sort, minPrice, maxPrice, minGrade, setTypeFilter, setKindFilter, setSort, changeMinPrice, setMaxPrice, changeMinGrade }}
+                            target={{ targets, targetInputs, changeTarget }}
+                            settings={{ includeOffers, autoSetting, resultsSetting, changeIncludeOffers, changeAutoSetting, changeResultsSetting }}
+                            drawer={{ drawerOpen, setDrawerOpen }}
+                            usage={usage} aiUsage={aiUsage}
+                        />
                     </header>
 
                     {analysisBlocked && <div className={styles.searchUpdate} role="alert">

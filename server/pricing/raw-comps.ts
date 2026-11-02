@@ -1,7 +1,7 @@
 import { RAW_CONDITIONS, type RawCondition } from "../../shared/conditions.ts";
 import type { CompSummary, Identity, RawPrice, RawPricing } from "../../shared/types.ts";
 import { rawPricesFor, variantFor } from "./raw-prices.ts";
-import { compProblem, summarizeComps } from "./graded-comps.ts";
+import { compProblem, summarizeComps } from "./sold-comps.ts";
 import type { CheckComps, Comp, FetchRawComps, PricedCard } from "./types.ts";
 import type { SoldConditionEvidence } from "../ai/sold-condition.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
