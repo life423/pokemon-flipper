@@ -1,6 +1,53 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { streamDeals, streamDig, evaluateListing } from "../../client/src/api.ts";
+import { streamDeals, streamNewDeals, streamDig, evaluateListing } from "../../client/src/api.ts";
+
+test("known filters and a search identifier reach both search modes before paid work", async t => {
+    const requests: { url: string; searchId: string | null }[] = [];
+    t.mock.method(globalThis, "fetch", async (url: unknown, init?: RequestInit) => {
+        requests.push({ url: String(url), searchId: new Headers(init?.headers).get("X-Pokemon-Flipper-Search-Id") });
+        return new Response('{"type":"done"}\n');
+    });
+    const options = { maxResults: 200, minPrice: 10, targets: { minProfit: 50, minRoi: 25 }, includeOffers: false,
+        filters: { typeFilter: "FIXED_PRICE" as const, kindFilter: "raw" as const, maxPrice: 300 }, searchRunId: "offline-search", knownIds: [] };
+    await streamDeals("charizard", options, () => {});
+    await streamNewDeals("charizard", options, () => {});
+    for (const request of requests) {
+        const query = new URL(request.url, "http://local").searchParams;
+        assert.equal(query.get("type"), "FIXED_PRICE"); assert.equal(query.get("kind"), "raw");
+        assert.equal(query.get("ceiling"), "300"); assert.equal(query.get("min"), "10");
+        assert.equal(request.searchId, "offline-search");
+    }
+});
+
+test("a stopped evaluation never dispatches or retries a paid request", async t => {
+    let calls = 0;
+    t.mock.method(globalThis, "fetch", async (_url: unknown, init?: RequestInit) => {
+        calls++;
+        return new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true }));
+    });
+    const listing = { id: "offline" } as never;
+    const stopped = new AbortController(); stopped.abort();
+    await assert.rejects(evaluateListing(listing, { signal: stopped.signal }));
+    assert.equal(calls, 0);
+    const controller = new AbortController();
+    const pending = evaluateListing(listing, { signal: controller.signal });
+    controller.abort(); await assert.rejects(pending);
+    assert.equal(calls, 1);
+});
+
+test("Stop immediately interrupts provider retry waiting and keeps search attribution", async t => {
+    let calls = 0;
+    const controller = new AbortController();
+    t.mock.method(globalThis, "fetch", async (_url: unknown, init?: RequestInit) => {
+        calls++;
+        assert.equal(new Headers(init?.headers).get("X-Pokemon-Flipper-Search-Id"), "offline-retry");
+        setTimeout(() => controller.abort(), 0);
+        return Response.json({ error: "Cooling down", retryable: true, retryAfterMs: 90_000 }, { status: 503 });
+    });
+    await assert.rejects(evaluateListing({ id: "offline" } as never, { signal: controller.signal, searchRunId: "offline-retry" }));
+    assert.equal(calls, 1);
+});
 
 test("a fresh request resumes one interrupted connection without repaying completed photo work or trusting old browser terms", async t => {
     const urls: string[] = [];

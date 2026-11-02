@@ -90,7 +90,7 @@ export function AnalysisDetails({
                         : "The initial analysis reused saved AI assessments."}
                 </p>
                 <button type="button" className={styles.secondary} onClick={onReanalyze} disabled={reviewing}>
-                    Reanalyze full listing (paid)
+                    {evaluation.researchMode && evaluation.researchMode !== "FULL" ? "Run full research (paid; reuse photos)" : "Reanalyze full listing (paid)"}
                 </button>
             </footer>
         </>

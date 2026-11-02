@@ -201,11 +201,6 @@ export function normalizeSetName(value: unknown): string {
     return SET_ALIASES[words] ?? words;
 }
 
-export function sameSet(a: unknown, b: unknown): boolean {
-    const x = normalizeSetName(a);
-    return x !== "" && x === normalizeSetName(b);
-}
-
 // The normalized names of every set a listing's set may be filed under.
 export function setFamily(setName: unknown): string[] {
     const key = normalizeSetName(setName);

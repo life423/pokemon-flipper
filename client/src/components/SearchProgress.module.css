@@ -41,6 +41,11 @@
     color: var(--text-muted);
 }
 
+.card[data-phase="paused"] .badge {
+    background: color-mix(in srgb, var(--warning, #d6a34b) 14%, transparent);
+    color: var(--warning, #d6a34b);
+}
+
 .card[data-phase="error"] .badge {
     background: color-mix(in srgb, var(--danger) 16%, transparent);
     color: var(--pass-text);
@@ -117,6 +122,42 @@
 
 .collapsed .toggle svg {
     transform: none;
+}
+
+.aiStatus {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1) var(--space-3);
+    padding: var(--space-2) var(--space-4) var(--space-3);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+
+.aiStatusLabel {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    font-weight: 650;
+}
+
+.aiStatus[data-ai-state="working"] .aiStatusLabel {
+    color: var(--action-text);
+}
+
+.aiStatus[data-ai-state="paused"] .aiStatusLabel {
+    color: var(--warning);
+}
+
+.aiStatusCount {
+    font-variant-numeric: tabular-nums;
+}
+
+.aiStatus .dots {
+    flex: none;
 }
 
 /* Expands and collapses by animating the row to its content's height. */
@@ -465,5 +506,20 @@
     .usage {
         max-width: 9rem;
         line-height: 1.25;
+    }
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+    .card,
+    .dots span,
+    .indeterminate {
+        animation: none;
+    }
+
+    .body,
+    .fill,
+    .toggle svg {
+        transition: none;
     }
 }

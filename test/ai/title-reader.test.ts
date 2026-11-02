@@ -122,3 +122,45 @@ test("one cancelled search does not cancel a shared title needed by another sear
     assert.equal(await read("Already stopped", stopped.signal), null);
     assert.equal(calls, 1);
 });
+
+
+test("a title batch stops at global dispatch while already accepted answers still save for a restart", async () => {
+    const started = Promise.withResolvers<AbortSignal>();
+    const release = Promise.withResolvers<void>();
+    const cache = new Map(); let calls = 0;
+    const stopped = new AbortController();
+    const read = createTitleReader({ load: async key => cache.get(key) ?? null,
+        save: async (key, value) => { cache.set(key, value); },
+        read: async (titles, signal) => {
+            calls++; started.resolve(signal!);
+            // An accepted request intentionally finishes despite cancellation.
+            await release.promise;
+            return titles.map(() => reading);
+        },
+    });
+    const first = read("Accepted title", stopped.signal);
+    const dispatchSignal = await started.promise;
+    stopped.abort();
+    assert.equal(dispatchSignal.aborted, true);
+    const resumed = read("Accepted title");
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(calls, 1, "a restart cannot repay while the accepted answer is saving");
+    release.resolve();
+    assert.deepEqual(await Promise.all([first, resumed]), [reading, reading]);
+    assert.equal(calls, 1);
+});
+
+test("title dispatch cancellation reaches a queued request before it is paid", async () => {
+    const started = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+    let paid = 0; const stopped = new AbortController();
+    const read = createTitleReader({ load: async () => null, save: async () => {},
+        read: async (titles, signal) => {
+            started.resolve(); await release.promise;
+            signal?.throwIfAborted(); paid++;
+            return titles.map(() => reading);
+        },
+    });
+    const result = read("Queued title", stopped.signal);
+    await started.promise; stopped.abort(); release.resolve();
+    assert.equal(await result, null); assert.equal(paid, 0);
+});

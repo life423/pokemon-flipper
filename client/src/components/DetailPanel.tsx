@@ -52,20 +52,17 @@ export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closin
                     </button>
                 </header>
 
+                <div className={styles.detailActions}>
+                    <a className={`${styles.primary} ${styles.listingLink}`} href={listing.url} target="_blank" rel="noopener noreferrer">Open on eBay ↗</a>
+                    {onSave && <button type="button" className={styles.secondary} onClick={() => { if (!saving) onSave(); }} aria-disabled={saving} aria-pressed={saved}>{saving ? "Saving…" : saved ? "Remove from shortlist" : "Save to shortlist"}</button>}
+                </div>
+                <PhotoGallery images={analysis?.status === "done" ? analysis.evaluation.listing.photos ?? listing.images : listing.images} />
+
                 {analysis?.status === "done" && <FinancialDecision evaluation={analysis.evaluation} targets={targets} now={now} />}
                 <PhotoReview listing={listing} evaluation={analysis?.status === "done" ? analysis.evaluation : null}
                     phase={analysis?.status === "loading" || analysis?.status === "error" ? analysis.status : undefined}
                     state={photoReviewState} onReview={unavailable ? undefined : onPhotoReview} />
                 {unavailable && <p className={styles.bad}>Saved analysis only. This listing is unavailable or ended.</p>}
-
-                <PhotoGallery images={analysis?.status === "done" ? analysis.evaluation.listing.photos ?? listing.images : listing.images} />
-
-                <p className={styles.small}>
-                    <a className={styles.listingLink} href={listing.url} target="_blank" rel="noopener noreferrer">
-                        Open the listing on eBay
-                    </a>
-                </p>
-                {onSave && <button type="button" className={styles.secondary} onClick={() => { if (!saving) onSave(); }} aria-disabled={saving} aria-pressed={saved}>{saving ? "Saving…" : saved ? "Remove from shortlist" : "Save to shortlist"}</button>}
 
                 {!analysis && !unavailable && (
                     <div className={styles.cta}>
@@ -96,7 +93,7 @@ export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closin
                         evaluation={analysis.evaluation}
                         now={now}
                         minGrade={minGrade}
-                        onReanalyze={() => onAnalyze(true)}
+                        onReanalyze={() => onAnalyze(!analysis.evaluation.researchMode || analysis.evaluation.researchMode === "FULL")}
                         reviewing={photoReviewState?.status === "loading" || unavailable}
                     />
                 )}

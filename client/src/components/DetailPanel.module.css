@@ -48,15 +48,32 @@
     cursor: pointer;
 }
 
-.gallery { margin-block: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-control); padding: var(--space-3); }
-.gallery summary { min-height: var(--tap); cursor: pointer; align-content: center; font-size: var(--text-sm); }
-.heroPhoto { width: 100%; height: 18rem; object-fit: contain; background: var(--surface-alt); border-radius: var(--radius-control); }
-.galleryNav { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); margin-block: var(--space-2); font-size: var(--text-sm); }
-.galleryNav button { width: var(--tap); height: var(--tap); border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-alt); cursor: pointer; }
+.detailActions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-4); }
+.detailActions > * { flex: 1 1 10rem; text-align: center; }
+.gallery { display: grid; gap: var(--space-2); margin-block: var(--space-4); min-width: 0; }
+.galleryHeader { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.galleryHeader .sectionTitle { margin: 0; }
+.photoViewport { position: relative; width: 100%; height: clamp(15rem, 48dvh, 30rem); overflow: hidden; background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius-control); touch-action: none; user-select: none; }
+.photoViewport[data-zoomed="true"] { cursor: grab; }
+.photoViewport[data-zoomed="true"]:active { cursor: grabbing; }
+.heroPhoto { display: block; width: 100%; height: 100%; object-fit: contain; transform-origin: center; pointer-events: none; user-select: none; }
+.photoError { position: absolute; inset: auto var(--space-3) var(--space-3); padding: var(--space-3); background: var(--surface); border-radius: var(--radius-control); font-size: var(--text-sm); }
+.galleryNav { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.galleryNav button, .zoomControls button, .photoTextButton { min-width: var(--tap); min-height: var(--tap); padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-alt); color: var(--text); cursor: pointer; }
+.gallery button:disabled { cursor: default; opacity: 0.45; }
+.zoomControls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
+.zoomControls input { flex: 1 1 4rem; min-width: 4rem; width: 4rem; min-height: var(--tap); accent-color: var(--accent); }
+.zoomControls output { min-width: 3ch; text-align: center; font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.zoomControls .photoTextButton { flex: 1 1 6rem; }
+.photoTextButton { font-size: var(--text-sm); font-weight: 600; }
+.originalPhoto { display: inline-flex; align-items: center; min-height: var(--tap); }
+.photoChoices summary { min-height: var(--tap); align-content: center; font-size: var(--text-sm); cursor: pointer; }
 .thumbnails { display: grid; grid-template-columns: repeat(auto-fill, minmax(48px, 1fr)); gap: var(--space-2); margin-top: var(--space-2); }
-.thumbnails button { padding: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-alt); cursor: pointer; }
-.thumbnails button[aria-pressed="true"] { border-color: var(--accent); }
-.thumbnails img { width: 100%; height: 56px; object-fit: contain; }
+.thumbnails button { min-width: var(--tap); min-height: var(--tap); padding: var(--space-1); border: 1px solid var(--border); border-radius: 6px; background: var(--surface-alt); cursor: pointer; }
+.thumbnails button[aria-pressed="true"] { border-color: var(--accent); outline: 1px solid var(--accent); }
+.thumbnails img { display: block; width: 100%; height: 56px; object-fit: contain; }
+.gallery:fullscreen { padding: var(--space-4); padding-top: calc(var(--space-4) + env(safe-area-inset-top)); padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom)); margin: 0; width: 100%; height: 100%; overflow-y: auto; background: var(--surface); }
+.gallery:fullscreen .photoViewport { height: max(12rem, calc(100dvh - 22rem)); }
 
 .small {
     color: var(--text-muted);
@@ -85,7 +102,7 @@
     margin-block: var(--space-4);
 }
 
-.listingLink { display: inline-flex; align-items: center; min-height: var(--tap); }
+.listingLink { display: inline-flex; align-items: center; justify-content: center; min-height: var(--tap); text-decoration: none; }
 
 .primary,
 .secondary {
@@ -436,4 +453,15 @@
 .skeleton .skeletonHero {
     width: 55%;
     height: 40px;
+}
+
+
+@media (max-width: 30rem) {
+    .panel { padding: var(--space-4); padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom)); }
+    .head { top: calc(-1 * var(--space-4)); margin-top: calc(-1 * var(--space-4)); padding-top: calc(var(--space-4) + env(safe-area-inset-top)); }
+    .zoomControls .photoTextButton { flex-basis: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .panel, .backdrop, .content, .verdict { animation: none; }
 }

@@ -11,6 +11,7 @@ import { analysisConcurrency } from "../../shared/analysis.ts";
 import { compareAnalysisPriority } from "../../shared/analysis-priority.ts";
 import type { FoundHow, ListingSummary, SearchIntent, Targets } from "../../shared/types.ts";
 import { criteriaMismatch, searchAttributes } from "../../shared/search-criteria.ts";
+import { AUTOMATIC_AUCTION_WINDOW_HOURS, worthScreening, type ListingFilters } from "../../shared/listing-filters.ts";
 
 // Dig deeper: single cards a plain search misses, where the hidden deals
 // are: misspelled or vague titles, number-only titles, and the wrong eBay
@@ -69,6 +70,8 @@ async function digListing(
     findPhoto: typeof findCardInPhoto
 ): Promise<ListingSummary | null> {
     signal?.throwIfAborted();
+    const expired = () => listing.buyingOption === "AUCTION" && Boolean(listing.endTime) && Date.parse(listing.endTime!) <= Date.now();
+    if (expired()) return null;
     const recheck = listing.match || listing.screen;
     const priceAnomaly = listing.screen?.priceAnomaly;
 
@@ -78,6 +81,7 @@ async function digListing(
     photoBudget.left -= 1;
     const seen = await findPhoto(listing.images[0], intent, signal);
     signal?.throwIfAborted();
+    if (expired()) return null;
 
     // Only a single card, plainly the one searched for. Several cards is a lot.
     if (seen?.found !== "YES" || seen.cardCount > 1) return null;
@@ -91,16 +95,19 @@ async function digListing(
             printing: "UNKNOWN", printingLabel: null,
         });
         signal?.throwIfAborted();
+        if (expired()) return null;
         if (pricePhoto?.verdict === "MISMATCH") return { ...listing, match: "OTHER_CARD", screen: { ...listing.screen!, reason: `Photo verification failed: ${pricePhoto.problems.join("; ") || "the card doesn't match"}.` } };
         if (pricePhoto?.verdict !== "MATCH") return null;
     }
     const claimed = await steps.readTitle({ title: listing.title, aspects: {} });
     signal?.throwIfAborted();
+    if (expired()) return null;
     const mistakes = seen.inspection ? sellerMistakes(listing, seen.inspection, claimed.aspects) : [];
     if (recheck && mistakes.length === 0 && !priceAnomaly) return null;
     const verifiedSteps = photoSteps(seen, intent, steps);
     if (pricePhoto) verifiedSteps.matchPhoto = async () => pricePhoto;
     const screened = await screenListing({ ...listing, match: undefined }, verifiedSteps, intent, signal);
+    if (expired()) return null;
     const foundHow: FoundHow = how === "MISSPELLED" || how === "NUMBER_ONLY" ? how
         : listing.categoryId !== CCG_INDIVIDUAL_CARDS ? "WRONG_CATEGORY" : "PHOTO_SHOWS_IT";
 
@@ -115,6 +122,7 @@ export async function digDeeper(
         onStart = () => {},
         onListing = () => {},
         minPrice = 0,
+        filters,
         targets,
         includeOffers = false,
         signal,
@@ -122,7 +130,8 @@ export async function digDeeper(
         excludeIds = [],
         primaryListings = [],
         onProgress = () => {},
-    }: { onStart?: (summary: DigSummary) => void; onListing?: (listing: ListingSummary) => void; minPrice?: number; targets?: Targets; includeOffers?: boolean; signal?: AbortSignal; intent?: SearchIntent; excludeIds?: string[]; primaryListings?: ListingSummary[]; onProgress?: (checked: number, total: number) => void } = {},
+        asOf = Date.now(),
+    }: { onStart?: (summary: DigSummary) => void; onListing?: (listing: ListingSummary) => void; minPrice?: number; filters?: ListingFilters; targets?: Targets; includeOffers?: boolean; signal?: AbortSignal; intent?: SearchIntent; excludeIds?: string[]; primaryListings?: ListingSummary[]; onProgress?: (checked: number, total: number) => void; asOf?: number } = {},
     dependencies: DigSteps = { search: searchListings, plan: digQueries, readIntent: readSearch, findPhoto: findCardInPhoto, screening: screeningSteps }
 ): Promise<void> {
     signal?.throwIfAborted();
@@ -132,20 +141,21 @@ export async function digDeeper(
     const plan: DigQuery[] = await dependencies.plan(search, intent, signal);
     const found = new Map<string, { listing: ListingSummary; how: FoundHow; lane: number }>();
     const excluded = new Set(excludeIds);
+    const listingFilters = { ...filters, minPrice: filters?.minPrice ?? minPrice };
     // Seller claims can hide the value, so also inspect the matching
     // initially rejected listings. Existing candidates already get full AI.
     for (const listing of primaryListings) {
-        if ((!listing.isGraded || listing.screen?.priceAnomaly) && listing.match !== "JUNK" && listing.screen?.status !== "CANDIDATE" && listing.images[0]) {
+        if (worthScreening(listing, listingFilters, asOf) && (!listing.isGraded || listing.screen?.priceAnomaly) && listing.match !== "JUNK" && listing.screen?.status !== "CANDIDATE" && listing.images[0]) {
             found.set(listing.id, { listing, how: "PHOTO_SHOWS_IT", lane: listing.screen?.priceAnomaly ? -1 : 0 });
         }
     }
 
     for (const [index, query] of plan.entries()) {
         signal?.throwIfAborted();
-        const { listings } = await dependencies.search(query.query, { maxResults: 200, anyCategory: query.anyCategory, keepReserve: true, signal });
+        const { listings } = await dependencies.search(query.query, { maxResults: 200, anyCategory: query.anyCategory, keepReserve: true, signal, filters, asOf, auctionEndsWithinHours: AUTOMATIC_AUCTION_WINDOW_HOURS });
 
         for (const listing of listings) {
-            if (!excluded.has(listing.id) && !found.has(listing.id)) found.set(listing.id, { listing, how: query.how, lane: index + 1 });
+            if (worthScreening(listing, listingFilters, asOf) && !excluded.has(listing.id) && !found.has(listing.id)) found.set(listing.id, { listing, how: query.how, lane: index + 1 });
         }
     }
 
@@ -154,8 +164,7 @@ export async function digDeeper(
         ({ listing }) =>
             gradingMatches(listing.isGraded, intent) &&
             !criteriaMismatch({ ...searchAttributes(listing.title), finish: null }, { ...intent, finish: null }, false) &&
-            (!listing.endTime || Date.parse(listing.endTime) > now) &&
-            !(listing.buyingOption === "FIXED_PRICE" && (listing.currentPrice ?? 0) < minPrice)
+            (!listing.endTime || Date.parse(listing.endTime) > now)
     );
     // Interleave families for early coverage, then inspect every eligible copy.
     const maximum = eligible.length;
@@ -187,7 +196,7 @@ export async function digDeeper(
         const concurrency = analysisConcurrency(live.length - offset);
         const batch = live.slice(offset, offset + concurrency * 2);
         await mapLimit(batch, concurrency, async ({ listing, how }) => {
-            if (signal?.aborted) return;
+            if (signal?.aborted || !worthScreening(listing, listingFilters, asOf)) return;
             const result = await digListing(listing, how, intent, photoBudget, steps, signal, dependencies.findPhoto).catch((error: Error) => {
                 if (signal?.aborted) return null;
                 console.error(`Dig failed for ${listing.id}: ${error.message}`);

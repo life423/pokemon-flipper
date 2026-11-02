@@ -1,4 +1,4 @@
-import { identifyCard, printingClaimFromText, readyForPricing } from "../identity/card-identity.ts";
+import { identifyCard, printingClaimFromText, readyForPricing, sameSetFamily } from "../identity/card-identity.ts";
 import { graderCode, normalizeGrade } from "../identity/slab-check.ts";
 import { rawPricesFor, variantFor } from "../pricing/raw-prices.ts";
 import { gradedPricesFor, compsForGrade } from "../pricing/graded-comps.ts";
@@ -13,6 +13,7 @@ import type { BuyingOption, CompSummary, Screen, Underwriting } from "../../shar
 import { usualPrice } from "../../shared/money/auction.ts";
 import { retargetScreen } from "../../shared/money/targets.ts";
 import { pricingIssue } from "../pricing/errors.ts";
+import { MIN_AUTOMATIC_RAW_RESALE, CHEAP_FIRST_EDITION_BASE_SET_LIMIT } from "../../shared/research-policy.ts";
 
 // The preliminary check, before full photo assessment: what a listing is worth at
 // its best, from the seller's own details and the price data. A listing
@@ -132,11 +133,16 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
     }
 
     const { identity, card } = identified;
+    const cheapFirstEditionBaseSet = !listing.isGraded && !identity.notThisCard && !lookupIssue &&
+        sameSetFamily(identity.set, "Base Set") && listing.price >= 0 && listing.price <= CHEAP_FIRST_EDITION_BASE_SET_LIMIT &&
+        (identity.printing === "FIRST_EDITION" || identity.status !== "IDENTIFIED" && listing.photoMarks?.firstEditionStamp !== "NOT_PRESENT" &&
+            (printing === "FIRST_EDITION" || listing.photoMarks?.firstEditionStamp === "VISIBLE"));
 
     if (!readyForPricing(identity)) {
         return screen("UNSCREENED", identity.reasons[0] ?? "The card couldn't be identified from the listing.", {
             incomplete: incomplete || (!card && !lookupIssue),
             pricingIssue: lookupIssue,
+            ...(cheapFirstEditionBaseSet ? { focusedReview: "CHEAP_FIRST_EDITION_BASE_SET" as const } : {}),
             ...(!lookupIssue && !identity.notThisCard ? { needsAnalysis: "IDENTITY" as const } : {}),
         });
     }
@@ -152,12 +158,28 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
     const variant = variantFor(card, identity);
     if (!variant.variant) return screen("UNSCREENED", variant.reason, {
         card: cardInfo, needsAnalysis: "FINISH", incomplete: true,
+        ...(cheapFirstEditionBaseSet ? { focusedReview: "CHEAP_FIRST_EDITION_BASE_SET" as const } : {}),
     });
+
+    // Use the feed already returned by identity lookup before researching sold
+    // copies or hypothetical grading routes. This is a raw-market research
+    // threshold, not a claim that every graded copy must sell below this price.
+    const marketRawPrices = rawPricesFor(card, identity);
+    const marketQuotes = marketRawPrices.prices?.map(price => price.price) ?? [];
+    const marketMaximum = marketQuotes.length ? Math.max(...marketQuotes) : null;
+    if (!listing.isGraded && marketMaximum !== null && marketMaximum < MIN_AUTOMATIC_RAW_RESALE) {
+        const lowResale = { minimum: MIN_AUTOMATIC_RAW_RESALE, rawMarketMaximum: marketMaximum, cheapFirstEditionBaseSet };
+        return screen(cheapFirstEditionBaseSet ? "UNSCREENED" : "DROPPED",
+            cheapFirstEditionBaseSet
+                ? `Cheap 1st Edition Base Set exception: verify the printing and condition. The highest available raw market quote is ${dollars(marketMaximum)}, below the normal ${dollars(MIN_AUTOMATIC_RAW_RESALE)} research minimum; this is not a verified deal.`
+                : `The highest available raw market quote is ${dollars(marketMaximum)}, below the ${dollars(MIN_AUTOMATIC_RAW_RESALE)} automatic research minimum. Graded resale may differ; manual analysis remains available.`,
+            { card: cardInfo, lowResale, ...(cheapFirstEditionBaseSet ? { needsAnalysis: "IDENTITY" as const, focusedReview: "CHEAP_FIRST_EDITION_BASE_SET" as const } : {}) });
+    }
 
     // The card's cheapest price in any condition, from the lookup already made.
     const rawPrices = !listing.isGraded && deps.fetchRawComps
         ? await rawPricesWithSales(card, identity, { fetchRawComps: deps.fetchRawComps, checkComps, now })
-        : rawPricesFor(card, identity);
+        : marketRawPrices;
     const floor =
         rawPrices.status === "PRICED" && rawPrices.prices?.length ? Math.min(...rawPrices.prices.map((p) => p.price)) : null;
 
@@ -260,8 +282,27 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
         : undefined;
 
     if (verdict.startsWith("BUY") || verdict === "PASS") {
-        // Flags an auction that will very likely end above its max bid.
-        return retargetScreen(screen("DROPPED", reasons[0] ?? null, { card: cardInfo, bestCase, assumed, money, priceAnomaly }), listing.price, config.targets, config, includeOffers);
+        // Reprice the supported paths against the current purchase targets.
+        const screened = retargetScreen(screen("DROPPED", reasons[0] ?? null, { card: cardInfo, bestCase, assumed, money, priceAnomaly }), listing.price, config.targets, config, includeOffers);
+        const claimed = sellerCondition(listing.cardCondition);
+        const betterConditions = claimed === "LIGHTLY_PLAYED" ? ["NEAR_MINT", "MINT"] as const
+            : claimed === "NEAR_MINT" ? ["MINT"] as const : [];
+        if (!listing.isGraded && screened.status === "DROPPED" && input.condition) {
+            for (const targetCondition of betterConditions) {
+                const quote = marketRawPrices.prices?.find(price => price.condition === targetCondition && price.price >= MIN_AUTOMATIC_RAW_RESALE);
+                if (!quote) continue;
+                // A hypothetical improvement can justify looking at the photos,
+                // never replacing the seller's claim or declaring a final deal.
+                // This reuses feed quotes and money math, with no new comp calls.
+                const alternative = underwrite({ ...input, rawPricing: marketRawPrices, gradedPricing: null,
+                    condition: { ...input.condition, rawCondition: targetCondition } }, config);
+                if (alternative.verdict !== "BUY_RAW") continue;
+                return { ...screened, status: "UNSCREENED", needsAnalysis: "IDENTITY",
+                    conditionUpside: { sellerCondition: claimed, targetCondition, rawMarketPrice: quote.price },
+                    reason: `Listed ${CONDITION_NAMES[claimed]}. If photos instead support ${CONDITION_NAMES[targetCondition]}, the ${dollars(quote.price)} raw market quote could clear your targets. AI must verify the condition; this is not a verified deal.` };
+            }
+        }
+        return screened;
     }
 
     return screen("UNSCREENED", reasons[0] ?? "It couldn't be priced.", { card: cardInfo, assumed, priceAnomaly,

@@ -7,6 +7,7 @@ import { retargetEvaluation } from "../shared/money/targets.ts";
 import { resultGroup } from "../shared/analysis.ts";
 import { auctionDecision } from "../shared/card-presentation.ts";
 import type { DeeperPhotoReview } from "../shared/types.ts";
+import { mixedCoverageEvaluation } from "./fixtures/photo-coverage.ts";
 
 function deep(impact: DeeperPhotoReview["findings"][number]["impact"]): DeeperPhotoReview {
     return { inputKey: "test", reviewedAt: "2026-10-26T13:00:00Z", summary: "Focused second opinion", photoNumbers: [1],
@@ -23,7 +24,7 @@ test("readable verified slabs keep incidental glare as notes, but identity, case
     e.slab = { status: "OK", grader: "PSA", grade: "7", gradeQualifier: null, certNumber: "123", certUrl: null, labelText: "PSA 7", caseCondition: "SCUFFED", reasons: [], concerns: [] };
     const status = photoReviewStatus(e);
     assert.equal(status.needsYourReview, false);
-    assert.deepEqual(status.photoNotes, ["Plastic reflections obscure tiny raw scratches."]);
+    assert.deepEqual(status.photoNotes, ["Photo 1 (front): Plastic reflections obscure tiny raw scratches."]);
     e.slab.status = "NEEDS_REVIEW"; e.slab.reasons = ["Case is cracked."];
     assert.ok(photoReviewStatus(e).reasons.includes("Case is cracked."));
     e.slab.status = "OK"; e.slab.reasons = []; e.identity!.status = "NEEDS_REVIEW"; e.identity!.reasons = ["Card number differs."];
@@ -89,4 +90,62 @@ test("a completed stock/blocked photo check does not advertise high condition co
     assert.equal(photoEvidence(e).confidence, "UNKNOWN", "the detailed evidence section agrees with the review summary");
     assert.equal(status.needsYourReview, true);
     assert.match(status.reasons.join(" "), /could not support/);
+});
+
+test("a cropped back close-up stays a numbered photo note when the full back is covered", () => {
+    const evaluation = mixedCoverageEvaluation();
+    const before = structuredClone(evaluation);
+    const status = photoReviewStatus(evaluation);
+    assert.equal(status.needsYourReview, false);
+    assert.deepEqual(status.reasons, []);
+    assert.ok(status.photoNotes.includes("Photo 2 (back close-up): Only the upper-right portion of the card back is shown."));
+    assert.ok(status.photoNotes.includes("Photo 4 (back): Lighting is uneven, though the full back, borders, corners, and much of the surface remain visible."));
+    assert.ok(status.photoNotes.some(note => note.startsWith("Additional view requested by AI:")));
+    assert.equal(photoEvidence(evaluation).coverage, "8 usable photos: 2 front, 4 back, 2 close-ups");
+    assert.match(photoEvidence(evaluation).issues[0], /^Photo 2 \(back close-up\):/);
+    assert.deepEqual(evaluation, before, "displaying photo scope must not change saved grades, confidence, prices or advice");
+});
+
+test("missing or obscured whole-side coverage still needs review despite usable close-ups", () => {
+    for (const side of ["FRONT", "BACK"]) {
+        const missing = mixedCoverageEvaluation();
+        missing.photoCheck!.images = missing.photoCheck!.images.filter(photo => photo.view !== side);
+        missing.photoCheck!.missingViews = [];
+        const status = photoReviewStatus(missing);
+        assert.equal(status.needsYourReview, true);
+        assert.ok(status.reasons.includes(`No usable photo shows the whole ${side.toLowerCase()}.`));
+        const obscured = mixedCoverageEvaluation();
+        obscured.photoCheck!.images.filter(photo => photo.view === side).forEach(photo => { photo.obscuresCondition = true; });
+        assert.ok(photoReviewStatus(obscured).reasons.includes(`Every usable whole-${side.toLowerCase()} photo has obscured detail.`));
+    }
+    const stockBack = mixedCoverageEvaluation();
+    stockBack.photoCheck!.images.filter(photo => photo.view === "BACK").forEach(photo => { photo.isStockImage = true; });
+    assert.equal(photoReviewStatus(stockBack).needsYourReview, true);
+});
+
+test("overall identity, authenticity and purchase holds still require review with clear full-card coverage", () => {
+    const identity = mixedCoverageEvaluation(); identity.identity!.status = "NEEDS_REVIEW"; identity.identity!.reasons = ["The card number differs."];
+    assert.ok(photoReviewStatus(identity).reasons.includes("The card number differs."));
+    const authenticity = mixedCoverageEvaluation(); authenticity.condition!.authenticity = { concern: "POSSIBLE", reasons: ["Visible font mismatch."] };
+    assert.ok(photoReviewStatus(authenticity).reasons.includes("Visible font mismatch."));
+    const held = mixedCoverageEvaluation(); held.underwriting!.verdict = "NEEDS_REVIEW"; held.underwriting!.reasons = ["Unresolved label conflict."];
+    assert.ok(photoReviewStatus(held).reasons.includes("Unresolved label conflict."));
+    const unknown = mixedCoverageEvaluation(); unknown.condition!.rawCondition = "UNKNOWN";
+    assert.equal(photoReviewStatus(unknown).needsYourReview, true);
+    const raw = mixedCoverageEvaluation(); raw.underwriting!.best!.path = "RAW"; raw.condition!.gradeRange.likely = null;
+    assert.equal(photoReviewStatus(raw).needsYourReview, false, "raw resale does not require a single submission-grade estimate");
+    assert.ok(photoReviewStatus(raw).photoNotes.includes("The photos do not support a single likely grade."));
+});
+
+test("intentional low-value deferral is not a manual task, while real identity or authenticity conflicts remain visible", () => {
+    const e = mixedCoverageEvaluation(); e.researchMode = "DEFERRED_LOW_RESALE"; e.condition = null;
+    e.underwriting = { verdict: "NEEDS_REVIEW", reasons: ["There's no condition estimate from the photos."], best: null, paths: [], assumptions: [] };
+    assert.equal(photoReviewStatus(e).needsYourReview, false);
+    assert.equal(resultGroup({} as never, e), null);
+    e.identity!.status = "NEEDS_REVIEW"; e.identity!.reasons = ["Visible number conflicts with the record."];
+    assert.equal(photoReviewStatus(e).needsYourReview, true);
+    assert.equal(resultGroup({} as never, e), "review");
+    const suspicious = mixedCoverageEvaluation(); suspicious.researchMode = "DEFERRED_LOW_RESALE";
+    suspicious.condition!.authenticity.concern = "POSSIBLE"; suspicious.condition!.authenticity.reasons = ["The printed font differs."];
+    assert.equal(resultGroup({} as never, suspicious), "review");
 });

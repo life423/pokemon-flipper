@@ -95,4 +95,4 @@ export interface CompVerdict {
 
 // A second look at sales that passed the rules: keep or drop each, with a
 // reason. Sales without a verdict stay on the rules' word.
-export type CheckComps = (comps: Comp[], target: CompTarget) => Promise<Map<Comp, CompVerdict>>;
+export type CheckComps = (comps: Comp[], target: CompTarget, signal?: AbortSignal) => Promise<Map<Comp, CompVerdict>>;

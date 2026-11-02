@@ -22,12 +22,13 @@ export function PhotoReview({ evaluation, listing, phase, compact = false, state
     const time = dateText(status.reviewedAt);
     return <section className={styles.review} aria-label="AI photo review">
         <p className={styles.title}>{phase === "loading" ? "Analyzing photos and checking resale prices…" : phase === "error" ? "Listing analysis could not finish" : status.title}</p>
+        {evaluation?.researchMode === "DEFERRED_LOW_RESALE" && <p className={styles.meta}>Further condition and resale research was deferred for this low-value card. Full research remains available.</p>}
         {evaluation?.photoCheck && <p className={styles.meta}>{status.checked} of {status.total} photos checked · Photo confidence: {name(status.confidence)}{time ? ` · ${time}` : " · date unavailable"}</p>}
         {status.needsYourReview && <div className={styles.caution}>
             <strong>Your review needed</strong>
             {compact ? <p>{status.reasons[0]}</p> : <ul>{status.reasons.slice(0, 4).map((reason) => <li key={reason}>{reason}</li>)}</ul>}
         </div>}
-        {!compact && status.photoNotes.length > 0 && <details><summary>Photo notes</summary><ul>{status.photoNotes.map(note => <li key={note}>{note}</li>)}</ul></details>}
+        {status.photoNotes.length > 0 && <details className={styles.notes}><summary>Photo notes ({status.photoNotes.length})</summary><ul>{status.photoNotes.map(note => <li key={note}>{note}</li>)}</ul></details>}
         {compact && deep && <p className={styles.meta}>Deeper AI review saved{dateText(deep.reviewedAt) ? ` · ${dateText(deep.reviewedAt)}` : ""}</p>}
         {compact && current?.status === "loading" && <p className={styles.meta} role="status">Deeper AI review in progress; initial assessment still shown.</p>}
         {compact && current?.status === "error" && <p className={styles.caution}>Deeper review failed; initial assessment kept. Open analysis for details.</p>}

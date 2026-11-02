@@ -31,4 +31,6 @@ test("saved snapshots reject invalid URLs and amounts and strip client financial
     for (const listing of [{...savedListing(),url:"javascript:alert(1)"},{...savedListing(),currentPrice:Infinity},{...savedListing(),id:"../escape"}]) assert.throws(()=>cleanSavedListing(listing), /valid listing snapshot/);
     const clean=cleanSavedListing({...savedListing(),evaluation:{underwriting:{verdict:"BUY_RAW"}},screen:{status:"CANDIDATE"}});
     assert.equal(clean.screen,undefined);assert.equal("evaluation" in clean,false);
+    const dated = cleanSavedListing({ ...savedListing(), listedAt: "2026-11-02T10:00:00-06:00", createdAt: "invalid" });
+    assert.equal(dated.listedAt, "2026-11-02T16:00:00.000Z"); assert.equal(dated.createdAt, undefined);
 });

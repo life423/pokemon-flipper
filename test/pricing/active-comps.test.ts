@@ -72,7 +72,7 @@ test("all matching current candidates receive photo checks and auctions cannot p
 test("BGS and TAG current comparisons retain exact graders, half grades and full certificate IDs", async () => {
     for (const grader of ["BGS", "TAG"]) {
         const subject: Slab = { ...slab, grader, grade: "6.5", certNumber: grader === "TAG" ? "A1234567" : "1234567" };
-        const items = ["self-cert", "a", "duplicate", "b"].map(id => ({ ...listing(id), title: `Venusaur Base Set 15/102 Holo ${grader} 6.5`, aspects: { "Professional Grader": grader, Grade: "6.5" } }));
+        const items: ListingDetails[] = ["self-cert", "a", "duplicate", "b"].map(id => ({ ...listing(id), title: `Venusaur Base Set 15/102 Holo ${grader} 6.5`, aspects: { "Professional Grader": grader, Grade: "6.5" } }));
         const certs = grader === "TAG" ? ["a 1234567", "B1234567", "b 1234567", "C1234567"] : ["1234567", "2234567", "2234567", "3234567"];
         const photos = (index: number) => ({ ...reading(), slab: { ...reading().slab!, grader, grade: "6.5", gradeQualifier: "EX MT+", certNumber: certs[index] } });
         assert.equal(matchesActiveSlab(photos(1), items[1], identity, subject), true);
@@ -87,4 +87,40 @@ test("BGS and TAG current comparisons retain exact graders, half grades and full
         assert.equal(reference?.listings.length, 2, "self and duplicate certificates are excluded");
         assert.deepEqual(new Set(reference?.listings.map(item => item.certNumber)), new Set([certs[1], certs[3]]));
     }
+});
+
+
+test("Stop during active-comparable details prevents the later paid photo stage", async () => {
+    const item = listing("stopped"); const stopped = new AbortController();
+    let started!: () => void, release!: () => void, photos = 0;
+    const detailsStarted = new Promise<void>(resolve => { started = resolve; });
+    const finishDetails = new Promise<void>(resolve => { release = resolve; });
+    const find = createActiveComparableFinder({
+        search: async () => ({ listings: [summary(item)], total: 1, skipped: 0 }),
+        details: async () => { started(); await finishDetails; return item; },
+        read: async () => { photos++; return { result: reading(), usage: {} as any }; },
+        cached: async () => null, save: async () => {}, savedAssessment: async () => null,
+    });
+    const work = find(identity, slab, "subject", stopped.signal);
+    await detailsStarted; stopped.abort();
+    await assert.rejects(work, { name: "AbortError" });
+    release(); await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(photos, 0);
+});
+
+test("unchanged unreadable active slabs reuse their paid reading after15minutes while new photos can resolve them", async () => {
+    let clock = Date.now(), photos = 0; const item = listing("unreadable");
+    const cache = new Map<string, { at: number; value: unknown }>();
+    const find = createActiveComparableFinder({
+        now: () => clock,
+        search: async () => ({ listings: [summary(item)], total: 1, skipped: 0 }), details: async () => item,
+        read: async () => { photos++; return { result: photos === 1 ? { ...reading(), cardIdentity: { ...reading().cardIdentity!, confidence: "LOW" }, slab: { ...reading().slab!, grade: null } } : reading(), usage: {} as any }; },
+        cached: async <T>(key: string, hours: number) => { const value = cache.get(key); return value && clock - value.at < hours * 3600000 ? value.value as T : null; },
+        save: async (key, value) => { cache.set(key, { at: clock, value }); }, savedAssessment: async () => null,
+    });
+    assert.equal(await find(identity, slab, "subject"), null); assert.equal(photos, 1);
+    clock += 3600000;
+    assert.equal(await find(identity, slab, "subject"), null); assert.equal(photos, 1, "unchanged incomplete evidence is not repurchased with age");
+    item.images = ["new-readable-front", "new-readable-back"]; clock += 3600000;
+    assert.ok(await find(identity, slab, "subject")); assert.equal(photos, 2, "new photos permit a fresh assessment");
 });

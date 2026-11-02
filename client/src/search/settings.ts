@@ -1,5 +1,6 @@
 import type { Targets } from "../types";
 import { MONEY_CONFIG } from "../../../shared/money/config.ts";
+import { DEVELOPMENT_SEARCH_LIMIT } from "../../../shared/research-policy.ts";
 
 // Recent searches, newest first, offered before the next search.
 export const RECENT_KEY = "recentSearches";
@@ -17,14 +18,12 @@ export function readRecentSearches(): string[] {
     }
 }
 
-// AI analyses at once, and per search unless you ask for more.
-// How many candidates the AI analyzes on its own per search: every one
-// that lands in Waiting by default, best first, or a cap, or none.
+// Explicit development scope. HTTP searches enforce the same small limit
+// before title/photo screening, regardless of any older browser setting.
 export const ALL = Number.POSITIVE_INFINITY;
-export const AUTO_OPTIONS = [ALL, 20, 10, 5, 0];
-export const DEFAULT_AUTO = ALL;
-// Saved under a new name, so an old cap doesn't hold over the new default.
-export const AUTO_KEY = "aiPerSearch";
+export const AUTO_OPTIONS = [DEVELOPMENT_SEARCH_LIMIT, 0];
+export const DEFAULT_AUTO = DEVELOPMENT_SEARCH_LIMIT;
+export const AUTO_KEY = "aiPerSearchDevelopment";
 
 // Your profit and return targets, saved between visits.
 export function readTargets(): Targets {
@@ -44,10 +43,8 @@ export const targetText = (targets: Targets) => ({
     minRoi: targets.minRoi === 0 ? "" : String(Math.round(targets.minRoi * 100)),
 });
 
-// eBay results per search: later pages are mostly loose matches, and each
-// result can cost an eBay request, so 400 unless you ask for more.
-export const RESULT_OPTIONS = [200, 400, 1000];
-export const DEFAULT_RESULTS = 400;
+export const RESULT_OPTIONS = [DEVELOPMENT_SEARCH_LIMIT];
+export const DEFAULT_RESULTS = DEVELOPMENT_SEARCH_LIMIT;
 
 export function readResultsSetting(): number {
     try {

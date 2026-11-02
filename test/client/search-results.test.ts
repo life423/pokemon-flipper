@@ -8,6 +8,7 @@ import type { AnalysisState } from "../../client/src/analysis-state.ts";
 import type { Evaluation, ListingSummary, RatingLevel, Screen, SearchIntent } from "../../shared/types.ts";
 import { underwrite } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
+import { canAutoAnalyze } from "../../shared/analysis.ts";
 
 const NOW = Date.parse("2026-11-02T12:00:00Z");
 const targets = { minProfit: 0, minRoi: 0 };
@@ -55,6 +56,18 @@ const filter = (listings: ListingSummary[], analyses: Record<string, AnalysisSta
 
 const holoIntent: SearchIntent = { cardName: "Venusaur", sets: ["Base Set"], cardNumber: "15/102", printing: null, graded: null,
     finish: "HOLO", titleWords: ["venusaur"], source: "rules" };
+
+test("deliberately deferred low-value copies stay out of deals, offers and hidden finds even with a reused profit estimate", () => {
+    const deferred = listing("deferred", { found: { how: "PHOTO_SHOWS_IT", note: "The photo identifies this card." } });
+    const normal = listing("fully-researched");
+    const e = evaluation(deferred, 300, "STRONG"); e.researchMode = "DEFERRED_LOW_RESALE";
+    const analyses = { [deferred.id]: done(e), [normal.id]: done(evaluation(normal, 250, "GOOD")) };
+    const groups = groupSearchResults([deferred, normal], analyses, true, new Set());
+    assert.deepEqual(ids(groups.deals), [normal.id]);
+    assert.deepEqual(groups.offers, []); assert.deepEqual(groups.hidden, []); assert.deepEqual(groups.review, []);
+    assert.deepEqual(ids(groups.all), [deferred.id, normal.id]);
+    assert.deepEqual(ids(sortSearchResults([deferred, normal], analyses, "best", targets, NOW)), [normal.id, deferred.id]);
+});
 
 test("the result inventory excludes expired, unavailable and disproved copies before grouping", () => {
     const kept = listing("kept");
@@ -115,10 +128,10 @@ test("offer-dependent discoveries stay separate from confirmed deals and respect
     const listings = filter([deal, offer, lowball, waiting, review, rejected], analyses);
     const without = groupSearchResults(listings, analyses, false, new Set([offer.id, lowball.id]));
     assert.deepEqual(ids(without.deals), ["buy-now-deal"]); assert.deepEqual(ids(without.offers), []);
-    assert.deepEqual(ids(without.hidden), ["buy-now-deal", "waiting-discovery", "printing-review"]);
+    assert.deepEqual(without.hidden, []);
     const withOffers = groupSearchResults(listings, analyses, true, new Set([offer.id, lowball.id]));
     assert.deepEqual(ids(withOffers.offers), ["offer-only"]); assert.deepEqual(ids(withOffers.deals), ["buy-now-deal"]);
-    assert.deepEqual(ids(withOffers.hidden), ["buy-now-deal", "offer-only", "waiting-discovery", "printing-review"]);
+    assert.deepEqual(withOffers.hidden, []);
     assert.deepEqual(ids(withOffers.new), ["offer-only", "requires-lowball"], "new inventory includes a newly discovered rejection in All/New, not Deals");
 });
 
@@ -126,6 +139,27 @@ test("best order favors stronger verified deals over a much larger thin-profit e
     const thin = listing("thin"), strong = listing("strong"), strongMore = listing("strong-more"), waiting = listing("waiting");
     const analyses = { [thin.id]: done(evaluation(thin, 1000, "THIN")), [strong.id]: done(evaluation(strong, 250, "STRONG")), [strongMore.id]: done(evaluation(strongMore, 300, "STRONG")) };
     assert.deepEqual(ids(sortSearchResults([thin, strong, waiting, strongMore], analyses, "best", targets, NOW)), ["strong-more", "strong", "thin", "waiting"]);
+});
+
+test("photographic discoveries use ordinary deal outcomes", () => {
+    const discovered = listing("discovered-auction", { buyingOption: "AUCTION", found: { how: "PHOTO_SHOWS_IT", note: "Photo discovery" } });
+    const value = evaluation(discovered, 250, "GOOD");
+    const grouped = groupSearchResults([discovered], { [discovered.id]: done(value) }, false, new Set());
+    assert.deepEqual(ids(grouped.deals), [discovered.id]); assert.deepEqual(grouped.hidden, []);
+    assert.equal(value.rating?.level, "GOOD", "classification does not rewrite saved provider evidence");
+});
+
+test("the sorting workbench retains priced passes, deferred copies and unchecked rows while attention stays separate", () => {
+    const pass = listing("priced-pass"), deferred = listing("deferred-work"), unchecked = listing("unchecked", { screen: screen({ status: "DROPPED" }) });
+    const attention = listing("attention");
+    const deferredEvaluation = evaluation(deferred, 300); deferredEvaluation.researchMode = "DEFERRED_LOW_RESALE";
+    const review = evaluation(attention); review.identity!.status = "NEEDS_REVIEW";
+    review.underwriting = underwrite(review, { ...MONEY_CONFIG, targets });
+    const analyses = { [pass.id]: done(evaluation(pass, 20)), [deferred.id]: done(deferredEvaluation), [attention.id]: done(review) };
+    const groups = groupSearchResults([pass, deferred, unchecked, attention], analyses, false, new Set());
+    assert.deepEqual(ids(groups.candidates), [pass.id, deferred.id, unchecked.id]);
+    assert.deepEqual(ids(groups.review), [attention.id]); assert.deepEqual(groups.deals, []);
+    assert.equal(canAutoAnalyze(unchecked), false, "workbench membership does not authorize paid analysis");
 });
 
 test("overlooked order prioritizes confirmed deals and real listing evidence over retrieval method", () => {

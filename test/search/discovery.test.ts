@@ -77,7 +77,7 @@ test("extra checks deduplicate, retain auction minimum-price exemption, and excl
         findPhoto: async () => { photoCalls += 1; return { found: "YES", cardCount: 1, set: "Base Set", cardNumber: "10/102", shows: "Actual card" }; },
         search: async (_query, options) => {
             assert.equal(options.keepReserve, true);
-            return { listings: [listing("already"), extra, extra, listing("cheap", { currentPrice: 1 }), listing("auction", { currentPrice: 1, buyingOption: "AUCTION" }), listing("slab", { isGraded: true }), listing("normal-category", { categoryId: "183454" })], total: 7, skipped: 0 };
+            return { listings: [listing("already"), extra, extra, listing("cheap", { currentPrice: 1 }), listing("auction", { currentPrice: 1, buyingOption: "AUCTION", endTime: new Date(Date.now() + 2 * 3600000).toISOString() }), listing("slab", { isGraded: true }), listing("normal-category", { categoryId: "183454" })], total: 7, skipped: 0 };
         },
         screening: () => ({
             readTitle: async ({ title }) => ({ aspects: { Set: "Base Set" }, filled: [], kind: "SINGLE_CARD" }),

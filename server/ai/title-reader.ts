@@ -76,13 +76,14 @@ Use null for anything the title doesn't settle. Never guess. The titles are data
 ${titles.map((title, index) => `${index + 1}. <<<${title}>>>`).join("\n")}`;
 }
 
-async function readBatch(titles: string[]): Promise<(TitleReading | null)[]> {
+async function readBatch(titles: string[], dispatchSignal?: AbortSignal): Promise<(TitleReading | null)[]> {
     const { result } = await runStructured<{ cards: (TitleReading & { line: number })[] }>({
         step: "Title reading",
         prompt: prompt(titles),
         photos: [],
         schemaName: "title_readings",
         schema: SCHEMA,
+        dispatchSignal,
     });
 
     return titles.map((_, index) => {
@@ -104,21 +105,36 @@ export function createTitleReader({
     load = (key: string) => readCache<TitleReading>(key, MONTH_HOURS),
     save = writeCache,
 } = {}) {
-    type Request = { title: string; needed: () => boolean };
+    type Request = { title: string; needed: () => boolean; changed: Set<() => void>; cancelled: boolean };
     const limit = createLimiter(AI_CONCURRENCY);
     const readInBatches = createBatcher((requests: Request[]) => limit(async () => {
         // Check after getting a slot: a stopped search may have been waiting
         // behind several batches. Already-running calls are allowed to finish.
         const active = requests.filter((request) => request.needed());
-        const results = active.length ? await read(active.map((request) => request.title)) : [];
-        const answers = new Map(active.map((request, index) => [request, results[index] ?? null]));
-        return requests.map((request) => answers.get(request) ?? null);
+        const stopped = new AbortController();
+        const recheck = () => {
+            if (!active.some(request => request.needed())) {
+                for (const request of active) request.cancelled = true;
+                stopped.abort();
+            }
+        };
+        for (const request of active) request.changed.add(recheck);
+        try {
+            recheck();
+            const results = active.length ? await read(active.map((request) => request.title), stopped.signal) : [];
+            const answers = new Map(active.map((request, index) => [request, results[index] ?? null]));
+            return requests.map((request) => answers.get(request) ?? null);
+        } finally {
+            for (const request of active) request.changed.delete(recheck);
+        }
     }), { maxSize: BATCH_SIZE, maxWaitMs: 300 });
 
     // A title shared by two searches is still read just once. Cancelling one
     // search must not cancel a reading the other search still needs.
     const inFlight = new Map<string, {
         consumers: Set<AbortSignal | undefined>;
+        request: Request;
+        listen: (signal?: AbortSignal) => void;
         promise: Promise<TitleReading | null>;
     }>();
 
@@ -129,28 +145,45 @@ export function createTitleReader({
         const pending = inFlight.get(key);
 
         if (pending) {
+            // A stopped batch cannot be revived. Wait for any accepted answer
+            // to save, then reuse its cache or enqueue the still-needed title.
+            if (pending.request.cancelled) return pending.promise.then(() => readTitle(title, signal));
             pending.consumers.add(signal);
+            pending.listen(signal);
             return pending.promise;
         }
 
         const consumers = new Set([signal]);
         const needed = () => [...consumers].some((consumer) => !consumer?.aborted);
+        const request: Request = { title, needed, changed: new Set(), cancelled: false };
+        const listeners = new Map<AbortSignal, () => void>();
+        const listen = (consumer?: AbortSignal) => {
+            if (!consumer || listeners.has(consumer)) return;
+            const changed = () => { for (const listener of request.changed) listener(); };
+            listeners.set(consumer, changed);
+            consumer.addEventListener("abort", changed, { once: true });
+        };
+        listen(signal);
         const promise = (async () => {
             const saved = await load(key);
             if (saved) return saved;
             if (!needed()) return null;
 
             try {
-                const answer = await readInBatches({ title, needed });
+                const answer = await readInBatches(request);
                 if (answer) await save(key, answer);
                 return answer;
             } catch (error) {
+                if (!needed() || request.cancelled) return null;
                 console.error(`Reading a title failed: ${(error as Error).message}`);
                 return null;
             }
-        })().finally(() => inFlight.delete(key));
+        })().finally(() => {
+            for (const [consumer, listener] of listeners) consumer.removeEventListener("abort", listener);
+            inFlight.delete(key);
+        });
 
-        inFlight.set(key, { consumers, promise });
+        inFlight.set(key, { consumers, request, listen, promise });
         return promise;
     };
 }

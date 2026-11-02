@@ -6,7 +6,8 @@ import type { ListingDetails } from "../../server/ebay/listings.ts";
 const id = "v1|267743966894|0";
 const details = (): ListingDetails => ({ id, title: "Mewtwo Pokemon Base Set Holo 10/102", url: "https://www.ebay.com/itm/267743966894?tracking=server", price: 350, shipping: 6.4,
     bids: 0, buyingOption: "FIXED_PRICE", endTime: null, images: ["https://i.ebayimg.com/front.jpg", "https://i.ebayimg.com/back.jpg"], seller: null,
-    condition: "Ungraded", cardCondition: "Near mint or better", conditionNotes: [], aspects: {}, availability: "ACTIVE", retrievedAt: "2026-10-30T12:00:00Z" });
+    condition: "Ungraded", cardCondition: "Near mint or better", conditionNotes: [], aspects: {}, availability: "ACTIVE", retrievedAt: "2026-10-30T12:00:00Z",
+    listedAt: "2026-10-30T10:00:00Z", createdAt: "2026-10-29T09:00:00Z" });
 
 test("direct resolution fetches just the canonical item with current terms and strips tracking", async () => {
     let requests = 0;
@@ -14,6 +15,7 @@ test("direct resolution fetches just the canonical item with current terms and s
     const listing = await resolve("https://www.ebay.com/itm/267743966894?_skw=mewtwo&itmprp=tracking");
     assert.equal(requests, 1); assert.equal(listing.currentPrice, 350); assert.equal(listing.shipping, 6.4); assert.equal(listing.isGraded, false);
     assert.equal(listing.url, "https://www.ebay.com/itm/267743966894"); assert.equal(listing.termsCheckedAt, "2026-10-30T12:00:00Z"); assert.equal(listing.images.length, 2);
+    assert.equal(listing.listedAt, "2026-10-30T10:00:00Z"); assert.equal(listing.createdAt, "2026-10-29T09:00:00Z");
 });
 test("invalid links and variations cannot spend a detail or AI request", async () => {
     let calls = 0; const resolve = createListingResolver({ details: async () => { calls++; return details(); } });

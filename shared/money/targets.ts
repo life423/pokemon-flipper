@@ -1,7 +1,6 @@
 import { MONEY_CONFIG, type MoneyConfig } from "./config.ts";
-import { bestPath, pathNumbers, underwrite } from "./underwriting.ts";
+import { bestPath, netFromSale, pathNumbers, underwrite } from "./underwriting.ts";
 import { rateDeal } from "./rating.ts";
-import { isLongShot } from "./auction.ts";
 import { offerPlan, offerWorthMaking } from "./offer.ts";
 import type { Evaluation, ListingSummary, Screen, Targets } from "../types.ts";
 import { withFreshListing } from "../fresh-listing.ts";
@@ -50,10 +49,10 @@ export function retargetScreen(
     config: MoneyConfig = MONEY_CONFIG,
     includeOffers = false
 ): Screen {
-    if (!screen.money || price === null || screen.status === "UNSCREENED") return screen;
+    if (!screen.money || price === null || screen.status === "UNSCREENED" && !screen.conditionUpside) return screen;
 
     const repriced = withTargets(targets, config);
-    const { shipping, paths, auction, usual } = screen.money;
+    const { shipping, paths } = screen.money;
     const priced = paths.map((path) => ({
         label: path.label,
         ...pathNumbers({ expectedNet: path.expectedNet, fixedCosts: path.fixedCosts, shipping, price }, repriced),
@@ -64,11 +63,15 @@ export function retargetScreen(
     const requiresOffer = !best.clears && includeOffers && screen.money.bestOffer === true &&
         offerWorthMaking(offerPlan(price, best.maxBid));
 
-    return {
+    const repricedScreen: Screen = {
         ...screen,
         status: best.clears || requiresOffer ? "CANDIDATE" : "DROPPED",
         requiresOffer,
         bestCase: { label: best.label, maxBid: best.maxBid, profit: best.profit, roi: best.roi },
-        longShot: best.clears && isLongShot(auction, usual, best.maxBid),
     };
+    if (!screen.conditionUpside) return repricedScreen;
+    if (repricedScreen.status === "CANDIDATE") return { ...repricedScreen, needsAnalysis: undefined };
+    const upside = pathNumbers({ expectedNet: netFromSale(screen.conditionUpside.rawMarketPrice, "raw", config.selling), fixedCosts: 0, shipping, price }, repriced);
+    return { ...repricedScreen, status: upside.clears ? "UNSCREENED" : "DROPPED", needsAnalysis: upside.clears ? "IDENTITY" : undefined,
+        reason: upside.clears ? screen.reason : "Even the better-condition raw market quote does not clear your current targets. Manual analysis remains available." };
 }

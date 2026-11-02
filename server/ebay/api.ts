@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { fetchJson, ProviderError } from "../lib/http.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
 import { reserveBrowseRequest } from "./usage.ts";
+import { reserveDevelopmentBrowseRequest } from "./development-budget.ts";
 
 const EBAY_API = "https://api.ebay.com";
 
@@ -96,7 +97,7 @@ export async function ebayGet<T>(path: string, { signal, keepReserve = false }: 
         headers["X-EBAY-C-ENDUSERCTX"] = `contextualLocation=${encodeURIComponent(`country=US,zip=${process.env.EBAY_SHIP_TO_ZIP.trim()}`)}`;
     }
 
-    if (path.startsWith("/buy/browse/")) await reserveBrowseRequest(keepReserve);
+    if (path.startsWith("/buy/browse/")) await reserveDevelopmentBrowseRequest(() => reserveBrowseRequest(keepReserve), signal);
     signal?.throwIfAborted();
     const { response, body: data } = await fetchJson(`${EBAY_API}${path}`, { headers, signal }, { service: "eBay" });
 

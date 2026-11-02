@@ -1,3 +1,4 @@
+import "../fixtures/isolated-data.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { evaluateListing } from "../../server/analysis/evaluate.ts";

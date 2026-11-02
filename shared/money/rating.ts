@@ -56,20 +56,19 @@ export function rateDeal(evaluation: RatingInput): Rating | null {
     let outlook: AuctionOutlook | null = null;
 
     if (auction) {
-        // The current bid will rise, so room under the max bid means little.
-        // What matters is how often this card sells as low as the max bid.
+        // Keep observed reference facts separate from confidence in the deal.
         notes.push("It's an auction, so the price can still rise. The max bid is the most to pay.");
 
         const usual = usualPrice(underwriting.paths, best.path === "GRADED_RESALE" ? evaluation.slabPricing?.summary : null);
 
         if (usual) {
             outlook = auctionOutlook(best.maxBid, usual);
-            // Where an auction usually ends, not where it stands days early.
+            // A reference scenario, rather than a predicted closing price.
             outlook.profitAtUsual = pathNumbers(
                 { expectedNet: best.expectedNet, fixedCosts: best.fixedCosts, shipping: best.shipping, price: usual.price },
                 MONEY_CONFIG
             ).profit;
-            (outlook.chance === "LIKELY" ? strengths : concerns).push(describeOutlook(outlook, best.maxBid));
+            notes.push(describeOutlook(outlook, best.maxBid));
         }
     } else if (listing.price !== null && best.maxBid > 0) {
         room = (best.maxBid - listing.price) / best.maxBid;
@@ -150,7 +149,7 @@ export function rateDeal(evaluation: RatingInput): Rating | null {
     }
 
     return {
-        level: outlook?.chance === "LONG_SHOT" ? "LONG_SHOT" : LEVELS[Math.min(concerns.length, LEVELS.length - 1)],
+        level: LEVELS[Math.min(concerns.length, LEVELS.length - 1)],
         room: room === null ? null : Math.round(room * 1000) / 1000,
         strengths,
         concerns,

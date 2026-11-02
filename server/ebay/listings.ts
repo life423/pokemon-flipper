@@ -5,6 +5,7 @@ import { ebayUsage, EbayBudgetError } from "./usage.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
 import { photoEvidenceKey, searchPhotosFitDetails } from "../../shared/listing-evidence.ts";
 import type { BuyingOption, ListingSummary, Seller } from "../../shared/types.ts";
+import type { ListingFilters } from "../../shared/listing-filters.ts";
 
 // Toys & Hobbies > Collectible Card Games > CCG Individual Cards
 export const CCG_INDIVIDUAL_CARDS = "183454";
@@ -56,6 +57,8 @@ interface EbayItem {
     currentBidPrice?: Amount;
     bidCount?: number;
     itemEndDate?: string;
+    itemOriginDate?: string;
+    itemCreationDate?: string;
     conditionId?: string;
     condition?: string;
     image?: { imageUrl: string };
@@ -69,6 +72,8 @@ interface EbayItem {
 
 // Full details for analysis.
 export interface ListingDetails {
+    listedAt?: string | null;
+    createdAt?: string | null;
     itemGroupType?: string;
     retrievedAt?: string;
     availability?: "ACTIVE" | "UNAVAILABLE" | "UNKNOWN";
@@ -117,6 +122,15 @@ function photosOf(item: EbayItem): string[] {
     );
 }
 
+function listingDates(item: EbayItem) {
+    const validDate = (value: unknown): string | null => typeof value === "string" && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
+    const listedAt = validDate(item.itemOriginDate);
+    const createdAt = validDate(item.itemCreationDate);
+    // First available to buy and created can differ; never substitute one for
+    // the other or use our retrieval time to make old inventory look new.
+    return { ...(listedAt ? { listedAt } : {}), ...(createdAt ? { createdAt } : {}) };
+}
+
 // What buying it costs right now: the current bid for an auction, the
 // price otherwise, and the quoted shipping.
 function priceDetails(item: EbayItem) {
@@ -142,6 +156,7 @@ function toListing(item: EbayItem): ListingSummary {
         title: item.title,
         currentPrice: price,
         ...rest,
+        ...listingDates(item),
         isGraded: item.conditionId === GRADED,
         bestOffer: item.buyingOptions?.includes("BEST_OFFER") ?? false,
         categoryId: item.categories?.[0]?.categoryId,
@@ -159,11 +174,18 @@ export async function searchListings(
         keepReserve = false,
         signal,
         sort,
-    }: { maxResults?: number; anyCategory?: boolean; keepReserve?: boolean; signal?: AbortSignal; sort?: "newlyListed" | "price" } = {}
+        filters,
+        auctionEndsWithinHours,
+        asOf = Date.now(),
+    }: { maxResults?: number; anyCategory?: boolean; keepReserve?: boolean; signal?: AbortSignal; sort?: "newlyListed" | "price"; filters?: ListingFilters; auctionEndsWithinHours?: number; asOf?: number } = {}
 ): Promise<{ listings: ListingSummary[]; total: number; skipped: number }> {
     const scope = anyCategory ? "any" : "cards";
     signal?.throwIfAborted();
-    const key = `ebay:search:${maxResults}:${scope}:${sort ? `${sort}:` : ""}${normalizeText(search).trim()}${shippingCacheScope()}`;
+    const buyingOption = filters?.typeFilter && filters.typeFilter !== "all" ? filters.typeFilter : undefined;
+    const kind = filters?.kindFilter && filters.kindFilter !== "all" ? filters.kindFilter : undefined;
+    const endWindow = buyingOption === "AUCTION" && typeof auctionEndsWithinHours === "number" && Number.isFinite(auctionEndsWithinHours) && auctionEndsWithinHours > 0 ? auctionEndsWithinHours : undefined;
+    const filterScope = buyingOption || kind || endWindow ? `:filters:${JSON.stringify([buyingOption ?? null, kind ?? null, endWindow ?? null])}` : "";
+    const key = `ebay:search:${maxResults}:${scope}:${sort ? `${sort}:` : ""}${normalizeText(search).trim()}${shippingCacheScope()}${filterScope}`;
     const saved = await readCache<{ listings: ListingSummary[]; total: number; skipped: number }>(key, sort ? 1 / 60 : SEARCH_MAX_AGE_HOURS);
     signal?.throwIfAborted();
 
@@ -181,17 +203,20 @@ export async function searchListings(
     let total = 0;
     // Junk the free rules dropped: lots, sealed product, merch, fakes.
     let skipped = 0;
+    const sourceNow = asOf;
 
     for (let offset = 0; offset < maxResults; offset += PAGE_SIZE) {
         signal?.throwIfAborted();
         if (keepReserve && (await ebayUsage())?.braking) {
             throw new EbayBudgetError("Saving the rest of today's eBay allowance; extra searches paused.");
         }
+        const filter = [`buyingOptions:{${buyingOption ?? "AUCTION|FIXED_PRICE"}}`, `conditionIds:{${kind === "raw" ? UNGRADED : kind === "graded" ? GRADED : `${UNGRADED}|${GRADED}`}}`];
+        if (endWindow) filter.push(`itemEndDate:[${new Date(sourceNow).toISOString()}..${new Date(sourceNow + endWindow * 3600000).toISOString()}]`);
         const params = new URLSearchParams({
             q: `pokemon ${search}`.trim(),
             // Outside the card category, for listings filed in the wrong one.
             ...(anyCategory ? {} : { category_ids: CCG_INDIVIDUAL_CARDS }),
-            filter: `buyingOptions:{AUCTION|FIXED_PRICE},conditionIds:{${UNGRADED}|${GRADED}}`,
+            filter: filter.join(","),
             limit: String(PAGE_SIZE),
             offset: String(offset),
             ...(sort ? { sort } : {}),
@@ -294,6 +319,7 @@ async function fetchListingDetails(itemId: string, keepReserve = false): Promise
         url: item.itemWebUrl,
         images: photosOf(item),
         ...priceDetails(item),
+        ...listingDates(item),
         seller: toSeller(item.seller),
         condition: item.condition ?? null,
         cardCondition: conditionFields["Card Condition"] ?? null,

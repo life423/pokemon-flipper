@@ -17,6 +17,7 @@ import { PhotoReview, type DeeperReviewState } from "./PhotoReview";
 import styles from "./DealCard.module.css";
 import { cardDetails } from "../../../shared/card-details.ts";
 import { claimedCondition, CONDITION_NAMES } from "../../../shared/conditions.ts";
+import { isResearchDeferred } from "../../../shared/photo-review.ts";
 
 interface Props {
     index?: number;
@@ -35,10 +36,13 @@ interface Props {
     onSave?: () => void;
 }
 const COMPACT = new Intl.NumberFormat("en-US", { notation: "compact", maximumSignificantDigits: 2 });
+const LISTED_DATE = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 const signed = (value: number) => `${value < 0 ? "−" : "+"}${dollars(Math.abs(value))}`;
+const dateOf = (value: string | null | undefined) => typeof value === "string" && Number.isFinite(Date.parse(value)) ? new Date(value) : null;
 
 export function DealCard({ listing, analysis, selected, now, onOpen, years, index = 0, transitionName, minGrade = 0, targets = MONEY_CONFIG.targets, photoReviewState, saved, saving, onSave }: Props) {
     const evaluation = analysis?.status === "done" ? analysis.evaluation : null;
+    const deferred = isResearchDeferred(evaluation);
     const best = evaluation?.underwriting?.best;
     const verdict = evaluation?.underwriting?.verdict;
     const deal = verdict?.startsWith("BUY");
@@ -47,7 +51,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
     const screen = listing.screen;
     const pricePending = !evaluation && screen?.priceAnomaly && !screen.priceAnomaly.photoChecked;
     const plan = offerFor(listing, best?.maxBid);
-    const offer = verdict === "PASS" && offerWorthMaking(plan) ? plan : null;
+    const offer = !deferred && verdict === "PASS" && offerWorthMaking(plan) ? plan : null;
     const offerNumbers = offer && best ? numbersAtOffer(best, offer) : null;
     const evidence = evaluation ? photoEvidence(evaluation, minGrade) : null;
     const mistakes = currentSellerMistakes(listing, evaluation);
@@ -57,13 +61,12 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
     const number = card?.cardNumber?.replace(/^0+(?=\d)/, "");
     const title = card?.name ? [card.name, number].filter(Boolean).join(" ") : listing.title;
     const subtitle = card?.name ? [card.set, yearOf(years, card.set), card.printing !== "UNLIMITED" ? card.printingLabel : null].filter(Boolean).join(" · ") : listing.isGraded ? "Graded card" : "Raw card";
-    const longShot = evaluation?.rating?.level === "LONG_SHOT" || screen?.longShot;
     const [badge, tone] = analysis?.status === "loading" ? ["Analyzing", "pending"]
         : analysis?.status === "error" ? ["Analysis failed", "watch"]
+        : deferred ? ["Research deferred", "quiet"]
         : decision?.status === "ENDED" ? ["Ended", "quiet"]
         : decision?.status === "OVER_LIMIT" ? ["Over limit", "pass"]
         : decision?.status === "PROVISIONAL" ? ["Your review needed", "watch"]
-        : longShot ? ["Long shot", "quiet"]
         : deal && auction ? [decision?.breakEven ? "Break-even" : "Within limit", decision?.breakEven ? "watch" : "buy"]
         : deal ? [evaluation?.rating?.level === "THIN" ? "Thin margin" : best?.path === "GRADE" ? "Buy + grade" : "Buy", best?.path === "GRADE" ? "grade" : "buy"]
         : offer ? ["Offer", "offer"]
@@ -79,18 +82,22 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
     const sellerText = seller?.feedbackScore === 0 ? "New seller" : seller?.feedbackPercentage != null
         ? `${seller.feedbackPercentage}% · ${seller.feedbackScore == null ? "rating count unavailable" : `${seller.feedbackScore < 1000 ? seller.feedbackScore.toLocaleString() : COMPACT.format(seller.feedbackScore)} ratings`}` : "Not available";
     const ceiling = best?.maxBid ?? (!evaluation ? screen?.bestCase?.maxBid : null);
+    const listedAt = dateOf(evaluation?.listing.listedAt) ?? dateOf(listing.listedAt);
+    const listingDate = listedAt ?? dateOf(evaluation?.listing.createdAt) ?? dateOf(listing.createdAt);
     return <article className={`${styles.card} ${selected ? styles.selected : ""}`} data-tone={tone}
         style={{ "--i": Math.min(index, 10), viewTransitionName: transitionName } as CSSProperties}>
         <button type="button" className={styles.hit} onClick={onOpen} aria-label={`Open ${title}, ${auction ? "Auction" : "Buy It Now"}, ${details.source}: ${details.grade}, ${details.finish}`} />
         <header className={styles.head}>
             <div className={styles.photo}>{listing.images[0] && <img src={listing.images[0]} alt="" loading="lazy" />}</div>
-            <div className={styles.identity}><p className={styles.saleType}>{auction ? "Auction" : "Buy It Now"}</p><h2>{title}</h2><p>{subtitle}</p><p className={styles.details}><span>{details.source}: </span>{details.grade} · {details.finish}</p></div>
+            <div className={styles.identity}><p className={styles.saleType}>{auction ? "Auction" : "Buy It Now"}</p><h2>{title}</h2><p>{subtitle}</p><p className={styles.details}><span>{details.source}: </span>{details.grade} · {details.finish}</p>
+                <p>{listingDate ? <>{listedAt ? "Listed" : "Created"} <time dateTime={listingDate.toISOString()} title={listingDate.toUTCString()}>{LISTED_DATE.format(listingDate)}</time></> : "Listed time unavailable"}</p>
+            </div>
             <span className={styles.badge}>{badge}</span>
         </header>
         <PhotoReview compact evaluation={evaluation} listing={listing} state={photoReviewState} phase={analysis?.status === "loading" || analysis?.status === "error" ? analysis.status : undefined} />
         {evaluation?.underwriting?.verdict === "CANT_PRICE" && <p className={styles.note}>{evaluation.underwriting.reasons[0]}</p>}
         {!evaluation && screen?.status === "UNSCREENED" && <p className={styles.note}>{screen.pricingIssue?.kind === "RATE_LIMIT" ? "Pricing paused for provider cooldown." : screen.pricingIssue?.kind === "TEMPORARY" ? "Price lookup temporarily unavailable." : screen.pricingIssue?.kind === "CREDITS" ? "Pricing unavailable. Check provider credits." : screen.pricingIssue?.kind === "CONFIG" ? "Pricing unavailable. Check provider setup." : screen.reason}</p>}
-        {auction && evaluation ? <AuctionSummary evaluation={evaluation} targets={targets} now={now} /> : <>
+        {deferred ? <div className={styles.money}><div><span className={styles.label}>{auction ? "Current bid" : "Asking price"}</span><strong className={styles.price}>{dollars(listing.currentPrice)}</strong></div></div> : auction && evaluation ? <AuctionSummary evaluation={evaluation} targets={targets} now={now} /> : <>
             <div className={styles.money}>
                 <div><span className={styles.label}>{auction ? "Current bid" : "Asking price"}</span><strong className={styles.price}>{dollars(listing.currentPrice)}</strong></div>
                 {best && <div><span className={styles.label}>Est. net {best.profit < 0 ? "loss" : "profit"} at asking</span><strong className={best.profit >= 0 ? styles.gain : styles.loss}>{dollars(Math.abs(best.profit))}</strong><span className={styles.label}>{returnText(best.cost > 0 ? best.profit / best.cost : null)} return on total cost</span></div>}

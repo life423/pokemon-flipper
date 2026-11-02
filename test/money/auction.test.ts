@@ -1,37 +1,28 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { auctionOutlook, describeOutlook, isLongShot } from "../../shared/money/auction.ts";
+import { auctionOutlook, describeOutlook } from "../../shared/money/auction.ts";
 import { rateDeal } from "../../shared/money/rating.ts";
 
 // Recent PSA 6 Alakazam sales.
 const SLAB = { price: 62, sales: [41, 55, 60, 62, 70] };
 
-test("a slab auction that never sells near the max bid is a long shot", () => {
+test("auction comparisons retain observed prices and a clear bid limit without inventing win odds", () => {
     const outlook = auctionOutlook(10, SLAB);
 
-    assert.equal(outlook.chance, "LONG_SHOT");
     assert.equal(outlook.salesAtOrUnder, 0);
-    assert.match(describeOutlook(outlook, 10), /market reference is about \$62\.00; 0 of 5 recent sales went for \$10\.00 or less/);
+    assert.match(describeOutlook(outlook, 10), /item-bid limit is \$10\.00.*market reference is about \$62\.00; 0 of 5 observed sales went for \$10\.00 or less/);
 });
 
-test("a slab auction is possible when some recent sales went that low", () => {
-    assert.equal(auctionOutlook(56, SLAB).chance, "POSSIBLE");
+test("a raw market quote supplies a reference without assuming a sale distribution", () => {
+    for (const bid of [300, 450, 600]) {
+        const outlook = auctionOutlook(bid, { price: 500 });
+        assert.equal(outlook.salesAtOrUnder, null); assert.equal(outlook.salesTotal, null);
+        assert.equal(outlook.usualPrice, 500);
+    }
 });
 
-test("a raw auction is judged against its market price", () => {
-    assert.equal(auctionOutlook(600, { price: 500 }).chance, "LIKELY");
-    assert.equal(auctionOutlook(450, { price: 500 }).chance, "POSSIBLE");
-    assert.equal(auctionOutlook(300, { price: 500 }).chance, "LONG_SHOT");
-});
-
-test("only auctions are long shots", () => {
-    assert.equal(isLongShot(true, SLAB, 10), true);
-    assert.equal(isLongShot(false, SLAB, 10), false);
-    assert.equal(isLongShot(true, null, 10), false);
-});
-
-test("a long-shot auction is rated a long shot, not a strong deal", () => {
-    const best = { path: "GRADED_RESALE", status: "PRICED", label: "Resell as PSA 6", maxBid: 10, downside: 5, profit: 40, salePrice: 62 };
+test("an auction's market-reference gap does not override actual deal evidence or change its rating", () => {
+    const best = { path: "GRADED_RESALE", status: "PRICED", label: "Resell as PSA 6", maxBid: 10, downside: 5, profit: 40, salePrice: 62, expectedNet: 50, fixedCosts: 0, shipping: 0 };
     const rating = rateDeal({
         listing: { price: 0.99, buyingOption: "AUCTION", seller: null, cardCondition: null },
         underwriting: { verdict: "BUY_GRADED", best, paths: [best], reasons: [], assumptions: [] },
@@ -44,11 +35,12 @@ test("a long-shot auction is rated a long shot, not a strong deal", () => {
         gradedPricing: null,
     });
 
-    assert.equal(rating.level, "LONG_SHOT");
-    assert.equal(rating.auction.chance, "LONG_SHOT");
+    assert.equal(rating.level, "STRONG");
+    assert.deepEqual(rating.concerns, []);
+    assert.match(rating.notes.join(" "), /0 of 5 observed sales/);
 });
 
-test("a likely auction shows the profit if it ends at its usual price, not at today's bid", () => {
+test("reference-price profit remains a scenario calculated with existing costs", () => {
     // The 1st Edition Neo Genesis Lugia, MP, at 87 cents with 6 days left.
     const raw = { path: "RAW", status: "PRICED", label: "Resell raw", salePrice: 1134.84 };
     const best = {
@@ -64,7 +56,6 @@ test("a likely auction shows the profit if it ends at its usual price, not at to
         slabPricing: null,
     });
 
-    assert.equal(rating.auction.chance, "LIKELY");
     assert.equal(rating.auction.profitAtUsual, 92.61);
-    assert.match(describeOutlook(rating.auction, best.maxBid), /winning there would make about \$92\.61/);
+    assert.match(describeOutlook(rating.auction, best.maxBid), /At that reference price, estimated profit would be \$92\.61/);
 });

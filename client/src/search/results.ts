@@ -3,8 +3,9 @@ import type { AnalysisState } from "../analysis-state";
 import { canAutoAnalyze, meetsMinimumGrade, resultGroup, type ResultGroup } from "../../../shared/analysis.ts";
 import { compareAnalysisPriority } from "../../../shared/analysis-priority.ts";
 import { evaluatedCriteriaMismatch } from "../../../shared/search-criteria.ts";
-import { offerFor, offerWorthMaking } from "../../../shared/money/offer.ts";
+import { rateDeal } from "../../../shared/money/rating.ts";
 import { compareListingEvidence, listingSignals } from "../../../shared/signals.ts";
+import { matchesListingFilters } from "../../../shared/listing-filters.ts";
 
 export type View = ResultGroup | "hidden" | "all" | "new";
 
@@ -28,10 +29,11 @@ interface ResultsContext {
 }
 export type ResultGroups = Record<View, ListingSummary[]>;
 
-const LEVEL_ORDER: Record<RatingLevel, number> = { STRONG: 0, GOOD: 1, THIN: 2, LONG_SHOT: 3 };
+const LEVEL_ORDER: Record<RatingLevel, number> = { STRONG: 0, GOOD: 1, THIN: 2 };
+const currentRating = (evaluation: Evaluation | null) => evaluation?.rating && !Object.hasOwn(LEVEL_ORDER, evaluation.rating.level) ? rateDeal(evaluation) : evaluation?.rating;
 
 export const evaluationOf = (analysis?: AnalysisState) => (analysis?.status === "done" ? analysis.evaluation : null);
-const isDeal = (evaluation: Evaluation | null) => evaluation?.underwriting?.verdict.startsWith("BUY") ?? false;
+const isDeal = (evaluation: Evaluation | null) => evaluation?.researchMode !== "DEFERRED_LOW_RESALE" && (evaluation?.underwriting?.verdict.startsWith("BUY") ?? false);
 
 const SORTS: Record<Exclude<SortKey, "best" | "overlooked">, (a: ListingSummary, b: ListingSummary) => number> = {
     // Listings without an end date (most Buy It Now) go last.
@@ -54,50 +56,34 @@ export function filterSearchResults({ listings, analyses, filters: { typeFilter,
             return page !== "search" || !intent || !evaluation || !evaluatedCriteriaMismatch(evaluation, intent);
         })
         .filter((listing) => listing.availability !== "UNAVAILABLE")
-        .filter((listing) => typeFilter === "all" || listing.buyingOption === typeFilter)
-        .filter((listing) => kindFilter === "all" || listing.isGraded === (kindFilter === "graded"))
+        .filter((listing) => matchesListingFilters(listing, { typeFilter, kindFilter, maxPrice: limit, minPrice: floor }))
         .filter((listing) => {
             const evaluation = evaluationOf(analyses[listing.id]);
             return !evaluation || meetsMinimumGrade(evaluation, minGrade);
         })
-        .filter((listing) => (listing.currentPrice ?? 0) <= limit)
-        .filter((listing) => listing.buyingOption !== "FIXED_PRICE" || (listing.currentPrice ?? 0) >= floor)
         .filter((listing) => !listing.endTime || Date.parse(listing.endTime) > now);
 }
 
 export function groupSearchResults(filtered: ListingSummary[], analyses: Record<string, AnalysisState>, includeOffers: boolean, newIds: ReadonlySet<string>): ResultGroups {
-    const grouped: Record<ResultGroup, ListingSummary[]> = { deals: [], offers: [], candidates: [], longShots: [], review: [] };
+    const grouped: Record<ResultGroup, ListingSummary[]> = { deals: [], offers: [], candidates: [], review: [] };
 
     for (const listing of filtered) {
         const evaluation = evaluationOf(analyses[listing.id]);
         const group = resultGroup(listing, evaluation, includeOffers, analyses[listing.id]?.status === "error");
-        if (group) grouped[group].push(listing);
+        if (group === "deals" || group === "offers" || group === "review") grouped[group].push(listing);
+        else grouped.candidates.push(listing);
     }
 
-    // Turned up by Dig deeper, shown only while genuine profit still exists:
-    // a verified deal or offer, or a candidate still being checked.
-    const hidden = filtered.filter((listing) => {
-        if (!listing.found) return false;
-
-        const evaluation = evaluationOf(analyses[listing.id]);
-
-        if (evaluation) {
-            const verdict = evaluation.underwriting?.verdict;
-            return isDeal(evaluation) || (listing.mistakes?.length && verdict === "NEEDS_REVIEW") || (includeOffers && verdict === "PASS" && offerWorthMaking(offerFor(listing, evaluation.underwriting?.best?.maxBid)));
-        }
-
-        return listing.screen?.status === "CANDIDATE" || Boolean(listing.mistakes?.length);
-    });
-
-    return { ...grouped, hidden, all: filtered, new: filtered.filter((listing) => newIds.has(listing.id)) };
+    // Compatibility keys remain empty; discovery uses the ordinary outcome groups.
+    return { ...grouped, hidden: [], all: filtered, new: filtered.filter((listing) => newIds.has(listing.id)) };
 }
 
 export function sortSearchResults(listings: ListingSummary[], analyses: Record<string, AnalysisState>, sort: SortKey, targets: Targets, now: number): ListingSummary[] {
     const compareBest = (a: ListingSummary, b: ListingSummary) => {
         const ea = evaluationOf(analyses[a.id]);
         const eb = evaluationOf(analyses[b.id]);
-        const ra = isDeal(ea) ? ea?.rating : null;
-        const rb = isDeal(eb) ? eb?.rating : null;
+        const ra = isDeal(ea) ? currentRating(ea) : null;
+        const rb = isDeal(eb) ? currentRating(eb) : null;
 
         if (ra && rb) {
             if (ra.level !== rb.level) return LEVEL_ORDER[ra.level] - LEVEL_ORDER[rb.level];
@@ -118,7 +104,11 @@ export function sortSearchResults(listings: ListingSummary[], analyses: Record<s
     return [...listings].sort(sort === "best" ? compareBest : sort === "overlooked" ? compareOverlooked : SORTS[sort]);
 }
 
-export function countSearchResults({ listings, analyses, newMode, newIds, page, intent }: ResultsContext & { newMode: boolean; newIds: ReadonlySet<string> }) {
+export function countSearchResults({ listings, analyses, newMode, newIds, page, intent, filters }: ResultsContext & { newMode: boolean; newIds: ReadonlySet<string>; filters?: SearchFilters }) {
+    listings = filters ? listings.filter(listing => matchesListingFilters(listing, {
+        typeFilter: filters.typeFilter, kindFilter: filters.kindFilter,
+        minPrice: Number(filters.minPrice) || 0, maxPrice: filters.maxPrice === "" ? undefined : Number(filters.maxPrice),
+    })) : listings;
     const count = (status: string) => listings.filter((listing) => listing.screen?.status === status).length;
     const analyzing = listings.filter((listing) => analyses[listing.id]?.status === "loading").length;
 

@@ -3,3 +3,6 @@ node_modules/
 .DS_Store
 data/
 client/dist/
+
+# Private local roadmap and product ideas.
+/LOCAL_PLAN.md

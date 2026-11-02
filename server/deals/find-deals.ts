@@ -7,6 +7,7 @@ import type { ListingSummary, SearchIntent, Targets } from "../../shared/types.t
 import { criteriaMismatch, marketplaceQuery, searchAttributes } from "../../shared/search-criteria.ts";
 import { AI_CONCURRENCY } from "../../shared/work-limits.ts";
 import { screeningSteps, screenListing } from "./screen-listing.ts";
+import { AUTOMATIC_AUCTION_WINDOW_HOURS, worthScreening, type ListingFilters } from "../../shared/listing-filters.ts";
 
 // Preserve the existing public screening imports for scripts and tests.
 export { screeningSteps, screenListing, shippingCouldChange, REAL_STEPS } from "./screen-listing.ts";
@@ -25,8 +26,15 @@ const DEFAULT_RESULTS = 400;
 const MOST_RESULTS = 1000;
 const PARALLEL_LISTINGS = AI_CONCURRENCY;
 
+interface FindSteps {
+    readIntent: typeof readSearch;
+    search: typeof searchListings;
+    readTitle: typeof readTitle;
+    screening: typeof screeningSteps;
+}
+
 export interface SearchSummary {
-    mode?: "new";
+    mode?: "new" | "development";
     deferred?: number;
     previouslySeen?: number;
     // eBay's count for the search, and how many were fetched and kept.
@@ -54,25 +62,34 @@ export async function findDeals(
         targets,
         includeOffers = false,
         newOnly,
+        filters,
+        screenLimit,
+        asOf = Date.now(),
     }: {
         onStart?: (summary: SearchSummary) => void;
         onListing?: (listing: ListingSummary) => void;
         maxResults?: number;
         // Buy It Now listings under this are skipped; auctions aren't affected.
         minPrice?: number;
+        filters?: ListingFilters;
+        // Explicit development scope: cap work before title/photo screening.
+        screenLimit?: number;
+        asOf?: number;
         // A stopped search: the listings not yet checked are skipped, so no
         // more eBay requests or AI calls go out.
         signal?: AbortSignal;
         targets?: Targets;
         includeOffers?: boolean;
         newOnly?: { excludeIds: readonly string[]; limit: number };
-    } = {}
+    } = {},
+    dependencies: FindSteps = { readIntent: readSearch, search: searchListings, readTitle, screening: screeningSteps }
 ): Promise<ListingSummary[]> {
     if (signal?.aborted) return [];
-    const intent = await readSearch(search, signal);
+    const intent = await dependencies.readIntent(search, signal);
     if (signal?.aborted) return [];
-    const limit = Math.min(MOST_RESULTS, Math.max(200, Math.round(maxResults / 200) * 200));
-    const { listings, total, skipped } = await searchListings(marketplaceQuery(search, intent), { maxResults: newOnly ? 200 : limit, signal, ...(newOnly ? { sort: "newlyListed" as const, keepReserve: true } : {}) });
+    const limited = screenLimit !== undefined && Number.isFinite(screenLimit) ? Math.max(0, Math.floor(screenLimit)) : undefined;
+    const limit = limited === undefined ? Math.min(MOST_RESULTS, Math.max(200, Math.round(maxResults / 200) * 200)) : 200;
+    const { listings, total, skipped } = await dependencies.search(marketplaceQuery(search, intent), { maxResults: limited === undefined && newOnly ? 200 : limit, signal, filters, asOf, auctionEndsWithinHours: AUTOMATIC_AUCTION_WINDOW_HOURS, ...(newOnly ? { sort: "newlyListed" as const, keepReserve: true } : {}) });
     if (signal?.aborted) return [];
     const now = Date.now();
     const requestsBefore = detailRequestCount();
@@ -80,28 +97,30 @@ export async function findDeals(
     const live = listings.filter((listing) => !listing.endTime || Date.parse(listing.endTime) > now);
     const excluded = new Set(newOnly?.excludeIds ?? []);
     const unseen = live.filter((listing) => !excluded.has(listing.id));
+    const listingFilters = { ...filters, minPrice: filters?.minPrice ?? minPrice };
     const eligible = unseen.filter(
         (listing) =>
-            titleMatches(listing.title, intent) &&
+            worthScreening(listing, listingFilters, asOf) && titleMatches(listing.title, intent) &&
             gradingMatches(listing.isGraded, intent) &&
-            !criteriaMismatch(searchAttributes(listing.title), intent, false) &&
-            !(listing.buyingOption === "FIXED_PRICE" && (listing.currentPrice ?? 0) < minPrice)
+            !criteriaMismatch(searchAttributes(listing.title), intent, false)
     );
 
-    const matching = newOnly ? eligible.slice(0, newOnly.limit) : eligible;
+    const selected = newOnly ? eligible.slice(0, newOnly.limit) : eligible;
+    const matching = limited === undefined ? selected : selected.slice(0, limited);
     onStart({ total, found: live.length, count: matching.length, skipped, intent,
-        ...(newOnly ? { mode: "new", deferred: Math.max(0, eligible.length - matching.length), previouslySeen: live.length - unseen.length } : {}) });
+        ...(newOnly || limited !== undefined ? { mode: limited === undefined ? "new" : "development", deferred: Math.max(0, eligible.length - matching.length),
+            ...(newOnly ? { previouslySeen: live.length - unseen.length } : {}) } : {}) });
 
     // Every title queued for reading at once, so the AI gets full batches
     // of 25, but not waited on: each listing is checked as soon as its own
     // title comes back, so results start arriving within seconds.
     if (signal?.aborted) return [];
-    for (const listing of matching) void readTitle(listing.title, signal);
+    for (const listing of matching) if (worthScreening(listing, listingFilters, asOf)) void dependencies.readTitle(listing.title, signal);
 
-    const steps = screeningSteps(targets, includeOffers, signal);
+    const steps = dependencies.screening(targets, includeOffers, signal);
 
     const results = await mapLimit(matching, PARALLEL_LISTINGS, async (listing) => {
-        if (signal?.aborted) return null;
+        if (signal?.aborted || !worthScreening(listing, listingFilters, asOf)) return null;
 
         let screened: ListingSummary;
         try {
@@ -110,7 +129,7 @@ export async function findDeals(
             if (signal?.aborted) return null;
             throw error;
         }
-        if (signal?.aborted) return null;
+        if (signal?.aborted || !worthScreening(screened, listingFilters, asOf)) return null;
         const mismatch = screened.match ?? cardMismatch(screened.screen, intent);
         const result = mismatch ? { ...screened, match: mismatch } : screened;
 

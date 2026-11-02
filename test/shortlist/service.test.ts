@@ -85,3 +85,15 @@ test("saving an old browser snapshot keeps newer locally verified terms", async 
     const saved = await service.save({ ...listing(), currentPrice: 1 });
     assert.equal(saved.listing.currentPrice, 28); assert.equal(saved.evaluation?.listing.price, 28);
 });
+
+test("shortlist save and refresh preserve known listing dates without fetching to fill missing dates", async t => {
+    const store = await fixture(t);
+    const listedAt = "2026-11-02T10:00:00.000Z", createdAt = "2026-11-01T09:00:00.000Z";
+    let requests = 0;
+    const service = createShortlistService({ store, load: async () => null, cached: async () => ({ ...details(), listedAt, createdAt }),
+        details: async () => { requests++; return details(); } });
+    const saved = await service.save(listing());
+    assert.equal(saved.listing.listedAt, listedAt); assert.equal(saved.listing.createdAt, createdAt); assert.equal(requests, 0);
+    const refreshed = (await service.refresh([saved.id])).entries[0];
+    assert.equal(refreshed.listing.listedAt, listedAt); assert.equal(refreshed.listing.createdAt, createdAt); assert.equal(requests, 1);
+});

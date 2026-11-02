@@ -5,6 +5,8 @@ import { canRetryPricing } from "../../shared/pricing-retries.ts";
 import type { ListingSummary } from "../../shared/types.ts";
 import type { PricingRecoveryProgress } from "../../shared/pricing-retries.ts";
 
+export { DEVELOPMENT_SEARCH_LIMIT } from "../../shared/research-policy.ts";
+
 export interface DiscoveryProgress {
     status: "checking" | "done" | "error";
     checked: number;
@@ -16,20 +18,26 @@ export interface DiscoveryProgress {
 // search, shares its criteria, and never checks the same listing twice.
 export async function searchWithDiscovery(
     search: string,
-    options: NonNullable<Parameters<typeof findDeals>[1]> & { onDiscovery?: (progress: DiscoveryProgress) => void; onPricing?: (progress: PricingRecoveryProgress) => void;
+    options: NonNullable<Parameters<typeof findDeals>[1]> & { developmentLimit?: number; onDiscovery?: (progress: DiscoveryProgress) => void; onPricing?: (progress: PricingRecoveryProgress) => void;
         onPricingListing?: (listing: ListingSummary, snapshotKey: string) => void } = {},
     steps: { find: typeof findDeals; discover: typeof digDeeper; recover?: typeof recoverSearchPricing } = { find: findDeals, discover: digDeeper, recover: recoverSearchPricing }
 ): Promise<void> {
+    options = { ...options, asOf: options.asOf ?? Date.now() };
     let summary: SearchSummary | undefined;
     const snapshots = new Map<string, ListingSummary>();
     const emit = (listing: ListingSummary) => { snapshots.set(listing.id, listing); options.onListing?.(listing); };
     const listings = await steps.find(search, {
         ...options,
+        ...(options.developmentLimit !== undefined ? { screenLimit: options.developmentLimit, maxResults: 200 } : {}),
         onListing: emit,
         onStart: (value) => { summary = value; options.onStart?.(value); },
     });
     for (const listing of listings) if (!snapshots.has(listing.id)) snapshots.set(listing.id, listing);
     if (options.signal?.aborted) return;
+    if (options.developmentLimit !== undefined) {
+        options.onDiscovery?.({ status: "done", checked: 0, total: 0, note: "Development mode checks a few cards without broad discovery or automatic pricing retries." });
+        return;
+    }
     const recover = (rows: ListingSummary[]) => steps.recover?.(rows, {
         signal: options.signal, targets: options.targets, includeOffers: options.includeOffers,
         onListing: (listing, snapshotKey) => { snapshots.set(listing.id, listing);

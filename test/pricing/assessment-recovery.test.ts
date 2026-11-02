@@ -30,3 +30,12 @@ test("a second temporary failure stops, and a retry without a date uses bounded 
     await assert.rejects(withPricingRecovery(async () => { calls++; throw new PricingProviderError("temporary", "TEMPORARY"); }, { now: () => 1000, wait: async ms => { waits.push(ms); } }));
     assert.equal(calls, 2); assert.deepEqual(waits, [30_000]);
 });
+
+
+test("Stop during a pricing cooldown prevents its later retry", async () => {
+    const stopped = new AbortController(); let calls = 0;
+    await assert.rejects(withPricingRecovery(async () => {
+        calls++; throw new PricingProviderError("temporary", "TEMPORARY");
+    }, { signal: stopped.signal, wait: async () => { stopped.abort(); } }), { name: "AbortError" });
+    assert.equal(calls, 1);
+});

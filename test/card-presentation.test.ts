@@ -4,6 +4,7 @@ import { auctionDecision, gradingRoutes, returnText, scenarioAt } from "../share
 import { cardEvaluation, salesSummary } from "./fixtures/card-evaluation.ts";
 import { pathNumbers } from "../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../shared/money/config.ts";
+import { mixedCoverageEvaluation } from "./fixtures/photo-coverage.ts";
 
 const any = { minProfit: 0, minRoi: 0 };
 test("auction profit, total investment and ROI all use the displayed winning price", () => {
@@ -97,4 +98,21 @@ test("rendering decisions and changing hypothetical prices makes no provider req
     t.mock.method(globalThis, "fetch", () => { throw new Error("presentation must not fetch"); });
     auctionDecision(e); gradingRoutes(e); scenarioAt(e.underwriting!.best!, 40);
     assert.deepEqual(e, before);
+});
+
+test("raw resale does not demand a PSA grade, while global photo and purchase holds remain provisional", () => {
+    const e = mixedCoverageEvaluation();
+    e.underwriting!.best!.path = "RAW";
+    e.condition!.gradeRange.likely = null;
+    assert.equal(auctionDecision(e).provisional, false);
+    e.condition!.rawCondition = "UNKNOWN";
+    assert.equal(auctionDecision(e).provisional, true);
+    e.condition!.rawCondition = "LIGHTLY_PLAYED";
+    e.photoCheck!.images = e.photoCheck!.images.filter(photo => photo.view !== "BACK");
+    assert.equal(auctionDecision(e).provisional, true, "close-ups cannot replace whole-back coverage");
+    const held = mixedCoverageEvaluation();
+    held.underwriting!.verdict = "NEEDS_REVIEW"; held.underwriting!.reasons = ["Material label conflict."];
+    assert.equal(auctionDecision(held).provisional, true);
+    const incomplete = mixedCoverageEvaluation(); incomplete.photoCheck = null;
+    assert.equal(auctionDecision(incomplete).provisional, true, "an absent photo assessment cannot support a confirmed bid limit");
 });

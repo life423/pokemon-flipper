@@ -1,10 +1,13 @@
 import { EbayError } from "../ebay/api.ts";
 import { EbayBudgetError } from "../ebay/usage.ts";
 import { ProviderError } from "../lib/http.ts";
+import { aiSpendingFailure } from "../ai/spending.ts";
 
 // Known provider errors carry actionable, controlled text. Never expose an
 // arbitrary exception or raw response body (which may contain credentials).
 export function searchFailureMessage(error: unknown): string {
+    const spending = aiSpendingFailure(error);
+    if (spending) return spending.message;
     if (error instanceof ProviderError || error instanceof EbayBudgetError) return error.message;
     if (error instanceof EbayError) {
         if (error.status === 401) return "eBay authorization expired or was rejected. Check the Production credentials in .env, then restart the app.";

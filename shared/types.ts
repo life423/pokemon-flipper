@@ -35,6 +35,10 @@ export interface Screen {
     needsAnalysis?: "IDENTITY" | "FINISH" | "SLAB_LABEL" | "PRICE_EVIDENCE";
     status: "CANDIDATE" | "DROPPED" | "UNSCREENED";
     reason: string | null;
+    // A preliminary raw-market quote, never a certified graded resale ceiling.
+    lowResale?: { minimum: number; rawMarketMaximum: number; cheapFirstEditionBaseSet: boolean };
+    focusedReview?: "CHEAP_FIRST_EDITION_BASE_SET";
+    conditionUpside?: { sellerCondition: RawCondition; targetCondition: RawCondition; rawMarketPrice: number };
     pricingIssue?: PricingIssue;
     pricingRetry?: PricingRetry;
     card: {
@@ -58,9 +62,6 @@ export interface Screen {
         usual: UsualPrice | null;
         bestOffer?: boolean;
     };
-    // An auction that will very likely end above even its best-case max
-    // bid. Lower priority, but still eligible for AI.
-    longShot?: boolean;
     requiresOffer?: boolean;
     priceAnomaly?: { referencePrice: number; photoChecked: boolean };
     evidence?: { photos: number; mainPhoto: "MATCH" | "CANT_TELL" | "UNKNOWN" };
@@ -75,6 +76,10 @@ export interface Screen {
 
 // Today's eBay Browse allowance, from eBay's own count.
 export interface EbayUsage {
+    devRemaining?: number;
+    devLimit?: number;
+    devExpiresAt?: string;
+    devRenewalRequired?: boolean;
     used: number;
     limit: number;
     remaining: number;
@@ -124,6 +129,9 @@ export interface SellerMistake {
 
 // One search result, with the free check once it's run.
 export interface ListingSummary {
+    // eBay first-available time and creation time are separate facts.
+    listedAt?: string | null;
+    createdAt?: string | null;
     listedAttributes?: { grader: string | null; grade: number | null; finish: "HOLO" | "NON_HOLO" | "REVERSE_HOLO" | null };
     termsCheckedAt?: string;
     availability?: "ACTIVE" | "UNAVAILABLE" | "UNKNOWN";
@@ -466,18 +474,16 @@ export interface UsualPrice {
     sales?: number[];
 }
 
-// How likely an auction is to end at or under the max bid.
+// Observed auction comparison facts, without a modeled probability of winning.
 export interface AuctionOutlook {
-    chance: "LIKELY" | "POSSIBLE" | "LONG_SHOT";
     usualPrice: number;
     salesAtOrUnder: number | null;
     salesTotal: number | null;
-    // Profit if the auction ends at the usual price: the realistic outcome.
+    // Estimated profit at the reference price, not a closing-price prediction.
     profitAtUsual?: number | null;
 }
 
-// LONG_SHOT: an auction that will very likely end above the max bid.
-export type RatingLevel = "STRONG" | "GOOD" | "THIN" | "LONG_SHOT";
+export type RatingLevel = "STRONG" | "GOOD" | "THIN";
 
 export interface Rating {
     level: RatingLevel;
@@ -486,7 +492,7 @@ export interface Rating {
     strengths: string[];
     concerns: string[];
     notes: string[];
-    // For an auction: how likely it is to end at or under the max bid.
+    // For an auction: market-reference and observed-sale comparison facts.
     auction?: AuctionOutlook | null;
 }
 
@@ -509,6 +515,7 @@ export interface DeeperPhotoReview {
 }
 
 export interface Evaluation {
+    researchMode?: "FULL" | "FOCUSED_LOW_RESALE" | "DEFERRED_LOW_RESALE";
     conditionVersion?: string;
     assessmentVersion?: string;
     pricingVersion?: string;
@@ -517,6 +524,8 @@ export interface Evaluation {
     photoReviewKey?: string;
     deeperPhotoReview?: DeeperPhotoReview;
     listing: {
+        listedAt?: string | null;
+        createdAt?: string | null;
         termsCheckedAt?: string;
         availability?: "ACTIVE" | "UNAVAILABLE" | "UNKNOWN";
         id: string;

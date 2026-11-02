@@ -17,7 +17,6 @@ test("resolvable identity/finish/label gaps queue analysis without overriding ex
     const cheap: ListingSummary = { ...listing, match: undefined, screen: { ...listing.screen!, needsAnalysis: undefined, priceAnomaly: { referencePrice: 1000, photoChecked: false } } };
     assert.equal(canAutoAnalyze(cheap), true, "an unusually low price calls for immediate AI verification, not delayed discovery");
     assert.equal(resultGroup(cheap, null), "candidates");
-    assert.equal(canAutoAnalyze({ ...cheap, screen: { ...cheap.screen!, status: "CANDIDATE", longShot: true } }), true, "auction likelihood must not prohibit photo verification");
     const e = cardEvaluation(); e.identity!.finish = "HOLO";
     e.photoCheck!.slab = { present: true, grader: "PSA", grade: "7", gradeQualifier: null, certNumber: "123", labelText: "PSA 7", caseCondition: "INTACT", authenticity: "NONE_SEEN", concerns: [] };
     const intent = readSearchByRules("Aquapolis PSA 7 holo");
@@ -27,12 +26,13 @@ test("resolvable identity/finish/label gaps queue analysis without overriding ex
     assert.equal(withResolvedCriteria(listing, e, intent).match, "UNCONFIRMED_CRITERIA", "raw predicted grades cannot satisfy a slab request");
 });
 
-test("preliminary financial rejection and temporary price gaps cannot veto AI; definitive exclusions remain", () => {
+test("price-first rejection defers automatic work while temporary gaps and verified discoveries can be resolved", () => {
     const listing: ListingSummary = { id: "1", title: "Raw card seller calls damaged", url: "#", currentPrice: 100, shipping: 7, buyingOption: "FIXED_PRICE", images: ["photo"], bids: 0, endTime: null, seller: null, isGraded: false,
         screen: { status: "DROPPED", reason: "Seller's price estimate does not clear targets", card: null, assumed: "Damaged", bestCase: null,
             money: { shipping: 7, auction: false, usual: null, paths: [{ label: "Sell raw", expectedNet: 50, fixedCosts: 0 }] } } };
-    assert.equal(canAutoAnalyze(listing), true);
-    assert.equal(resultGroup(listing, null), "candidates");
+    assert.equal(canAutoAnalyze(listing), false);
+    assert.equal(resultGroup(listing, null), null);
+    assert.equal(canAutoAnalyze({ ...listing, mistakes: [{ kind: "FIRST_EDITION", detail: "Photo shows an unmentioned edition stamp" }] }), true);
     const promising = { ...listing, id: "2", screen: { ...listing.screen!, status: "CANDIDATE" as const } };
     assert.ok(compareAnalysisPriority(promising, listing) < 0, "stronger leads retain priority");
     const temporary = { ...listing, screen: { ...listing.screen!, status: "UNSCREENED" as const, money: undefined, pricingIssue: { kind: "TEMPORARY" as const, retryAt: null } } };
@@ -40,6 +40,9 @@ test("preliminary financial rejection and temporary price gaps cannot veto AI; d
     assert.equal(canAutoAnalyze({ ...listing, match: "OTHER_GRADE" }), false);
     assert.equal(canAutoAnalyze({ ...listing, images: [] }), false);
     assert.equal(canAutoAnalyze({ ...listing, availability: "UNAVAILABLE" }), false);
+    assert.equal(canAutoAnalyze({ ...promising, currentPrice: 223_200 }), false);
+    assert.equal(canAutoAnalyze({ ...promising, screen: { ...promising.screen, lowResale: { minimum: 60, rawMarketMaximum: 20, cheapFirstEditionBaseSet: false } },
+        mistakes: [{ kind: "GENERIC_TITLE", detail: "Generic seller title" }] }), false);
     assert.equal(canAutoAnalyze({ ...temporary, screen: { ...temporary.screen, pricingIssue: { kind: "CREDITS", retryAt: null } } }), false);
     const assessed = cardEvaluation(); assessed.underwriting!.verdict = "PASS";
     assert.equal(resultGroup(listing, assessed), null, "AI eligibility cannot turn an analyzed rejection into a Deal");

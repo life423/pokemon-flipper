@@ -2,13 +2,13 @@ import { cleanPhotoCard, PHOTO_CARD_SCHEMA } from "./photo-card-schema.ts";
 import { runStructured, MODEL } from "./openai.ts";
 import { fullSizePhoto } from "./photo-match.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
-import { createSingleFlight } from "../lib/single-flight.ts";
+import { createSharedWork } from "../lib/shared-work.ts";
 import { normalizeWords, sameCardNumber, sameSetFamily, photoPrinting } from "../identity/card-identity.ts";
 import type { PhotoCardReading, PrintingMarks, SearchIntent } from "../../shared/types.ts";
 
 const FIND_VERSION = 5;
 const YEAR_HOURS = 24 * 365;
-const share = createSingleFlight();
+const share = createSharedWork();
 
 export interface PhotoInspection {
     cardCount: number;
@@ -59,13 +59,14 @@ export function describeWanted(intent: SearchIntent): string {
 // reading is reused across searches; it is never a final grading assessment.
 export async function inspectCardPhoto(url: string, signal?: AbortSignal): Promise<PhotoInspection | null> {
     signal?.throwIfAborted();
-    return share(cacheKey(url), async () => {
+    return share(cacheKey(url), async workSignal => {
+        workSignal.throwIfAborted();
         const saved = await savedPhotoInspection(url);
         if (saved) return saved;
         try {
             const { result } = await runStructured<PhotoInspection>({
                 step: "Seller mistake photo scan",
-                signal,
+                dispatchSignal: workSignal,
                 prompt: `Identify the actual Pokemon card visible in this listing photo, independently of any seller text. Report the printed name, exact set using its symbol, number and artwork, printed collector number, language, finish, and concrete visual evidence. Use null or UNKNOWN when unreadable; never infer a set or premium variant from a vague resemblance. Count cards and mark stock/catalog images.
 HIGH confidence requires a legible name and collector number with set-symbol/artwork evidence agreeing. A back-only, blurry, cropped, stock, or ambiguous look-alike photo cannot be HIGH.
 Finish: HOLO or REVERSE_HOLO only with visible foil evidence; a still photo without reflection does not prove NON_HOLO. Use UNKNOWN when uncertain. Do not confuse holo, reverse holo, anniversary reprints, or other parallel versions.
@@ -77,10 +78,11 @@ Printing marks: firstEditionStamp VISIBLE only when the printed 1st Edition stam
             await writeCache(cacheKey(url), cleaned);
             return cleaned;
         } catch (error) {
+            workSignal.throwIfAborted();
             console.error(`Photo discovery failed: ${(error as Error).message}`);
             return null;
         }
-    });
+    }, signal);
 }
 
 export function photoFitsSearch(photo: PhotoInspection, intent: SearchIntent): boolean {

@@ -219,7 +219,7 @@ export function PhotosSection({ evaluation, photoCheck }: { evaluation: Evaluati
 
             {photoCheck.missingViews.length > 0 && (
                 <>
-                    <h4 className={styles.subTitle}>Missing views</h4>
+                    <h4 className={styles.subTitle}>Additional photos requested by AI</h4>
                     <Notes items={photoCheck.missingViews} tone="muted" />
                 </>
             )}

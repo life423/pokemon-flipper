@@ -5,12 +5,11 @@ import http from "node:http";
 import path from "node:path";
 import express from "express";
 import { CLIENT_ROOT } from "./lib/paths.ts";
-import { searchWithDiscovery } from "./deals/search.ts";
+import { DEVELOPMENT_SEARCH_LIMIT, searchWithDiscovery } from "./deals/search.ts";
 import { evaluateListing } from "./analysis/evaluate.ts";
 import { EbayError } from "./ebay/api.ts";
 import { ebayUsage } from "./ebay/usage.ts";
 import { writeOfferNote } from "./ai/offer-note.ts";
-import { digDeeper } from "./deals/dig.ts";
 import type { CurrentState } from "./analysis/evaluate.ts";
 import { MONEY_CONFIG } from "../shared/money/config.ts";
 import { ProviderError } from "./lib/http.ts";
@@ -26,6 +25,8 @@ import { resolveListingLink, ListingLinkError } from "./listings/resolve.ts";
 import { pricingRetries, PricingRetryError } from "./deals/pricing-retries.ts";
 import { localApi, validSearchRequest } from "./lib/local-api.ts";
 import { aiUsageToday } from "./ai/usage.ts";
+import { withAiUsageContext } from "./ai/usage-context.ts";
+import { readListingFilters } from "./search/listing-filters.ts";
 
 const app = express();
 
@@ -65,12 +66,15 @@ const server = http.createServer(app);
 const PORT = Number(process.env.PORT || 3017);
 const isProduction = process.env.NODE_ENV === "production";
 
+const searchId = (value: unknown) => typeof value === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(value) ? value : undefined;
 app.use("/api", localApi);
+app.use("/api", (req, _res, next) => withAiUsageContext({ searchId: searchId(req.get("X-Pokemon-Flipper-Search-Id")) }, next));
+app.use("/api/listings/:id", (req, _res, next) => withAiUsageContext({ listingId: req.params.id }, next));
 app.use(express.json());
 app.get(["/api/deals", "/api/dig"], validSearchRequest);
 app.post("/api/deals/new", validSearchRequest);
-app.get("/api/ai-usage", async (_req, res) => {
-    try { res.json(await aiUsageToday()); }
+app.get("/api/ai-usage", async (req, res) => {
+    try { res.json(await aiUsageToday(searchId(req.query.searchId))); }
     catch { res.status(500).json({ error: "AI usage could not be read. Provider operations are unchanged." }); }
 });
 
@@ -133,7 +137,7 @@ app.post("/api/deals/new", async (req, res) => {
         const query = typeof req.body?.query === "string" ? req.body.query.trim() : "";
         const known: unknown = req.body?.knownIds ?? [];
         if (!query || query.length > 300 || !Array.isArray(known) || known.length > 500 || known.some((id) => typeof id !== "string" || id.length > 120)) throw new Error("A search and up to 500 known listing IDs are required.");
-        await discoverNewListings(query, { signal: controller.signal, targets: searchTargets(req), includeOffers: req.query.offers === "1", minPrice: Math.max(0, Number(req.query.min) || 0),
+        await discoverNewListings(query, { developmentLimit: DEVELOPMENT_SEARCH_LIMIT, signal: controller.signal, filters: readListingFilters(req.query), targets: searchTargets(req), includeOffers: req.query.offers === "1", minPrice: Math.max(0, Number(req.query.min) || 0),
             onStart: (summary) => send({ type: "start", ...summary }), onListing: (listing) => send({ type: "listing", listing }),
             onPricing: (progress) => send({ type: "pricing", ...progress }),
             onPricingListing: (listing, snapshotKey) => send({ type: "pricing-listing", listing, snapshotKey }) }, known as string[]);
@@ -180,7 +184,9 @@ app.get("/api/deals", async (req, res) => {
 
     try {
         await searchWithDiscovery(searchText(req), {
+            developmentLimit: DEVELOPMENT_SEARCH_LIMIT,
             signal: stopped.signal,
+            filters: readListingFilters(req.query),
             targets: searchTargets(req),
             includeOffers: req.query.offers === "1",
             maxResults: Number(req.query.max) || undefined,
@@ -191,10 +197,10 @@ app.get("/api/deals", async (req, res) => {
             onPricing: (progress) => send({ type: "pricing", ...progress }),
             onPricingListing: (listing, snapshotKey) => send({ type: "pricing-listing", listing, snapshotKey }),
         });
-        await searchHistory.remember(searchText(req), Math.max(0, Number(req.query.min) || 0), [...seen]).catch((error) => console.error("Search history was not saved", error));
+        await searchHistory.remember(searchText(req), Math.max(0, Number(req.query.min) || 0), [...seen], readListingFilters(req.query)).catch((error) => console.error("Search history was not saved", error));
         send({ type: "done" });
     } catch (error) {
-        await searchHistory.remember(searchText(req), Math.max(0, Number(req.query.min) || 0), [...seen]).catch((failure) => console.error("Partial search history was not saved", failure));
+        await searchHistory.remember(searchText(req), Math.max(0, Number(req.query.min) || 0), [...seen], readListingFilters(req.query)).catch((failure) => console.error("Partial search history was not saved", failure));
         console.error(error);
         if (!stopped.signal.aborted) send({ type: "error", error: searchFailureMessage(error) });
     }
@@ -202,52 +208,44 @@ app.get("/api/deals", async (req, res) => {
     res.end();
 });
 
-// Dig deeper: the listings a plain search misses (misspelled, vague, the
-// wrong category, lots), checked by photo. Streams like a search.
-app.get("/api/dig", async (req, res) => {
+// The discovery implementation remains available offline/for future workflows;
+// local HTTP development cannot launch its broad paid scan.
+app.get("/api/dig", (_req, res) => {
     res.setHeader("Content-Type", "application/x-ndjson");
-
-    const send = (message: object) => res.write(`${JSON.stringify(message)}\n`);
-    const stopped = new AbortController();
-    res.on("close", () => stopped.abort());
-
-    try {
-        await digDeeper(searchText(req), {
-            signal: stopped.signal,
-            targets: searchTargets(req),
-            includeOffers: req.query.offers === "1",
-            minPrice: Number(req.query.min) || 0,
-            onStart: (summary) => send({ type: "start", ...summary }),
-            onListing: (listing) => send({ type: "listing", listing }),
-        });
-        send({ type: "done" });
-    } catch (error) {
-        console.error(error);
-        send({ type: "error", error: error instanceof Error ? error.message : "Dig deeper failed" });
-    }
-
+    res.write(`${JSON.stringify({ type: "error", error: `Broad discovery is paused in development mode. Find deals screens at most ${DEVELOPMENT_SEARCH_LIMIT} listings.` })}\n`);
     res.end();
 });
 
 // Paid stages can include photos, condition opinions, focused identity work
 // and comparable checks. Saved stages are reused; ?fresh=1 asks again.
 app.post("/api/listings/:id/evaluate", async (req, res) => {
+    const stopped = new AbortController();
+    const disconnect = () => { if (!res.writableEnded) stopped.abort(); };
+    req.on("aborted", disconnect);
+    res.on("close", disconnect);
     try {
         const current = currentState(req.body);
         const evaluation = await evaluateListing(req.params.id, {
             fresh: req.query.fresh === "1",
+            automatic: req.query.auto === "1",
             current: req.query.refreshTerms === "1" ? null : current,
+            signal: stopped.signal,
         });
+        stopped.signal.throwIfAborted();
         const evidenceKey = listingEvidenceKey({ title: req.query.fresh === "1" ? evaluation.listing.title : current?.title ?? evaluation.listing.title,
             images: req.query.fresh === "1" ? evaluation.listing.photos ?? [] : current?.images ?? evaluation.listing.photos ?? [] });
         await shortlistService.remember(evaluation, evidenceKey).catch((error) => console.error("Saved evaluation was not updated", error));
 
-        res.json(evaluation);
+        if (!stopped.signal.aborted) res.json(evaluation);
     } catch (error) {
+        if (stopped.signal.aborted) return;
         console.error(error);
 
         const failure = evaluationFailure(error);
         res.status(failure.status).json(failure);
+    } finally {
+        req.off("aborted", disconnect);
+        res.off("close", disconnect);
     }
 });
 

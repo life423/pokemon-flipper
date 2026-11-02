@@ -22,14 +22,14 @@ test("too pricey at asking: offer the max price, the most that still clears", ()
 
     assert.equal(plan.offer, 460);
     assert.equal(plan.clearsAtAsking, false);
-    assert.equal(plan.longShot, false);
+    assert.equal(plan.requiresPriceDrop, false);
     assert.match(describeOffer(plan, 500), /8% under asking/);
 });
 
-test("an offer more than 10% under asking is a long shot", () => {
+test("an offer more than 10% under asking requires a price drop", () => {
     const plan = offerPlan(1000, 500);
 
-    assert.equal(plan.longShot, true);
+    assert.equal(plan.requiresPriceDrop, true);
     assert.match(describeOffer(plan, 1000), /10% offer-discovery cutoff/);
 });
 
@@ -39,12 +39,12 @@ test("no offer when nothing clears at any price", () => {
 
 
 test("the 10% offer cutoff survives rounding and rejects the screenshot examples", () => {
-    assert.equal(offerPlan(125, 76).longShot, true);
-    assert.equal(offerPlan(600, 417).longShot, true);
-    assert.equal(offerPlan(650, 418).longShot, true);
+    assert.equal(offerPlan(125, 76).requiresPriceDrop, true);
+    assert.equal(offerPlan(600, 417).requiresPriceDrop, true);
+    assert.equal(offerPlan(650, 418).requiresPriceDrop, true);
     const plan = offerPlan(125, 113);
     assert.equal(plan.offer, 112.5);
-    assert.equal(plan.longShot, false);
+    assert.equal(plan.requiresPriceDrop, false);
     assert.ok(plan.offer >= 125 * 0.9);
     assert.ok(plan.offer <= plan.walkAway);
 });

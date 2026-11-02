@@ -3,6 +3,28 @@
 Updated November 2, 2026. This file records the user's agreed requirements so
 future work can continue without losing the conversation context.
 
+## Current audit checkpoint and local planning
+
+Read `LOCAL_PLAN.md` before continuing product or strategy work when it exists.
+The user asked to keep that roadmap and detailed ideas local and Git-ignored.
+Do not commit its contents or publish it without a new explicit request.
+
+The November 2 spending audit follows the organization refactor below. Runtime
+fixes cover spending reservations, cancellation/reuse, early filters, auction
+windows, review evidence and development quota protection; README records the
+seven reviewed boundaries. Validation: 557 offline tests, both TypeScript
+checks, production build and diff whitespace checks pass.
+
+Paid processing remains paused. Uncached AI cannot dispatch without trusted
+input bounds within the hard two-cent search ceiling. Do not resume broad paid
+work to test this checkpoint. Use a temporary POKEMON_FLIPPER_DATA_DIR for tests
+so mocked calls cannot modify the real spending or quota ledgers.
+
+The latest user request authorizes a commit on the current branch. It does not
+request a merge or push. Consult Git for delivery status. Leave the unrelated
+`.env.example` deletion outside this commit. Earlier checkpoints below are
+historical; these controls and the local plan take precedence.
+
 ## November 2 codebase organization and current goal
 
 On this Mac, use `/Users/andrewclark/programming/pokemon-flipper`. The user

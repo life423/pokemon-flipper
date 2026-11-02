@@ -1,3 +1,5 @@
+import "../fixtures/mock-ai-spending.ts";
+import "../fixtures/isolated-data.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -17,7 +19,10 @@ test("AI telemetry records each transport attempt and token usage without record
     const lines: string[] = [];
     t.mock.method(fs, "mkdir", async () => undefined);
     t.mock.method(fs, "appendFile", async (_path, content) => { lines.push(String(content)); });
-    t.mock.method(fs, "readFile", async () => lines.join(""));
+    t.mock.method(fs, "readFile", async (file: unknown) => {
+        if (String(file).endsWith(".ndjson")) return lines.join("");
+        throw Object.assign(Error("offline file missing"), { code: "ENOENT" });
+    });
     let attempt = 0;
     t.mock.method(globalThis, "fetch", async () => ++attempt === 1 ? new Response('{}', { status: 429 }) : new Response(JSON.stringify({ usage: { input_tokens: 300, output_tokens: 100, input_tokens_details: { cached_tokens: 200 } } }), { status: 200 }));
     const init = { headers: { Authorization: "Bearer secret-key" }, body: JSON.stringify({ model: "test-model", metadata: { app_step: "photo_check" }, input: [{ content: [{ type: "input_image", image_url: "https://private-photo" }, { type: "input_text", text: "private seller text" }] }] }) };

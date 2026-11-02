@@ -5,6 +5,8 @@ import { cardEvaluation } from "../fixtures/card-evaluation.ts";
 import { underwrite } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import type { Comp, PricedCard } from "../../server/pricing/types.ts";
+import type { Identity } from "../../shared/types.ts";
+import { rawPricesFor } from "../../server/pricing/raw-prices.ts";
 
 const now = Date.parse("2026-10-30T18:00:00Z");
 const identity = cardEvaluation().identity!;
@@ -93,4 +95,51 @@ test("concurrent listings share one complete sold-price job and later requests c
     assert.equal(fetches, 1); assert.equal(reviews, 40); assert.equal(a.ebayComps?.find(row => row.grade === "LIGHTLY_PLAYED")?.count, 40);
     a.prices![0].price = 999; assert.notEqual(b.prices![0].price, 999, "callers cannot alter another listing's price object");
     await price(card, identity); assert.equal(fetches, 2, "sharing must not become an indefinite quote cache");
+});
+
+test("unresolved photo targets retain their market fallback without fetching or assessing historical copies", async () => {
+    let fetches = 0, assessments = 0;
+    const unresolved: Partial<Identity>[] = [{ finish: "NOT_STATED" }, { finish: "UNKNOWN" }, { finish: "CONFLICTING" },
+        { status: "NEEDS_REVIEW" }, { printing: "UNKNOWN" }, { name: null }, { set: null }, { cardNumber: null }];
+    for (const change of unresolved) {
+        const target = { ...identity, ...change };
+        const raw = await rawPricesWithSales(card, target, { now,
+            fetchRawComps: async () => { fetches++; return [sale(1), sale(2), sale(3)]; },
+            assessCondition: async () => { assessments++; return { condition: "LIGHTLY_PLAYED", evidence: ["Visible whitening"], photoCount: 2 }; },
+        });
+        assert.deepEqual(raw, rawPricesFor(card, target), "keep only the fallback the existing market rules can actually support");
+    }
+    assert.equal(fetches, 0); assert.equal(assessments, 0);
+    const resolved = await rawPricesWithSales(card, identity, { now,
+        fetchRawComps: async () => { fetches++; return [sale(1, 90), sale(2, 100), sale(3, 110)]; },
+        assessCondition: async () => { assessments++; return { condition: "LIGHTLY_PLAYED", evidence: ["Visible whitening"], photoCount: 2 }; },
+    });
+    assert.equal(fetches, 1); assert.equal(assessments, 3);
+    assert.equal(resolved.prices?.[0].price, 100); assert.equal(resolved.prices?.[0].basis, "EBAY_SOLD");
+});
+
+test("stopping one listing preserves shared market work needed by another listing", async () => {
+    const controller = new AbortController(); let release!: () => void, started!: () => void; let reviews = 0, fetches = 0;
+    const gate = new Promise<void>(resolve => release = resolve), ready = new Promise<void>(resolve => started = resolve);
+    const price = createSharedRawSalesPricer({ now,
+        fetchRawComps: async () => { fetches++; started(); await gate; return [sale(1), sale(2), sale(3)]; },
+        assessCondition: async (_sale, _identity, signal) => { assert.equal(signal?.aborted, false); reviews++; return { condition: "LIGHTLY_PLAYED", evidence: ["Visible wear"], photoCount: 2 }; },
+    });
+    const canceled = price(card, identity, controller.signal), needed = price(card, identity);
+    const rejected = assert.rejects(canceled, { name: "AbortError" });
+    await ready; controller.abort(); await rejected; release();
+    assert.equal((await needed).reviewedSoldCopies, 3); assert.equal(reviews, 3); assert.equal(fetches, 1);
+});
+
+test("stopping every consumer prevents the pending market lookup from launching historical photo work", async () => {
+    const a = new AbortController(), b = new AbortController(); let release!: () => void, started!: () => void; let reviews = 0;
+    const gate = new Promise<void>(resolve => release = resolve), ready = new Promise<void>(resolve => started = resolve);
+    const price = createSharedRawSalesPricer({ now,
+        fetchRawComps: async () => { started(); await gate; return [sale(1), sale(2), sale(3)]; },
+        assessCondition: async () => { reviews++; return { condition: "LIGHTLY_PLAYED", evidence: ["Visible wear"], photoCount: 2 }; },
+    });
+    const first = assert.rejects(price(card, identity, a.signal), { name: "AbortError" });
+    const second = assert.rejects(price(card, identity, b.signal), { name: "AbortError" });
+    await ready; a.abort(); b.abort(); release(); await Promise.all([first, second]);
+    await new Promise(resolve => setImmediate(resolve)); assert.equal(reviews, 0);
 });

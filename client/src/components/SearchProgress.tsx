@@ -6,10 +6,10 @@ import type { PricingRecoveryProgress } from "../../../shared/pricing-retries.ts
 
 // Where a search is: finding listings on eBay, the free check, the AI,
 // then done. Or stopped, or failed.
-export type SearchPhase = "finding" | "filtering" | "discovering" | "pricing" | "ai" | "done" | "stopped" | "error";
+export type SearchPhase = "finding" | "filtering" | "discovering" | "pricing" | "ai" | "done" | "paused" | "stopped" | "error";
 
 const STEPS = ["Finding listings", "Filtering listings", "AI analysis", "Finalizing results"];
-const STEP_OF: Record<SearchPhase, number> = { finding: 0, filtering: 1, discovering: 1, pricing: 1, ai: 2, done: 4, stopped: -1, error: -1 };
+const STEP_OF: Record<SearchPhase, number> = { finding: 0, filtering: 1, discovering: 1, pricing: 1, ai: 2, done: 4, paused: -1, stopped: -1, error: -1 };
 const COLLAPSED_KEY = "searchProgressCollapsed";
 
 interface Props {
@@ -21,7 +21,7 @@ interface Props {
     // The free check: listings checked of those that match the search.
     checked: number;
     total: number | null;
-    ai: { done: number; target: number; analyzing: number; waiting: number; failed: number };
+    ai: { done: number; target: number; analyzing: number; waiting: number; failed: number; paused?: boolean };
     pricing?: PricingRecoveryProgress | null;
     stats: { junk: number; dropped: number; unchecked: number; deals: number };
     usage: { text: string; note: string; braking: boolean } | null;
@@ -58,6 +58,12 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
 
     const running = phase === "finding" || phase === "filtering" || phase === "discovering" || phase === "pricing" || phase === "ai";
     const step = STEP_OF[phase];
+    const aiState = phase === "stopped" ? "stopped" : ai.paused ? "paused" : ai.analyzing > 0 ? "working" : "idle";
+    const completed = Math.max(0, ai.done - ai.failed);
+    const aiStatus = aiState === "stopped" ? "AI analysis stopped"
+        : aiState === "paused" ? "AI analysis paused"
+        : aiState === "working" ? `AI assessing ${ai.analyzing.toLocaleString()} ${ai.analyzing === 1 ? "card" : "cards"}`
+        : "No full card assessments running";
 
     // How far along: the free check while it runs, then the AI.
     const percent =
@@ -81,6 +87,7 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
         pricing: "Recovering temporary price lookups",
         ai: "AI analysis",
         done: "Search complete",
+        paused: "Analysis paused",
         stopped: "Search stopped",
         error: "Search failed",
     }[phase];
@@ -111,22 +118,21 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
 
     // What's happening right now, in a few words.
     const activity =
-            phase === "pricing" ? "Temporary failures retry automatically after the provider cooldown. Results remain available below."
+            phase === "stopped" ? "New checks are stopped. Already accepted AI answers can still finish and save."
+            : ai.paused ? "AI analysis is paused. Completed assessments and search results stay below."
+            : ai.analyzing > 0 ? `${aiStatus}. Results appear as each assessment finishes.`
+            : phase === "pricing" ? "Temporary failures retry automatically after the provider cooldown. Results remain available below."
             : phase === "discovering"
                 ? "Automatic discovery is running; results stay available below."
             : phase === "finding"
             ? "Searching eBay..."
             : phase === "error"
               ? "The search could not finish. Any results checked so far are kept."
-            : ai.analyzing > 0
-              ? `AI analyzing ${ai.analyzing} ${ai.analyzing === 1 ? "candidate" : "candidates"}...`
-              : phase === "filtering"
+            : phase === "filtering"
                 ? "Reading titles, checking photos and prices..."
                 : ai.waiting > 0
                   ? `${ai.waiting} ${ai.waiting === 1 ? "candidate is" : "candidates are"} waiting for the AI.`
-                  : phase === "stopped"
-                    ? "Nothing more is being checked."
-                    : ai.failed > 0
+                  : ai.failed > 0
                       ? `${ai.failed} AI ${ai.failed === 1 ? "analysis failed" : "analyses failed"}; see Review.`
                       : "Automatic analysis finished. Screened-only listings have not had full photo analysis.";
 
@@ -155,7 +161,7 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
                     {collapsed ? (
                         <>
                             <p className={styles.compactTitle}>
-                                {phase === "done" ? "Done:" : phase === "pricing" ? "Recovering prices:" : phase === "stopped" ? "Stopped:" : phase === "error" ? "Search incomplete:" : "Searching"} “{query}”
+                                {phase === "done" ? "Done:" : phase === "paused" ? "Analysis paused:" : phase === "pricing" ? "Recovering prices:" : phase === "stopped" ? "Stopped:" : phase === "error" ? "Search incomplete:" : phase === "ai" ? "AI assessing" : "Searching"} “{query}”
                             </p>
                             <p className={styles.sub}>{compact}</p>
                             {phase !== "error" && <ProgressBar percent={percent} thin />}
@@ -188,6 +194,17 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
                 >
                     <ChevronIcon />
                 </button>
+            </div>
+
+            {/* Full photo work overlaps searching and discovery, and stays visible
+                when the optional search details are collapsed. */}
+            <div className={styles.aiStatus} data-ai-state={aiState} aria-label="AI assessment progress">
+                <span className={styles.aiStatusLabel}>
+                    {aiState === "working" && <span className={styles.dots} aria-hidden="true"><span /><span /><span /></span>}
+                    {aiStatus}
+                </span>
+                <span className={styles.aiStatusCount}>{completed.toLocaleString()} completed</span>
+                {ai.failed > 0 && <span className={styles.aiStatusCount}>{ai.failed.toLocaleString()} failed</span>}
             </div>
 
             {/* Expands and collapses smoothly; hidden from tabbing when collapsed. */}
@@ -251,7 +268,7 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
 
                         <div className={styles.activity}>
                             <p>
-                                {(running || ai.analyzing > 0) && (
+                                {!ai.paused && phase !== "stopped" && (running || ai.analyzing > 0) && (
                                     <span className={styles.dots} aria-hidden="true">
                                         <span />
                                         <span />

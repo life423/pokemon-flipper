@@ -39,15 +39,15 @@ export function OfferSection({ listing, evaluation }: { listing: ListingSummary;
         <Section title="Best offer">
             <Pairs
                 rows={[
-                    [plan.longShot ? "Wait for price at or below" : "Suggested offer (not submitted)", <strong>{dollars(plan.longShot ? plan.walkAway : plan.offer)}</strong>],
+                    [plan.requiresPriceDrop ? "Wait for price at or below" : "Suggested offer (not submitted)", <strong>{dollars(plan.requiresPriceDrop ? plan.walkAway : plan.offer)}</strong>],
                     ["Walk away above", dollars(plan.walkAway)],
-                    ...(!plan.longShot && offerNumbers ? [["Est. profit if accepted", `${dollars(offerNumbers.profit)} (${percent(offerNumbers.roi)} return)`] as [string, ReactNode]] : []),
+                    ...(!plan.requiresPriceDrop && offerNumbers ? [["Est. profit if accepted", `${dollars(offerNumbers.profit)} (${percent(offerNumbers.roi)} return)`] as [string, ReactNode]] : []),
                 ]}
             />
             <p className={styles.small}>{describeOffer(plan, listing.currentPrice)}</p>
 
             <p className={styles.small}>Notes are drafts only. Nothing is sent and no offer is submitted by this app.</p>
-            {!plan.longShot && <div className={styles.noteActions}>
+            {!plan.requiresPriceDrop && <div className={styles.noteActions}>
                 <button type="button" className={styles.secondary} onClick={write} disabled={writing}>
                     {writing ? "Writing..." : note ? "Write another note" : "Write a note for the seller"}
                 </button>

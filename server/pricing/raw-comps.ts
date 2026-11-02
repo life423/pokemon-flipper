@@ -4,7 +4,8 @@ import { rawPricesFor, variantFor } from "./raw-prices.ts";
 import { compProblem, summarizeComps } from "./sold-comps.ts";
 import type { CheckComps, Comp, FetchRawComps, PricedCard } from "./types.ts";
 import type { SoldConditionEvidence } from "../ai/sold-condition.ts";
-import { createSingleFlight } from "../lib/single-flight.ts";
+import { createSharedWork } from "../lib/shared-work.ts";
+import { readyForPricing } from "../../shared/identity.ts";
 
 // Seller text is used only for screening/bootstrap. Final valuations classify
 // sold-copy photos independently; an unknown condition is never assumed NM.
@@ -24,13 +25,18 @@ export function compCondition(title: string): RawCondition | null {
 }
 
 export async function rawPricesWithSales(card: PricedCard | null, identity: Identity, {
-    fetchRawComps, checkComps, now = Date.now(), assessCondition,
-}: { fetchRawComps: FetchRawComps; checkComps?: CheckComps; now?: number; assessCondition?: (sale: Comp, identity: Identity) => Promise<SoldConditionEvidence | null> }): Promise<RawPricing> {
+    fetchRawComps, checkComps, now = Date.now(), assessCondition, signal,
+}: { fetchRawComps: FetchRawComps; checkComps?: CheckComps; now?: number; assessCondition?: (sale: Comp, identity: Identity, signal?: AbortSignal) => Promise<SoldConditionEvidence | null>; signal?: AbortSignal }): Promise<RawPricing> {
+    signal?.throwIfAborted();
     const fallback = rawPricesFor(card, identity);
     const { variant } = variantFor(card, identity);
-    if (!variant || !card || card.source !== "pkmnprices" || identity.status !== "IDENTIFIED") return fallback;
+    if (!variant || !card || card.source !== "pkmnprices" || !readyForPricing(identity) || !identity.name?.trim()) return fallback;
+    // A sole provider variant may support a marked market fallback even while
+    // the listing's finish is unresolved. It does not resolve that photo target.
+    if (assessCondition && !["HOLO", "NON_HOLO", "REVERSE_HOLO"].includes(identity.finish)) return fallback;
     try {
         const fetched = await fetchRawComps(variant.recordId, variant.name);
+        signal?.throwIfAborted();
         let sales = [...new Map(fetched.map(sale => [sale.id ?? sale.listing_url ?? JSON.stringify(sale), sale])).values()];
         const sampledSoldCopies = sales.length;
         if (assessCondition) {
@@ -38,12 +44,14 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
                 !/\b(psa|cgc|bgs|sgc|tag|lot|bundle)\b/i.test(sale.title) && compProblem({ ...sale, grader: "RAW", grade: "ANY" },
                     { printing: identity.printing, setName: variant.setName, finish: variant.finish, grader: "RAW", grade: "ANY", now, windowDays: 90 }) === null);
             sales = (await Promise.all(eligible.map(async sale => {
-                const assessed = await assessCondition(sale, identity).catch(() => null);
+                signal?.throwIfAborted();
+                const assessed = await assessCondition(sale, identity, signal).catch(() => { signal?.throwIfAborted(); return null; });
                 return assessed ? { ...sale, photoCondition: assessed.condition, conditionEvidence: assessed.evidence, sellerCondition: compCondition(sale.title) } : null;
             }))).filter((sale): sale is Comp & { photoCondition: import("../../shared/conditions.ts").RawCondition; conditionEvidence: string[]; sellerCondition: import("../../shared/conditions.ts").RawCondition | null } => sale !== null);
         }
         const summaries: CompSummary[] = [];
         for (const condition of RAW_CONDITIONS) {
+            signal?.throwIfAborted();
             const criteria = { printing: identity.printing, setName: variant.setName, finish: variant.finish, grader: "RAW", grade: condition, now, windowDays: 90 as const };
             const normalized = sales.map(sale => ({ ...sale, grader: "RAW", grade: condition }));
             const passing: Comp[] = [];
@@ -66,7 +74,7 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
                 cardNumber: identity.cardNumber ?? card.cardNumber, printingLabel: fallback.printingLabel ?? identity.printingLabel ?? "",
                 grader: "RAW", grade: condition,
                 finish: variant.finish, ...(assessCondition ? { conditionEvidence: "AI_PHOTOS" as const } : {}),
-            }) : undefined;
+            }, signal) : undefined;
             const checked = checkComps ? passing.filter(sale => {
                 if (verdicts?.has(sale)) return true;
                 rejected["sale identity not checked"] = (rejected["sale identity not checked"] ?? 0) + 1;
@@ -88,6 +96,7 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
             evidenceNote: assessCondition ? `${sales.length} sold copies have accepted AI photo-condition assessments from ${sampledSoldCopies} returned records. All eligible returned copies receive photo review; results are reused for unchanged photos. Three matched sales are required for an eBay median; other conditions retain a marked market fallback.`
                 : "Screening uses seller-stated raw conditions. Final evaluations assess sold-copy photos where available. Up to 40 returned records over 90 days are sampled." };
     } catch {
+        signal?.throwIfAborted();
         return { ...fallback, prices: fallback.prices?.map(p => ({ ...p, basis: "TCGPLAYER" })), evidenceNote: "eBay raw sales are temporarily unavailable; using the condition-specific TCGplayer market fallback." };
     }
 }
@@ -96,10 +105,10 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
 // including filtering and comp checks. No completed quote is retained here:
 // provider freshness and photo-evidence caches remain responsible for reuse.
 export function createSharedRawSalesPricer(deps: Parameters<typeof rawPricesWithSales>[2]) {
-    const share = createSingleFlight();
-    return async (card: PricedCard | null, identity: Identity): Promise<RawPricing> => {
+    const share = createSharedWork();
+    return async (card: PricedCard | null, identity: Identity, signal?: AbortSignal): Promise<RawPricing> => {
         const key = JSON.stringify([card, identity.status, identity.name, identity.set, identity.cardNumber, identity.language, identity.printing, identity.finish]);
-        const result = await share(key, () => rawPricesWithSales(card, identity, deps));
+        const result = await share(key, workSignal => rawPricesWithSales(card, identity, { ...deps, signal: workSignal }), signal);
         return structuredClone(result);
     };
 }

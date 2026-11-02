@@ -62,6 +62,7 @@ test("a candidate gets its details and a second check with the seller's conditio
     assert.equal(result.cardCondition, "Lightly played (Excellent)");
 });
 
+
 test("a title missing pieces gets its details, which might settle it", async () => {
     const s = steps([screen("UNSCREENED", { incomplete: true }), screen("CANDIDATE")]);
     const result = await screenListing(listing("Charizard Holo WOTC"), s);

@@ -129,8 +129,7 @@ for (const [index, query] of pendingQueries.entries()) {
     const ranked = [...listings.values()].filter(canAutoAnalyze).sort((a, b) => compareAnalysisPriority(a, b, targets));
     row.eligibleForAutoAnalysis = ranked.length;
     row.strongestCandidates = ranked.slice(0, 3).map((listing) => ({ title: listing.title, price: listing.currentPrice, buyingOption: listing.buyingOption, priority: analysisPriority(listing, targets), screen: listing.screen?.bestCase, preliminaryMatch: listing.screen?.evidence?.mainPhoto }));
-    // Sample a distinct eligible listing, never a long-shot auction or an
-    // unverified extreme price. Full output stays in ignored local snapshots.
+    // Sample a distinct eligible listing. Full output stays in ignored snapshots.
     if (ranked.length && fullAnalyses < 4 && budget.used.ai < budget.limits.ai - 4) {
         const listing = ranked[0]; fullAnalyses += 1;
         const analysisStopped = new AbortController();

@@ -2,7 +2,7 @@ import { runStructured, MODEL } from "./openai.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { createLimiter } from "../lib/concurrency.ts";
 import { AI_CONCURRENCY } from "../../shared/work-limits.ts";
-import { createSingleFlight } from "../lib/single-flight.ts";
+import { createSharedWork } from "../lib/shared-work.ts";
 import { COMP_DROP_REASONS, type CheckComps, type Comp, type CompTarget, type CompVerdict } from "../pricing/types.ts";
 
 // The AI's second look at sold comps that already passed the rules:
@@ -13,7 +13,7 @@ import { COMP_DROP_REASONS, type CheckComps, type Comp, type CompTarget, type Co
 
 // Bump when the prompt or schema changes, so saved verdicts get redone.
 const CHECK_VERSION = 2;
-const shareChecks = createSingleFlight();
+const shareChecks = createSharedWork();
 
 // Reuse verdicts for unchanged sale metadata. Corrections to its title,
 // printing or grade change the key; provider responses refresh separately.
@@ -80,38 +80,42 @@ const targetKey = (target: CompTarget) =>
 const cacheKey = (comp: Comp, target: CompTarget) =>
     `comp-check:v${CHECK_VERSION}:${MODEL}:${targetKey(target)}:${compKey(comp)}:${JSON.stringify([comp.title, comp.variant, comp.grader, comp.grade, comp.grade_qualifier, comp.attribution])}`;
 
-export const checkComps: CheckComps = async (comps, target) => {
-    const result = await shareChecks(JSON.stringify([target, comps]), () => checkOnce(comps, target));
+export const checkComps: CheckComps = async (comps, target, signal) => {
+    const result = await shareChecks(JSON.stringify([target, comps]), workSignal => checkOnce(comps, target, workSignal), signal);
     // Concurrent callers can hold equivalent sales in different objects.
     const byKey = new Map([...result].map(([sale, verdict]) => [compKey(sale), verdict]));
     return new Map(comps.flatMap(sale => { const verdict = byKey.get(compKey(sale)); return verdict ? [[sale, verdict] as const] : []; }));
 };
 
-export const cachedCompChecks: CheckComps = async (comps, target) => {
+export const cachedCompChecks: CheckComps = async (comps, target, signal) => {
     const verdicts = new Map<Comp, CompVerdict>();
     for (const comp of comps) {
+        signal?.throwIfAborted();
         const saved = await readCache<CompVerdict>(cacheKey(comp, target), FOREVER_HOURS);
         if (saved) verdicts.set(comp, saved);
     }
     return verdicts;
 };
 
-const checkOnce: CheckComps = async (comps, target) => {
-    const verdicts = await cachedCompChecks(comps, target);
+const checkOnce: CheckComps = async (comps, target, signal) => {
+    const verdicts = await cachedCompChecks(comps, target, signal);
+    signal?.throwIfAborted();
     const unchecked = comps.filter(comp => !verdicts.has(comp));
 
     if (unchecked.length === 0) return verdicts;
 
     try {
-        const { result } = await limit(() =>
-            runStructured<{ sales: (CompVerdict & { line: number })[] }>({
+        const { result } = await limit(() => {
+            signal?.throwIfAborted();
+            return runStructured<{ sales: (CompVerdict & { line: number })[] }>({
                 step: "Comp check",
                 prompt: prompt(unchecked, target),
                 photos: [],
                 schemaName: "comp_check",
                 schema: SCHEMA,
-            })
-        );
+                dispatchSignal: signal,
+            });
+        });
 
         for (const [index, comp] of unchecked.entries()) {
             const answer = result.sales.find((sale) => sale.line === index + 1);
@@ -124,6 +128,7 @@ const checkOnce: CheckComps = async (comps, target) => {
             await writeCache(cacheKey(comp, target), verdict);
         }
     } catch (error) {
+        signal?.throwIfAborted();
         // The rules' result stands, as it did before the AI check.
         console.error(`Comp check failed, so the rules decide alone: ${(error as Error).message}`);
     }

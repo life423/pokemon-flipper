@@ -2,7 +2,7 @@ import { runStructured, MODEL } from "./openai.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { createLimiter } from "../lib/concurrency.ts";
 import { AI_CONCURRENCY } from "../../shared/work-limits.ts";
-import { createSingleFlight } from "../lib/single-flight.ts";
+import { createSharedWork } from "../lib/shared-work.ts";
 import type { Screen } from "../../shared/types.ts";
 
 // A quick look at a candidate's main photo before any eBay detail request
@@ -11,10 +11,6 @@ import type { Screen } from "../../shared/types.ts";
 
 const MATCH_VERSION = 2;
 const YEAR_HOURS = 24 * 365;
-
-// Main photos are checked alongside a whole search's free checks.
-const limit = createLimiter(AI_CONCURRENCY);
-const share = createSingleFlight();
 
 export type ClaimedCard = NonNullable<Screen["card"]>;
 
@@ -63,31 +59,67 @@ Separately, report the printing marks as the photo shows them, never from the li
 - artBoxShadow: PRESENT if the artwork frame has a dark drop shadow along its right edge, ABSENT if it has none, otherwise CANT_TELL.`;
 }
 
-export async function matchMainPhoto(imageUrl: string, card: ClaimedCard): Promise<PhotoMatch | null> {
-    const key = `photo-match:v${MATCH_VERSION}:${MODEL}:${imageUrl}:${[card.set, card.cardNumber, card.name].join("|").toLowerCase()}`;
-    return share(key, async () => {
-    const saved = await readCache<PhotoMatch>(key, YEAR_HOURS);
+const cacheKey = (url: string, card: ClaimedCard) =>
+    `photo-match:v${MATCH_VERSION}:${MODEL}:${url}:${[card.set, card.cardNumber, card.name].join("|").toLowerCase()}`;
 
-    if (saved) return saved;
-
-    try {
-        const { result } = await limit(() =>
-            runStructured<PhotoMatch>({
-                step: "Main photo check",
-                prompt: prompt(card),
-                photos: [{ url: fullSizePhoto(imageUrl), label: "Main listing photo" }],
-                schemaName: "photo_match",
-                schema: SCHEMA,
-            })
-        );
-
-        await writeCache(key, result);
-
-        return result;
-    } catch (error) {
-        // Without the check, the listing goes on as before.
-        console.error(`Main photo check failed: ${(error as Error).message}`);
-        return null;
-    }
+const inspect = async (url: string, card: ClaimedCard, signal: AbortSignal): Promise<PhotoMatch> => {
+    const { result } = await runStructured<PhotoMatch>({
+        step: "Main photo check",
+        prompt: prompt(card),
+        photos: [{ url, label: "Main listing photo" }],
+        dispatchSignal: signal,
+        schemaName: "photo_match",
+        schema: SCHEMA,
     });
+    return result;
+};
+
+export function createMainPhotoMatcher({
+    read = inspect,
+    load = (key: string) => readCache<PhotoMatch>(key, YEAR_HOURS),
+    save = writeCache,
+    concurrency = AI_CONCURRENCY,
+} = {}) {
+    const limit = createLimiter(concurrency);
+    const share = createSharedWork();
+
+    return function matchMainPhoto(imageUrl: string, card: ClaimedCard, signal?: AbortSignal): Promise<PhotoMatch | null> {
+        const photoUrl = fullSizePhoto(imageUrl);
+        const key = cacheKey(photoUrl, card);
+        return share(key, async (workSignal) => {
+            const saved = await load(key);
+            if (saved) return saved;
+
+            // Existing readings used the caller's URL, normally eBay's 225px
+            // search thumbnail. Migrate them without repeating paid work.
+            const legacyUrls = new Set([imageUrl, photoUrl.replace(/\/s-l1600\./, "/s-l225.")]);
+            for (const legacyUrl of legacyUrls) {
+                const legacyKey = cacheKey(legacyUrl, card);
+                if (legacyKey === key) continue;
+                const previous = await load(legacyKey);
+                if (previous) {
+                    await save(key, previous);
+                    return previous;
+                }
+            }
+
+            try {
+                const result = await limit(() => {
+                    workSignal.throwIfAborted();
+                    return read(photoUrl, card, workSignal);
+                });
+                // A dispatched request may finish after Stop. Keep its paid
+                // answer; cancellation prevents later dispatch, not this save.
+                await save(key, result);
+                return result;
+            } catch (error) {
+                workSignal.throwIfAborted();
+                // Without the check, the listing goes on as before.
+                console.error(`Main photo check failed: ${(error as Error).message}`);
+                return null;
+            }
+        }, signal);
+    };
 }
+
+export const matchMainPhoto = createMainPhotoMatcher();

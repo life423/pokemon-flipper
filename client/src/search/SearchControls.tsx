@@ -12,6 +12,7 @@ import { TargetFields, TargetMenu, type TargetInputProps } from "./TargetFields"
 import styles from "../App.module.css";
 
 interface SearchControlsProps {
+    showSearchOptions?: boolean;
     hidden: boolean;
     idle: boolean;
     views: {
@@ -51,7 +52,6 @@ const VIEW_ICONS: Record<View, ReactNode> = {
     deals: <TagIcon />,
     offers: <DollarIcon />,
     candidates: <ClockIcon />,
-    longShots: <TrendIcon />,
     review: <ReviewIcon />,
     hidden: <SparkleIcon />,
     all: <GridIcon />,
@@ -61,9 +61,8 @@ const VIEW_NAMES: Record<View, string> = {
     new: "New listings",
     deals: "Deals",
     offers: "Offers",
-    candidates: "Waiting",
-    longShots: "Long shots",
-    review: "Review",
+    candidates: "Sorting",
+    review: "Needs attention",
     hidden: "Hidden finds",
     all: "All",
 };
@@ -91,7 +90,7 @@ function Segmented<T extends string>({
     );
 }
 
-export function SearchControls({ hidden, idle, views, filters, target, settings, drawer, usage, aiUsage }: SearchControlsProps) {
+export function SearchControls({ showSearchOptions = false, hidden, idle, views, filters, target, settings, drawer, usage, aiUsage }: SearchControlsProps) {
     const { view, availableViews, groups, allTab, setView } = views;
     const { typeFilter, kindFilter, sort, minPrice, maxPrice, minGrade, setTypeFilter, setKindFilter, setSort, changeMinPrice, setMaxPrice, changeMinGrade } = filters;
     const { targets, targetInputs, changeTarget } = target;
@@ -148,8 +147,39 @@ export function SearchControls({ hidden, idle, views, filters, target, settings,
         });
     };
 
+    const purchaseFields = <>
+                <label className={styles.field}>
+                    <span>Listing format</span>
+                    <select value={typeFilter} onChange={(event) => withViewTransition(() => setTypeFilter(event.target.value as TypeFilter))}>
+                        <option value="FIXED_PRICE">Buy It Now</option>
+                        <option value="AUCTION">Auctions ending within 12 hours</option>
+                        <option value="all">Both formats</option>
+                    </select>
+                </label>
+                <label className={styles.field}>
+                    <span>Card type</span>
+                    <select value={kindFilter} onChange={(event) => withViewTransition(() => setKindFilter(event.target.value as KindFilter))}>
+                        <option value="all">Both</option>
+                        <option value="raw">Raw cards</option>
+                        <option value="graded">Graded cards</option>
+                    </select>
+                </label>
+                <label className={styles.field}>
+                    <span>Minimum Buy It Now price</span>
+                    <span className={styles.affix}><span>$</span><input type="number" min="0" inputMode="decimal" placeholder="Any" value={minPrice} onChange={(event) => changeMinPrice(event.target.value)} /></span>
+                </label>
+                <label className={styles.field}>
+                    <span>Maximum purchase price</span>
+                    <span className={styles.affix}><span>$</span><input type="number" min="0" inputMode="decimal" placeholder="Any" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} /></span>
+                </label>
+    </>;
+
     return (
         <>
+            {showSearchOptions && <div className={styles.searchOptions} role="group" aria-label="Search options">
+                {purchaseFields}
+                <p className={styles.preferenceNote}>Development mode: up to 3 listings per search, with a 2¢ AI spending ceiling. Broad discovery is paused. All prices by default; the minimum applies to Buy It Now and the maximum to both formats.</p>
+            </div>}
             <div className={styles.controlPanel} hidden={hidden} data-idle={idle || undefined}>
                 <div className={styles.controlRow}>
                     {/* Every view remains visible in wrapping tabs. */}
@@ -200,10 +230,6 @@ export function SearchControls({ hidden, idle, views, filters, target, settings,
                     <label className={styles.offerToggle} title="Include opportunities requiring an unaccepted offer, at most 10% below asking">
                         <span>Include Best Offers</span>
                         <input type="checkbox" role="switch" aria-label="Include Best Offer opportunities" checked={includeOffers} onChange={(event) => changeIncludeOffers(event.target.checked)} />
-                    </label>
-                    <label className={styles.field}>
-                        <span>Minimum Buy It Now price</span>
-                        <span className={styles.affix}><span>$</span><input type="number" min="0" inputMode="decimal" placeholder="Any" value={minPrice} onChange={(event) => changeMinPrice(event.target.value)} /></span>
                     </label>
                     <label className={styles.field} title="Raw cards use the upper end of the AI grade range. Slabs use their label grade. Applies after analysis.">
                         <span>Minimum potential grade</span>
@@ -268,62 +294,7 @@ export function SearchControls({ hidden, idle, views, filters, target, settings,
 
                 <section className={styles.drawerSection}>
                     <h3>Filters</h3>
-                    <div className={styles.field}>
-                        <span>Listing</span>
-                        <Segmented
-                            label="Listing type"
-                            value={typeFilter}
-                            onChange={(next) => withViewTransition(() => setTypeFilter(next))}
-                            options={[
-                                ["all", "Any"],
-                                ["AUCTION", "Auctions"],
-                                ["FIXED_PRICE", "Buy It Now"],
-                            ]}
-                        />
-                    </div>
-                    <div className={styles.field}>
-                        <span>Card</span>
-                        <Segmented
-                            label="Raw or graded"
-                            value={kindFilter}
-                            onChange={(next) => withViewTransition(() => setKindFilter(next))}
-                            options={[
-                                ["all", "Any"],
-                                ["raw", "Raw"],
-                                ["graded", "Graded"],
-                            ]}
-                        />
-                    </div>
-                    <div className={styles.priceRange}>
-                        <label className={styles.field}>
-                            <span>Min price, Buy It Now</span>
-                            <span className={styles.affix}>
-                                <span>$</span>
-                                <input
-                                    type="number"
-                                    inputMode="decimal"
-                                    min="0"
-                                    value={minPrice}
-                                    onChange={(event) => changeMinPrice(event.target.value)}
-                                    placeholder="Any"
-                                />
-                            </span>
-                        </label>
-                        <label className={styles.field}>
-                            <span>Max price</span>
-                            <span className={styles.affix}>
-                                <span>$</span>
-                                <input
-                                    type="number"
-                                    inputMode="decimal"
-                                    min="0"
-                                    value={maxPrice}
-                                    onChange={(event) => setMaxPrice(event.target.value)}
-                                    placeholder="Any"
-                                />
-                            </span>
-                        </label>
-                    </div>
+                    {!showSearchOptions && purchaseFields}
                     <label className={styles.field}>
                         <span>Sort</span>
                         <select
@@ -376,13 +347,13 @@ export function SearchControls({ hidden, idle, views, filters, target, settings,
                             ))}
                         </select>
                     </label>
-                    <p className={styles.usage}>AI checks matching listings even when preliminary prices are missing or above target. Stronger opportunities go first. This limit controls full assessments; screening and discovery can also use paid checks.</p>
+                    <p className={styles.usage}>Only the development shortlist can enter automatic assessment. Screening and photo work share the same 2¢ search budget; repeated valid answers are reused. A spending pause keeps cached results available.</p>
                     {usage && <p className={styles.usage}>{describeUsage(usage)}</p>}
                 </section>
                 <section className={styles.drawerSection}>
                     <h3>AI usage</h3>
                     <p className={styles.usage}>{aiUsage ? `${aiUsage.calls} API calls recorded on ${aiUsage.dayUtc} (UTC)` : "Usage will appear after the local log is available."}</p>
-                    {aiUsage && <details className={styles.aiUsage}><summary>View calls by task and model</summary><ul>{aiUsage.stages.map(stage => <li key={`${stage.step}:${stage.model}`}><strong>{stage.step}</strong><br />{stage.model} · {stage.calls} calls{stage.failed ? ` · ${stage.failed} failed` : ""}<br />{(stage.inputTokens + stage.outputTokens).toLocaleString()} tokens · {stage.images} image inputs</li>)}</ul></details>}
+                    {aiUsage && <details className={styles.aiUsage}><summary>View calls by task and model</summary><ul>{aiUsage.stages.map(stage => <li key={`${stage.step}:${stage.model}:${stage.serviceTier ?? "unknown"}`}><strong>{stage.step}</strong><br />{stage.model} · {stage.calls} calls{stage.failed ? ` · ${stage.failed} failed` : ""}<br />{(stage.inputTokens + stage.outputTokens).toLocaleString()} tokens · {stage.images} image inputs</li>)}</ul></details>}
                     <p className={styles.usage}>Local server totals since logging began. Retries count separately; reused answers add no request. This is usage telemetry, not a billing statement.</p>
                 </section>
             </Drawer>

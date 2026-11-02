@@ -21,6 +21,7 @@ export function createShortlistService({ store = shortlistStore, details = getLi
     const save = async (listing: ListingSummary) => {
         const record = await load(listing.id);
         const currentDetails = await cached(listing.id);
+        listing = { ...listing, listedAt: currentDetails?.listedAt ?? listing.listedAt, createdAt: currentDetails?.createdAt ?? listing.createdAt };
         if (listing.termsCheckedAt !== currentDetails?.retrievedAt) listing = { ...listing, termsCheckedAt: undefined };
         if (currentDetails?.availability === "UNAVAILABLE") listing = { ...listing, availability: "UNAVAILABLE" };
         const candidate = record?.version === ANALYSIS_VERSION ? record.latestEvaluation : null;
@@ -63,6 +64,7 @@ export function createShortlistService({ store = shortlistStore, details = getLi
                 const listing: ListingSummary = { ...latest.listing, title: refreshed.title, url: refreshed.url, currentPrice: refreshed.price, shipping: refreshed.shipping,
                     listedAttributes: searchAttributes(refreshed.title, refreshed.aspects),
                     termsCheckedAt: refreshed.retrievedAt ?? new Date(now()).toISOString(),
+                    listedAt: refreshed.listedAt ?? latest.listing.listedAt, createdAt: refreshed.createdAt ?? latest.listing.createdAt,
                     buyingOption: refreshed.buyingOption, bids: refreshed.bids, endTime: refreshed.endTime, images: refreshed.images, seller: refreshed.seller,
                     isGraded: /graded/i.test(refreshed.condition ?? "") && !/ungraded/i.test(refreshed.condition ?? "") || Boolean(refreshed.aspects["Professional Grader"]),
                     bestOffer: refreshed.bestOffer ?? false, cardCondition: refreshed.cardCondition, conditionNotes: refreshed.conditionNotes,
@@ -71,6 +73,7 @@ export function createShortlistService({ store = shortlistStore, details = getLi
                     photoEvidenceKey(latest.evaluation.listing.photos ?? latest.listing.images) === photoEvidenceKey(refreshed.images);
                 const evaluation = same && latest.evaluation ? retargetEvaluation({ ...latest.evaluation, listing: { ...latest.evaluation.listing,
                     title: refreshed.title, url: refreshed.url, price: refreshed.price, shipping: refreshed.shipping, buyingOption: refreshed.buyingOption,
+                    listedAt: listing.listedAt, createdAt: listing.createdAt,
                     bids: refreshed.bids, endTime: refreshed.endTime, seller: refreshed.seller, availability: listing.availability } }, MONEY_CONFIG.targets) : null;
                 return { ...latest, listing, evaluation, needsAnalysis: !evaluation, checkedAt: new Date(now()).toISOString() };
             });

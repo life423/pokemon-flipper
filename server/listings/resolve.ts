@@ -22,6 +22,7 @@ export function createListingResolver({ details = getListingDetails, now = () =>
             shipping: listing.shipping, bids: listing.bids, buyingOption: listing.buyingOption, endTime: listing.endTime,
             seller: listing.seller, bestOffer: listing.bestOffer, availability: listing.availability ?? "UNKNOWN",
             termsCheckedAt: listing.retrievedAt ?? new Date(now()).toISOString(),
+            listedAt: listing.listedAt, createdAt: listing.createdAt,
             isGraded: /graded/i.test(listing.condition ?? "") && !/ungraded/i.test(listing.condition ?? "") || Boolean(listing.aspects["Professional Grader"]),
             cardCondition: listing.cardCondition, conditionNotes: listing.conditionNotes };
     };

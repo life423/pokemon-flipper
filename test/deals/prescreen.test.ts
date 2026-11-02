@@ -110,14 +110,15 @@ test("a raw card that can't clear the targets even at its best is dropped", asyn
     assert.ok(result.bestCase.maxBid < 2000);
 });
 
-test("the seller's own condition call caps the best case", async () => {
+test("the seller's condition caps its displayed best case while a priced condition upgrade can request verification", async () => {
     // Lightly played: best grade 6, which has no sales, so only the raw
     // Lightly Played price counts.
     const result = await prescreen(rawLugia({ cardCondition: "Lightly played (Excellent)" }), deps);
 
-    assert.equal(result.status, "DROPPED");
+    assert.equal(result.status, "UNSCREENED");
     assert.equal(result.bestCase.label, "Sell raw");
     assert.equal(result.bestCase.maxBid, 271);
+    assert.deepEqual(result.conditionUpside, { sellerCondition: "LIGHTLY_PLAYED", targetCondition: "NEAR_MINT", rawMarketPrice: 531.39 });
 });
 
 test("a card number in the title stands in when the item details skip it", async () => {

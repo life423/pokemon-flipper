@@ -371,16 +371,6 @@
 
 
 
-.priceRange {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: var(--space-3);
-}
-
-.priceRange .affix input {
-    width: 100%;
-}
-
 /* The title and search: one row on wide screens; on phones the title shares
    the top row with the menu, and search gets the full row below. */
 .topRow {
@@ -996,12 +986,18 @@
 .offerToggle input:checked { background: var(--accent); }
 .offerToggle input:checked::before { transform: translateX(18px); background: white; }
 .offerToggle input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.searchPreferences { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: var(--space-3); border-top: 1px solid var(--border); padding-top: var(--space-3); margin-top: var(--space-2); }
+.searchOptions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: start; gap: var(--space-3); }
+.searchOptions .field { min-width: 0; }
+.searchOptions select, .searchOptions .affix { min-width: 0; min-height: var(--tap); }
+.searchOptions .affix input { flex: 1; min-width: 0; width: 100%; }
+.searchOptions .preferenceNote { grid-column: 1 / -1; max-width: none; }
+.searchPreferences { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: var(--space-3); border-top: 1px solid var(--border); padding-top: var(--space-3); margin-top: var(--space-2); }
 .searchPreferences .field { min-width: 0; max-width: none; }
 .searchPreferences .offerToggle { align-self: center; }
 .searchPreferences .preferenceNote { grid-column: 1 / -1; }
 .preferenceNote { color: var(--text-muted); font-size: var(--text-xs); max-width: 24rem; }
 @media (max-width: 39.999rem) {
+    .searchOptions { grid-template-columns: minmax(0, 1fr); }
     .searchPreferences.wideOnly { display: none; }
 }
 .aiUsage summary { min-height: var(--tap); align-content: center; cursor: pointer; }

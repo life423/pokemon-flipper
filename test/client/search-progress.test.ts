@@ -1,0 +1,53 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createServer } from "vite";
+import { fileURLToPath } from "node:url";
+
+// Vite handles the real TSX/CSS modules in middleware mode: no listening app,
+// browser request or provider is involved in these progress-state regressions.
+test("AI assessment progress is visible throughout searching and respects pause, Stop and failures", async t => {
+    const vite = await createServer({ configFile: fileURLToPath(new URL("../../client/vite.config.js", import.meta.url)),
+        server: { middlewareMode: true, hmr: false, ws: false, watch: null }, logLevel: "error" });
+    t.after(() => vite.close());
+    const { SearchProgress } = await vite.ssrLoadModule("/src/components/SearchProgress.tsx");
+    const defaults = { phase: "discovering", query: "1999 base set holo", error: null, ebayTotal: 1000, checked: 25, total: 100,
+        ai: { done: 5, target: 20, analyzing: 3, waiting: 12, failed: 1 },
+        stats: { junk: 0, dropped: 0, unchecked: 0, deals: 1 }, usage: null, onStop: () => {} };
+    const render = (change: Record<string, unknown> = {}) => renderToStaticMarkup(createElement(SearchProgress, { ...defaults, ...change }));
+    const status = (markup: string) => markup.match(/<div[^>]+data-ai-state="([^"]+)"[^>]*>([\s\S]*?)<\/div>/)!;
+    for (const phase of ["finding", "filtering", "discovering", "pricing", "ai"]) {
+        const markup = render({ phase });
+        const [, state, content] = status(markup);
+        assert.equal(state, "working");
+        assert.match(content, /AI assessing 3 cards/);
+        assert.match(content, /4 completed/);
+        assert.match(content, /1 failed/);
+        assert.ok(markup.indexOf('data-ai-state="working"') < markup.indexOf('inert=""'), "the indicator is outside collapsed details");
+    }
+    assert.match(status(render({ ai: { ...defaults.ai, analyzing: 1 } }))[2], /AI assessing 1 card</);
+    for (const [phase, paused, expected] of [["discovering", true, "paused"], ["paused", true, "paused"], ["stopped", true, "stopped"], ["done", false, "idle"]] as const) {
+        const [, state, content] = status(render({ phase, ai: { ...defaults.ai, analyzing: phase === "done" ? 0 : 3, paused } }));
+        assert.equal(state, expected);
+        assert.doesNotMatch(content, /AI assessing|aria-hidden/);
+        assert.match(content, /4 completed/);
+    }
+    const budgetPaused = render({ phase: "paused", ai: { ...defaults.ai, analyzing: 0, paused: true } });
+    assert.match(budgetPaused, /Analysis paused:/);
+    assert.doesNotMatch(budgetPaused, /Done:|data-state="complete"/);
+    const [, idleState, idle] = status(render({ phase: "finding", ai: { done: 0, target: 0, analyzing: 0, waiting: 0, failed: 0 } }));
+    assert.equal(idleState, "idle"); assert.match(idle, /No full card assessments running/); assert.match(idle, /0 completed/);
+
+    const previous = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem: () => "0" } });
+    try {
+        const expanded = render();
+        assert.ok(!expanded.includes('inert=""'));
+        assert.match(status(expanded)[2], /AI assessing 3 cards/);
+        assert.match(expanded, /Results appear as each assessment finishes/);
+    } finally {
+        if (previous) Object.defineProperty(globalThis, "localStorage", previous);
+        else Reflect.deleteProperty(globalThis, "localStorage");
+    }
+});

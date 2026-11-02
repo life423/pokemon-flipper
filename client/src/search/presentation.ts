@@ -18,8 +18,8 @@ export function describeIntent(intent: SearchIntent): string {
 
 export function describeUsage(usage: EbayUsage): string {
     const left = `eBay today: ${usage.remaining.toLocaleString()} of ${usage.limit.toLocaleString()} requests left`;
-
+    const development = usage.devLimit === undefined ? "" : ` Development allowance: ${usage.devRemaining ?? 0} of ${usage.devLimit} additional requests left.`;
     return usage.braking
-        ? `${left}. Listings are checked from their titles only until it resets at midnight Pacific.`
-        : `${left}.`;
+        ? `${left}. New optional lookups are paused to preserve the daily reserve.${development}`
+        : `${left}.${development}`;
 }

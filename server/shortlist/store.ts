@@ -28,8 +28,11 @@ export function cleanSavedListing(value: unknown): ListingSummary {
         grade: typeof attributes.grade === "number" && attributes.grade >= 1 && attributes.grade <= 10 && Number.isInteger(attributes.grade * 2) ? attributes.grade : null,
         finish: ["HOLO", "NON_HOLO", "REVERSE_HOLO"].includes(attributes.finish ?? "") ? attributes.finish : null,
     } : searchAttributes(input.title);
+    const validDate = (value: unknown): string | undefined => typeof value === "string" && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : undefined;
+    const listedAt = validDate(input.listedAt), createdAt = validDate(input.createdAt);
     return { id: input.id, title: input.title, url: input.url!, currentPrice: input.currentPrice!, shipping: input.shipping!,
         listedAttributes,
+        ...(listedAt ? { listedAt } : {}), ...(createdAt ? { createdAt } : {}),
         ...(typeof input.termsCheckedAt === "string" && Number.isFinite(Date.parse(input.termsCheckedAt)) ? { termsCheckedAt: input.termsCheckedAt } : {}),
         buyingOption: input.buyingOption!, bids: Number.isInteger(input.bids) && input.bids! >= 0 ? input.bids! : 0,
         isGraded: input.isGraded === true, images: [...input.images], endTime: input.endTime!, bestOffer: input.bestOffer === true,

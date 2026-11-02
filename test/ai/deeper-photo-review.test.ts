@@ -1,3 +1,5 @@
+import "../fixtures/mock-ai-spending.ts";
+import "../fixtures/isolated-data.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { reviewPhotosDeeper } from "../../server/ai/deeper-photo-review.ts";

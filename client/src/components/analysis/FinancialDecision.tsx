@@ -8,9 +8,14 @@ import { AuctionSummary } from "../AuctionSummary";
 import { RatingBadge, VerdictBadge } from "../VerdictBadge";
 import { Tween } from "../Tween";
 import { Notes, Pairs, Section } from "./primitives";
+import { isResearchDeferred } from "../../../../shared/photo-review.ts";
 import styles from "../DetailPanel.module.css";
 
 export function FinancialDecision({ evaluation, targets, now }: { evaluation: Evaluation; targets: Targets; now: number }) {
+    if (isResearchDeferred(evaluation)) return <Section title="Automatic research deferred">
+        <p>{evaluation.rawPricing?.evidenceNote}</p>
+        <p className={styles.small}>This is not a completed purchase recommendation. Run full research below to assess the resale routes; saved photo assessments will be reused.</p>
+    </Section>;
     if (!evaluation.underwriting) return null;
     return evaluation.listing.buyingOption === "AUCTION" ? <Section title="Auction decision">
         <AuctionSummary evaluation={evaluation} targets={targets} now={now} />

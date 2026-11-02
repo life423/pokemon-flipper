@@ -2,7 +2,10 @@ import { ProviderError } from "../lib/http.ts";
 import { EbayAuthenticationError, EbayError } from "../ebay/api.ts";
 import { EbayBudgetError } from "../ebay/usage.ts";
 import { AiCreditsError, isAiCreditFailure } from "../ai/errors.ts";
+import { aiSpendingFailure } from "../ai/spending.ts";
 export function evaluationFailure(error: unknown) {
+    const spending = aiSpendingFailure(error);
+    if (spending) return { status: 503, code: spending.code, error: spending.message, retryable: false };
     const value = error as { status?: number; name?: string; code?: string; message?: string };
     if (error instanceof EbayError && [404, 410].includes(error.status)) return { status: 404, error: "Listing not found or no longer available", retryable: false };
     if (error instanceof EbayAuthenticationError || error instanceof EbayBudgetError) return { status: 503, error: error.message, retryable: false };

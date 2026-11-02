@@ -1,5 +1,5 @@
 import { getListingDetails } from "../ebay/listings.ts";
-import { fillFromTitle } from "../ai/title-reader.ts";
+import { fillFromTitle, readTitle } from "../ai/title-reader.ts";
 import {
     ANALYSIS_VERSION,
     CONDITION_VERSION,
@@ -27,7 +27,9 @@ import {
 import type { SavedRecord } from "./types.ts";
 import type { PricedCard } from "../pricing/types.ts";
 import type { Evaluation, Grader, GradeRange, GradedPricing, Identity, Slab, SlabPricing } from "../../shared/types.ts";
-import { identifyCard, readyForPricing } from "../identity/card-identity.ts";
+import { identifyCard, readyForPricing, sameSetFamily } from "../identity/card-identity.ts";
+import { rawPricesFor } from "../pricing/raw-prices.ts";
+import { MIN_AUTOMATIC_RAW_RESALE, CHEAP_FIRST_EDITION_BASE_SET_LIMIT } from "../../shared/research-policy.ts";
 import { createSharedRawSalesPricer } from "../pricing/raw-comps.ts";
 import { crossCheckRawPrices } from "../pricing/cross-check.ts";
 import { assessSoldCondition } from "../ai/sold-condition.ts";
@@ -46,7 +48,7 @@ import { verifyShadowless } from "../ai/shadowless-check.ts";
 import { photoReviewKey } from "./deeper-review.ts";
 import { reconcileIdentityReadings } from "./resolve-evidence.ts";
 import { listingEvidenceKey } from "../../shared/listing-evidence.ts";
-import { createSingleFlight } from "../lib/single-flight.ts";
+import { createSharedWork } from "../lib/shared-work.ts";
 import { completeConditionRuns } from "./condition-runs.ts";
 import { ProviderError } from "../lib/http.ts";
 import { withPricingRecovery } from "../pricing/recover.ts";
@@ -64,14 +66,21 @@ const rawSalesPrices = createSharedRawSalesPricer({ fetchRawComps, checkComps, a
 async function gradedPricesByGrader(
     card: PricedCard,
     identity: Identity,
-    gradeRange: GradeRange
+    gradeRange: GradeRange,
+    signal?: AbortSignal
 ): Promise<Partial<Record<Grader, GradedPricing>>> {
     const byGrader: Partial<Record<Grader, GradedPricing>> = {};
 
     for (const grader of GRADERS) {
         try {
-            byGrader[grader] = await withPricingRecovery(() => gradedPricesFor(card, identity, gradeRange, { fetchComps, checkComps, grader }));
+            signal?.throwIfAborted();
+            byGrader[grader] = await withPricingRecovery(() => gradedPricesFor(card, identity, gradeRange, {
+                fetchComps: (...args) => whileNeeded(signal, () => fetchComps(...args)),
+                checkComps: (comps, target) => whileNeeded(signal, () => checkComps(comps, target, signal)), grader,
+            }), { signal });
+            signal?.throwIfAborted();
         } catch (error) {
+            signal?.throwIfAborted();
             byGrader[grader] = {
                 status: "PRICE_UNAVAILABLE",
                 reason: `The ${grader} comp lookup failed: ${(error as Error).message}`,
@@ -83,7 +92,7 @@ async function gradedPricesByGrader(
 }
 
 // Verified sold comps for a slab's exact grader and grade.
-async function slabPricesFor(card: PricedCard | null, identity: Identity, slab: Slab): Promise<SlabPricing> {
+async function slabPricesFor(card: PricedCard | null, identity: Identity, slab: Slab, signal?: AbortSignal): Promise<SlabPricing> {
     const { grader, grade } = slab;
 
     if (!grader || !grade) {
@@ -94,10 +103,11 @@ async function slabPricesFor(card: PricedCard | null, identity: Identity, slab: 
         return await withPricingRecovery(() => compsForGrade(card, identity, {
             grader,
             grade,
-            fetchComps,
-            checkComps,
-        }));
+            fetchComps: (...args) => whileNeeded(signal, () => fetchComps(...args)),
+            checkComps: (comps, target) => whileNeeded(signal, () => checkComps(comps, target, signal)),
+        }), { signal });
     } catch (error) {
+        signal?.throwIfAborted();
         return {
             status: "PRICE_UNAVAILABLE",
             reason: `The ${grader} comp lookup failed: ${(error as Error).message}`,
@@ -120,17 +130,24 @@ export interface CurrentState {
     endTime: string | null;
 }
 
-interface EvaluationOptions { fresh?: boolean; remember?: boolean; current?: CurrentState | null }
-const shareEvaluations = createSingleFlight();
+interface EvaluationOptions { fresh?: boolean; remember?: boolean; automatic?: boolean; current?: CurrentState | null; signal?: AbortSignal }
+const shareEvaluations = createSharedWork();
+
+async function whileNeeded<T>(signal: AbortSignal | undefined, work: () => Promise<T>): Promise<T> {
+    signal?.throwIfAborted();
+    const result = await work();
+    signal?.throwIfAborted();
+    return result;
+}
 
 // Identical requests share their entire evaluation. Different snapshots for the
 // same item wait, then reuse the first request's saved AI work when it still fits.
 export function evaluateListing(itemId: string, options: EvaluationOptions = {}): Promise<Evaluation> {
-    const normalized = { fresh: options.fresh ?? false, remember: options.remember ?? true, current: options.fresh ? null : options.current ?? null };
+    const normalized = { fresh: options.fresh ?? false, remember: options.remember ?? true, automatic: options.automatic ?? false, current: options.fresh ? null : options.current ?? null };
     // The local consistency diagnostic intentionally asks for independent,
     // unsaved readings. HTTP callers cannot set remember=false.
-    if (normalized.fresh && !normalized.remember) return evaluateOnce(itemId, normalized);
-    return shareEvaluations(JSON.stringify([itemId, normalized]), () => withAssessmentLock(itemId, () => evaluateOnce(itemId, normalized)));
+    if (normalized.fresh && !normalized.remember) return evaluateOnce(itemId, { ...normalized, signal: options.signal });
+    return shareEvaluations(JSON.stringify([itemId, normalized]), signal => withAssessmentLock(itemId, () => evaluateOnce(itemId, { ...normalized, signal })), options.signal);
 }
 
 async function evaluateOnce(
@@ -138,17 +155,21 @@ async function evaluateOnce(
     {
         fresh = false,
         remember = true,
+        automatic = false,
         current = null,
+        signal,
     }: EvaluationOptions = {}
 ): Promise<Evaluation> {
     // From the page: the saved details plus the price it just searched,
     // so analyzing a listing usually costs no eBay request. Without that
     // (the evaluate script), the details are fetched fresh for the price.
+    signal?.throwIfAborted();
     const details = await getListingDetails(itemId, {
         ...(!current || fresh ? { maxAgeHours: 0 } : {}),
         expectedPhotos: current?.images,
         expectedTitle: current?.title,
     });
+    signal?.throwIfAborted();
     const listing = current
         ? {
               ...details,
@@ -161,10 +182,12 @@ async function evaluateOnce(
 
     // Set, number, and name read from the title when the seller left them
     // out, the same way the free check reads them.
-    listing.aspects = (await fillFromTitle(listing)).aspects;
+    listing.aspects = (await fillFromTitle(listing, title => readTitle(title, signal))).aspects;
+    signal?.throwIfAborted();
     const photoUrls = listing.images.slice(0, MAX_PHOTOS);
 
     const evaluation: Evaluation = {
+        researchMode: "FULL",
         conditionVersion: CONDITION_VERSION,
         assessmentVersion: ANALYSIS_VERSION,
         pricingVersion: PRICING_VERSION,
@@ -173,6 +196,8 @@ async function evaluateOnce(
             id: listing.id,
             title: listing.title,
             url: listing.url,
+            listedAt: listing.listedAt,
+            createdAt: listing.createdAt,
             availability: listing.availability,
             ...(fresh && details.retrievedAt ? { termsCheckedAt: details.retrievedAt } : {}),
             sellerCondition: listing.condition,
@@ -223,6 +248,7 @@ async function evaluateOnce(
               title: listing.title,
           });
 
+    signal?.throwIfAborted();
     const record: SavedRecord = saved ?? {
         itemId: listing.id,
         version: ANALYSIS_VERSION,
@@ -238,7 +264,7 @@ async function evaluateOnce(
     if (record.photoCheck) {
         evaluation.reusedSteps.push("photoCheck");
     } else {
-        const photoCheck = await checkListingPhotos(listing, photoUrls);
+        const photoCheck = await checkListingPhotos(listing, photoUrls, undefined, signal);
         record.photoCheck = { result: photoCheck.result, usage: photoCheck.usage };
         evaluation.usage.push({ step: "photoCheck", ...photoCheck.usage });
         changed = true;
@@ -246,6 +272,7 @@ async function evaluateOnce(
         if (remember) await saveRecord(listing.id, record);
     }
 
+    signal?.throwIfAborted();
     const originalPhotos = applyPhotoCheckRules(record.photoCheck.result, photoUrls.length);
     let checkedPhotos = originalPhotos;
     evaluation.photoCheck = checkedPhotos;
@@ -257,9 +284,12 @@ async function evaluateOnce(
     // Identity and raw pricing don't depend on the grading mode, only
     // on the listing showing one card, raw or graded.
     let identifiedCard = null;
+    let lowValueReview = false;
+    let deferredReview = false;
 
     if (checkedPhotos.cardCount === "ONE") {
         const scan = await savedPhotoInspection(photoUrls[0]);
+        signal?.throwIfAborted();
         let photoIdentity = confirmPhotoIdentity(scan, checkedPhotos);
         let finishConflict = false;
         if (record.identityPasses?.length) {
@@ -271,10 +301,10 @@ async function evaluateOnce(
         }
         if (photoIdentity?.printing === "SHADOWLESS") {
             const fronts = checkedPhotos.images.filter((image) => image.usable && !image.isStockImage && (image.view === "FRONT" || image.view === "FRONT_DETAIL"));
-            if (!await verifyShadowless(fronts.map((image) => photoUrls[image.number - 1]))) photoIdentity.printing = undefined;
+            if (!await verifyShadowless(fronts.map((image) => photoUrls[image.number - 1]), signal)) photoIdentity.printing = undefined;
         }
         const identify = async () => {
-            const result = await identifyCard(listing, checkedPhotos, { lookupCards: query => withPricingRecovery(() => lookupCards(query)), photoIdentity });
+            const result = await whileNeeded(signal, () => identifyCard(listing, checkedPhotos, { lookupCards: query => withPricingRecovery(() => whileNeeded(signal, () => lookupCards(query)), { signal }), photoIdentity }));
             if (finishConflict) result.identity.finish = "CONFLICTING";
             return result;
         };
@@ -286,22 +316,25 @@ async function evaluateOnce(
             const labelGap = checkedPhotos.holder === "GRADED_SLAB" && (!checkedPhotos.slab?.grader || !checkedPhotos.slab.grade || !checkedPhotos.slab.labelText);
             if (readyForPricing(identified.identity) && !finishGap && !labelGap) break;
             try {
+                signal?.throwIfAborted();
                 const answer = await readIdentityPhotos(focusPhotos, record.identityPasses?.length ?? 0, {
                     unresolved: [...identified.identity.reasons, ...(finishGap ? ["Select the exact finish only if the photo or readable label supports it."] : []), ...(labelGap ? ["Read missing slab label fields from the actual label."] : [])],
                     possibleFinishes: [...new Set(identified.card?.variants.map(variant => variant.name) ?? [])],
-                });
+                }, undefined, signal);
                 (record.identityPasses ??= []).push(answer);
                 evaluation.usage.push({ step: "identityResolution", ...answer.usage });
                 changed = true;
                 record.answeredAt = new Date().toISOString();
                 if (remember) await saveRecord(listing.id, record);
+                signal?.throwIfAborted();
                 const resolved = reconcileIdentityReadings(originalPhotos, record.identityPasses.map(pass => pass.result));
                 checkedPhotos = resolved.check;
                 finishConflict = resolved.finishConflict;
                 photoIdentity = resolved.confirmation;
-                if (photoIdentity?.printing === "SHADOWLESS" && !await verifyShadowless(focusPhotos)) photoIdentity.printing = undefined;
+                if (photoIdentity?.printing === "SHADOWLESS" && !await verifyShadowless(focusPhotos, signal)) photoIdentity.printing = undefined;
                 identified = await identify();
             } catch (error) {
+                signal?.throwIfAborted();
                 console.error(`Focused identity reading could not finish: ${(error as Error).message}`);
                 break;
             }
@@ -312,15 +345,35 @@ async function evaluateOnce(
         identifiedCard = card;
         evaluation.identity = identity;
 
+        if (automatic && checkedPhotos.holder !== "GRADED_SLAB" && readyForPricing(identity)) {
+            const market = rawPricesFor(card, identity);
+            const quotes = market.prices?.map(price => price.price).filter(price => Number.isFinite(price) && price > 0) ?? [];
+            if (market.status === "PRICED" && quotes.length && Math.max(...quotes) < MIN_AUTOMATIC_RAW_RESALE) {
+                const cheapFirstEdition = identity.printing === "FIRST_EDITION" && sameSetFamily(identity.set, "Base Set") &&
+                    listing.price !== null && listing.price >= 0 && listing.price <= CHEAP_FIRST_EDITION_BASE_SET_LIMIT;
+                lowValueReview = true;
+                deferredReview = !cheapFirstEdition;
+                evaluation.researchMode = cheapFirstEdition ? "FOCUSED_LOW_RESALE" : "DEFERRED_LOW_RESALE";
+                evaluation.rawPricing = { ...market, prices: market.prices?.map(price => ({ ...price, basis: "TCGPLAYER" })),
+                    evidenceNote: cheapFirstEdition
+                        ? `Focused review of a cheap 1st Edition Base Set card below the $${MIN_AUTOMATIC_RAW_RESALE} raw-market research minimum. Resale uses the condition-specific market feed, not verified eBay sold prices. Full sold-price and grading research is available manually.`
+                        : `Automatic research was deferred because the highest available raw market quote is below $${MIN_AUTOMATIC_RAW_RESALE}. Existing photo assessments are kept. Condition, eBay sold-price and grading research can be completed manually.` };
+                evaluation.gradedPricing = Object.fromEntries(GRADERS.map(grader => [grader, { status: "PRICE_UNAVAILABLE",
+                    reason: "Graded comparisons were deferred for this focused low-value review. Run full manual analysis to research this grading route." }]));
+            }
+        }
+
         if (checkedPhotos.holder === "GRADED_SLAB") {
             // A graded card is resold as is: read its slab, then price
             // that exact grader and grade.
             evaluation.slab = checkSlab(checkedPhotos, listing.aspects);
 
             if (evaluation.slab.status === "OK") {
-                evaluation.slabPricing = await slabPricesFor(card, identity, evaluation.slab);
+                evaluation.slabPricing = await slabPricesFor(card, identity, evaluation.slab, signal);
+                signal?.throwIfAborted();
                 if (evaluation.slabPricing.status !== "PRICED") {
-                    const activeReference = await findActiveComparables(identity, evaluation.slab, listing.id);
+                    const activeReference = await findActiveComparables(identity, evaluation.slab, listing.id, signal);
+                    signal?.throwIfAborted();
                     if (activeReference) evaluation.slabPricing = { ...evaluation.slabPricing, status: "PRICED", source: "ebay-active",
                         printing: identity.printing, grader: evaluation.slab.grader!, grade: evaluation.slab.grade!, activeReference };
                 }
@@ -328,13 +381,15 @@ async function evaluateOnce(
         }
     }
 
-    if (mode !== "BLOCKED") {
+    signal?.throwIfAborted();
+    const clearPhotos = checkedPhotos.images.filter(isClearPhoto);
+    const photoNumbers = clearPhotos.map((photo) => photo.number);
+    const cachedConditionFits = assessmentStillFits(record.assessment, mode, photoNumbers, CONDITION_VERSION);
+    if (mode !== "BLOCKED" && (!deferredReview || cachedConditionFits)) {
         // Only the clear photos go to the (more expensive) condition step.
-        const clearPhotos = checkedPhotos.images.filter(isClearPhoto);
-        const photoNumbers = clearPhotos.map((photo) => photo.number);
         const closeUps = hasCloseUps(checkedPhotos);
 
-        if (assessmentStillFits(record.assessment, mode, photoNumbers, CONDITION_VERSION)) {
+        if (cachedConditionFits) {
             evaluation.reusedSteps.push("condition");
         } else {
             const photos = clearPhotos.map((photo) => ({
@@ -344,9 +399,9 @@ async function evaluateOnce(
 
             const previous = record.conditionRuns;
             const existing = previous?.version === CONDITION_VERSION && previous.mode === mode && previous.photoNumbers.join(",") === photoNumbers.join(",") ? previous.answers : [];
-            const answers = await completeConditionRuns({ existing,
+            const answers = await completeConditionRuns({ existing, signal,
                 run: async () => {
-                    const answer = await assessCardCondition(listing, photos, mode);
+                    const answer = await assessCardCondition(listing, photos, mode, signal);
                     evaluation.usage.push({ step: "condition", ...answer.usage });
                     if (!applyConditionRules(answer.result, mode, { closeUps, photoCount: photos.length })) throw new ProviderError("The AI condition or authenticity evidence was incomplete; the missing assessment will be retried.");
                     return answer;
@@ -395,19 +450,24 @@ async function evaluateOnce(
             evaluation.condition = condition;
             evaluation.setAside = (record.assessment?.setAside ?? []).map(summarizeAnswer);
 
-            if (identifiedCard && evaluation.identity) {
+            if (identifiedCard && evaluation.identity && !lowValueReview) {
                 evaluation.gradedPricing = await gradedPricesByGrader(
                     identifiedCard,
                     evaluation.identity,
-                    condition.gradeRange
+                    condition.gradeRange,
+                    signal
                 );
             }
         }
+    } else if (deferredReview) {
+        evaluation.gradeStatus = "DEFERRED_LOW_RESALE";
     }
 
+    signal?.throwIfAborted();
     const context = { title: listing.title, photos: photoUrls };
-    if (identifiedCard && evaluation.identity && !evaluation.slab) evaluation.rawPricing = await rawSalesPrices(identifiedCard, evaluation.identity);
-    if (evaluation.rawPricing && evaluation.identity && evaluation.condition) evaluation.rawPricing = await crossCheckRawPrices(evaluation.rawPricing, evaluation.identity);
+    if (identifiedCard && evaluation.identity && !evaluation.slab && !lowValueReview) evaluation.rawPricing = await rawSalesPrices(identifiedCard, evaluation.identity, signal);
+    signal?.throwIfAborted();
+    if (evaluation.rawPricing && evaluation.identity && evaluation.condition && !lowValueReview) evaluation.rawPricing = await whileNeeded(signal, () => crossCheckRawPrices(evaluation.rawPricing!, evaluation.identity!));
     record.reviewContext = context;
 
     if (changed) {
@@ -417,8 +477,8 @@ async function evaluateOnce(
     evaluation.answeredAt = record.answeredAt;
     if (remember) evaluation.photoReviewKey = photoReviewKey(record);
     if (record.deeperPhotoReview?.inputKey === evaluation.photoReviewKey) evaluation.deeperPhotoReview = record.deeperPhotoReview;
-    if (identifiedCard && evaluation.identity) {
-        evaluation.marketActivity = await activityFor(identifiedCard, evaluation.identity, Boolean(evaluation.slab), fetchSalesVolume);
+    if (identifiedCard && evaluation.identity && !lowValueReview) {
+        evaluation.marketActivity = await whileNeeded(signal, () => activityFor(identifiedCard!, evaluation.identity!, Boolean(evaluation.slab), (...args) => whileNeeded(signal, () => fetchSalesVolume(...args))));
     }
     evaluation.underwriting = underwrite(evaluation);
     evaluation.rating = rateDeal(evaluation);

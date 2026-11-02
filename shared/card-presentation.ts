@@ -1,6 +1,6 @@
 import { MONEY_CONFIG } from "./money/config.ts";
 import { pathNumbers } from "./money/underwriting.ts";
-import { deeperPhotoConcerns } from "./photo-review.ts";
+import { photoReviewStatus } from "./photo-review.ts";
 import type { Evaluation, Grader, PricedPath, Targets } from "./types.ts";
 
 export function returnText(value: number | null | undefined): string {
@@ -19,9 +19,7 @@ export function auctionDecision(evaluation: Evaluation, targets: Targets = MONEY
     const best = evaluation.underwriting?.best;
     const current = evaluation.listing.price;
     const ceiling = best && Number.isFinite(best.maxBid) && best.maxBid > 0 ? best.maxBid : null;
-    const provisional = deeperPhotoConcerns(evaluation).length > 0 || evaluation.identity?.status !== "IDENTIFIED" || (evaluation.slab
-        ? evaluation.slab.status !== "OK"
-        : !evaluation.condition || evaluation.condition.confidence === "LOW" || evaluation.condition.rawCondition === "UNKNOWN" || evaluation.condition.gradeRange.likely === null);
+    const provisional = !evaluation.photoCheck || photoReviewStatus(evaluation).needsYourReview || (!evaluation.slab && evaluation.condition?.rawCondition === "UNKNOWN");
     const ended = evaluation.listing.availability === "UNAVAILABLE" || Boolean(evaluation.listing.endTime && Date.parse(evaluation.listing.endTime) <= now);
     const overLimit = ceiling !== null && current !== null && current > ceiling;
     const status = ended ? "ENDED" : ceiling === null ? "UNPRICED" : overLimit ? "OVER_LIMIT" : provisional ? "PROVISIONAL" : "WITHIN_LIMIT";

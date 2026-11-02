@@ -2,6 +2,24 @@ import type { DeeperPhotoReview, EbayUsage, Evaluation, ListingSummary, SearchIn
 import type { ShortlistEntry, RefreshResult } from "../../shared/shortlist.ts";
 import type { PricingRetryResult, PricingRecoveryProgress } from "../../shared/pricing-retries.ts";
 import type { AiUsageDay } from "../../shared/ai-usage.ts";
+import type { ListingFilters } from "../../shared/listing-filters.ts";
+
+function filterQuery(filters?: ListingFilters): string {
+    const query = new URLSearchParams();
+    if (filters?.typeFilter && filters.typeFilter !== "all") query.set("type", filters.typeFilter);
+    if (filters?.kindFilter && filters.kindFilter !== "all") query.set("kind", filters.kindFilter);
+    if (filters?.maxPrice !== undefined) query.set("ceiling", String(filters.maxPrice));
+    return query.size ? `&${query}` : "";
+}
+
+function retryDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
+    return new Promise((resolve, reject) => {
+        const cancel = () => { clearTimeout(timer); reject(signal?.reason); };
+        const timer = setTimeout(() => { signal?.removeEventListener("abort", cancel); resolve(); }, milliseconds);
+        signal?.addEventListener("abort", cancel, { once: true });
+    });
+}
 export function fetchAiUsage(): Promise<AiUsageDay> { return request("/api/ai-usage"); }
 export class ApiRequestError extends Error {
     constructor(message: string, readonly retryable = false, readonly retryAfterMs = 1500, readonly code?: string) { super(message); }
@@ -36,7 +54,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export type DealsMessage =
-    | { type: "start"; total: number; found: number; count: number; skipped: number; intent: SearchIntent; mode?: "new"; deferred?: number; previouslySeen?: number }
+    | { type: "start"; total: number; found: number; count: number; skipped: number; intent: SearchIntent; mode?: "new" | "development"; deferred?: number; previouslySeen?: number }
     | { type: "listing"; listing: ListingSummary }
     | { type: "discovery"; status: "checking" | "done" | "error"; checked: number; total: number; note?: string }
     | ({ type: "pricing" } & PricingRecoveryProgress)
@@ -99,16 +117,17 @@ async function streamLines<T extends { type: string }>(
 
 export function streamDeals(
     query: string,
-    { maxResults, minPrice, signal, targets, includeOffers = false }: { maxResults: number; minPrice: number; signal?: AbortSignal; targets?: Targets; includeOffers?: boolean },
+    { maxResults, minPrice, signal, targets, includeOffers = false, filters, searchRunId }: { maxResults: number; minPrice: number; signal?: AbortSignal; targets?: Targets; includeOffers?: boolean; filters?: ListingFilters; searchRunId?: string },
     onMessage: (message: DealsMessage) => void
 ): Promise<void> {
     const criteria = targets ? `&profit=${targets.minProfit}&roi=${targets.minRoi}` : "";
-    return streamLines(`/api/deals?q=${encodeURIComponent(query)}&max=${maxResults}&min=${minPrice}${criteria}&offers=${includeOffers ? 1 : 0}`, onMessage, signal);
+    return streamLines(`/api/deals?q=${encodeURIComponent(query)}&max=${maxResults}&min=${minPrice}${criteria}&offers=${includeOffers ? 1 : 0}${filterQuery(filters)}`, onMessage, signal,
+        searchRunId ? { headers: { "X-Pokemon-Flipper-Search-Id": searchRunId } } : undefined);
 }
 
-export function streamNewDeals(query: string, options: { minPrice: number; signal?: AbortSignal; targets: Targets; includeOffers: boolean; knownIds: string[] }, onMessage: (message: DealsMessage) => void): Promise<void> {
-    return streamLines(`/api/deals/new?min=${options.minPrice}&profit=${options.targets.minProfit}&roi=${options.targets.minRoi}&offers=${options.includeOffers ? 1 : 0}`, onMessage, options.signal,
-        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query, knownIds: options.knownIds.slice(-500) }) });
+export function streamNewDeals(query: string, options: { minPrice: number; signal?: AbortSignal; targets: Targets; includeOffers: boolean; knownIds: string[]; filters?: ListingFilters; searchRunId?: string }, onMessage: (message: DealsMessage) => void): Promise<void> {
+    return streamLines(`/api/deals/new?min=${options.minPrice}&profit=${options.targets.minProfit}&roi=${options.targets.minRoi}&offers=${options.includeOffers ? 1 : 0}${filterQuery(options.filters)}`, onMessage, options.signal,
+        { method: "POST", headers: { "Content-Type": "application/json", ...(options.searchRunId ? { "X-Pokemon-Flipper-Search-Id": options.searchRunId } : {}) }, body: JSON.stringify({ query, knownIds: options.knownIds.slice(-500) }) });
 }
 
 export function resolveListingLink(input: string, signal?: AbortSignal): Promise<ListingSummary> {
@@ -159,12 +178,15 @@ export function fetchEbayUsage(): Promise<EbayUsage | null> {
 // after that. fresh asks the model again.
 // The listing's current price, bid, and end time go along, so the server
 // can use its saved details instead of asking eBay again.
-export async function evaluateListing(listing: ListingSummary, { fresh = false } = {}): Promise<Evaluation> {
+export async function evaluateListing(listing: ListingSummary, { fresh = false, signal, searchRunId, automatic = false }: { fresh?: boolean; signal?: AbortSignal; searchRunId?: string; automatic?: boolean } = {}): Promise<Evaluation> {
     for (let attempt = 0; ; attempt++) {
-        const query = fresh ? attempt === 0 ? "?fresh=1" : "?refreshTerms=1" : "";
+        signal?.throwIfAborted();
+        const refreshQuery = fresh ? attempt === 0 ? "?fresh=1" : "?refreshTerms=1" : "";
+        const query = automatic ? `${refreshQuery}${refreshQuery ? "&" : "?"}auto=1` : refreshQuery;
         try { return await request(`/api/listings/${encodeURIComponent(listing.id)}/evaluate${query}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(searchRunId ? { "X-Pokemon-Flipper-Search-Id": searchRunId } : {}) },
+        signal,
         body: JSON.stringify({
             title: listing.title,
             images: listing.images,
@@ -174,8 +196,8 @@ export async function evaluateListing(listing: ListingSummary, { fresh = false }
             endTime: listing.endTime,
         }),
         }); } catch (error) {
-            if (attempt > 0 || !(error instanceof ApiRequestError) || !error.retryable) throw error;
-            await new Promise(resolve => setTimeout(resolve, error.retryAfterMs));
+            if (signal?.aborted || attempt > 0 || !(error instanceof ApiRequestError) || !error.retryable) throw error;
+            await retryDelay(error.retryAfterMs, signal);
         }
     }
 }

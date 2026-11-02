@@ -30,7 +30,14 @@ export interface ScreenSteps {
     matchPhoto: (imageUrl: string, card: ClaimedCard) => Promise<PhotoMatch | null>;
 }
 
-export function screeningSteps(targets?: Targets, includeOffers = false, signal?: AbortSignal): ScreenSteps {
+export function screeningSteps(targets?: Targets, includeOffers = false, signal?: AbortSignal,
+    pricing = { lookupCards, fetchComps, fetchRawComps, checkComps }): ScreenSteps {
+    const whileNeeded = async <T>(run: () => Promise<T>): Promise<T> => {
+        signal?.throwIfAborted();
+        const result = await run();
+        signal?.throwIfAborted();
+        return result;
+    };
     return {
         deferPricing: pricingRetries.register,
         shippingCouldChange: (screen, price) => shippingCouldChange(screen, price, targets ? withTargets(targets) : MONEY_CONFIG, includeOffers),
@@ -41,10 +48,17 @@ export function screeningSteps(targets?: Targets, includeOffers = false, signal?
             ...(freshShipping ? { maxAgeHours: 0 } : {}),
         }),
         check: (input) =>
-            prescreen(input, { lookupCards, fetchComps, fetchRawComps, checkComps, config: targets ? withTargets(targets) : undefined, includeOffers }).catch((error: Error) =>
-                unscreened(`Screening failed: ${error.message}`)
-            ),
-        matchPhoto: matchMainPhoto,
+            whileNeeded(() => prescreen(input, {
+                lookupCards: (...args) => whileNeeded(() => pricing.lookupCards(...args)),
+                fetchComps: (...args) => whileNeeded(() => pricing.fetchComps(...args)),
+                fetchRawComps: (...args) => whileNeeded(() => pricing.fetchRawComps(...args)),
+                checkComps: (comps, target) => whileNeeded(() => pricing.checkComps(comps, target, signal)),
+                config: targets ? withTargets(targets) : undefined, includeOffers,
+            })).catch((error: Error) => {
+                signal?.throwIfAborted();
+                return unscreened(`Screening failed: ${error.message}`);
+            }),
+        matchPhoto: (imageUrl, card) => matchMainPhoto(imageUrl, card, signal),
     };
 }
 
@@ -65,6 +79,9 @@ export async function screenListing(
     signal?: AbortSignal
 ): Promise<ListingSummary> {
     signal?.throwIfAborted();
+    const expired = () => listing.buyingOption === "AUCTION" && Boolean(listing.endTime) && Date.parse(listing.endTime!) <= Date.now();
+    const unavailable = () => ({ ...listing, availability: "UNAVAILABLE" as const });
+    if (expired()) return unavailable();
     let pricingInput: ScreenInput | undefined;
     const check = (input: ScreenInput) => { pricingInput = input; return steps.check(input); };
     const finish = (value: ListingSummary): ListingSummary => {
@@ -86,6 +103,7 @@ export async function screenListing(
     // condition is the one the title claims; with none, it's assumed best.
     const fromTitle = await steps.readTitle({ title: listing.title, aspects: {} });
     signal?.throwIfAborted();
+    if (expired()) return unavailable();
 
     // Not a single card: a lot, sealed product, merch, a mystery pack, a
     // fake. Skipped before any price lookup or eBay request.
@@ -119,17 +137,19 @@ export async function screenListing(
     );
     signal?.throwIfAborted();
 
+    if (expired()) return unavailable();
     // Explicit junk stays excluded; unusually low prices can enter full AI verification.
     if (first.junk) return { ...listing, match: "JUNK", screen: first };
     if (first.priceAnomaly && !first.priceAnomaly.photoChecked) return titleResult({ ...listing, screen: first });
 
     // A candidate's main photo, checked against the card it claims before any
-    // eBay request or full analysis. Long-shot auctions aren't worth it.
+    // eBay request or full analysis.
     let seen: PhotoMatch | null = null;
 
-    if (first.status === "CANDIDATE" && !first.longShot && first.card && listing.images[0]) {
+    if (first.status === "CANDIDATE" && first.card && listing.images[0]) {
         seen = await steps.matchPhoto(listing.images[0], first.card);
         signal?.throwIfAborted();
+        if (expired()) return unavailable();
 
         if (seen?.verdict === "MISMATCH") {
             const reason = `The main photo doesn't match: ${seen.problems.join("; ") || "another card"}.`;
@@ -152,14 +172,17 @@ export async function screenListing(
         details = await steps.loadDetails(listing.id, listing, needsShippingQuote);
     } catch {
         signal?.throwIfAborted();
+        if (expired()) return unavailable();
         // Out of eBay requests, or the listing is gone: the title's check stands.
         return titleResult({ ...listing, screen: { ...first, evidence: { photos: availablePhotoCount(listing.images), mainPhoto: seen?.verdict === "MATCH" ? "MATCH" : seen?.verdict === "CANT_TELL" ? "CANT_TELL" : "UNKNOWN" } } });
     }
     signal?.throwIfAborted();
 
     // Then with the listing's own details; the title only fills gaps.
+    if (expired()) return unavailable();
     const { aspects, filled } = await steps.readTitle(details);
     signal?.throwIfAborted();
+    if (expired()) return unavailable();
 
     if (!isEnglish(aspects.Language)) {
         return { ...listing, match: "OTHER_LANGUAGE" };
@@ -188,6 +211,7 @@ export async function screenListing(
         ...listing,
         ...(detailsMismatch ? { match: detailsMismatch } : {}),
         shipping: listing.shipping ?? details.shipping,
+        listedAt: details.listedAt ?? listing.listedAt, createdAt: details.createdAt ?? listing.createdAt,
         listedAttributes: searchAttributes(details.title, aspects),
         seller: details.seller ?? listing.seller,
         cardCondition: details.cardCondition,

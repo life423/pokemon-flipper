@@ -1,5 +1,5 @@
 import type { Evaluation, ListingSummary, PhotoCheck } from "./types.ts";
-import { photoAssessmentConfidence } from "./photo-evidence.ts";
+import { photoAssessmentConfidence, photoCoverage, photoIssueNotes } from "./photo-evidence.ts";
 
 export const DEEP_PHOTO_LIMIT = 24;
 export function planDeeperPhotos(check: PhotoCheck | null, photos: string[]) {
@@ -33,22 +33,42 @@ export function photoReviewStatus(evaluation: Evaluation | null, listing?: Listi
         confidence: "UNKNOWN", checked: 0, total: listing?.images?.length ?? 0, reviewedAt: null, reasons: [] as string[], photoNotes: [] as string[], needsYourReview: false,
     };
     const check = evaluation.photoCheck;
+    const deferred = evaluation.researchMode === "DEFERRED_LOW_RESALE";
     const confidence = photoAssessmentConfidence(evaluation);
     const newConcerns = deeperPhotoConcerns(evaluation);
     const reasons = [...newConcerns];
-    const photoNotes = check.images.filter((image) => image.obscuresCondition).flatMap((image) => image.issues);
-    if (!evaluation.slab) reasons.push(...photoNotes);
-    if (evaluation.identity?.status !== "IDENTIFIED") reasons.push(...(evaluation.identity?.reasons ?? ["The exact card identity is uncertain."]));
-    if (evaluation.slab?.status !== "OK" && evaluation.slab) reasons.push(...evaluation.slab.reasons);
-    if (!evaluation.slab && evaluation.condition?.gradeRange.likely === null) reasons.push("The photos do not support a single likely grade.");
-    if (!evaluation.slab && !evaluation.condition) reasons.push("AI could not support a raw-condition or grade estimate.");
+    const photoNotes = photoIssueNotes(check);
+    if (evaluation.identity?.status !== "IDENTIFIED") reasons.push(...(evaluation.identity?.reasons.length ? evaluation.identity.reasons : ["The exact card identity is uncertain."]));
+    if (evaluation.slab?.status !== "OK" && evaluation.slab) reasons.push(...(evaluation.slab.reasons.length ? evaluation.slab.reasons : evaluation.slab.concerns.length ? evaluation.slab.concerns : ["The slab label or authenticity needs review."]));
+    if (evaluation.underwriting?.verdict === "NEEDS_REVIEW" && (!deferred || evaluation.condition)) reasons.push(...(evaluation.underwriting.reasons.length ? evaluation.underwriting.reasons : ["The purchase recommendation needs review."]));
     if (!evaluation.slab) {
-        if (confidence === "LOW") reasons.push("Photo assessment confidence is low.");
-        reasons.push(...check.missingViews.map((view) => `Missing view: ${view.toLowerCase().replaceAll("_", " ")}.`));
-        reasons.push(...evaluation.modeReasons);
+        const coverage = photoCoverage(check);
+        const coverageNotes = deferred ? photoNotes : reasons;
+        if (!coverage.fronts) coverageNotes.push("No usable photo shows the whole front.");
+        else if (!coverage.clearFronts) coverageNotes.push("Every usable whole-front photo has obscured detail.");
+        if (!coverage.backs) coverageNotes.push("No usable photo shows the whole back.");
+        else if (!coverage.clearBacks) coverageNotes.push("Every usable whole-back photo has obscured detail.");
+        if (!evaluation.condition && !deferred) reasons.push("AI could not support a raw-condition or grade estimate.");
+        else if (evaluation.condition?.rawCondition === "UNKNOWN") reasons.push("AI could not support a raw-condition estimate.");
+        const authenticity = evaluation.condition?.authenticity;
+        if (authenticity && authenticity.concern !== "NONE_SEEN") reasons.push(...(authenticity.reasons.length ? authenticity.reasons : ["The photos raise an authenticity question."]));
+        const grading = evaluation.underwriting?.best?.path === "GRADE";
+        if (evaluation.condition?.gradeRange.likely === null) {
+            (grading ? reasons : photoNotes).push("The photos do not support a single likely grade.");
+        }
+        if (confidence === "LOW") (grading ? reasons : photoNotes).push("Photo assessment confidence is low.");
+        // A cropped or glared close-up describes that image, not every view of
+        // the card. Requested extra views remain visible without replacing the
+        // whole-side coverage or the model's completed condition assessment.
+        photoNotes.push(...check.missingViews.map(view => `Additional view requested by AI: ${view}`));
+        photoNotes.push(...evaluation.modeReasons.map(reason => `Assessment note: ${reason}`));
     }
     const concerns = reasons.length > 0;
-    return { title: "AI photo review complete", confidence, checked: check.images.length,
+    return { title: deferred && !evaluation.condition ? "AI identity check complete" : "AI photo review complete", confidence, checked: check.images.length,
         total: evaluation.listing.photosInListing, reviewedAt: evaluation.answeredAt,
-        reasons: [...new Set(reasons)], photoNotes: evaluation.slab ? [...new Set(photoNotes)] : [], needsYourReview: concerns };
+        reasons: [...new Set(reasons)], photoNotes: [...new Set(photoNotes)], needsYourReview: concerns };
+}
+
+export function isResearchDeferred(evaluation: Evaluation | null): boolean {
+    return evaluation?.researchMode === "DEFERRED_LOW_RESALE" && !photoReviewStatus(evaluation).needsYourReview;
 }

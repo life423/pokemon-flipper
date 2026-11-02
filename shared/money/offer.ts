@@ -11,7 +11,7 @@ const OPENING_DISCOUNT = 0.1;
 
 // Discovery policy, not a prediction of what a seller will accept.
 // Larger discounts require a price drop before being shown as opportunities.
-const LONG_SHOT_DISCOUNT = 0.1;
+const MAX_OFFER_DISCOUNT = 0.1;
 
 export interface OfferPlan {
     // What to offer, rounded to a number that reads as deliberate.
@@ -21,7 +21,7 @@ export interface OfferPlan {
     // Paying the full asking price would still clear your targets.
     clearsAtAsking: boolean;
     // More than 10% under asking: outside our offer-discovery cutoff.
-    longShot: boolean;
+    requiresPriceDrop: boolean;
 }
 
 // $125, not $127.50: whole steps that grow with the price.
@@ -35,7 +35,7 @@ export function offerPlan(asking: number, maxPrice: number): OfferPlan | null {
     if (maxPrice <= 0 || asking <= 0) return null;
 
     const clearsAtAsking = asking <= maxPrice;
-    const minimumOffer = Math.ceil((asking * (1 - LONG_SHOT_DISCOUNT) - 1e-9) * 100) / 100;
+    const minimumOffer = Math.ceil((asking * (1 - MAX_OFFER_DISCOUNT) - 1e-9) * 100) / 100;
     const rounded = roundOffer(clearsAtAsking ? asking * (1 - OPENING_DISCOUNT) : maxPrice);
     // Keep rounding from turning a permitted discount into a lowball.
     const offer = maxPrice >= minimumOffer ? Math.max(minimumOffer, rounded) : rounded;
@@ -46,7 +46,7 @@ export function offerPlan(asking: number, maxPrice: number): OfferPlan | null {
         offer,
         walkAway: Math.floor((maxPrice + 1e-9) * 100) / 100,
         clearsAtAsking,
-        longShot: offer + 1e-9 < asking * (1 - LONG_SHOT_DISCOUNT),
+        requiresPriceDrop: offer + 1e-9 < asking * (1 - MAX_OFFER_DISCOUNT),
     };
 }
 
@@ -60,7 +60,7 @@ export function describeOffer(plan: OfferPlan, asking: number): string {
 
     const base = `Offer ${dollars(plan.offer)}, ${under} under asking, within your price limit.`;
 
-    return plan.longShot
+    return plan.requiresPriceDrop
         ? `Your limit is ${dollars(plan.walkAway)}, ${under} below asking. This is outside the 10% offer-discovery cutoff; wait for a price drop. Seller acceptance is unknown.`
         : `${base} Seller acceptance is unknown; this is only an opportunity if they agree.`;
 }
@@ -92,5 +92,5 @@ export function offerFor(
 // A listing that doesn't clear at its asking price, but would at a
 // realistic offer.
 export function offerWorthMaking(plan: OfferPlan | null): plan is OfferPlan {
-    return plan !== null && !plan.clearsAtAsking && !plan.longShot;
+    return plan !== null && !plan.clearsAtAsking && !plan.requiresPriceDrop;
 }

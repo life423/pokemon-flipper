@@ -14,6 +14,8 @@
 .caution strong { font-size: var(--text-sm); }
 .caution p, .caution ul { margin-top: var(--space-1); font-size: var(--text-xs); }
 .review ul { margin: var(--space-2) 0 0; padding-left: var(--space-4); }
+.notes { position: relative; z-index: 2; }
+.notes summary { min-height: var(--tap); align-content: center; cursor: pointer; }
 .deep, .action { display: grid; gap: var(--space-3); margin-top: var(--space-2); }
 .deep h3 { font-size: var(--text-md); }
 .deep h4 { font-size: var(--text-sm); }

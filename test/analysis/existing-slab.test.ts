@@ -1,3 +1,4 @@
+import "../fixtures/mock-ai-spending.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
