@@ -1,7 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { screenListing } from "../../server/deals/find-deals.ts";
+import { findDeals, screenListing } from "../../server/deals/find-deals.ts";
 import { canAutoAnalyze } from "../../shared/analysis.ts";
+import { EnglishOnlyError } from "../../shared/card-language.ts";
+
+test("foreign-language search intent is rejected before paid query interpretation", async () => {
+    await assert.rejects(findDeals("Japanese Charizard", {}, { readIntent: async () => { throw new Error("Excluded searches must not reach AI intent parsing"); } }), EnglishOnlyError);
+});
 
 const listing = (title, extra = {}) => ({
     id: "v1|1|0",
@@ -84,6 +89,15 @@ test("a title in another language is set aside without any checks", async () => 
     s.readTitle = async () => ({ aspects: { Language: "Japanese" }, filled: ["Language"] });
     const result = await screenListing(listing("Charizard Base Set"), s);
 
+    assert.equal(result.match, "OTHER_LANGUAGE");
+    assert.equal(s.calls.details, 0);
+    assert.equal(s.calls.checks.length, 0);
+});
+
+test("an explicitly foreign title is rejected before even paid title reading", async () => {
+    const s = steps([]);
+    s.readTitle = async () => { throw new Error("foreign title must not be sent to AI"); };
+    const result = await screenListing(listing("Charizard Japanese Base Set Holo"), s);
     assert.equal(result.match, "OTHER_LANGUAGE");
     assert.equal(s.calls.details, 0);
     assert.equal(s.calls.checks.length, 0);

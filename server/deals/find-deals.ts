@@ -1,13 +1,16 @@
 import { detailRequestCount, searchListings } from "../ebay/listings.ts";
 import { mapLimit } from "../lib/concurrency.ts";
-import { readSearch } from "../search/intent.ts";
-import { cardMismatch, gradingMatches, titleMatches } from "../search/relevance.ts";
-import { readTitle } from "../ai/title-reader.ts";
+import { readSearch, readSearchWithoutAi } from "../search/intent.ts";
+import { cardMismatch, gradingMatches, titleMatches, setMatches } from "../search/relevance.ts";
+import { readTitle, readTitleByRules, readTitleWithoutAi } from "../ai/title-reader.ts";
 import type { ListingSummary, SearchIntent, Targets } from "../../shared/types.ts";
 import { criteriaMismatch, marketplaceQuery, searchAttributes } from "../../shared/search-criteria.ts";
 import { AI_CONCURRENCY } from "../../shared/work-limits.ts";
-import { screeningSteps, screenListing } from "./screen-listing.ts";
+import { screeningSteps, screenListing, screenListingWithoutAi } from "./screen-listing.ts";
 import { AUTOMATIC_AUCTION_WINDOW_HOURS, worthScreening, type ListingFilters } from "../../shared/listing-filters.ts";
+import { cardLanguageStatus, EnglishOnlyError } from "../../shared/card-language.ts";
+import { sameCardNumber } from "../identity/card-identity.ts";
+import { DEVELOPMENT_SEARCH_LIMIT } from "../../shared/research-policy.ts";
 
 // Preserve the existing public screening imports for scripts and tests.
 export { screeningSteps, screenListing, shippingCouldChange, REAL_STEPS } from "./screen-listing.ts";
@@ -26,11 +29,19 @@ const DEFAULT_RESULTS = 400;
 const MOST_RESULTS = 1000;
 const PARALLEL_LISTINGS = AI_CONCURRENCY;
 
+function literalTitleFits(listing: ListingSummary, intent: SearchIntent): boolean {
+    const reading = readTitleByRules(listing.title);
+    return (!reading.kind || reading.kind === "SINGLE_CARD") && setMatches(reading.set, intent) &&
+        (!intent.cardNumber || !reading.cardNumber || sameCardNumber(intent.cardNumber, reading.cardNumber));
+}
+
 interface FindSteps {
     readIntent: typeof readSearch;
     search: typeof searchListings;
     readTitle: typeof readTitle;
     screening: typeof screeningSteps;
+    readIntentWithoutAi?: typeof readSearchWithoutAi;
+    readTitleWithoutAi?: typeof readTitleWithoutAi;
 }
 
 export interface SearchSummary {
@@ -65,6 +76,7 @@ export async function findDeals(
         filters,
         screenLimit,
         asOf = Date.now(),
+        bounded = false,
     }: {
         onStart?: (summary: SearchSummary) => void;
         onListing?: (listing: ListingSummary) => void;
@@ -75,6 +87,8 @@ export async function findDeals(
         // Explicit development scope: cap work before title/photo screening.
         screenLimit?: number;
         asOf?: number;
+        // Small server-selected workflow; preliminary work cannot buy AI stages.
+        bounded?: boolean;
         // A stopped search: the listings not yet checked are skipped, so no
         // more eBay requests or AI calls go out.
         signal?: AbortSignal;
@@ -85,11 +99,14 @@ export async function findDeals(
     dependencies: FindSteps = { readIntent: readSearch, search: searchListings, readTitle, screening: screeningSteps }
 ): Promise<ListingSummary[]> {
     if (signal?.aborted) return [];
-    const intent = await dependencies.readIntent(search, signal);
+    if (cardLanguageStatus(search) === "OTHER") throw new EnglishOnlyError();
+    const intent = await (bounded ? dependencies.readIntentWithoutAi ?? readSearchWithoutAi : dependencies.readIntent)(search, signal);
     if (signal?.aborted) return [];
-    const limited = screenLimit !== undefined && Number.isFinite(screenLimit) ? Math.max(0, Math.floor(screenLimit)) : undefined;
+    const requestedLimit = screenLimit !== undefined && Number.isFinite(screenLimit) ? Math.max(0, Math.floor(screenLimit)) : undefined;
+    const limited = bounded ? Math.min(requestedLimit ?? DEVELOPMENT_SEARCH_LIMIT, DEVELOPMENT_SEARCH_LIMIT) : requestedLimit;
     const limit = limited === undefined ? Math.min(MOST_RESULTS, Math.max(200, Math.round(maxResults / 200) * 200)) : 200;
-    const { listings, total, skipped } = await dependencies.search(marketplaceQuery(search, intent), { maxResults: limited === undefined && newOnly ? 200 : limit, signal, filters, asOf, auctionEndsWithinHours: AUTOMATIC_AUCTION_WINDOW_HOURS, ...(newOnly ? { sort: "newlyListed" as const, keepReserve: true } : {}) });
+    const { listings, total, skipped } = await dependencies.search(marketplaceQuery(search, intent), { maxResults: limited === undefined && newOnly ? 200 : limit, signal, filters, asOf, auctionEndsWithinHours: AUTOMATIC_AUCTION_WINDOW_HOURS,
+        ...(newOnly || bounded && filters?.typeFilter !== "AUCTION" ? { sort: "newlyListed" as const } : {}), ...(newOnly ? { keepReserve: true } : {}) });
     if (signal?.aborted) return [];
     const now = Date.now();
     const requestsBefore = detailRequestCount();
@@ -102,7 +119,8 @@ export async function findDeals(
         (listing) =>
             worthScreening(listing, listingFilters, asOf) && titleMatches(listing.title, intent) &&
             gradingMatches(listing.isGraded, intent) &&
-            !criteriaMismatch(searchAttributes(listing.title), intent, false)
+            !criteriaMismatch(searchAttributes(listing.title), intent, false) &&
+            (!bounded || literalTitleFits(listing, intent))
     );
 
     const selected = newOnly ? eligible.slice(0, newOnly.limit) : eligible;
@@ -111,20 +129,20 @@ export async function findDeals(
         ...(newOnly || limited !== undefined ? { mode: limited === undefined ? "new" : "development", deferred: Math.max(0, eligible.length - matching.length),
             ...(newOnly ? { previouslySeen: live.length - unseen.length } : {}) } : {}) });
 
-    // Every title queued for reading at once, so the AI gets full batches
-    // of 25, but not waited on: each listing is checked as soon as its own
-    // title comes back, so results start arriving within seconds.
+    // Legacy screening batches title reads. Bounded admission cannot enqueue
+    // that paid work, even when the caller asks for a larger result count.
     if (signal?.aborted) return [];
-    for (const listing of matching) if (worthScreening(listing, listingFilters, asOf)) void dependencies.readTitle(listing.title, signal);
+    if (!bounded) for (const listing of matching) if (worthScreening(listing, listingFilters, asOf)) void dependencies.readTitle(listing.title, signal);
 
-    const steps = dependencies.screening(targets, includeOffers, signal);
+    const steps = bounded ? null : dependencies.screening(targets, includeOffers, signal);
 
     const results = await mapLimit(matching, PARALLEL_LISTINGS, async (listing) => {
         if (signal?.aborted || !worthScreening(listing, listingFilters, asOf)) return null;
 
         let screened: ListingSummary;
         try {
-            screened = await screenListing(listing, steps, intent, signal);
+            screened = bounded ? await screenListingWithoutAi(listing, intent, signal, dependencies.readTitleWithoutAi ?? readTitleWithoutAi)
+                : await screenListing(listing, steps!, intent, signal);
         } catch (error) {
             if (signal?.aborted) return null;
             throw error;

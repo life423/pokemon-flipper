@@ -12,6 +12,7 @@ import type { SavedRecord } from "../../server/analysis/types.ts";
 import { cardEvaluation } from "../fixtures/card-evaluation.ts";
 import { listingEvidenceKey } from "../../shared/listing-evidence.ts";
 import { retargetEvaluation } from "../../shared/money/targets.ts";
+import { evaluationContextKey } from "../../server/analysis/private-evaluation.ts";
 const listing = () => ({ id:"v1|111|0",title:"Venusaur Base Set 15/102",url:"https://www.ebay.com/itm/111",currentPrice:10,shipping:0,bids:1,isGraded:false,buyingOption:"AUCTION" as const,endTime:new Date(Date.now()+86400000).toISOString(),images:["https://i.ebayimg.com/images/g/front/s-l500.jpg"],seller:null });
 const details = (): ListingDetails => ({ id:"v1|111|0",title:listing().title,url:listing().url,price:20,shipping:null,bids:2,buyingOption:"AUCTION",endTime:listing().endTime,images:["https://i.ebayimg.com/images/g/front/s-l1600.jpg"],seller:null,condition:"Ungraded",cardCondition:null,conditionNotes:[],aspects:{},availability:"ACTIVE" });
 async function fixture(t: TestContext) {
@@ -96,4 +97,17 @@ test("shortlist save and refresh preserve known listing dates without fetching t
     assert.equal(saved.listing.listedAt, listedAt); assert.equal(saved.listing.createdAt, createdAt); assert.equal(requests, 0);
     const refreshed = (await service.refresh([saved.id])).entries[0];
     assert.equal(refreshed.listing.listedAt, listedAt); assert.equal(refreshed.listing.createdAt, createdAt); assert.equal(requests, 1);
+});
+
+test("saving bounded analysis uses its private snapshot and rejects changed cached label facts", async t => {
+    const e = snapshot().latestEvaluation!.evaluation;
+    e.assessmentVersion = "offline-model/bounded-prompts-1";
+    const saved = { version: 1 as const, evidenceKey: listingEvidenceKey(listing()), contextKey: evaluationContextKey(details()), evaluation: e };
+    const first = createShortlistService({ store: await fixture(t), load: async () => null, latest: async () => saved, cached: async () => details() });
+    const retained = await first.save(listing());
+    assert.equal(retained.evaluation?.assessmentVersion, e.assessmentVersion);
+    assert.equal(retained.needsAnalysis, false);
+    const changed = createShortlistService({ store: await fixture(t), load: async () => null, latest: async () => saved,
+        cached: async () => ({ ...details(), aspects: { Grade: "9" } }) });
+    assert.equal((await changed.save(listing())).evaluation, null, "an unchanged title/photo is insufficient when label claims changed");
 });

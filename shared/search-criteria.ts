@@ -1,5 +1,8 @@
-import type { Evaluation, ListingSummary, SearchIntent } from "./types.ts";
+import type { Evaluation, ListingSummary, PhotoCardReading, SearchIntent } from "./types.ts";
 import { finishClaim } from "./finish.ts";
+import { isPrinting } from "./identity.ts";
+import { setKey } from "./sets.ts";
+import { explicitReprintSet } from "./reprint-release.ts";
 
 type Finish = NonNullable<SearchIntent["finish"]>;
 const GRADER = "(?:psa|cgc|bgs|sgc|tag)";
@@ -59,7 +62,58 @@ export function criteriaMismatch(attributes: SearchAttributes, intent: SearchInt
     return null;
 }
 
+function searchSetFamily(value: string): string {
+    // Preserve release names: Base Set 2 and Celebrations are never Base Set.
+    if (/^\s*celebrations\s*:\s*classic collection\b/i.test(value)) return "celebrations";
+    const key = setKey(value).replace(/\benglish\b/g, " ").replace(/\s+/g, " ").trim().replace(/^(?:19|20)\d{2}\s+/, "");
+    if (/^(?:unknown|unspecified|not (?:known|stated|visible|specified)|n a)$/.test(key)) return "";
+    if (key === "game") return "base set";
+    if (/^game base set(?: 2)?$/.test(key)) return key.slice("game ".length);
+    if (key === "rocket") return "team rocket";
+    return key === "crown zenith galarian gallery" ? "crown zenith" : key;
+}
+
+function confirmedPhotoCard(evaluation: Evaluation): PhotoCardReading | null {
+    const photo = evaluation.photoCheck?.cardIdentity;
+    return photo?.confidence === "HIGH" && evaluation.photoCheck?.cardCount === "ONE" &&
+        evaluation.photoCheck.images.some(image => image.usable && !image.isStockImage && (image.view === "FRONT" || image.view === "FRONT_DETAIL")) ? photo : null;
+}
+
+function numberMismatch(a: string | null | undefined, b: string | null | undefined): boolean {
+    const parts = (value: string | null | undefined) => String(value ?? "").toUpperCase().replace(/\s|^#/g, "").split("/").map(part => {
+        const match = part.match(/^([A-Z-]*?)0*(\d+)([A-Z]*)$/);
+        return match ? `${match[1]}:${Number(match[2])}:${match[3]}` : null;
+    });
+    const x = parts(a), y = parts(b);
+    return Boolean(x[0] && y[0] && (x[0] !== y[0] || x[1] && y[1] && x[1] !== y[1]));
+}
+
+// Seller metadata cannot keep a photo-identified wrong release in Review.
+// Only settled facts exclude a copy; unclear photos remain an evidence gap.
+export function evaluatedIdentityMismatch(evaluation: Evaluation, intent: SearchIntent): ListingSummary["match"] | null {
+    const photo = confirmedPhotoCard(evaluation);
+    const strongPhoto = Boolean(photo);
+    const identified = evaluation.identity?.status === "IDENTIFIED" ? evaluation.identity : null;
+    const card = photo ? { name: photo.name ?? identified?.name, set: photo.set ?? identified?.set, cardNumber: photo.cardNumber ?? identified?.cardNumber } : identified;
+    const wantedSets = intent.sets.map(searchSetFamily).filter(Boolean);
+    const cardSet = card?.set ? searchSetFamily(card.set) : "";
+    if (cardSet && wantedSets.length && !wantedSets.includes(cardSet)) return "OTHER_SET";
+    if (intent.cardNumber && numberMismatch(intent.cardNumber, card?.cardNumber)) return "OTHER_CARD";
+    if (card?.name && !/^(?:unknown|not (?:known|visible|stated))$/i.test(card.name) && intent.titleWords.length) {
+        const words = (value: string) => value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        const name = ` ${words(card.name)} `;
+        if (intent.titleWords.some(word => !name.includes(` ${words(word)} `))) return "OTHER_CARD";
+    }
+    if (identified && intent.printing && isPrinting(identified.printing) && identified.printing !== intent.printing &&
+        (!strongPhoto || !photo?.set || !identified.set || searchSetFamily(photo.set) === searchSetFamily(identified.set))) return "OTHER_PRINTING";
+    // An explicit reprint title is enough to set aside a disputed Base Set
+    // claim. It does not establish which anniversary issue it actually is.
+    if (!cardSet && wantedSets.length && wantedSets.every(set => set === "base set") && explicitReprintSet(evaluation.listing.title)) return "OTHER_SET";
+    return null;
+}
+
 export function evaluatedCriteriaMismatch(evaluation: Evaluation, intent: SearchIntent): boolean {
+    if (evaluatedIdentityMismatch(evaluation, intent)) return true;
     const attributes = searchAttributes(evaluation.listing.title, evaluation.listing.aspects);
     const slab = evaluation.photoCheck?.slab;
     if (slab?.present) {
@@ -69,8 +123,10 @@ export function evaluatedCriteriaMismatch(evaluation: Evaluation, intent: Search
         attributes.grader = null;
         attributes.grade = null;
     }
-    const finish = finishIn(evaluation.identity?.finish ?? "");
+    const physicalFinish = confirmedPhotoCard(evaluation)?.finish;
+    const finish = physicalFinish && physicalFinish !== "UNKNOWN" ? physicalFinish : finishIn(evaluation.identity?.finish ?? "");
     if (finish) attributes.finish = finish;
+    else if (physicalFinish === "UNKNOWN") attributes.finish = null;
     return Boolean(criteriaMismatch(attributes, intent));
 }
 

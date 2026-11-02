@@ -65,7 +65,10 @@ test("TAG certificate letters survive normalization and distinguish otherwise id
     const matching = { "Professional Grader": "TAG", Grade: "9", "Certification Number": "A1234567" };
     assert.equal(checkSlab(photo, matching).status, "OK");
     assert.equal(checkSlab(photo, matching).certNumber, "A1234567");
-    assert.equal(checkSlab(photo, { ...matching, "Certification Number": "B1234567" }).status, "NEEDS_REVIEW");
+    const typo = checkSlab(photo, { ...matching, "Certification Number": "B1234567" });
+    assert.equal(typo.status, "OK");
+    assert.equal(typo.certNumber, "A1234567");
+    assert.match(typo.concerns.join(" "), /seller-entered certificate/i);
     assert.equal(checkSlab(photo, { ...matching, Grade: "8" }).status, "NEEDS_REVIEW");
     assert.equal(checkSlab(photo, { ...matching, "Professional Grader": "BGS" }).status, "NEEDS_REVIEW");
 });
@@ -77,13 +80,28 @@ test("PSA ordinary grade descriptions are not special qualifiers; mixed or incor
     for (const gradeQualifier of ["NM OC", "OC", "MK", "Authentic", "MINT"]) assert.equal(checkSlab(slabPhotos({ grade: "7", gradeQualifier })).status, "NEEDS_REVIEW");
 });
 
-test("item details that disagree with the label send it to review", () => {
+test("a seller grade conflict remains material while a certificate typo is a note for a readable slab", () => {
     const wrongGrade = checkSlab(slabPhotos(), { ...ASPECTS, Grade: "10" });
     const wrongCert = checkSlab(slabPhotos(), { ...ASPECTS, "Certification Number": "99999999" });
 
     assert.equal(wrongGrade.status, "NEEDS_REVIEW");
     assert.match(wrongGrade.reasons[0], /grade 10, but the label says 9/);
-    assert.equal(wrongCert.status, "NEEDS_REVIEW");
+    assert.equal(wrongCert.status, "OK");
+    assert.equal(wrongCert.certNumber, "12345678");
+    assert.equal(wrongCert.certUrl, "https://www.psacard.com/cert/12345678");
+    assert.equal(wrongCert.reasons.length, 0);
+    assert.match(wrongCert.concerns.join(" "), /readable slab label/);
+});
+
+test("a certificate typo cannot bypass an unreadable label, stock photos, multiple cards or visible tampering", () => {
+    const typo = { ...ASPECTS, "Certification Number": "99999999" };
+    assert.equal(checkSlab(slabPhotos({ labelText: null }), typo).status, "NEEDS_REVIEW");
+    assert.equal(checkSlab(slabPhotos({ grade: null }), typo).status, "NEEDS_REVIEW");
+    const stock = slabPhotos(); stock.images[0].isStockImage = true;
+    assert.equal(checkSlab(stock, typo).status, "NEEDS_REVIEW");
+    assert.equal(checkSlab({ ...slabPhotos(), cardCount: "MULTIPLE" }, typo).status, "NEEDS_REVIEW");
+    assert.equal(checkSlab(slabPhotos({ authenticity: "POSSIBLE", authenticityEvidence: ["Visible broken reseal seam."] }), typo).status, "NEEDS_REVIEW");
+    assert.equal(checkSlab(slabPhotos({ caseCondition: "CRACKED" }), typo).status, "NEEDS_REVIEW");
 });
 
 test("a cracked case, a qualifier, or an unreadable label goes to review", () => {
@@ -159,7 +177,7 @@ test("accepting an ordinary CGC description does not bypass photo, label, case o
     }
     assert.equal(checkSlab(slabPhotos({ ...valid, authenticity: "LIKELY_FAKE" })).status, "LIKELY_FAKE");
     assert.equal(checkSlab(slabPhotos(valid), { Grade: "9" }).status, "NEEDS_REVIEW");
-    assert.equal(checkSlab(slabPhotos(valid), { "Certification Number": "wrong123" }).status, "NEEDS_REVIEW");
+    assert.equal(checkSlab(slabPhotos(valid), { "Certification Number": "wrong123" }).status, "OK");
     const stock = slabPhotos(valid); stock.images[0].isStockImage = true;
     assert.equal(checkSlab(stock).status, "NEEDS_REVIEW");
 });

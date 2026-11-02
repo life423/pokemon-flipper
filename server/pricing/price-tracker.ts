@@ -59,9 +59,13 @@ async function trackerGet(path: string): Promise<{ data?: unknown; metadata?: { 
         throw new Error("POKEMON_PRICE_TRACKER_API_KEY is not set");
     }
 
-    const { response, body } = await limit(() => fetchJson(`${BASE}${path}`, {
-        headers: { Authorization: `Bearer ${apiKey}` },
-    }, { service: "PokemonPriceTracker" }));
+    const { response, body } = await limit(async () => {
+        const { assertSqlStorageReady } = await import("../storage/index.ts");
+        await assertSqlStorageReady();
+        return fetchJson(`${BASE}${path}`, {
+            headers: { Authorization: `Bearer ${apiKey}` },
+        }, { service: "PokemonPriceTracker" });
+    });
 
     if (!response.ok) {
         throw new Error(

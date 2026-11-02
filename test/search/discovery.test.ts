@@ -7,6 +7,16 @@ import { digQueries } from "../../server/search/dig.ts";
 const intent = { cardName: null, sets: ["Base Set"], cardNumber: null, printing: null, graded: false, titleWords: [], source: "rules" };
 const listing = (id, overrides = {}) => ({ id, title: "1999 Base Set Mewtwo 10/102 holo", currentPrice: 30, shipping: 0, buyingOption: "FIXED_PRICE", isGraded: false, categoryId: "wrong", images: ["photo"], ...overrides });
 
+test("bounded search cannot launch discovery or pricing recovery even without a development-limit option", async () => {
+    let found = 0;
+    await searchWithDiscovery("Mewtwo", { bounded: true }, {
+        find: async (_query, options) => { assert.equal(options.bounded, true); found++; return [listing("kept")]; },
+        discover: async () => assert.fail("bounded searches cannot expand paid discovery"),
+        recover: async () => assert.fail("bounded searches cannot enter legacy pricing recovery"),
+    });
+    assert.equal(found, 1);
+});
+
 test("every normal search automatically expands coverage with matching criteria and excludes its existing listings", async () => {
     const messages = [];
     const targets = { minProfit: 0, minRoi: 0 };

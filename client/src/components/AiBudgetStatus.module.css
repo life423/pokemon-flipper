@@ -1,0 +1,15 @@
+.root {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--space-2) var(--space-4);
+    margin-block: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    background: var(--surface);
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+}
+.root strong, .root b { color: var(--text); }
+.root small { flex-basis: 100%; font-size: inherit; }

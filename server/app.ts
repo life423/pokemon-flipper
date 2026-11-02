@@ -6,7 +6,7 @@ import path from "node:path";
 import express from "express";
 import { CLIENT_ROOT } from "./lib/paths.ts";
 import { DEVELOPMENT_SEARCH_LIMIT, searchWithDiscovery } from "./deals/search.ts";
-import { evaluateListing } from "./analysis/evaluate.ts";
+import { evaluateBoundedListing } from "./analysis/bounded-evaluate.ts";
 import { EbayError } from "./ebay/api.ts";
 import { ebayUsage } from "./ebay/usage.ts";
 import { writeOfferNote } from "./ai/offer-note.ts";
@@ -27,6 +27,9 @@ import { localApi, validSearchRequest } from "./lib/local-api.ts";
 import { aiUsageToday } from "./ai/usage.ts";
 import { withAiUsageContext } from "./ai/usage-context.ts";
 import { readListingFilters } from "./search/listing-filters.ts";
+import { assertSqlStorageReady, storageBackend } from "./storage/index.ts";
+import { storageFailure } from "./lib/storage-failure.ts";
+import { aiSpending } from "./ai/spending.ts";
 
 const app = express();
 
@@ -71,10 +74,23 @@ app.use("/api", localApi);
 app.use("/api", (req, _res, next) => withAiUsageContext({ searchId: searchId(req.get("X-Pokemon-Flipper-Search-Id")) }, next));
 app.use("/api/listings/:id", (req, _res, next) => withAiUsageContext({ listingId: req.params.id }, next));
 app.use(express.json());
+app.get("/api/storage", async (_req, res) => {
+    try {
+        const backend = storageBackend();
+        await assertSqlStorageReady();
+        res.json({ backend, ready: true });
+    } catch (error) {
+        res.status(503).json({ ready: false, error: storageFailure(error)?.message ?? "Saved evidence storage is unavailable." });
+    }
+});
 app.get(["/api/deals", "/api/dig"], validSearchRequest);
 app.post("/api/deals/new", validSearchRequest);
 app.get("/api/ai-usage", async (req, res) => {
-    try { res.json(await aiUsageToday(searchId(req.query.searchId))); }
+    try {
+        const id = searchId(req.query.searchId);
+        const [usage, budget] = await Promise.all([aiUsageToday(id), aiSpending.summary(id)]);
+        res.json({ ...usage, budget });
+    }
     catch { res.status(500).json({ error: "AI usage could not be read. Provider operations are unchanged." }); }
 });
 
@@ -137,7 +153,7 @@ app.post("/api/deals/new", async (req, res) => {
         const query = typeof req.body?.query === "string" ? req.body.query.trim() : "";
         const known: unknown = req.body?.knownIds ?? [];
         if (!query || query.length > 300 || !Array.isArray(known) || known.length > 500 || known.some((id) => typeof id !== "string" || id.length > 120)) throw new Error("A search and up to 500 known listing IDs are required.");
-        await discoverNewListings(query, { developmentLimit: DEVELOPMENT_SEARCH_LIMIT, signal: controller.signal, filters: readListingFilters(req.query), targets: searchTargets(req), includeOffers: req.query.offers === "1", minPrice: Math.max(0, Number(req.query.min) || 0),
+        await discoverNewListings(query, { bounded: true, developmentLimit: DEVELOPMENT_SEARCH_LIMIT, signal: controller.signal, filters: readListingFilters(req.query), targets: searchTargets(req), includeOffers: req.query.offers === "1", minPrice: Math.max(0, Number(req.query.min) || 0),
             onStart: (summary) => send({ type: "start", ...summary }), onListing: (listing) => send({ type: "listing", listing }),
             onPricing: (progress) => send({ type: "pricing", ...progress }),
             onPricingListing: (listing, snapshotKey) => send({ type: "pricing-listing", listing, snapshotKey }) }, known as string[]);
@@ -184,6 +200,7 @@ app.get("/api/deals", async (req, res) => {
 
     try {
         await searchWithDiscovery(searchText(req), {
+            bounded: true,
             developmentLimit: DEVELOPMENT_SEARCH_LIMIT,
             signal: stopped.signal,
             filters: readListingFilters(req.query),
@@ -216,8 +233,8 @@ app.get("/api/dig", (_req, res) => {
     res.end();
 });
 
-// Paid stages can include photos, condition opinions, focused identity work
-// and comparable checks. Saved stages are reused; ?fresh=1 asks again.
+// HTTP development uses one bounded visual assessment and saved evidence.
+// Refreshing current terms never discards unchanged paid photo evidence.
 app.post("/api/listings/:id/evaluate", async (req, res) => {
     const stopped = new AbortController();
     const disconnect = () => { if (!res.writableEnded) stopped.abort(); };
@@ -225,10 +242,9 @@ app.post("/api/listings/:id/evaluate", async (req, res) => {
     res.on("close", disconnect);
     try {
         const current = currentState(req.body);
-        const evaluation = await evaluateListing(req.params.id, {
-            fresh: req.query.fresh === "1",
+        const evaluation = await evaluateBoundedListing(req.params.id, {
             automatic: req.query.auto === "1",
-            current: req.query.refreshTerms === "1" ? null : current,
+            current: req.query.refreshTerms === "1" || req.query.fresh === "1" ? null : current,
             signal: stopped.signal,
         });
         stopped.signal.throwIfAborted();
@@ -325,6 +341,11 @@ server.on("error", (error) => {
 });
 
 // This is a local app with paid API access, so don't expose it on the LAN.
+try { await assertSqlStorageReady(); }
+catch (error) {
+    console.error(storageFailure(error)?.message ?? "Saved evidence storage could not be initialized.");
+    process.exit(1);
+}
 server.listen(PORT, "127.0.0.1", () => {
     console.log(`Server listening on http://localhost:${PORT}`);
 });

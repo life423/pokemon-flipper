@@ -6,12 +6,12 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { aiInputHash, aiSpending, aiSpendingFailure, AiSpendingError, createAiSpendingGuard } from "../../server/ai/spending.ts";
-import { withAiUsageContext } from "../../server/ai/usage-context.ts";
+import { withAiDispatchSignal, withAiUsageContext } from "../../server/ai/usage-context.ts";
 import { evaluationFailure } from "../../server/analysis/failure.ts";
 import { searchFailureMessage } from "../../server/deals/errors.ts";
 import { runStructured } from "../../server/ai/openai.ts";
 
-const body = { model: "gpt-5.6-luna", service_tier: "default", prompt_cache_retention: "in-memory", max_output_tokens: 100,
+const body = { model: "gpt-5.6-luna", service_tier: "default", prompt_cache_options: { mode: "explicit", ttl: "30m" }, max_output_tokens: 100,
     input: [{ role: "user", content: [{ type: "input_text", text: "Offline bounded fixture" }] }] };
 const proof = async (request: unknown) => ({ inputHash: aiInputHash(request), inputTokens: 100 });
 const book = async (directory: string) => JSON.parse(await fs.readFile(path.join(directory, "ai-spending-ledger.json"), "utf8"));
@@ -72,6 +72,22 @@ test("unattributed, unknown model/tier/cache, tool charges and unproven inputs f
     assert.deepEqual((await book(directory)).searches, {});
     await fs.unlink(path.join(directory, "ai-spending.json"));
     await assert.rejects(guard.reserve(body, context), /initialized AI spending control is missing/);
+});
+
+test("only verified 30-minute cache policies are admitted without retention or breakpoint overrides", async () => {
+    const { directory, guard, context } = await fixture(0.02);
+    for (const request of [
+        { ...body, prompt_cache_options: { mode: "explicit", ttl: "12h" } },
+        { ...body, prompt_cache_options: { mode: "unknown", ttl: "30m" } },
+        { ...body, prompt_cache_options: { mode: "explicit", ttl: "30m", breakpoints: [0] } },
+        { ...body, prompt_cache_options: { mode: "implicit", ttl: "30m", extra: true } },
+        { ...body, prompt_cache_options: undefined, prompt_cache_retention: "in_memory" },
+        { ...body, prompt_cache_retention: "24h" },
+        { ...body, input: [{ role: "user", content: [{ type: "input_text", text: "Offline", cache_control: { ttl: "12h" } }] }] },
+        { ...body, input: [{ role: "user", content: "Offline", cache_control: { ttl: "12h" } }] },
+    ]) await assert.rejects(guard.reserve(request, context), denied("AI_BUDGET"));
+    assert.deepEqual((await book(directory)).searches, {});
+    assert.ok(await guard.reserve({ ...body, prompt_cache_options: { mode: "implicit", ttl: "30m" } }, context));
 });
 
 test("unexpected usage automatically pauses later dispatch and preserves the discrepancy", async () => {
@@ -161,4 +177,57 @@ test("a fresh data directory is paused and cannot make even one unconfigured pai
     await assert.rejects(runStructured({ step: "Fresh install guard fixture", schemaName: "search_intent", prompt: "Offline", photos: [], schema: { type: "object", properties: {}, additionalProperties: false } }), denied("AI_PAUSED"));
     assert.equal(dispatches, 0);
     await assert.rejects(guard.configure({ paused: false, perSearchCapUsd: 0.03 }), /between \$0 and \$0.02/);
+});
+
+test("remote preflight releases the file lock and a concurrent pause prevents reservation", async () => {
+    const directory = await fs.mkdtemp(path.join(isolatedDataDir, "pause-count-"));
+    const guard = createAiSpendingGuard({ directory, preflight: async request => {
+        await guard.configure({ paused: true, perSearchCapUsd: 0.02, pauseReason: "Paused while counting" });
+        return proof(request);
+    } });
+    await guard.configure({ paused: false, perSearchCapUsd: 0.02 });
+    await assert.rejects(guard.reserve(body, { searchId: randomUUID() }), denied("AI_PAUSED"));
+    assert.deepEqual((await book(directory)).searches, {});
+});
+
+test("a lower cap, changed request or cancellation during preflight cannot authorize dispatch", async () => {
+    const directory = await fs.mkdtemp(path.join(isolatedDataDir, "change-count-"));
+    let action: (request: unknown) => Promise<void> = async () => {};
+    const stopped = new AbortController();
+    const guard = createAiSpendingGuard({ directory, preflight: async request => { const original = await proof(request); await action(request); return original; } });
+    await guard.configure({ paused: false, perSearchCapUsd: 0.02 });
+    action = async () => { await guard.configure({ paused: false, perSearchCapUsd: 0.00001 }); };
+    await assert.rejects(guard.reserve(body, { searchId: randomUUID() }), denied("AI_BUDGET"));
+    await guard.configure({ paused: false, perSearchCapUsd: 0.02 });
+    action = async request => { (request as any).instructions = "Changed immutable instructions"; };
+    await assert.rejects(guard.reserve(structuredClone(body), { searchId: randomUUID() }), /does not match/);
+    action = async () => { stopped.abort(); };
+    await assert.rejects(withAiDispatchSignal(stopped.signal, () => guard.reserve(body, { searchId: randomUUID() })), { name: "AbortError" });
+    assert.deepEqual((await book(directory)).searches, {});
+});
+
+test("the standard-context pricing threshold rejects oversized exact inputs before reservation", async () => {
+    const { directory, context } = await fixture(0.02);
+    const guard = createAiSpendingGuard({ directory, preflight: async request => ({ inputHash: aiInputHash(request), inputTokens: 272001 }) });
+    await assert.rejects(guard.reserve(body, context), /standard-context price boundary/);
+    assert.deepEqual((await book(directory)).searches, {});
+});
+
+test("search summaries distinguish reported settled cost from conservative unresolved holds", async () => {
+    const { directory, guard, context } = await fixture();
+    const initial = await guard.summary(context.searchId);
+    assert.equal(initial.capUsd, 0.001); assert.equal(initial.remainingUsd, 0.001); assert.equal(initial.committedUsd, 0);
+    const reservation = await guard.reserve(body, context);
+    const held = await guard.summary(context.searchId);
+    assert.equal(held.committedUsd, 0.000145); assert.equal(held.heldUsd, 0.000145); assert.equal(held.settledUsd, 0); assert.equal(held.unsettledAttempts, 1);
+    await guard.settle(reservation, { model: body.model, service_tier: "default", usage: { input_tokens: 80, output_tokens: 20,
+        input_tokens_details: { cached_tokens: 20, cache_write_tokens: 10, cache_write_tokens_details: { ttl_30m_tokens: 10, ttl_12h_tokens: 0 } } } });
+    const settled = await guard.summary(context.searchId);
+    assert.equal(settled.committedUsd, 0.0000369); assert.equal(settled.settledUsd, 0.0000369); assert.equal(settled.heldUsd, 0); assert.equal(settled.unsettledAttempts, 0);
+    await guard.reserve(body, context);
+    const latest = await guard.summary(context.searchId);
+    assert.equal(latest.committedUsd, 0.0001819); assert.equal(latest.heldUsd, 0.000145); assert.equal(latest.attempts, 2);
+    assert.deepEqual(await createAiSpendingGuard({ directory }).summary(context.searchId), latest, "restart does not reset reported costs or unresolved holds");
+    assert.equal((await guard.summary()).remainingUsd, null, "independent search allowances are not one global allowance");
+    assert.equal((await guard.summary(randomUUID())).committedUsd, 0);
 });

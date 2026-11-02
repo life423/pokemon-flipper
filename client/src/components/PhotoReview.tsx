@@ -12,30 +12,27 @@ interface Props {
     state?: DeeperReviewState;
     onReview?: () => void;
 }
-const dateText = (date: string | null | undefined) => date && Number.isFinite(Date.parse(date))
-    ? new Date(date).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : null;
 export function PhotoReview({ evaluation, listing, phase, compact = false, state, onReview }: Props) {
     const status = photoReviewStatus(evaluation, listing);
     const current = state?.key === evaluation?.photoReviewKey ? state : undefined;
     const deep = evaluation?.deeperPhotoReview;
     const plan = evaluation ? planDeeperPhotos(evaluation.photoCheck, evaluation.listing.photos ?? listing.images) : null;
-    const time = dateText(status.reviewedAt);
     return <section className={styles.review} aria-label="AI photo review">
         <p className={styles.title}>{phase === "loading" ? "Analyzing photos and checking resale prices…" : phase === "error" ? "Listing analysis could not finish" : status.title}</p>
         {evaluation?.researchMode === "DEFERRED_LOW_RESALE" && <p className={styles.meta}>Further condition and resale research was deferred for this low-value card. Full research remains available.</p>}
-        {evaluation?.photoCheck && <p className={styles.meta}>{status.checked} of {status.total} photos checked · Photo confidence: {name(status.confidence)}{time ? ` · ${time}` : " · date unavailable"}</p>}
+        {evaluation?.photoCheck && <p className={styles.meta}>{status.checked} of {status.total} photos checked · Photo confidence: {name(status.confidence)}</p>}
         {status.needsYourReview && <div className={styles.caution}>
             <strong>Your review needed</strong>
             {compact ? <p>{status.reasons[0]}</p> : <ul>{status.reasons.slice(0, 4).map((reason) => <li key={reason}>{reason}</li>)}</ul>}
         </div>}
         {status.photoNotes.length > 0 && <details className={styles.notes}><summary>Photo notes ({status.photoNotes.length})</summary><ul>{status.photoNotes.map(note => <li key={note}>{note}</li>)}</ul></details>}
-        {compact && deep && <p className={styles.meta}>Deeper AI review saved{dateText(deep.reviewedAt) ? ` · ${dateText(deep.reviewedAt)}` : ""}</p>}
+        {compact && deep && <p className={styles.meta}>Deeper AI review saved</p>}
         {compact && current?.status === "loading" && <p className={styles.meta} role="status">Deeper AI review in progress; initial assessment still shown.</p>}
         {compact && current?.status === "error" && <p className={styles.caution}>Deeper review failed; initial assessment kept. Open analysis for details.</p>}
         {!compact && evaluation?.photoCheck && !evaluation.slab && <>
             {deep ? <div className={styles.deep}>
                 <h3>Deeper AI photo review</h3>
-                <p className={styles.meta}>{deep.photoNumbers.length} photos examined · {dateText(deep.reviewedAt)} · saved result</p>
+                <p className={styles.meta}>{deep.photoNumbers.length} photos examined · saved result</p>
                 <p>{deep.summary}</p>
                 <p className={styles.meta}>This second opinion adds evidence notes. It does not raise the grade estimate, confidence or bid limit. New concerns pause purchase advice.</p>
                 {deep.findings.map((finding, i) => <div className={styles.finding} key={i}>

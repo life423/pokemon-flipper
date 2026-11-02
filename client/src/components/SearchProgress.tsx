@@ -42,8 +42,10 @@ function readCollapsed(): boolean {
 
 // The search's progress, expanded with every step and count, or collapsed
 // to one line to leave room for results.
-export function SearchProgress({ phase, query, error, ebayTotal, checked, total, ai, pricing, stats, usage, onStop, actions, details }: Props) {
+export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal, checked, total, ai, pricing, stats, usage, onStop, actions, details }: Props) {
     const [collapsed, setCollapsed] = useState(readCollapsed);
+    const phase = requestedPhase === "stopped" || requestedPhase === "error" ? requestedPhase
+        : requestedPhase === "paused" || ai.paused ? "paused" : requestedPhase;
 
     const toggle = () => {
         setCollapsed((now) => {
@@ -57,8 +59,9 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
     };
 
     const running = phase === "finding" || phase === "filtering" || phase === "discovering" || phase === "pricing" || phase === "ai";
+    const halted = phase === "paused" || phase === "stopped" || phase === "error";
     const step = STEP_OF[phase];
-    const aiState = phase === "stopped" ? "stopped" : ai.paused ? "paused" : ai.analyzing > 0 ? "working" : "idle";
+    const aiState = phase === "stopped" ? "stopped" : phase === "paused" ? "paused" : phase === "error" ? "idle" : ai.analyzing > 0 ? "working" : "idle";
     const completed = Math.max(0, ai.done - ai.failed);
     const aiStatus = aiState === "stopped" ? "AI analysis stopped"
         : aiState === "paused" ? "AI analysis paused"
@@ -78,7 +81,7 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
                 : total
                   ? checked / total
                   : 0;
-    const percentText = percent === null ? "" : `${Math.round(percent * 100)}%`;
+    const percentText = halted || percent === null ? "" : `${Math.round(percent * 100)}%`;
 
     const title = {
         finding: "Searching eBay",
@@ -99,6 +102,7 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
               ? `${checked.toLocaleString()} listing and photo checks for \u201c${query}\u201d`
               : phase === "stopped"
                 ? `Stopped after ${checked.toLocaleString()} of ${(total ?? checked).toLocaleString()} checks. Results so far stay below.`
+                : phase === "paused" ? `New checks are stopped for “${query}”. Results checked so far stay below.`
                 : phase === "pricing" ? `Automatically recovering prices for “${query}”`
                 : phase === "ai"
                   ? `Checking the best candidates for \u201c${query}\u201d`
@@ -119,15 +123,14 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
     // What's happening right now, in a few words.
     const activity =
             phase === "stopped" ? "New checks are stopped. Already accepted AI answers can still finish and save."
-            : ai.paused ? "AI analysis is paused. Completed assessments and search results stay below."
+            : phase === "paused" ? "No new analysis is running. Completed assessments and search results stay below."
+            : phase === "error" ? "The search could not finish. Any results checked so far are kept."
             : ai.analyzing > 0 ? `${aiStatus}. Results appear as each assessment finishes.`
             : phase === "pricing" ? "Temporary failures retry automatically after the provider cooldown. Results remain available below."
             : phase === "discovering"
                 ? "Automatic discovery is running; results stay available below."
             : phase === "finding"
             ? "Searching eBay..."
-            : phase === "error"
-              ? "The search could not finish. Any results checked so far are kept."
             : phase === "filtering"
                 ? "Reading titles, checking photos and prices..."
                 : ai.waiting > 0
@@ -155,7 +158,7 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
             aria-label="Search progress"
         >
             <div className={styles.head}>
-                <span className={styles.badge}>{phase === "done" ? <CheckIcon /> : <SearchIcon />}</span>
+                <span className={styles.badge}>{phase === "done" ? <CheckIcon /> : halted ? <StopIcon /> : <SearchIcon />}</span>
 
                 <div className={styles.titles}>
                     {collapsed ? (
@@ -164,7 +167,7 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
                                 {phase === "done" ? "Done:" : phase === "paused" ? "Analysis paused:" : phase === "pricing" ? "Recovering prices:" : phase === "stopped" ? "Stopped:" : phase === "error" ? "Search incomplete:" : phase === "ai" ? "AI assessing" : "Searching"} “{query}”
                             </p>
                             <p className={styles.sub}>{compact}</p>
-                            {phase !== "error" && <ProgressBar percent={percent} thin />}
+                            {!halted && <ProgressBar percent={percent} thin />}
                         </>
                     ) : (
                         <>
@@ -211,7 +214,7 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
             <div className={styles.body} inert={collapsed}>
                 <div className={styles.bodyInner}>
                     <div className={styles.content}>
-                        {phase !== "error" && (
+                        {!halted && (
                             <ol className={styles.steps}>
                                 {STEPS.map((label, index) => {
                                     const state =
@@ -226,7 +229,7 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
                             </ol>
                         )}
 
-                        {phase !== "error" && (
+                        {!halted && (
                             <div className={styles.progress}>
                                 <div className={styles.progressRow}>
                                     <ProgressBar percent={percent} />
@@ -268,7 +271,7 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
 
                         <div className={styles.activity}>
                             <p>
-                                {!ai.paused && phase !== "stopped" && (running || ai.analyzing > 0) && (
+                                {!halted && (running || ai.analyzing > 0) && (
                                     <span className={styles.dots} aria-hidden="true">
                                         <span />
                                         <span />
@@ -289,7 +292,7 @@ export function SearchProgress({ phase, query, error, ebayTotal, checked, total,
                             )}
                         </div>
 
-                        {actions}
+                        {!halted && actions}
 
                         {details && (
                             <details className={styles.details}>

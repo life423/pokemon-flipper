@@ -2,7 +2,7 @@
 
 Find eBay Pokémon card listings worth flipping, priced to the exact printing, with a max bid for every one.
 
-Search for a card or inspect a listing link. The app checks identity, price evidence and estimated costs before presenting a purchase limit. Current development searches process a small batch, with paid AI paused behind a persistent spending guard.
+Search for a card or inspect a listing link. The app checks identity, price evidence and estimated costs before presenting a purchase limit. Current HTTP searches use a small bounded workflow with a persistent **$0.02 AI cap per search**.
 
 > **The question it answers:** *At this price, is this card worth buying to resell?*
 
@@ -18,6 +18,7 @@ Search for a card or inspect a listing link. The app checks identity, price evid
 - [Scripts](#scripts)
 - [Project layout](#project-layout)
 - [Costs and limits](#costs-and-limits)
+- [Database storage](#database-storage)
 - [Testing](#testing)
 - [Known gaps](#known-gaps)
 
@@ -26,35 +27,42 @@ Search for a card or inspect a listing link. The app checks identity, price evid
 ## How a search works
 
 Current HTTP searches fetch one page of up to 200 listings, apply free format,
-card-type, price and auction-window exclusions, then admit at most three to paid screening. Automatic
-broad discovery and pricing recovery are disabled for this development slice.
-Raw cards normally need a supported resale reference of at least $60; cheap
-potential 1st Edition Base Set cards retain a focused verification path.
+card-type, price and auction-window exclusions, then admit at most three
+development candidates. Preliminary interpretation uses saved metadata or local
+rules, with no fresh AI title, photo or price screening. Buy It Now searches
+prioritize newly listed inventory. Automatic broad discovery and pricing
+recovery are disabled for this development slice.
 
 ```
 Your search          base set 1999 charizard
     │
     ▼
-AI reads the search  → Charizard, Base Set, any printing
+Saved/local reading  → literal card, set and grade constraints
     │
     ▼
-eBay search          one page; at most 3 eligible listings enter screening
+eBay search          one English-only page; at most 3 eligible candidates
     │                listings that aren't this card are set aside
     ▼
-Preliminary check    AI reads each title (set, number, grade, condition)
-    │                and checks existing market references before photo work
+Local screening      obvious mismatches, junk, prices and auction windows
+    │                seller claims remain unverified
     ▼
 eBay details         fetched when needed, within the shared daily allowance
     │
     ▼
-AI analysis          the photos: condition, printing marks, the slab label
-    │                (reuse saved evidence; block unbounded or over-budget work)
+Saved evidence       reuse unchanged photo assessments first
+    │
     ▼
-Money math           every resale path, a verdict, a max bid, and a rating
+Bounded AI           exact input-token preflight, then one combined assessment
+    │                of up to 6 photos; no automatic second opinion
+    ▼
+Prices and money     matched evidence, costs, a verdict and purchase ceiling
 ```
 
-Three resale paths are supported. Focused or deliberately deferred low-value
-research does not request every historical comparison:
+The bounded assessment combines identity, printing, photo coverage and raw
+condition or the actual slab label. It records which photos were inspected;
+unselected images are not described as assessed. A separate assessment version
+keeps this evidence distinct from the older multi-pass workflow. Three resale
+paths use existing deterministic pricing and money rules:
 
 | Path | Buy | Sell | Priced from |
 | --- | --- | --- | --- |
@@ -63,6 +71,9 @@ research does not request every historical comparison:
 | **Resell the slab** | Graded slab | Same slab | Sold comps at its exact grader and grade |
 
 ## What you get
+
+Sections depend on available evidence. Bounded HTTP research does not regenerate
+every legacy diagnostic or buy missing evidence solely to fill a UI section.
 
 - **Targeted pricing retries:** temporary provider failures offer **Retry pricing**, up to five listings at a time after cooldown. The queue reuses caches, stops on provider limits and preserves existing assessments. Identity problems and missing comps stay separate. New candidates follow your existing AI setting; retries do not refresh listing terms or rerun search/discovery. See [limits and verification](docs/pricing-retries-card-details-2026-10-30.md).
 - **Grade and finish at a glance:** card headers show values such as **Listed: PSA 8 · Holo**, then **Label checked** after a successful slab assessment. Raw cards remain labeled Raw; unreadable or qualified grades need review. Short entrances, selection underlines and save feedback respect reduced-motion preferences.
@@ -74,7 +85,7 @@ research does not request every historical comparison:
 - **A verdict for every listing:** buy raw, buy and grade, buy graded, pass, needs review, or can't price.
 - **A max bid:** the most you can pay and still clear your targets after eBay fees, sales tax, shipping, and grading costs.
 - **Resale evidence:** raw cards use a recent eBay sold median when at least three sales explicitly match the printing, finish and condition. Otherwise the condition-specific TCGplayer market price remains a labeled fallback. Open Prices to inspect the matched sales. Graded cards prefer 90-day sales when at least three match, with a labeled 180-day fallback for sparse grades. Only USD sales enter the money math.
-- **Trading activity:** a full assessment shows recorded eBay sales over 30 days, active selling days and average recorded sales per day. Counts cover the same printing, with raw conditions or slab grades combined. They measure provider observations, not total market volume or guaranteed time to sell; volume availability depends on the provider plan.
+- **Trading activity:** fuller saved assessments can show recorded eBay sales over 30 days, active selling days and average recorded sales per day. Counts cover the same printing, with raw conditions or slab grades combined. They measure provider observations, not total market volume or guaranteed time to sell; bounded research does not buy a new activity lookup.
 - **Your targets, live:** set a minimum profit and minimum return in the toolbar (or *Any*). Every max bid, verdict, and ranking recalculates instantly, with no new lookups.
 - **Ratings:** *Strong*, *Good*, or *Thin*, from plain rules: room under the max bid, the outcome at the low end of the grade range, how many sales back the price, photo confidence, and seller feedback. Every concern is listed.
 - **Bargain signals:** signs a listing is overlooked or mispriced because of how it was listed: photos showing a pricier printing than the title says, a misspelled name, no set or number, missing item details, weak photos of an identifiable card, auctions with almost no bids or ending in the middle of the night, new sellers. Each listing gets a score with the reasons, and **Most overlooked first** sorts by it. A signal is never a buy: the photos and the money math still decide.
@@ -82,19 +93,19 @@ research does not request every historical comparison:
   number-only titles and wrong categories. Automatic discovery is paused in the
   current development slice. Verified opportunities appear in **Deals** with
   their discovery reason; there is no separate Hidden finds view.
-- **Best Offer:** for a Buy It Now that takes offers, what to offer and where to walk away, plus a friendly note to send with it. Listings that would be a deal at a realistic offer show up in **Deals**.
+- **Best Offer:** for a Buy It Now that takes offers, show a realistic offer and walk-away amount when supported. Conditional offer opportunities are separate from profit at asking price; the app submits no offers.
 - **Auction guidance:** maximum bids include the modeled costs and targets. Observed sales provide market references, without a forecast of the closing price.
 - **The exact printing:** 1st Edition, Shadowless, and Unlimited are priced apart, and the title, item details, slab label, and photos have to agree.
 - **Reprints caught:** Celebrations, Classic Collection (2021 and 2026), Base Set 2, metal cards, and Topps cards don't get priced as vintage originals.
-- **Checked comps:** sold comps pass hard rules first, then an AI check that drops sales of another card, printing, or grade, qualified or signed copies, lots, and altered cards.
+- **Checked comps:** sold comps pass identity, printing, finish, grader/grade and other eligibility rules. Bounded HTTP research reuses saved AI comp checks and sold-copy condition evidence; it does not purchase new comp-review batches or historical photo assessments. Missing matched sales remain unavailable or use the labeled market fallback.
 
 ## Design principles
 
 1. **Identity first, price second.** No price source decides what card a listing is. A card is priced only once its set, number, and printing are known.
-2. **The AI reports; code does the money.** The AI reads photos, titles, and searches. Every fee, profit, return, and max bid is plain code, and the same inputs always give the same answer.
+2. **The AI reports; code does the money.** Bounded searches use cached/local metadata and AI photo findings. Every fee, profit, return, and max bid is plain code, and the same inputs always give the same answer.
 3. **Fail closed.** Anything unknown stops the math instead of being guessed: an unclear printing goes to review, and a grade with no sales underneath it can't be priced.
-4. **Pricier printings need two witnesses.** 1st Edition or Shadowless needs both the seller's word and the photos.
-5. **Spend AI to save scarce things.** AI calls are batched and their answers saved, and they're used to avoid eBay requests, which are limited per day.
+4. **Premium printings need corroborated evidence.** A seller's title alone cannot establish 1st Edition or Shadowless.
+5. **Reuse before spending.** Saved evidence is checked before new paid work. Every generation needs a verified input count and an affordable maximum output; eBay requests have separate daily and development allowances.
 
 ## Getting started
 
@@ -117,6 +128,11 @@ Open **http://localhost:3017** and search for a card. This app uses its own port
 so it can run alongside Ascend Avoid on port 3000. Startup never kills another
 process; if 3017 is already occupied, use the running instance or set `PORT`.
 
+The current development search is English-only. Browse searches use the card
+category's Language aspect; wrong-category discovery uses English keywords.
+Known foreign title, item-specific and saved photo evidence is excluded before
+further paid assessment. Unknown language stays preliminary until identified.
+
 The server reads `.env` at startup. After adding or changing keys, restart
 `npm run dev`. eBay requires a matching Production app ID and cert ID. Missing or
 rejected eBay credentials now appear as an actionable search error.
@@ -129,10 +145,11 @@ rejected eBay credentials now appear as an actionable search error.
 | --- | --- | --- |
 | `EBAY_CLIENT_ID` | Yes | eBay Browse API app ID |
 | `EBAY_CLIENT_SECRET` | Yes | eBay Browse API cert ID |
-| `OPENAI_API_KEY` | Yes | Photo analysis, reading searches and titles, comp checks |
+| `OPENAI_API_KEY` | Yes | Exact input-token preflight and photo analysis |
 | `PKMNPRICES_API_KEY` | Yes | Raw prices and graded sold comps |
 | `EBAY_SHIP_TO_ZIP` | No | Lets eBay quote calculated shipping to your ZIP |
-| `OPENAI_MODEL` | No | Overrides the default model |
+| `OPENAI_MODEL` | No | Overrides legacy text/vision defaults |
+| `OPENAI_BOUNDED_VISION_MODEL` | No | Bounded photo model; unsupported pricing remains blocked |
 | `POKEMON_PRICE_TRACKER_API_KEY` | No | A second price source, kept as a cross-check |
 | `PORT` | No | Server port, 3017 by default |
 
@@ -188,8 +205,8 @@ Everything is TypeScript. The server runs through [tsx](https://tsx.is), and the
 
 **eBay.** The Browse API allows 5,000 requests a day per app by default. The app keeps its use low:
 
-- Screening starts with search results and AI-read titles. Candidates, incomplete identities and borderline listings whose unknown shipping could change eligibility get listing details. A borderline shipping check requests a fresh quote; missing quotes still use the explicit $7 assumption. Shipping caches are separated by destination ZIP.
-- Searches are saved for 10 minutes and listing details for a week. Analyzing a listing you've already searched usually costs no eBay request at all.
+- Bounded preliminary screening uses the search result and saved/local title metadata. It requests no listing details or additional photos. The selected candidate's evaluator loads details only when valid saved details are unavailable. Shipping caches remain separated by destination ZIP.
+- Ordinary searches are saved for 10 minutes; newest-inventory searches use a one-minute cache. Listing details are saved for a week and checked against the current title/photo snapshot before reuse. A saved detail response does not prove current availability indefinitely.
 - Repricing a completed analysis, filtering loaded results and sorting make no
   eBay requests. Lower targets can qualify additional automatic analyses within
   the current AI budget. Widening the minimum Buy It Now price requires an explicit
@@ -203,20 +220,34 @@ eBay raises the limit through its free [Application Growth Check](https://develo
 
 **OpenAI.** A persistent guard at the SDK transport boundary enforces a maximum
 of **$0.02 per search** across concurrent stages, retries and process restarts.
-Paid processing is currently paused. Missing or invalid controls/ledgers do not
-enable spending. A trusted exact input bound, supported model/tier, output limit
-and durable reservation are required before a generation request can leave.
-Unknown billing retains its reservation; reported overages pause dispatch.
+Paid processing is operator-controlled. Fresh installations, missing or invalid
+controls/ledgers and unsupported model or cache pricing fail closed; starting
+the app does not enable spending or reset a search allowance.
 
-The current large-photo pipeline cannot be assumed to fit two cents. Production
-exact-token preflight is not configured, so uncached generation remains blocked
-even if the pause flag is changed. No token-count API request was enabled or
-used during this audit. Cached assessments remain usable. The next paid-work
-slice needs verified immutable input bounds and a deliberately smaller workflow;
-do not enable broad analysis to test it.
+Before a generation request leaves, the transport requires immutable inline
+image bytes, a trusted exact input count, supported default-tier/cache settings,
+a bounded output and a durable reservation. Input preflight uses OpenAI's
+count-only endpoint for the final request's model, instructions, schema and
+images, with successful proofs reused for identical inputs. Generation has no
+automatic retries in the bounded workflow. Unknown billing retains its full
+reservation; a reported overage pauses further dispatch. Budget reporting
+distinguishes reported spend from unconfirmed holds.
+
+An uncached candidate receives one combined identity/condition/slab assessment
+of at most six selected photos, with a 2,200-token output limit. Valid existing
+photo evidence is reused first. Bounded HTTP research does not buy separate
+identity passes, a second condition opinion, fresh comp-check batches or sold
+listing photo reviews. Legacy diagnostic evaluators retain their older workflow
+and remain subject to the same spending guard.
+
+A controlled four-photo assessment's reported token usage cost **$0.0030728**
+at the verified model rates.
+Repeating the same photo evidence used no new AI generation, and the check used
+no eBay Browse requests. This is a focused assessment canary, not the measured
+cost or deal quality of a complete uncached search.
 
 Underlying AI concurrency remains a ceiling, not a spending allowance.
-Development UI offers up to three full assessments or Off; source HTTP limits
+Development UI offers up to three assessments or Off; source HTTP limits
 apply before screening as well. Saved successful and unresolved photo evidence
 is reused for unchanged inputs. Budget/credit pauses stop later work and leave
 unfinished cards in Sorting, rather than pretending analysis completed.
@@ -231,8 +262,8 @@ eBay detail requests at once, reuses successful checks for one minute, and backs
 off failed checks for 30 seconds. It preserves the daily reserve and never starts
 AI analysis. New inventory scans share a separate one-minute newest-search cache,
 remember seen IDs across restarts and screen up to three unseen development
-matches. Screening can use title/photo checks only within the same spending
-guard. The selected full-analysis setting applies to that small batch.
+matches. Preliminary screening uses saved/local metadata; the selected
+assessment setting applies to the bounded photo work on that small batch.
 There is no recurring inventory polling.
 
 The shortlist lives in `data/shortlist.json`; discovery history lives in
@@ -242,17 +273,78 @@ sync. Back up these files along with the rest of `data/`. For isolated tests,
 [implementation and verification](docs/shortlist-discovery-2026-10-29.md).
 
 **Direct links.** Each deliberate link submission checks current eBay details,
-then reuses those details for the standard analysis. Matching saved title/photo
+then reuses those details for bounded analysis under its capped search ID. Matching saved title/photo
 assessments avoid another AI charge. Invalid links and unsupported variations
 make no provider request; obvious non-single-card listings, unavailable listings
 and missing photos stop before analysis. See [supported inputs and live checks](docs/listing-links-2026-10-30.md).
 
+## Database storage
+
+The backend supports local files and Azure SQL Database. Select the backend
+explicitly with `POKEMON_FLIPPER_STORAGE=file` or `azure-sql`; the default is
+local files. SQL mode never silently substitutes a file cache when SQL fails.
+
+Azure SQL uses passwordless Microsoft Entra authentication through one small
+connection pool with encrypted, certificate-validated connections. Local
+development can use the existing `az login` identity:
+
+```dotenv
+POKEMON_FLIPPER_STORAGE=azure-sql
+AZURE_SQL_SERVER=your-server.database.windows.net
+AZURE_SQL_DATABASE=your-database
+AZURE_SQL_AUTH=azure-cli
+AZURE_SQL_OWNER_ID=local-owner
+```
+
+Use `AZURE_SQL_AUTH=default` for the Azure Identity credential chain, including
+managed identities on supported Azure hosts. Public deployment still needs
+authenticated user ownership and an appropriately scoped application identity;
+the current local owner is not a public account system.
+
+```sh
+npm run db -- import --dry-run # validate existing files without SQL or provider calls
+npm run db -- migrate          # apply versioned SQL schema explicitly
+npm run db -- import           # back up, import in batches and verify every record
+npm run db -- verify           # compare SQL with the saved import snapshot
+npm run db -- status           # show schema version and saved record counts
+npm run db:check               # encrypted connection and disposable concurrency checks
+```
+
+Import preserves original timestamps, evidence versions and newer SQL data.
+Checksummed source backups and resumable checkpoints remain under ignored
+`data/database-migration/`; original cache/assessment files are retained. Import
+does not call OpenAI, eBay or price providers. SQL stores shared observations
+separately from owner-specific financial evaluations. Destination-specific and
+unknown cache namespaces remain owner-scoped.
+
+Durable task claims prevent simultaneous identical AI dispatches. Completed
+responses with identical inputs and owner context can be reused; dispatched
+requests with unknown outcomes retain their
+claims. An accepted answer can checkpoint locally during a SQL outage and later
+save that answer without buying it again. A storage outage is distinct from a
+confirmed cache miss and blocks new provider requests.
+
+Startup checks the selected SQL schema before listening. The local app's
+`GET /api/storage` endpoint reports backend readiness without requesting any
+provider data; it uses the same local-only API header protection as other routes.
+
+The current runtime spending/quota guards, shortlist, search history and usage
+logs still use their existing local files. SQL budget/attempt tables establish
+the schema for later shared accounting; they do not yet authorize independently
+hosted replicas to use separate local allowances. The app remains a local,
+single-host development deployment with operator-controlled paid AI. A complete
+server-owned worker queue and public multiuser authentication are separate
+remaining work.
+
+Store original image bytes outside the Basic database; SQL keeps references
+and fingerprints. Monitor storage and query load before increasing concurrency.
+
 ## Testing
 
-### Seven pass spending audit
+### Historical seven pass spending audit
 
-The November 2 review follows the complete outgoing-provider paths and their
-callers, saved-state transitions and client controls. These are the reviewed
+The original November 2 review followed the complete outgoing-provider paths and
+their callers, saved-state transitions and client controls. These are the reviewed
 boundaries and the regressions added for their failure cases:
 
 | Pass | Verified boundary |
@@ -271,7 +363,9 @@ checks used local synthetic images at mobile and desktop sizes. They do not
 certify future model judgments, complete market coverage or profitable flips.
 An independent financial-formula/rate audit and a measured live search remain
 pending. No new OpenAI generation, token-count or eBay Browse calls were used
-for this audit. Paid processing remains paused.
+for that offline audit, and paid processing was paused at its checkpoint. The
+bounded-workflow canary described above was performed later; it does not replace
+a complete search benchmark or the financial audit.
 
 An optional `data/ebay-development-budget.json` adds a persisted Browse allowance
 until its `expiresAt` time. It complements the daily quota and reserve; cached
@@ -284,8 +378,9 @@ Browse requests. After a crash, stop all app instances and verify the owner is
 no longer running before removing only `ebay-development-budget.json.lock`.
 Keep the JSON ledger and its used count. An old lock is never stolen automatically.
 
-Use a temporary `POKEMON_FLIPPER_DATA_DIR` for offline tests while a development
-allowance is active, so mocked transport requests cannot consume the real ledger.
+`npm test` creates a temporary `POKEMON_FLIPPER_DATA_DIR` and selects file storage
+for the suite, so mocked transport cannot consume the real ledgers. Direct
+`node --test` invocations must provide the same isolation explicitly.
 
 ```bash
 npm test            # offline provider and workflow regressions
@@ -298,5 +393,5 @@ The tests cover identity and printing rules, comp filtering, the money math, rat
 
 - **PSA fees need account verification.** Public service levels were checked against PSA's October 30 schedule, including available Standard and the current Express fee. PSA remains unverified against your invoice/account. Your recorded 13.6% eBay fee, shipping assumptions, purchase tax and CGC schedule remain configurable in [`shared/money/config.ts`](shared/money/config.ts).
 - **Printings named only in item details.** The free check reads titles, so a slab whose seller writes *Shadowless* or *1st Edition* only in the item details is checked as Unlimited at first.
-- **BGS and SGC slabs** aren't priced yet, and **non-English cards** are skipped.
+- **Exact slab markets need coverage.** A readable grader/grade does not ensure matching sold prices are available. Non-English cards are excluded from the current scope.
 - **Grade odds are a fixed rule:** the likely grade counts most and each grade away counts less. It isn't yet measured against real grading results.

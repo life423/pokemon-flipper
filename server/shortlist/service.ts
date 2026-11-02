@@ -13,8 +13,9 @@ import { shortlistStore, ShortlistError } from "./store.ts";
 import { readCache } from "../lib/cache.ts";
 import { withFreshListing } from "../../shared/fresh-listing.ts";
 import { searchAttributes } from "../../shared/search-criteria.ts";
+import { loadPrivateEvaluation, evaluationContextKey } from "../analysis/private-evaluation.ts";
 
-export function createShortlistService({ store = shortlistStore, details = getListingDetails, load = loadSaved, cached = (id: string) => readCache<ListingDetails>(listingCacheKey(id), 24 * 7), now = () => Date.now() } = {}) {
+export function createShortlistService({ store = shortlistStore, details = getListingDetails, load = loadSaved, latest = loadPrivateEvaluation, cached = (id: string) => readCache<ListingDetails>(listingCacheKey(id), 24 * 7), now = () => Date.now() } = {}) {
     const limit = createLimiter(2);
     const share = createSingleFlight();
     const failures = new Map<string, { until: number; message: string }>();
@@ -28,7 +29,14 @@ export function createShortlistService({ store = shortlistStore, details = getLi
         const fullPhotos = candidate?.evaluation.listing.photos ?? [];
         const matchesSnapshot = candidate && (candidate.evidenceKey === listingEvidenceKey(listing) || candidate.evaluation.listing.title.trim() === listing.title.trim() && photoEvidenceKey(fullPhotos) === photoEvidenceKey(listing.images));
         const matchesCurrentDetails = !currentDetails || candidate?.evaluation.listing.title.trim() === currentDetails.title.trim() && photoEvidenceKey(fullPhotos) === photoEvidenceKey(currentDetails.images);
-        const snapshot = matchesSnapshot && matchesCurrentDetails ? candidate!.evaluation : null;
+        let snapshot = matchesSnapshot && matchesCurrentDetails ? candidate!.evaluation : null;
+        if (!snapshot) {
+            const bounded = await latest(listing.id);
+            const photos = bounded?.evaluation.listing.photos ?? [];
+            const sameSnapshot = bounded && (bounded.evidenceKey === listingEvidenceKey(listing) || bounded.evaluation.listing.title.trim() === listing.title.trim() && photoEvidenceKey(photos) === photoEvidenceKey(listing.images));
+            const sameDetails = !currentDetails || bounded?.contextKey === evaluationContextKey(currentDetails);
+            if (sameSnapshot && sameDetails) snapshot = bounded!.evaluation;
+        }
         const review = record?.deeperPhotoReview;
         const evaluation = snapshot ? retargetEvaluation({ ...snapshot, ...(review?.inputKey === snapshot.photoReviewKey ? { deeperPhotoReview: review } : {}) }, MONEY_CONFIG.targets, listing) : null;
         return store.save(evaluation ? withFreshListing(listing, evaluation) : listing, evaluation, new Date(now()).toISOString());

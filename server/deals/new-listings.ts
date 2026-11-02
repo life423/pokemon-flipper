@@ -26,7 +26,7 @@ export function createNewListingDiscovery({ find = findDeals, history = searchHi
             await find(query, { ...options, ...(options.developmentLimit !== undefined ? { screenLimit: options.developmentLimit, maxResults: 200 } : {}),
                 newOnly: { excludeIds: [...new Set([...previous, ...knownIds])], limit: options.developmentLimit ?? NEW_SCREEN_LIMIT },
                 onListing: (listing) => { if (!worthScreening(listing, filters, options.asOf)) return; seen.add(listing.id); snapshots.set(listing.id, listing); options.onListing?.(listing); } });
-            if (options.developmentLimit === undefined) await recover([...snapshots.values()], { signal: options.signal, targets: options.targets, includeOffers: options.includeOffers,
+            if (options.developmentLimit === undefined && !options.bounded) await recover([...snapshots.values()], { signal: options.signal, targets: options.targets, includeOffers: options.includeOffers,
                 onListing: (listing, key) => { if (options.onPricingListing) options.onPricingListing(listing, key); else options.onListing?.(listing); }, onProgress: options.onPricing });
         } finally {
             try { if (seen.size) await history.remember(query, minimum, [...seen], filters); }

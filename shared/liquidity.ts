@@ -47,7 +47,7 @@ export function resaleActivity(evaluation: Evaluation | null, now = Date.now()):
         label: volume.observedSales >= 10 ? "Frequent recorded sales" : volume.observedSales >= 3 ? "Some recorded sales" : "Sparse recorded sales",
         recentSales: volume.observedSales,
         scope: "BROAD",
-        detail: `${volume.complete ? "" : "At least "}${volume.observedSales} recorded eBay ${volume.scope === "RAW" ? "raw" : "graded"} sales of ${volume.variant} / 30 days (${volume.dailyAverage.toFixed(volume.dailyAverage < 1 ? 2 : 1)}/day; ${volume.activeDays} active days). ${volume.scope === "RAW" ? "All raw conditions combined" : "All graders and grades combined"}. Checked ${volume.checkedAt.slice(0, 10)}.`,
+        detail: `${volume.complete ? "" : "At least "}${volume.observedSales} recorded eBay ${volume.scope === "RAW" ? "raw" : "graded"} sales of ${volume.variant} / 30 days (${volume.dailyAverage.toFixed(volume.dailyAverage < 1 ? 2 : 1)}/day; ${volume.activeDays} active days). ${volume.scope === "RAW" ? "All raw conditions combined" : "All graders and grades combined"}.`,
     };
     let summary: CompSummary | undefined;
     if (best?.path === "RAW") summary = evaluation?.rawPricing?.prices?.find(price => price.condition === evaluation?.condition?.rawCondition)?.comps;

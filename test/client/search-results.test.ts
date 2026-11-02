@@ -57,6 +57,119 @@ const filter = (listings: ListingSummary[], analyses: Record<string, AnalysisSta
 const holoIntent: SearchIntent = { cardName: "Venusaur", sets: ["Base Set"], cardNumber: "15/102", printing: null, graded: null,
     finish: "HOLO", titleWords: ["venusaur"], source: "rules" };
 
+test("known reprint titles leave Base Set results rather than become a manual-review task when metadata conflicts", t => {
+    const fetch = t.mock.method(globalThis, "fetch", () => { assert.fail("classifying existing reprint evidence must not purchase another check"); });
+    const intent = { ...holoIntent, cardName: "Charizard", cardNumber: "4/102", titleWords: ["charizard"] };
+    const ordinary = listing("uncertain-base", { title: "Charizard Base Set 4/102 English Holo" });
+    const celebration = listing("celebration-conflict", { title: "Pokemon Charizard Celebration Base Set 4/102 English Holo" });
+    const anniversary = listing("anniversary-conflict", { title: "Charizard 30th Celebration 4/102 English Holo" });
+    const copies = [ordinary, celebration, anniversary];
+    const analyses = Object.fromEntries(copies.map(item => {
+        const value = evaluation(item);
+        value.identity = { ...value.identity!, status: "NEEDS_REVIEW", name: "Charizard", cardNumber: "4/102", reasons: ["The title and item specifics disagree about the release."] };
+        value.photoCheck!.cardIdentity = { name: "Charizard", set: "Base Set", cardNumber: "4/102", finish: "HOLO", language: "English", confidence: "MEDIUM", evidence: ["Name and number are readable; release mark is uncertain."] };
+        value.underwriting = { ...value.underwriting!, verdict: "NEEDS_REVIEW", reasons: [...value.identity.reasons] };
+        return [item.id, done(value)];
+    }));
+    const visible = filter(copies, analyses, {}, "search", intent);
+    const groups = groupSearchResults(visible, analyses, false, new Set());
+    assert.deepEqual(ids(groups.all), [ordinary.id]);
+    assert.deepEqual(ids(groups.review), [ordinary.id], "genuine uncertainty without an incompatible release stays reviewable");
+    assert.deepEqual(groups.deals, []);
+    const counts = countSearchResults({ listings: copies, analyses, page: "search", intent, newMode: false, newIds: new Set() });
+    assert.equal(counts.mismatched, 2);
+    assert.equal(counts.candidates, 1, "known wrong releases no longer count as eligible analysis candidates");
+    assert.equal(fetch.mock.callCount(), 0);
+});
+
+test("a high-confidence physical card reading overrides seller set claims when filtering the requested market", () => {
+    const reprint = listing("photo-confirmed-reprint"), actual = listing("actual-original");
+    const changed = evaluation(reprint);
+    changed.identity = { ...changed.identity!, status: "NEEDS_REVIEW", reasons: ["Seller metadata says Base Set."] };
+    changed.photoCheck!.cardIdentity = { name: "Venusaur", set: "Celebrations: Classic Collection", cardNumber: "15/102", finish: "HOLO", language: "English", confidence: "HIGH", evidence: ["The photographed anniversary stamp identifies a reprint."] };
+    changed.underwriting = { ...changed.underwriting!, verdict: "NEEDS_REVIEW", reasons: changed.identity.reasons };
+    const right = evaluation(actual);
+    right.identity!.set = "Celebrations: Classic Collection";
+    right.photoCheck!.cardIdentity = { name: "Venusaur", set: "Base Set", cardNumber: "15/102", finish: "HOLO", language: "English", confidence: "HIGH", evidence: ["The clear physical card identifies the original release."] };
+    const analyses = { [reprint.id]: done(changed), [actual.id]: done(right) };
+    assert.deepEqual(ids(filter([reprint, actual], analyses, {}, "search", holoIntent)), [actual.id]);
+    assert.deepEqual(ids(filter([reprint], analyses, {}, "shortlist", holoIntent)), [reprint.id], "a search scope cannot delete or hide otherwise relevant saved history");
+});
+
+test("known canonical identity respects requested set, collector number, printed name and printing", () => {
+    const wrongSet = listing("other-set"), wrongNumber = listing("other-number"), wrongName = listing("other-name"), right = listing("right");
+    const setValue = evaluation(wrongSet); setValue.identity!.set = "Base Set 2";
+    const numberValue = evaluation(wrongNumber); numberValue.identity!.cardNumber = "14/102";
+    const nameValue = evaluation(wrongName); nameValue.identity!.name = "Mewtwo";
+    const correct = evaluation(right); correct.identity!.set = "Base Set (Shadowless)"; correct.identity!.cardNumber = "015/0102"; correct.identity!.printing = "SHADOWLESS";
+    const analyses = { [wrongSet.id]: done(setValue), [wrongNumber.id]: done(numberValue), [wrongName.id]: done(nameValue), [right.id]: done(correct) };
+    assert.deepEqual(ids(filter([wrongSet, wrongNumber, wrongName, right], analyses, {}, "search", holoIntent)), [right.id]);
+    assert.deepEqual(filter([right], analyses, {}, "search", { ...holoIntent, printing: "UNLIMITED" }), []);
+});
+
+test("a broad reprint search and unknown photo identity are not reclassified as vintage mismatches", () => {
+    const item = listing("celebration-query", { title: "Venusaur Celebration 15/102 Holo" });
+    const value = evaluation(item);
+    value.identity = { ...value.identity!, status: "NEEDS_REVIEW", reasons: ["The exact release needs clearer evidence."] };
+    value.photoCheck!.cardIdentity = { name: null, set: null, cardNumber: null, finish: "UNKNOWN", language: "English", confidence: "LOW", evidence: [] };
+    value.underwriting = { ...value.underwriting!, verdict: "NEEDS_REVIEW", reasons: value.identity.reasons };
+    const analyses = { [item.id]: done(value) };
+    assert.deepEqual(ids(filter([item], analyses, {}, "search", { ...holoIntent, sets: ["Celebrations: Classic Collection"] })), [item.id]);
+    assert.deepEqual(ids(filter([item], analyses, {}, "search", { ...holoIntent, sets: [] })), [item.id]);
+});
+
+test("the three saved Base Set cases retain both PSA copies and exclude the disputed anniversary reprint", () => {
+    const first = listing("v1|287700156029|0", { title: "1999 Pokémon Base Set Charizard #4/102 Holo – PSA 5 EX – Excellent Eye Appeal", isGraded: true });
+    const anniversary = listing("v1|168833419127|0", { title: "Pokemon 30th Celebration Charizard 4/102" });
+    const second = listing("v1|840086210843|0", { title: "1999 Pokemon Base Set Charizard 4/102 Holo Rare PSA 5 EX Vintage WOTC", isGraded: true });
+    const intent = { ...holoIntent, cardName: "Charizard", cardNumber: null, titleWords: ["charizard"] };
+    const photo = (set: string, confidence: "HIGH" | "MEDIUM") => ({ name: "Charizard", set, cardNumber: "4/102", language: "English", finish: "HOLO" as const, confidence, evidence: ["The card name, number and English text are readable."] });
+    const firstValue = slab(first, "PSA", "5");
+    firstValue.identity = { ...firstValue.identity!, name: "Charizard", cardNumber: "004/102" };
+    firstValue.photoCheck!.cardIdentity = photo("1999 Pokémon Game Base Set", "HIGH");
+    firstValue.underwriting = { ...firstValue.underwriting!, verdict: "NEEDS_REVIEW", reasons: ["A seller certificate field differs from the readable label."] };
+    const reprintValue = evaluation(anniversary);
+    reprintValue.identity = { ...reprintValue.identity!, status: "NEEDS_REVIEW", name: null, cardNumber: null, printing: "UNKNOWN", reasons: ["The anniversary title conflicts with Base Set item specifics."] };
+    reprintValue.photoCheck!.cardIdentity = photo("Base Set", "MEDIUM");
+    reprintValue.underwriting = { ...reprintValue.underwriting!, verdict: "NEEDS_REVIEW", reasons: reprintValue.identity.reasons };
+    const secondValue = slab(second, "PSA", "5");
+    secondValue.identity = { ...secondValue.identity!, name: "Charizard", cardNumber: "004/102" };
+    secondValue.photoCheck!.cardIdentity = photo("Base Set", "HIGH");
+    secondValue.underwriting = { ...secondValue.underwriting!, verdict: "PASS", reasons: ["The asking price does not clear the financial target."] };
+    const analyses = { [first.id]: done(firstValue), [anniversary.id]: done(reprintValue), [second.id]: done(secondValue) };
+    const visible = filter([first, anniversary, second], analyses, {}, "search", intent);
+    const groups = groupSearchResults(visible, analyses, false, new Set());
+    assert.deepEqual(ids(groups.all), [first.id, second.id]);
+    assert.deepEqual(ids(groups.review), [first.id]);
+    assert.deepEqual(ids(groups.candidates), [second.id]);
+    assert.deepEqual(groups.deals, [], "scope correction cannot promote a priced loss into Deals");
+    assert.equal(countSearchResults({ listings: [first, anniversary, second], analyses, page: "search", intent, newMode: false, newIds: new Set() }).mismatched, 1);
+});
+
+test("high-confidence actual holo, reverse-holo and non-holo finishes stay distinct despite seller wording", () => {
+    const holo = listing("actual-holo"), reverse = listing("actual-reverse"), plain = listing("actual-non-holo");
+    const copies = [holo, reverse, plain];
+    const finishes = ["HOLO", "REVERSE_HOLO", "NON_HOLO"] as const;
+    const analyses = Object.fromEntries(copies.map((item, index) => {
+        const value = evaluation(item, 20);
+        value.identity = { ...value.identity!, status: "NEEDS_REVIEW", finish: "UNKNOWN", reasons: ["Seller metadata cannot establish the finish."] };
+        value.listing.aspects.Finish = "Holo";
+        value.photoCheck!.cardIdentity = { name: "Venusaur", set: "Base Set", cardNumber: "15/102", language: "English", finish: finishes[index], confidence: "HIGH", evidence: ["The physical foil pattern is clear."] };
+        return [item.id, done(value)];
+    }));
+    assert.deepEqual(ids(filter(copies, analyses, {}, "search", holoIntent)), [holo.id]);
+    assert.deepEqual(ids(filter(copies, analyses, {}, "search", { ...holoIntent, finish: "REVERSE_HOLO" })), [reverse.id]);
+    assert.deepEqual(ids(filter(copies, analyses, {}, "search", { ...holoIntent, finish: "NON_HOLO" })), [plain.id]);
+    const low = structuredClone(analyses[reverse.id]);
+    if (low.status === "done") { low.evaluation.photoCheck!.cardIdentity!.confidence = "LOW"; low.evaluation.identity!.finish = "HOLO"; }
+    assert.deepEqual(ids(filter([reverse], { [reverse.id]: low }, {}, "search", holoIntent)), [reverse.id], "low-confidence photo guesses do not overrule settled finish evidence");
+    const unknown = structuredClone(analyses[holo.id]);
+    if (unknown.status === "done") unknown.evaluation.photoCheck!.cardIdentity!.finish = "UNKNOWN";
+    assert.deepEqual(filter([holo], { [holo.id]: unknown }, {}, "search", holoIntent), [], "unknown actual and canonical finish cannot be filled with the seller's holo claim");
+    assert.deepEqual(ids(filter([holo], { [holo.id]: unknown }, {}, "search", { ...holoIntent, finish: null })), [holo.id]);
+    assert.deepEqual(groupSearchResults(filter(copies, analyses, {}, "search", holoIntent), analyses, false, new Set()).deals, []);
+});
+
 test("deliberately deferred low-value copies stay out of deals, offers and hidden finds even with a reused profit estimate", () => {
     const deferred = listing("deferred", { found: { how: "PHOTO_SHOWS_IT", note: "The photo identifies this card." } });
     const normal = listing("fully-researched");
@@ -83,6 +196,67 @@ test("the result inventory excludes expired, unavailable and disproved copies be
     assert.deepEqual(ids(groups.deals), ["kept"]);
     assert.deepEqual(ids(groups.all), ["kept"]);
     assert.deepEqual(ids(groups.new), ["kept"]);
+});
+
+test("All matching includes screened passes and unfinished cards while excluding known wrong cards and junk without new work", t => {
+    let requests = 0;
+    t.mock.method(globalThis, "fetch", () => { requests++; throw new Error("All matching is a projection of saved results"); });
+    const deal = listing("deal"), pass = listing("pass"), waiting = listing("unfinished");
+    const wrong = listing("wrong-card"), junk = listing("flagged-junk", { screen: screen({ junk: true }) });
+    const wrongAssessment = evaluation(wrong);
+    wrongAssessment.identity!.notThisCard = "Photos show a different card.";
+    const passAssessment = evaluation(pass, 20);
+    assert.equal(passAssessment.underwriting?.verdict, "PASS");
+    const analyses = { [deal.id]: done(evaluation(deal)), [pass.id]: done(passAssessment), [wrong.id]: done(wrongAssessment) };
+    const visible = filter([deal, pass, waiting, wrong, junk, listing("wrong-set", { match: "OTHER_SET" })], analyses);
+    const groups = groupSearchResults(visible, analyses, false, new Set());
+    assert.deepEqual(ids(groups.all), ["deal", "pass", "unfinished"]);
+    assert.deepEqual(ids(groups.deals), ["deal"]);
+    assert.equal(Object.hasOwn(analyses, waiting.id), false, "showing a card does not imply an assessment exists");
+    assert.equal(requests, 0);
+});
+
+test("a photo rejection marked OTHER_LANGUAGE hides an English-titled listing and never returns it to the analysis queue", () => {
+    const rejected = listing("foreign-photo-rejected", { title: "Venusaur Base Set English Holo", match: "OTHER_LANGUAGE" });
+    const english = listing("english-card", { title: "Venusaur Base Set English Holo" });
+    assert.equal(canAutoAnalyze(rejected), false);
+    for (const analyses of [{}, { [rejected.id]: { status: "error", evidenceKey: rejected.id, message: "Photos show a German card." } as AnalysisState }]) {
+        const visible = filter([rejected, english], analyses);
+        assert.deepEqual(ids(groupSearchResults(visible, analyses, true, new Set([rejected.id])).all), [english.id]);
+        const counts = countSearchResults({ listings: [rejected, english], analyses, page: "search", newMode: false, newIds: new Set() });
+        assert.equal(counts.waiting, 1);
+        assert.equal(counts.mismatched, 1);
+    }
+});
+
+test("English-only results exclude foreign titles and saved evidence before grouping without treating unknown language as foreign", t => {
+    let requests = 0;
+    t.mock.method(globalThis, "fetch", () => { requests++; throw new Error("Language filtering must use saved evidence"); });
+    const english = listing("english", { title: "Venusaur Base Set English Holo" });
+    const unknown = listing("unconfirmed"), alias = listing("english-alias");
+    const foreignTitle = listing("foreign-title", { title: "Venusaur Base Set German Holo" });
+    const foreignIdentity = listing("foreign-identity"), foreignPhoto = listing("foreign-photo"), foreignAspect = listing("foreign-aspect");
+    const foreignMatch = listing("foreign-match", { match: "OTHER_LANGUAGE" });
+    const identity = evaluation(foreignIdentity); identity.identity!.language = "German";
+    const photo = evaluation(foreignPhoto); photo.photoCheck!.cardIdentity = { name: "Venusaur", set: "Base Set", cardNumber: "15/102",
+        finish: "HOLO", language: "Japanese", confidence: "HIGH", evidence: ["Japanese text visible."] };
+    const aspect = evaluation(foreignAspect); aspect.listing.aspects.Language = "fr";
+    const englishAlias = evaluation(alias); englishAlias.identity!.language = "en-US";
+    const analyses = { [foreignIdentity.id]: done(identity), [foreignPhoto.id]: done(photo), [foreignAspect.id]: done(aspect), [alias.id]: done(englishAlias) };
+    const listings = [english, unknown, alias, foreignTitle, foreignIdentity, foreignPhoto, foreignAspect, foreignMatch];
+    const before = structuredClone({ listings, analyses });
+    for (const page of ["search", "shortlist"] as const) {
+        const visible = filter(listings, analyses, {}, page);
+        assert.deepEqual(ids(visible), ["english", "unconfirmed", "english-alias"]);
+        assert.deepEqual(ids(groupSearchResults(visible, analyses, false, new Set()).all), ids(visible));
+    }
+    const counts = countSearchResults({ listings, analyses, page: "search", newMode: false, newIds: new Set() });
+    assert.equal(counts.mismatched, 5);
+    assert.equal(counts.candidates, 3);
+    assert.equal(counts.waiting, 2);
+    assert.equal(Object.hasOwn(analyses, unknown.id), false, "an unconfirmed row does not gain a photo assessment");
+    assert.deepEqual({ listings, analyses }, before);
+    assert.equal(requests, 0);
 });
 
 test("a minimum Buy It Now price does not hide a low auction opening bid", () => {

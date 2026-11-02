@@ -64,7 +64,7 @@ const VIEW_NAMES: Record<View, string> = {
     candidates: "Sorting",
     review: "Needs attention",
     hidden: "Hidden finds",
-    all: "All",
+    all: "All matching",
 };
 function Segmented<T extends string>({
     label,
@@ -178,7 +178,7 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
         <>
             {showSearchOptions && <div className={styles.searchOptions} role="group" aria-label="Search options">
                 {purchaseFields}
-                <p className={styles.preferenceNote}>Development mode: up to 3 listings per search, with a 2¢ AI spending ceiling. Broad discovery is paused. All prices by default; the minimum applies to Buy It Now and the maximum to both formats.</p>
+                <p className={styles.preferenceNote}>English cards only. Unconfirmed language stays preliminary until identified. Development scans admit up to 3 candidates, using saved metadata or local screening. New AI work shares a 2¢ search cap; broad discovery is off. All prices by default; the minimum applies to Buy It Now and the maximum to both formats.</p>
             </div>}
             <div className={styles.controlPanel} hidden={hidden} data-idle={idle || undefined}>
                 <div className={styles.controlRow}>
@@ -294,6 +294,7 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
 
                 <section className={styles.drawerSection}>
                     <h3>Filters</h3>
+                    <p className={styles.usage}>English cards only. Listings with unconfirmed language remain preliminary.</p>
                     {!showSearchOptions && purchaseFields}
                     <label className={styles.field}>
                         <span>Sort</span>
@@ -338,7 +339,7 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
                         </select>
                     </label>
                     <label className={styles.field}>
-                        <span>Full AI analyses per search</span>
+                        <span>AI assessments per search</span>
                         <select value={autoSetting} onChange={(event) => changeAutoSetting(Number(event.target.value))}>
                             {AUTO_OPTIONS.map((option) => (
                                 <option key={option} value={option}>
@@ -347,12 +348,12 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
                             ))}
                         </select>
                     </label>
-                    <p className={styles.usage}>Only the development shortlist can enter automatic assessment. Screening and photo work share the same 2¢ search budget; repeated valid answers are reused. A spending pause keeps cached results available.</p>
+                    <p className={styles.usage}>Saved evidence is reused first. New photo work checks identity and either raw condition or the slab label in one assessment of up to 6 photos. All paid stages share the 2¢ search cap; unconfirmed charges remain counted against it. A pause keeps saved evidence available.</p>
                     {usage && <p className={styles.usage}>{describeUsage(usage)}</p>}
                 </section>
                 <section className={styles.drawerSection}>
                     <h3>AI usage</h3>
-                    <p className={styles.usage}>{aiUsage ? `${aiUsage.calls} API calls recorded on ${aiUsage.dayUtc} (UTC)` : "Usage will appear after the local log is available."}</p>
+                    <p className={styles.usage}>{aiUsage ? `${aiUsage.calls} generation requests recorded ${aiUsage.searchId ? "for this search" : "today"}` : "Usage will appear after the local log is available."}</p>
                     {aiUsage && <details className={styles.aiUsage}><summary>View calls by task and model</summary><ul>{aiUsage.stages.map(stage => <li key={`${stage.step}:${stage.model}:${stage.serviceTier ?? "unknown"}`}><strong>{stage.step}</strong><br />{stage.model} · {stage.calls} calls{stage.failed ? ` · ${stage.failed} failed` : ""}<br />{(stage.inputTokens + stage.outputTokens).toLocaleString()} tokens · {stage.images} image inputs</li>)}</ul></details>}
                     <p className={styles.usage}>Local server totals since logging began. Retries count separately; reused answers add no request. This is usage telemetry, not a billing statement.</p>
                 </section>

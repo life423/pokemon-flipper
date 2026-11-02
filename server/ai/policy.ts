@@ -2,6 +2,10 @@
 // separately; cheap text extraction does not need the assessment model.
 export const TEXT_MODEL = process.env.OPENAI_MODEL ?? "gpt-5.6-luna";
 export const VISION_MODEL = process.env.OPENAI_VISION_MODEL ?? process.env.OPENAI_MODEL ?? "gpt-5.6-terra";
+// The small development workflow uses one compact visual assessment rather
+// than the legacy chain of independent photo, condition and comp requests.
+export const BOUNDED_VISION_MODEL = process.env.OPENAI_BOUNDED_VISION_MODEL ?? "gpt-5.6-luna";
+export const BOUNDED_MAX_OUTPUT_TOKENS = 2200;
 // User-approved throughput. Provider rate limits still trigger their normal
 // backoff; these are concurrency ceilings, not spending budgets.
 export { AI_CONCURRENCY as AI_REQUEST_CONCURRENCY, AI_CONCURRENCY as SOLD_REVIEW_CONCURRENCY } from "../../shared/work-limits.ts";

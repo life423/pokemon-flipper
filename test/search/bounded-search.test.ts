@@ -1,0 +1,150 @@
+import "../fixtures/isolated-data.ts";
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { findDeals, type SearchSummary } from "../../server/deals/find-deals.ts";
+import { readSearchLocally, readSearchWithoutAi } from "../../server/search/intent.ts";
+import { readTitleByRules, readTitleWithoutAi } from "../../server/ai/title-reader.ts";
+import { writeCache } from "../../server/lib/cache.ts";
+import { StorageUnavailableError } from "../../server/storage/index.ts";
+import { MODEL } from "../../server/ai/openai.ts";
+import { canAutoAnalyze } from "../../shared/analysis.ts";
+import type { ListingSummary } from "../../shared/types.ts";
+
+const row = (id: string, title = "Charizard Base Set 4/102 Holo English", extra: Partial<ListingSummary> = {}): ListingSummary => ({
+    id, title, currentPrice: 80, shipping: 5, buyingOption: "FIXED_PRICE", bids: 0, isGraded: false,
+    endTime: null, images: ["https://i.ebayimg.com/images/g/offline/s-l1600.jpg"], seller: null, url: "#", ...extra,
+});
+function noPaidSteps(search: (query: string, options: any) => Promise<any>) {
+    return { search,
+        readIntent: async () => { assert.fail("bounded searches cannot buy query interpretation"); },
+        readTitle: async () => { assert.fail("bounded searches cannot enqueue a title batch"); },
+        screening: () => { assert.fail("bounded searches cannot start prescreen prices, main-photo AI or eBay detail checks"); },
+    };
+}
+
+test("local bounded metadata transcribes explicit names and numbers without inventing a denominator", () => {
+    const text = readTitleByRules("Charizard 4/102 Base Set Holo English PSA 8");
+    assert.deepEqual([text.cardName, text.cardNumber, text.set, text.grader, text.grade, text.language], ["charizard", "4/102", "Base Set", "PSA", "8", "English"]);
+    assert.equal(readTitleByRules("Aquapolis H28 Holo").cardNumber, "H28");
+    assert.equal(readTitleByRules("Galarian Sirfetch'd SWSH050 Promo").cardNumber, "SWSH050");
+    assert.equal(readTitleByRules("Charizard ex SVP074 Promo").cardNumber, "SVP074");
+    assert.equal(readTitleByRules("Charizard 1999 PSA 8").cardNumber, null);
+    assert.equal(readTitleByRules("Charizard #4 Base Set").cardNumber, "4");
+    assert.equal(readTitleByRules("Charizard 4/102 Base Set 2").set, "Base Set 2");
+    assert.equal(readTitleByRules("Unown A").cardName, "unown a");
+    assert.deepEqual(readSearchLocally("1999 base set charizard holo").titleWords, ["charizard"]);
+    assert.deepEqual(readSearchLocally("4/102").titleWords, []);
+    assert.equal(readSearchLocally("4/102").cardNumber, "4/102");
+    assert.deepEqual(readSearchLocally("1999 base set holo").sets, ["Base Set"]);
+});
+
+test("bounded search reads one newest BIN page and admits only three candidates without any paid preliminary work", async t => {
+    const fetch = t.mock.method(globalThis, "fetch", async () => { assert.fail("only the injected source may run; AI and price providers cannot dispatch"); });
+    let sources = 0;
+    let summary: SearchSummary | undefined;
+    const emitted: ListingSummary[] = [];
+    const page = Array.from({ length: 200 }, (_, index) => row(String(index)));
+    const result = await findDeals("1999 Base Set Charizard holo", { bounded: true, maxResults: 1000, screenLimit: 100,
+        filters: { typeFilter: "FIXED_PRICE" }, onStart: value => { summary = value; }, onListing: value => { emitted.push(value); } }, noPaidSteps(async (query, settings) => {
+            sources++;
+            assert.match(query, /charizard/);
+            assert.equal(settings.maxResults, 200);
+            assert.equal(settings.sort, "newlyListed");
+            return { listings: page, total: 5000, skipped: 0 };
+        }));
+    assert.equal(sources, 1);
+    assert.equal(fetch.mock.callCount(), 0);
+    assert.deepEqual(result, emitted);
+    assert.equal(result.length, 3);
+    assert.equal(summary?.mode, "development");
+    assert.equal(summary?.count, 3);
+    assert.equal(summary?.deferred, 197);
+    assert.ok(result.every(listing => canAutoAnalyze(listing)));
+    assert.ok(result.every(listing => listing.screen?.status === "UNSCREENED" && listing.screen.bestCase === null));
+});
+
+test("wrong cards, sets, numbers, foreign titles, junk, budget exclusions and far-off auctions do not consume bounded slots", async () => {
+    const page = [row("other-card", "Charmander Base Set 46/102 Holo"), row("other-set", "Charizard Base Set 2 4/130 Holo"),
+        row("other-number", "Charizard Base Set 5/102 Holo"), row("foreign", "Charizard Japanese Base Set 4/102 Holo"),
+        row("junk", "Charizard Base Set 4/102 custom proxy"), row("absurd", undefined, { currentPrice: 223200 }),
+        row("far-auction", undefined, { buyingOption: "AUCTION", endTime: new Date(Date.now() + 7 * 86400000).toISOString() }),
+        row("filtered-price", undefined, { currentPrice: 250 }), row("known"), row("one"), row("two"), row("three")];
+    const result = await findDeals("Charizard Base Set 4/102 holo", { bounded: true, filters: { maxPrice: 200 }, newOnly: { excludeIds: ["known"], limit: 200 } },
+        noPaidSteps(async () => ({ listings: page, total: page.length, skipped: 0 })));
+    assert.deepEqual(result.map(listing => listing.id), ["one", "two", "three"]);
+});
+
+test("number-only bounded searches do not invent a Pokemon or reject a matching card", async () => {
+    const result = await findDeals("4/102", { bounded: true }, noPaidSteps(async () => ({ listings: [row("one")], total: 1, skipped: 0 })));
+    assert.equal(result.length, 1);
+    assert.equal(result[0].screen?.card?.cardNumber, "4/102");
+});
+
+test("explicit reprint releases are excluded before bounded slots without paid interpretation", async t => {
+    const fetch = t.mock.method(globalThis, "fetch", async () => assert.fail("reprint rejection cannot call a provider"));
+    const page = [
+        row("celebration", "Pokemon 30th Celebration Charizard 4/102"),
+        row("celebrations", "Charizard Base Set Celebrations 4/102 English"),
+        row("anniversary", "Charizard 25th Anniversary 4/102 English"),
+        row("evolutions", "Charizard Base Set XY Evolutions 11/108 Holo"),
+        row("legendary", "Charizard Base Set Legendary Collection Holo 3/110"),
+        row("base-two", "Charizard Base Set 2 4/102 Holo"), row("one"), row("two"), row("three"),
+    ];
+    const result = await findDeals("1999 Base Set Charizard holo", { bounded: true }, noPaidSteps(async () => ({ listings: page, total: page.length, skipped: 0 })));
+    assert.deepEqual(result.map(listing => listing.id), ["one", "two", "three"]);
+    assert.equal(fetch.mock.callCount(), 0);
+    assert.equal(readTitleByRules(page[0].title).set, "30th Celebration");
+    assert.equal(readTitleByRules(page[0].title).cardName, "charizard");
+    assert.equal(readTitleByRules("Charizard Celebration 4/102").set, "Celebrations");
+});
+
+test("literal reprint names correct an old seller-derived title cache without more AI", async t => {
+    const fetch = t.mock.method(globalThis, "fetch", async () => assert.fail("cached title correction cannot call a provider"));
+    const title = "Offline Charizard Celebration Base Set 4/102";
+    await writeCache(`title-reading:v6:${MODEL}:${title.toLowerCase()}`, { kind: "SINGLE_CARD", cardName: "Charizard", set: "Base Set", cardNumber: "4/102", language: "English", grader: null, grade: null, condition: null });
+    assert.equal((await readTitleWithoutAi(title)).set, "Celebrations");
+    assert.equal(fetch.mock.callCount(), 0);
+});
+
+test("bounded helpers reuse existing paid title and intent readings without invoking AI", async t => {
+    const fetch = t.mock.method(globalThis, "fetch", async () => { assert.fail("saved metadata must be reused without provider calls"); });
+    const title = "Offline Charizard metadata reuse";
+    const reading = { kind: "SINGLE_CARD", cardName: "Charizard", set: "Base Set", cardNumber: "4/102", language: "English", grader: null, grade: null, condition: "Near Mint" };
+    await writeCache(`title-reading:v6:${MODEL}:${title.toLowerCase()}`, reading);
+    assert.deepEqual(await readTitleWithoutAi(title), reading);
+    const query = "offline charizard cache reuse";
+    const saved = { ...readSearchLocally(query), cardName: "Charizard", sets: ["Base Set"], titleWords: ["charizard"], keywords: "Charizard Base Set", source: "ai" };
+    await writeCache(`search-intent:v2:${MODEL}:${query}`, saved);
+    const reused = await readSearchWithoutAi(query);
+    assert.equal(reused.source, "ai");
+    assert.deepEqual(reused.sets, ["Base Set"]);
+    assert.deepEqual(reused.titleWords, ["charizard"]);
+    assert.equal(fetch.mock.callCount(), 0);
+});
+
+test("invalid saved bounded metadata fails closed rather than becoming a new AI request", async () => {
+    const query = "offline invalid saved query";
+    await writeCache(`search-intent:v2:${MODEL}:${query}`, { sets: [], titleWords: "bad" });
+    await assert.rejects(readSearchWithoutAi(query), StorageUnavailableError);
+    const title = "Offline invalid title cache";
+    await writeCache(`title-reading:v6:${MODEL}:${title.toLowerCase()}`, { kind: "SINGLE_CARD", cardName: 42 });
+    await assert.rejects(readTitleWithoutAi(title), StorageUnavailableError);
+});
+
+test("cancelling bounded query interpretation prevents the source request", async () => {
+    const stopped = new AbortController();
+    const dependencies = noPaidSteps(async () => { assert.fail("cancelled search cannot consume eBay allowance"); });
+    const result = await findDeals("charizard", { bounded: true, signal: stopped.signal }, { ...dependencies,
+        readIntentWithoutAi: async () => { stopped.abort(); return readSearchLocally("charizard"); } });
+    assert.deepEqual(result, []);
+});
+
+test("cancelling a bounded cached title read prevents emitted work and later stages", async () => {
+    const stopped = new AbortController();
+    let emitted = 0;
+    const dependencies = noPaidSteps(async () => ({ listings: [row("one")], total: 1, skipped: 0 }));
+    const result = await findDeals("charizard", { bounded: true, signal: stopped.signal, onListing: () => { emitted++; } }, { ...dependencies,
+        readTitleWithoutAi: async title => { stopped.abort(); return readTitleByRules(title); } });
+    assert.deepEqual(result, []);
+    assert.equal(emitted, 0);
+});

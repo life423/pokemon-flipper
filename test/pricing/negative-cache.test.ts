@@ -16,7 +16,7 @@ test("empty card-name results expire after five minutes while positive metadata 
     for (const [name, data, age] of [["cache old empty", [], 60], ["cache recent empty", [], 2], ["cache positive", [item], 20 * 60]] as const) {
         put("/cards?" + new URLSearchParams({ set_id: "99999", name, per_page: "20" }), { data }, age);
     }
-    t.mock.method(fs, "readFile", async (path: unknown) => { const key = String(path).split(/[\\/]/).at(-1)!; if (!cached.has(key)) throw Error("cache miss"); return cached.get(key)!; });
+    t.mock.method(fs, "readFile", async (path: unknown) => { const key = String(path).split(/[\\/]/).at(-1)!; if (!cached.has(key)) throw Object.assign(Error("cache miss"), { code: "ENOENT" }); return cached.get(key)!; });
     t.mock.method(fs, "writeFile", async () => {}); t.mock.method(fs, "mkdir", async () => undefined);
     t.mock.method(fs, "rename", async () => {}); t.mock.method(fs, "rm", async () => {});
     const requests: string[] = [];

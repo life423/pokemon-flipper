@@ -4,6 +4,8 @@ import { normalizeText } from "../ebay/filters.ts";
 import { isPrinting, normalizeWords, printingClaimFromText } from "../identity/card-identity.ts";
 import type { SearchIntent } from "../../shared/types.ts";
 import { explicitCriteria, fallbackKeywords } from "../../shared/search-criteria.ts";
+import { readTitleByRules } from "../ai/title-reader.ts";
+import { StorageUnavailableError } from "../storage/index.ts";
 
 // What a search means. eBay does the matching; this says which of
 // eBay's results are the card the search is for, so other cards and
@@ -71,6 +73,28 @@ export function readSearchByRules(search: string): SearchIntent {
         ...criteria,
         keywords: [fallbackKeywords(search), criteria.grader].filter(Boolean).join(" "),
     };
+}
+
+// A literal local interpretation is only a search constraint, never evidence
+// about a physical card's identity, printing, finish or condition.
+export function readSearchLocally(search: string): SearchIntent {
+    const intent = readSearchByRules(search);
+    const local = readTitleByRules(fallbackKeywords(search));
+    return { ...intent, cardName: local.cardName, sets: local.set ? [local.set] : [],
+        cardNumber: intent.cardNumber ?? local.cardNumber,
+        titleWords: local.cardName ? normalizeWords(local.cardName).split(" ").filter(Boolean).slice(0, 2) : [] };
+}
+
+export async function readSearchWithoutAi(search: string, signal?: AbortSignal): Promise<SearchIntent> {
+    signal?.throwIfAborted();
+    const saved = await readCache<SearchIntent>(`search-intent:v${INTENT_VERSION}:${MODEL}:${normalizeText(search).trim()}`, MONTH_HOURS);
+    signal?.throwIfAborted();
+    if (!saved) return readSearchLocally(search);
+    if (typeof saved !== "object" || !Array.isArray(saved.sets) || saved.sets.some(set => typeof set !== "string") ||
+        !Array.isArray(saved.titleWords) || saved.titleWords.some(word => typeof word !== "string")) {
+        throw new StorageUnavailableError("The saved search interpretation is invalid. No replacement AI request was authorized.");
+    }
+    return cleanReading(saved, search);
 }
 
 // The AI's reading, checked and cleaned. Anything off falls back to "any".

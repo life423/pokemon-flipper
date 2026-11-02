@@ -5,7 +5,7 @@ import type { GradingMode, Usage } from "../analysis/types.ts";
 import { createLimiter } from "../lib/concurrency.ts";
 import { ProviderError } from "../lib/http.ts";
 import { PHOTO_CARD_SCHEMA } from "./photo-card-schema.ts";
-import { aiPolicy, TEXT_MODEL, VISION_MODEL, AI_REQUEST_CONCURRENCY } from "./policy.ts";
+import { aiPolicy, TEXT_MODEL, VISION_MODEL, AI_REQUEST_CONCURRENCY, BOUNDED_VISION_MODEL, BOUNDED_MAX_OUTPUT_TOKENS } from "./policy.ts";
 import { trackedAiFetch } from "./usage.ts";
 import { PHOTO_REVIEW_REVISION, CONDITION_ASSESSMENT_REVISION } from "../../shared/pricing-freshness.ts";
 import { AUTHENTICITY_FEATURES, AUTHENTICITY_JUDGMENTS } from "../../shared/authenticity.ts";
@@ -15,6 +15,7 @@ import { CONDITION_RULES_VERSION } from "../../shared/conditions.ts";
 import { createAiCreditGate } from "./errors.ts";
 import { aiSpendingFailure } from "./spending.ts";
 import { withAiDispatchSignal } from "./usage-context.ts";
+import { storageFailure } from "../lib/storage-failure.ts";
 
 // A photo to send, with an optional label for the view it shows.
 export interface Photo {
@@ -49,7 +50,7 @@ const creditGate = createAiCreditGate();
 // Created on first use, so the server still starts (and listings
 // still load) when OPENAI_API_KEY is missing.
 function getClient(): OpenAI {
-    client ??= new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 90_000, maxRetries: 0, fetch: trackedAiFetch });
+    client ??= new OpenAI({ apiKey: process.env.OPENAI_API_KEY, baseURL: "https://api.openai.com/v1", timeout: 90_000, maxRetries: 0, fetch: trackedAiFetch });
     return client;
 }
 
@@ -119,6 +120,7 @@ export async function runStructured<T>({
     dispatchSignal,
     maxRetries,
     maxOutputTokens,
+    bounded = false,
 }: {
     step: string;
     prompt: string;
@@ -131,6 +133,8 @@ export async function runStructured<T>({
     dispatchSignal?: AbortSignal;
     maxRetries?: number;
     maxOutputTokens?: number;
+    // One compact immutable assessment for the two-cent development workflow.
+    bounded?: boolean;
 }): Promise<{ result: T; usage: Usage }> {
     const waitingSignal = signal && dispatchSignal ? AbortSignal.any([signal, dispatchSignal]) : signal ?? dispatchSignal;
     waitingSignal?.throwIfAborted();
@@ -142,23 +146,43 @@ export async function runStructured<T>({
         while (Date.now() < coolingUntil) { creditGate.check(); await delay(Math.min(30_000, coolingUntil - Date.now()), undefined, { signal: waitingSignal }); }
         creditGate.check();
         const deadline = AbortSignal.timeout(120_000);
-        const policy = aiPolicy(schemaName);
+        const policy = bounded ? { model: BOUNDED_VISION_MODEL, maxOutputTokens: BOUNDED_MAX_OUTPUT_TOKENS, effort: "none" as const,
+            supportsReasoning: /^(?:gpt-[56](?:[.-]|$)|o\d)/.test(BOUNDED_VISION_MODEL) } : aiPolicy(schemaName);
         const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+        const immutablePhotos: Photo[] = [];
+        if (bounded) {
+            let bytes = 0;
+            for (const photo of photos) {
+                waitingSignal?.throwIfAborted();
+                const url = photo.url.startsWith("data:image/") ? photo.url : await inlineEbayImage(photo.url,
+                    waitingSignal ? AbortSignal.any([requestSignal, waitingSignal]) : requestSignal);
+                bytes += url.length;
+                if (bytes > 32 * 1024 * 1024) throw new Error("The selected photos exceed the bounded assessment input limit.");
+                immutablePhotos.push({ ...photo, url });
+            }
+        }
         const sendOnce = (images: Photo[]) => withAiDispatchSignal(waitingSignal, () => getClient().responses.create({
             model: policy.model,
+            service_tier: "default",
+            // GPT-5.6+ uses the current TTL API. Explicit mode avoids paying
+            // cache-write charges for unique listing images without breakpoints.
+            ...{ prompt_cache_options: { mode: "explicit", ttl: "30m" } as const },
+            store: false,
             ...(instructions ? { instructions } : {}),
-            max_output_tokens: maxOutputTokens ?? policy.maxOutputTokens,
+            max_output_tokens: bounded ? Math.min(maxOutputTokens ?? policy.maxOutputTokens, BOUNDED_MAX_OUTPUT_TOKENS) : maxOutputTokens ?? policy.maxOutputTokens,
             ...(policy.supportsReasoning ? { reasoning: { effort: policy.effort } } : {}),
             metadata: { app_step: step },
             input: [{ role: "user" as const, content: [{ type: "input_text" as const, text: prompt }, ...photoInputs(images)] }],
             text: { format: { type: "json_schema" as const, name: schemaName, strict: true, schema } },
         }, { signal: requestSignal, maxRetries: 0 }));
-        const send = async (images: Photo[], retries = maxRetries ?? 1) => {
+        const send = async (images: Photo[], retries = bounded ? 0 : maxRetries ?? 1) => {
             for (let attempt = 0; ; attempt++) {
                 waitingSignal?.throwIfAborted();
                 creditGate.check();
                 try { return await sendOnce(images); }
                 catch (error) {
+                    const storage = storageFailure(error);
+                    if (storage) throw storage;
                     const spending = aiSpendingFailure(error);
                     if (spending) throw spending;
                     creditGate.reject(error);
@@ -173,10 +197,10 @@ export async function runStructured<T>({
             }
         };
         try {
-            try { return await send(photos); }
+            try { return await send(bounded ? immutablePhotos : photos); }
             catch (error) {
                 waitingSignal?.throwIfAborted();
-                if (!photos.length || !canRetryImageDownload(error)) throw error;
+                if (bounded || !photos.length || !canRetryImageDownload(error)) throw error;
                 const inline: Photo[] = [];
                 // Download sequentially and cap the aggregate encoded input.
                 let bytes = 0;

@@ -1,5 +1,6 @@
 import { normalizeWords, sameCardNumber, sameSetFamily, isPrinting } from "../identity/card-identity.ts";
 import type { ListingSummary, Screen, SearchIntent } from "../../shared/types.ts";
+import { cardLanguageStatus } from "../../shared/card-language.ts";
 
 // Which of eBay's results are the card searched for. Before any lookups,
 // the title has to name the card. After the free check identifies a
@@ -7,18 +8,14 @@ import type { ListingSummary, Screen, SearchIntent } from "../../shared/types.ts
 
 export type Match = NonNullable<ListingSummary["match"]>;
 
-// Only English cards are priced, so other languages are skipped.
-const OTHER_LANGUAGE = /\b(japanese|japan|jpn|jp|korean|chinese|german|french|italian|spanish|portuguese|dutch|thai|indonesian)\b/;
-
 export function isEnglish(language: string | null | undefined): boolean {
-    // "English", or the short forms titles use: "EN", "ENG".
-    return !language || /\benglish\b|^\s*(en|eng)\s*$/i.test(language);
+    return cardLanguageStatus("", [language]) !== "OTHER";
 }
 
 export function titleMatches(title: string, intent: SearchIntent): boolean {
     const text = normalizeWords(title);
 
-    if (OTHER_LANGUAGE.test(text)) return false;
+    if (cardLanguageStatus(title) === "OTHER") return false;
 
     return intent.titleWords.every((word) => text.includes(normalizeWords(word)));
 }

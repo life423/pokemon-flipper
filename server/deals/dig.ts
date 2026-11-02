@@ -2,6 +2,7 @@ import { searchListings, CCG_INDIVIDUAL_CARDS } from "../ebay/listings.ts";
 import { mapLimit } from "../lib/concurrency.ts";
 import { readSearch } from "../search/intent.ts";
 import { cardMismatch, gradingMatches } from "../search/relevance.ts";
+import { cardLanguageStatus, EnglishOnlyError } from "../../shared/card-language.ts";
 import { digQueries, type DigQuery } from "../search/dig.ts";
 import { findCardInPhoto, describeWanted, photoFitsSearch, type PhotoFind } from "../ai/photo-find.ts";
 import { screeningSteps, screenListing, type ScreenSteps } from "./screen-listing.ts";
@@ -135,6 +136,7 @@ export async function digDeeper(
     dependencies: DigSteps = { search: searchListings, plan: digQueries, readIntent: readSearch, findPhoto: findCardInPhoto, screening: screeningSteps }
 ): Promise<void> {
     signal?.throwIfAborted();
+    if (cardLanguageStatus(search) === "OTHER") throw new EnglishOnlyError();
     const intent = knownIntent ?? await dependencies.readIntent(search, signal);
     signal?.throwIfAborted();
 
@@ -145,7 +147,7 @@ export async function digDeeper(
     // Seller claims can hide the value, so also inspect the matching
     // initially rejected listings. Existing candidates already get full AI.
     for (const listing of primaryListings) {
-        if (worthScreening(listing, listingFilters, asOf) && (!listing.isGraded || listing.screen?.priceAnomaly) && listing.match !== "JUNK" && listing.screen?.status !== "CANDIDATE" && listing.images[0]) {
+        if (cardLanguageStatus(listing.title) !== "OTHER" && listing.match !== "OTHER_LANGUAGE" && worthScreening(listing, listingFilters, asOf) && (!listing.isGraded || listing.screen?.priceAnomaly) && listing.match !== "JUNK" && listing.screen?.status !== "CANDIDATE" && listing.images[0]) {
             found.set(listing.id, { listing, how: "PHOTO_SHOWS_IT", lane: listing.screen?.priceAnomaly ? -1 : 0 });
         }
     }

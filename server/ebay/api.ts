@@ -85,6 +85,9 @@ async function requestAccessToken(): Promise<string> {
 
 export async function ebayGet<T>(path: string, { signal, keepReserve = false }: { signal?: AbortSignal; keepReserve?: boolean } = {}): Promise<T> {
     signal?.throwIfAborted();
+    const { assertSqlStorageReady } = await import("../storage/index.ts");
+    await assertSqlStorageReady();
+    signal?.throwIfAborted();
     const token = await getAccessToken();
     signal?.throwIfAborted();
     const headers: Record<string, string> = {

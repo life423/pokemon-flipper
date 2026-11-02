@@ -3,8 +3,8 @@ import { normalizeText } from "../ebay/filters.ts";
 import { gradeQualifier as qualifierOf } from "../../shared/grade-qualifier.ts";
 
 // What the photos show about a slab, checked against the listing's item
-// details. The label is the grader's own record, so a slab only passes
-// when its label is readable and nothing disagrees with it.
+// details. The photographed label supplies the certified identity; a seller's
+// mistyped certificate is a note once that label is readable, not a new grade.
 
 const GRADER_PATTERNS: [RegExp, string][] = [
     [/\bpsa\b|professional sports authenticator/, "PSA"],
@@ -54,7 +54,7 @@ export function normalizeSlabReading(reading: SlabReading | null | undefined): S
 }
 
 export function checkSlab(
-    photoCheck: Pick<PhotoCheck, "slab" | "images">,
+    photoCheck: Pick<PhotoCheck, "slab" | "images"> & Partial<Pick<PhotoCheck, "cardCount">>,
     aspects: Record<string, string> = {}
 ): Slab {
     const slab = normalizeSlabReading(photoCheck.slab);
@@ -79,6 +79,8 @@ export function checkSlab(
     const gradeQualifier = qualifierOf(slab.gradeQualifier, grader, grade);
     const labelCert = normalizeCertNumber(slab.certNumber, grader);
     const reasons: string[] = [];
+    const concerns = [...(slab.concerns ?? [])];
+    if (photoCheck.cardCount !== undefined && photoCheck.cardCount !== "ONE") reasons.push("The photos do not establish exactly one graded card.");
 
     // Slabs skip raw-card grading, but still need a real photo of this copy.
     // A readable label in a stock image cannot establish what is being sold.
@@ -101,7 +103,9 @@ export function checkSlab(
         reasons.push(`The item details say grade ${listedGrade}, but the label says ${grade}.`);
     }
     if (listedCert && labelCert && listedCert !== labelCert) {
-        reasons.push("The cert number in the item details doesn't match the label.");
+        if (grader && grade && slab.labelText?.trim() && photoCheck.images.some(photo => photo.view === "FRONT" && photo.usable && !photo.isStockImage)) {
+            concerns.push("The seller-entered certificate number differs from the readable slab label. The photographed label's certificate number is used.");
+        } else reasons.push("The cert number in the item details doesn't match the label, and a readable slab label is needed to settle it.");
     }
     if (slab.caseCondition === "CRACKED") {
         reasons.push("The case looks cracked, so the grade may not hold up on resale.");
@@ -126,6 +130,6 @@ export function checkSlab(
         labelText: slab.labelText ?? null,
         caseCondition: slab.caseCondition ?? "NOT_VISIBLE",
         reasons,
-        concerns: slab.concerns ?? [],
+        concerns: [...new Set(concerns)],
     };
 }

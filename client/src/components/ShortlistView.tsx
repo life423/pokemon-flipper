@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import type { ShortlistEntry } from "../../../shared/shortlist.ts";
 import { REFRESH_LIMIT } from "../../../shared/shortlist.ts";
 import { currentPriceEvidence } from "../../../shared/pricing-freshness.ts";
+import { englishListingEligible } from "../../../shared/card-language.ts";
 import { dollars } from "../format";
 import styles from "./ShortlistView.module.css";
 
@@ -20,20 +21,26 @@ interface Props {
 }
 export function ShortlistView({ entries, loading, error, refreshing, refreshErrors, onRetry, onRefresh, onRemove, onUpdate, renderCard, now }: Props) {
     const [selected, setSelected] = useState<string[]>([]);
-    const selection = selected.filter((id) => entries.some((entry) => entry.id === id));
+    const eligible = entries.filter(entry => englishListingEligible(entry.listing, entry.evaluation));
+    const excluded = entries.filter(entry => !englishListingEligible(entry.listing, entry.evaluation));
+    const selection = selected.filter((id) => eligible.some((entry) => entry.id === id));
     return <section className={styles.root} aria-labelledby="shortlist-heading">
-        <header className={styles.head}><div><h2 id="shortlist-heading" tabIndex={-1}>Your shortlist</h2><p>Saved in this app. Refresh selected listings to check their current terms.</p></div>
+        <header className={styles.head}><div><h2 id="shortlist-heading" tabIndex={-1}>Your shortlist</h2><p>English cards only. Saved in this app. Refresh selected listings to check their current terms.</p></div>
             <button type="button" disabled={refreshing || !selection.length} onClick={() => void onRefresh(selection)}>{refreshing ? "Refreshing…" : `Refresh selected${selection.length ? ` (${selection.length})` : ""}`}</button>
         </header>
         <p className={styles.small}>Select up to {REFRESH_LIMIT}. Refresh checks eBay terms and photos; it does not start paid AI analysis. Successful checks are reused for one minute.</p>
         {error && <p role="alert" className={styles.error}>{error} <button type="button" onClick={onRetry}>Retry loading shortlist</button></p>}
         {loading ? <p role="status">Loading saved listings…</p> : !entries.length && !error ? <div className={styles.empty}><h3>Keep promising cards here</h3><p>Use Save on a search result or inside its analysis. Add notes and your own bid ceiling here.</p></div> : null}
-        <div className={styles.grid}>{entries.map((entry) => {
+        {excluded.length > 0 && <details className={styles.notes}>
+            <summary>{excluded.length} saved {excluded.length === 1 ? "listing" : "listings"} outside the English-only scope</summary>
+            <p className={styles.small}>These saved entries are kept, but their cards, prices and analysis are hidden.</p>
+            {excluded.map(entry => <ExcludedSavedEntry key={entry.id} entry={entry} onRemove={onRemove} />)}
+        </details>}
+        <div className={styles.grid}>{eligible.map((entry) => {
             const ended = entry.listing.availability === "UNAVAILABLE" || Boolean(entry.listing.endTime && Date.parse(entry.listing.endTime) <= now);
             return <section key={entry.id} className={styles.item} aria-label={`Saved ${entry.listing.title}`}>
                 <div className={styles.itemHead}><label className={styles.select}><input type="checkbox" checked={selection.includes(entry.id)} disabled={!selection.includes(entry.id) && selection.length >= REFRESH_LIMIT} onChange={(event) => setSelected((previous) => event.target.checked ? [...previous, entry.id] : previous.filter((id) => id !== entry.id))} />Select for refresh</label>
                     <button type="button" disabled={refreshing} onClick={() => void onRefresh([entry.id])}>Refresh</button></div>
-                <p className={styles.small}>{entry.checkedAt ? `Last checked ${new Date(entry.checkedAt).toLocaleString()}` : `Saved ${new Date(entry.savedAt).toLocaleString()} · not refreshed`}</p>
                 {ended && <p className={styles.warning}>Unavailable or ended. Saved figures are historical.</p>}
                 {!ended && entry.needsAnalysis && <p className={styles.warning}>A current photo assessment is needed. Open analysis to review the listing.</p>}
                 {!ended && entry.evaluation && !currentPriceEvidence(entry.evaluation, now) && <p className={styles.warning}>Prices need an update. Open analysis to refresh; unchanged photo assessments can be reused.</p>}
@@ -45,6 +52,19 @@ export function ShortlistView({ entries, loading, error, refreshing, refreshErro
             </section>;
         })}</div>
     </section>;
+}
+function ExcludedSavedEntry({ entry, onRemove }: { entry: ShortlistEntry; onRemove: Props["onRemove"] }) {
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState("");
+    return <div className={styles.noteActions}>
+        <span>{entry.listing.title}</span>
+        <button type="button" disabled={busy} onClick={async () => {
+            if (busy) return;
+            setBusy(true); setError("");
+            try { await onRemove(entry.id); } catch (error) { setError((error as Error).message); setBusy(false); }
+        }}>{busy ? "Removing…" : "Remove saved entry"}</button>
+        {error && <p role="alert" className={styles.error}>{error}</p>}
+    </div>;
 }
 function SavedNotes({ entry, onUpdate, onRemove }: { entry: ShortlistEntry; onUpdate: Props["onUpdate"]; onRemove: Props["onRemove"] }) {
     const [notes, setNotes] = useState(entry.notes);

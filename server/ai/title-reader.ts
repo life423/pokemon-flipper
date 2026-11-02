@@ -3,8 +3,12 @@ import { readCache, writeCache } from "../lib/cache.ts";
 import { createBatcher } from "../lib/batcher.ts";
 import { createLimiter } from "../lib/concurrency.ts";
 import { AI_CONCURRENCY } from "../../shared/work-limits.ts";
-import { normalizeText } from "../ebay/filters.ts";
+import { exclusionReason, normalizeText } from "../ebay/filters.ts";
 import { normalizeSetName } from "../identity/card-identity.ts";
+import { searchAttributes } from "../../shared/search-criteria.ts";
+import { cardLanguageStatus } from "../../shared/card-language.ts";
+import { StorageUnavailableError } from "../storage/index.ts";
+import { explicitReprintSet, withoutReprintRelease } from "../../shared/reprint-release.ts";
 
 // Many sellers leave the set, number, or name out of the item details
 // but put them in the title ("CHARIZARD 1999 POKEMON BASE SET 4/102").
@@ -97,6 +101,59 @@ async function readBatch(titles: string[], dispatchSignal?: AbortSignal): Promis
 }
 
 const cacheKey = (title: string) => `title-reading:v${READER_VERSION}:${MODEL}:${normalizeText(title).trim()}`;
+
+// These are literal phrases, not a complete catalog or a number-to-set lookup.
+// Unrecognized sets and names remain unresolved for the actual photo assessment.
+const LITERAL_SETS = ["Crown Zenith Galarian Gallery", "Scarlet & Violet 151", "Neo Revelation", "Neo Discovery", "Gym Challenge", "Evolving Skies", "Brilliant Stars", "Lost Origin", "Team Rocket", "Neo Genesis", "Neo Destiny", "Gym Heroes", "Crown Zenith", "Base Set 2", "Legendary Collection", "Celebrations", "Aquapolis", "Expedition", "Skyridge", "Fossil", "Jungle", "Base Set"];
+const escapePattern = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const setIn = (title: string) => explicitReprintSet(title) ?? LITERAL_SETS.find(set => new RegExp(`\\b${escapePattern(set).replace(/ /g, "\\s+")}\\b`, "i").test(title)) ?? null;
+const cardNumberIn = (title: string) => title.match(/\b(?:[a-z]{0,5}\d{1,4}[a-z]?)\s*\/\s*(?:[a-z]{0,5}\d{1,4}[a-z]?)\b/i)?.[0].replace(/\s/g, "")
+    ?? title.match(/\b(?:swsh|sm|svp|sv|xy|bw|dp|hgss|gg|tg|h)\d{1,4}[a-z]?\b/i)?.[0]
+    ?? title.match(/(?:#|\b(?:card\s*(?:no\.?|number)?|no\.))\s*(\d{1,3}[a-z]?)\b/i)?.[1] ?? null;
+
+export function readTitleByRules(title: string): TitleReading {
+    const attributes = searchAttributes(title);
+    const set = setIn(title);
+    const number = cardNumberIn(title);
+    const language = cardLanguageStatus(title);
+    const excluded = exclusionReason({ title, itemId: "local-title|0" });
+    const condition = /\b(?:damaged|dmg)\b/i.test(title) ? "Damaged"
+        : /\b(?:heavily played|hp)\b/i.test(title) ? "Heavily Played"
+        : /\b(?:moderately played|mp)\b/i.test(title) ? "Moderately Played"
+        : /\b(?:lightly played|lp|excellent)\b/i.test(title) ? "Lightly Played"
+        : /\b(?:near mint|nm|mint)\b/i.test(title) ? "Near Mint" : null;
+    // Only use a compact literal name after removing explicit metadata. This
+    // does not claim that an unknown phrase is a canonical Pokemon identity.
+    const name = normalizeText(withoutReprintRelease(title))
+        .replace(set ? new RegExp(escapePattern(set).replace(/ /g, "\\s+"), "ig") : /$^/, " ")
+        .replace(number ? new RegExp(escapePattern(number), "ig") : /$^/, " ")
+        .replace(/\b(?:psa|cgc|bgs|sgc|tag)\s*(?:(?:gem|mint|mt|nm|near|ex|excellent|vg|very|good|poor|fair|pristine|black|label)[ -]+){0,5}(?:10|[1-9](?:\.5)?)?\b/ig, " ")
+        .replace(/\b(?:pokemon|pok[eé]mon|tcg|cards?|english|eng|en|holo(?:graphic)?|non[ -]?holo|reverse|rare|ultra|secret|unlimited|shadowless|first edition|1st edition|wotc|vintage|raw|ungraded|graded|near mint|lightly played|moderately played|heavily played|damaged|mint|nm|lp|mp|hp|dmg|excellent|condition|collection|collectible|collectibles|promos?|with|from|the|for|please|show me|find me|looking for|i want|some|any|all)\b/ig, " ")
+        .replace(/\b(?:19|20)\d{2}\b|\b\d+(?:\.\d+)?\b|[#|,;:()[\]]/g, " ")
+        .replace(/\s+/g, " ").trim();
+    const nameWords = name.split(" ");
+    const cardName = !excluded && name && nameWords.length <= 3 && /^[a-z][a-z '.-]*$/i.test(name) && !/\b(?:would|like|best|better|higher|above|below|under|over|between|holos|deals?|search|selling|sale|lot|lots)\b/i.test(name) ? name : null;
+    return { kind: excluded ? "NOT_A_CARD" : null, cardName, set, cardNumber: number, language: language === "OTHER" ? "Other" : language === "ENGLISH" ? "English" : null,
+        grader: attributes.grader, grade: attributes.grade === null ? null : String(attributes.grade), condition };
+}
+
+// A bounded search may reuse paid title work, but cannot buy a new title batch.
+export async function readTitleWithoutAi(title: string, signal?: AbortSignal): Promise<TitleReading> {
+    signal?.throwIfAborted();
+    const saved = await readCache<TitleReading>(cacheKey(title), MONTH_HOURS);
+    signal?.throwIfAborted();
+    if (saved) {
+        if (typeof saved !== "object" || saved.kind !== null && !LISTING_KINDS.includes(saved.kind) ||
+            ["cardName", "set", "cardNumber", "language", "grader", "grade", "condition"].some(field => saved[field as keyof TitleReading] !== null && typeof saved[field as keyof TitleReading] !== "string")) {
+            throw new StorageUnavailableError("The saved title reading is invalid. No replacement AI title request was authorized.");
+        }
+        // A literal incompatible release must not disappear because an older
+        // title reading copied the seller's incorrect Base Set specifics.
+        const explicitSet = explicitReprintSet(title);
+        return explicitSet ? { ...saved, set: explicitSet } : saved;
+    }
+    return readTitleByRules(title);
+}
 
 // Dependencies are replaceable so batching and cancellation can be tested
 // without paid calls. Batches of 25 share the approved AI concurrency ceiling.

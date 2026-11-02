@@ -21,7 +21,11 @@ export function photoCoverage(check: PhotoCheck | null) {
 }
 
 export function photoAssessmentConfidence(evaluation: Evaluation) {
-    return evaluation.condition?.confidence ?? (evaluation.slab?.status === "OK" ? evaluation.photoCheck?.confidence : undefined) ?? "UNKNOWN";
+    // Reading a certified label does not produce a raw-condition estimate.
+    // A separate price/certificate/authenticity hold must not erase the photo
+    // reader's confidence; those concerns remain in the review reasons.
+    if (evaluation.slab || evaluation.photoCheck?.holder === "GRADED_SLAB") return evaluation.photoCheck?.confidence ?? "UNKNOWN";
+    return evaluation.condition?.confidence ?? "UNKNOWN";
 }
 
 export function photoEvidence(evaluation: Evaluation, requestedGrade = 0) {

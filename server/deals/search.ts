@@ -34,7 +34,7 @@ export async function searchWithDiscovery(
     });
     for (const listing of listings) if (!snapshots.has(listing.id)) snapshots.set(listing.id, listing);
     if (options.signal?.aborted) return;
-    if (options.developmentLimit !== undefined) {
+    if (options.developmentLimit !== undefined || options.bounded) {
         options.onDiscovery?.({ status: "done", checked: 0, total: 0, note: "Development mode checks a few cards without broad discovery or automatic pricing retries." });
         return;
     }

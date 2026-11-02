@@ -2,10 +2,15 @@ import { EbayError } from "../ebay/api.ts";
 import { EbayBudgetError } from "../ebay/usage.ts";
 import { ProviderError } from "../lib/http.ts";
 import { aiSpendingFailure } from "../ai/spending.ts";
+import { storageFailure } from "../lib/storage-failure.ts";
+import { EnglishOnlyError } from "../../shared/card-language.ts";
 
 // Known provider errors carry actionable, controlled text. Never expose an
 // arbitrary exception or raw response body (which may contain credentials).
 export function searchFailureMessage(error: unknown): string {
+    if (error instanceof EnglishOnlyError) return error.message;
+    const storage = storageFailure(error);
+    if (storage) return storage.message;
     const spending = aiSpendingFailure(error);
     if (spending) return spending.message;
     if (error instanceof ProviderError || error instanceof EbayBudgetError) return error.message;

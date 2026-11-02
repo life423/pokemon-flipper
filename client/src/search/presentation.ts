@@ -2,6 +2,20 @@ import type { EbayUsage, SearchIntent } from "../types";
 import { describeSearchCriteria } from "../../../shared/search-criteria.ts";
 import { name } from "../format";
 
+export type AnalysisBlockCode = "AI_CREDITS" | "AI_PAUSED" | "AI_BUDGET" | "STORAGE_UNAVAILABLE";
+export function analysisBlockPolicy(code: AnalysisBlockCode | null) {
+    switch (code) {
+        case "AI_CREDITS": return { title: "AI credits unavailable", retryLabel: "Retry after adding credits",
+            detail: "New analysis is stopped. Retry the remaining saved candidates after credits are available." };
+        case "STORAGE_UNAVAILABLE": return { title: "Saved evidence unavailable", retryLabel: "Retry when storage is available",
+            detail: "New analysis is stopped to avoid buying replacement evidence. Saved results stay visible." };
+        case "AI_BUDGET": return { title: "AI spending guard blocked this search", retryLabel: null,
+            detail: "New analysis is stopped. Retrying here cannot increase this search's allowance; completed results stay visible." };
+        default: return { title: "Paid AI unavailable", retryLabel: null,
+            detail: "New analysis is stopped. The server's spending configuration must be ready before paid work can resume; saved results stay visible." };
+    }
+}
+
 // "1st Edition Charizard from Base Set, graded": how the search was read.
 export function describeIntent(intent: SearchIntent): string {
     let text = [intent.printing ? name(intent.printing) : null, intent.cardName ?? (intent.sets.length ? "cards" : "listings for this search")]

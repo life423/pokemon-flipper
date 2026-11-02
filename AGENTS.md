@@ -9,19 +9,81 @@ Read `LOCAL_PLAN.md` before continuing product or strategy work when it exists.
 The user asked to keep that roadmap and detailed ideas local and Git-ignored.
 Do not commit its contents or publish it without a new explicit request.
 
-The November 2 spending audit follows the organization refactor below. Runtime
+Read `LOCAL_TODO.md` alongside that private plan. This checkpoint includes the
+Azure SQL Basic foundation: schema version 1 is installed,
+41,316 cached responses and 895 assessment records were imported and verified,
+and the running local app reports SQL ready. Original files and migration
+snapshots are retained. Validation: 617 offline tests, both typechecks, build,
+HTTP storage readiness and favicon checks pass. The SQL concurrency canary used
+simulated dispatch only; migration and validation made no paid provider requests.
+
+The useful two-cent workflow is implemented: HTTP searches use cached/local
+preliminary screening and up to three development candidates; HTTP evaluation
+uses one combined identity/condition/slab assessment with at most six unique
+photos. Exact token preflight binds immutable inline images and the schema to
+the final request. The transport reserves maximum input/output cost before
+sending, allows no assessment retry/image fallback, and retains unknown holds.
+The persistent hard cap remains $0.02 per search. The tested local guard was
+enabled after final checks; its ledger and development eBay allowance were
+verified unchanged. Fresh/unconfigured installations fail closed. Check actual
+local status before new work.
+
+A controlled four-photo saved-listing assessment reported $0.0030728 in token
+charges (about 0.31 cents), with zero Browse requests. Reopening its shared photo
+evidence used zero additional AI requests. An earlier rejected request retains
+its conservative hold; the same canary budget's total committed amount was
+$0.0084108. This is not a full live-search benchmark or a provider invoice.
+Final stopping-point verification: all 679 offline tests, both typechecks,
+production build and diff checks pass, including actual saved-case slab/reprint
+replay, label-set aliases and distinct holo/reverse-holo finish matching.
+Owner-private bounded evaluations survive save-after-analysis and shortlist
+reload; unchanged fresh evidence reuses prices with current-term recalculation.
+The browser must reload/start a new search to leave its previous paused run.
+
+Shortlists, usage, spending and eBay quota authorities still use local files.
+SQL task claims coordinate duplicate requests, but public authentication, shared
+budget/quota authority and server-owned workers remain unfinished. Do not deploy
+independent replicas using separate local allowances. The user now authorizes a
+stopping-point commit, merge to main and push. Preserve the unrelated unstaged
+.env.example deletion, private local plans, credentials and data. Earlier
+delivery instructions below are historical checkpoints.
+
+The latest live review found routine seller conflicts producing manual holds.
+Readable slab certificate typos are informational; the photographed certificate
+is used. Deterministic cached evaluations reapply that rule without new AI.
+Explicit reprint release names are screened before paid admission; confirmed
+wrong set/name/number/printing leaves matching results. Strong physical identity
+and finish take precedence over seller metadata; uncertain evidence stays review.
+Bare holo and reverse holo remain distinct. Pricing advice version 9 invalidates
+old financial verdicts without invalidating saved photo assessments. Source and
+photo-confidence regressions cover the actual saved PSA5/Celebration examples.
+
+The saved PSA5 replay changed NEEDS_REVIEW to PASS with no remaining review
+reasons because the $500 asking price still loses about $182. Celebration is
+OTHER_SET for Base Set search. Both checks used zero provider calls. Photo
+reader guidance explicitly checks anniversary Pikachu marks and Base Set2
+symbols for future inputs, preserving existing paid evidence. Price-first
+screening from recent matched sales remains planned, not implemented here.
+
+The current user scope is English-only search/results. Keep known foreign titles,
+aspects and photo findings out of results/paid follow-up; preserve saved evidence
+and keep unknown language preliminary. Search aliases, listing availability and
+the six later UI concepts are recorded in the ignored local plan/TODO. Do not
+start the deferred interface redesign or install Radix as part of this milestone.
+
+The preceding November 2 spending audit was a historical checkpoint. Runtime
 fixes cover spending reservations, cancellation/reuse, early filters, auction
 windows, review evidence and development quota protection; README records the
 seven reviewed boundaries. Validation: 557 offline tests, both TypeScript
 checks, production build and diff whitespace checks pass.
 
-Paid processing remains paused. Uncached AI cannot dispatch without trusted
-input bounds within the hard two-cent search ceiling. Do not resume broad paid
-work to test this checkpoint. Use a temporary POKEMON_FLIPPER_DATA_DIR for tests
+That earlier checkpoint kept paid processing paused. Uncached AI still cannot
+dispatch without trusted input bounds within the hard two-cent search ceiling.
+Do not resume broad paid work to test it. Use a temporary POKEMON_FLIPPER_DATA_DIR for tests
 so mocked calls cannot modify the real spending or quota ledgers.
 
-The latest user request authorizes a commit on the current branch. It does not
-request a merge or push. Consult Git for delivery status. Leave the unrelated
+The earlier audit delivery request authorized a commit on that branch, without
+a merge or push. Consult Git for delivery status. Leave the unrelated
 `.env.example` deletion outside this commit. Earlier checkpoints below are
 historical; these controls and the local plan take precedence.
 

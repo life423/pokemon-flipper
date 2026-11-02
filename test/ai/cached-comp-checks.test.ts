@@ -8,7 +8,7 @@ import type { Comp, CompTarget } from "../../server/pricing/types.ts";
 test("reading existing comp verdicts never starts a paid request for uncached evidence", async t => {
     let files = 0, requests = 0;
     t.mock.method(fs, "readFile", async () => {
-        if (files++ > 0) throw Error("uncached sale");
+        if (files++ > 0) throw Object.assign(Error("uncached sale"), { code: "ENOENT" });
         return JSON.stringify({ savedAt: new Date(Date.now()).toISOString(), data: { keep: true, reason: null, note: "matches" } });
     });
     t.mock.method(globalThis, "fetch", async () => { requests++; throw Error("No paid request allowed"); });

@@ -41,7 +41,7 @@ async function apiGet(path: string, maxAgeHours = DAY): Promise<ApiBody> {
     return share(`${path}:${maxAgeHours}`, () => load(path, maxAgeHours));
 }
 
-async function load(path: string, maxAgeHours: number): Promise<ApiBody> {
+async function readApiCache(path: string, maxAgeHours: number): Promise<ApiBody | null> {
     let cached = await readCache(`pkmnprices:${path}`, maxAgeHours);
     // A successful but empty name search should not hide a newly available
     // record all day. Positive metadata and priced responses keep their TTLs.
@@ -49,6 +49,11 @@ async function load(path: string, maxAgeHours: number): Promise<ApiBody> {
         cached = await readCache(`pkmnprices:${path}`, Math.min(maxAgeHours, 5 / 60));
     }
 
+    return cached;
+}
+
+async function load(path: string, maxAgeHours: number): Promise<ApiBody> {
+    const cached = await readApiCache(path, maxAgeHours);
     if (cached) return cached;
 
     const apiKey = process.env.PKMNPRICES_API_KEY;
@@ -67,6 +72,8 @@ async function load(path: string, maxAgeHours: number): Promise<ApiBody> {
             lastRequestAt = slot;
             if (slot > Date.now()) await sleep(slot - Date.now());
             if (Date.now() < coolingUntil) throw new PricingProviderError("Price service is cooling down; cached prices still work.", coolingKind, coolingUntil);
+            const { assertSqlStorageReady } = await import("../storage/index.ts");
+            await assertSqlStorageReady();
             try { return await fetchJson(`${BASE}${path}`, { headers: { "x-api-key": apiKey } }, { service: "Price lookup" }); }
             catch (error) {
                 if (error instanceof ProviderError || error instanceof TypeError) { coolingKind = "TEMPORARY"; coolingUntil = Math.max(coolingUntil, Date.now() + 30_000); throw new PricingProviderError((error as Error).message, "TEMPORARY", coolingUntil); }
@@ -174,9 +181,20 @@ export const lookupCards: LookupCards = async ({ set, name, cardNumber }) => {
     const cards: CardRecord[] = [];
 
     for (const familySet of familySets) {
-        const list = await apiGet(
-            `/cards?${new URLSearchParams({ set_id: String(familySet.id), name: nameTerm, per_page: "20" })}`
-        );
+        const params = new URLSearchParams({ set_id: String(familySet.id), name: nameTerm, per_page: "20" });
+        const legacyPath = `/cards?${params}`;
+        // The provider charges per returned card. Push an already-required
+        // plain numeric number into its documented filter, while preserving
+        // existing broader cached lists and the local exact-number check.
+        // Promo/gallery prefixes and missing catalog totals retain their old
+        // lookup semantics rather than guessing a new API normalization rule.
+        const numeric = /^#?(\d+)(?:\/\d+)?$/.exec(cardNumber.replace(/\s+/g, ""));
+        let list: ApiBody;
+        if (numeric) {
+            const previous = await readApiCache(legacyPath, DAY);
+            params.set("number", numeric[1]!.replace(/^0+(?=\d)/, ""));
+            list = previous ?? await apiGet(`/cards?${params}`);
+        } else list = await apiGet(legacyPath);
 
         for (const item of list.data ?? []) {
             if (!sameCardNumber(cardNumberOf(item), cardNumber)) continue;

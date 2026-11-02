@@ -126,7 +126,7 @@ export function SlabSection({ slab, pricing }: { slab: Slab; pricing: SlabPricin
             {pricing?.activeReference && <div>
                 <p><strong>Current Buy It Now competition</strong></p>
                 <p>Resale target {dollars(pricing.activeReference.resalePrice)} · {percent(pricing.activeReference.discountRate)} below the cheapest matching item plus shipping ({dollars(pricing.activeReference.lowestTotal)}).</p>
-                <p className={styles.small}>Slab photos and labels checked · sellers have 100+ feedback and at least 98.5% positive · checked {new Date(pricing.activeReference.checkedAt).toLocaleString()}.</p>
+                <p className={styles.small}>Slab photos and labels checked · sellers have 100+ feedback and at least 98.5% positive.</p>
                 <ul>{pricing.activeReference.listings.map(comp => <li key={comp.id}><a className={styles.listingLink} href={comp.url} target="_blank" rel="noopener noreferrer">{comp.title}</a><p>{dollars(comp.total)} including shipping · {comp.seller.username} · {comp.seller.feedbackPercentage}% positive</p></li>)}</ul>
             </div>}
             {pricing && pricing.status !== "PRICED" && <p className={styles.muted}>{pricing.reason}</p>}

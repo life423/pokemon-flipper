@@ -52,6 +52,8 @@ import { createSharedWork } from "../lib/shared-work.ts";
 import { completeConditionRuns } from "./condition-runs.ts";
 import { ProviderError } from "../lib/http.ts";
 import { withPricingRecovery } from "../pricing/recover.ts";
+import { cardLanguageStatus } from "../../shared/card-language.ts";
+import { EnglishOnlyError } from "./failure.ts";
 
 // eBay allows 24 photos; the ones past the first few are often the
 // close-ups that matter most.
@@ -180,10 +182,13 @@ async function evaluateOnce(
           }
         : details;
 
+    if (cardLanguageStatus(listing.title, [listing.aspects.Language]) === "OTHER") throw new EnglishOnlyError();
+
     // Set, number, and name read from the title when the seller left them
     // out, the same way the free check reads them.
     listing.aspects = (await fillFromTitle(listing, title => readTitle(title, signal))).aspects;
     signal?.throwIfAborted();
+    if (cardLanguageStatus(listing.title, [listing.aspects.Language]) === "OTHER") throw new EnglishOnlyError();
     const photoUrls = listing.images.slice(0, MAX_PHOTOS);
 
     const evaluation: Evaluation = {
@@ -274,6 +279,7 @@ async function evaluateOnce(
 
     signal?.throwIfAborted();
     const originalPhotos = applyPhotoCheckRules(record.photoCheck.result, photoUrls.length);
+    if (cardLanguageStatus(listing.title, [listing.aspects.Language, originalPhotos.cardIdentity?.language]) === "OTHER") throw new EnglishOnlyError();
     let checkedPhotos = originalPhotos;
     evaluation.photoCheck = checkedPhotos;
 
@@ -309,6 +315,7 @@ async function evaluateOnce(
             return result;
         };
         let identified = await identify();
+        if (cardLanguageStatus(listing.title, [identified.identity.language]) === "OTHER") throw new EnglishOnlyError();
         const focusPhotos = checkedPhotos.images.filter(image => !image.isStockImage && image.usable && ["FRONT", "FRONT_DETAIL", ...(checkedPhotos.holder === "GRADED_SLAB" ? ["BACK"] : [])].includes(image.view))
             .map(image => photoUrls[image.number - 1]);
         while ((record.identityPasses?.length ?? 0) < 2 && focusPhotos.length && !identified.lookupFailed && !identified.identity.notThisCard) {

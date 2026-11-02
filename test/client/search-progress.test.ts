@@ -35,7 +35,10 @@ test("AI assessment progress is visible throughout searching and respects pause,
     }
     const budgetPaused = render({ phase: "paused", ai: { ...defaults.ai, analyzing: 0, paused: true } });
     assert.match(budgetPaused, /Analysis paused:/);
-    assert.doesNotMatch(budgetPaused, /Done:|data-state="complete"/);
+    assert.doesNotMatch(budgetPaused, /Done:|data-state="complete"|role="progressbar"|Scanning listings|\d+%/);
+    const phasePaused = render({ phase: "paused", checked: 2, total: 3, ai: { ...defaults.ai, paused: false } });
+    assert.match(status(phasePaused)[2], /AI analysis paused/);
+    assert.doesNotMatch(phasePaused, /AI assessing|role="progressbar"|67%/);
     const [, idleState, idle] = status(render({ phase: "finding", ai: { done: 0, target: 0, analyzing: 0, waiting: 0, failed: 0 } }));
     assert.equal(idleState, "idle"); assert.match(idle, /No full card assessments running/); assert.match(idle, /0 completed/);
 
@@ -46,6 +49,10 @@ test("AI assessment progress is visible throughout searching and respects pause,
         assert.ok(!expanded.includes('inert=""'));
         assert.match(status(expanded)[2], /AI assessing 3 cards/);
         assert.match(expanded, /Results appear as each assessment finishes/);
+        const expandedPause = render({ phase: "paused", checked: 2, total: 3, ai: { ...defaults.ai, paused: true } });
+        assert.match(expandedPause, /New checks are stopped/);
+        assert.match(expandedPause, /No new analysis is running/);
+        assert.doesNotMatch(expandedPause, /Scanning listings|Searching eBay|role="progressbar"|67%|AI assessing|class="[^"]*(?:dots|indeterminate)/);
     } finally {
         if (previous) Object.defineProperty(globalThis, "localStorage", previous);
         else Reflect.deleteProperty(globalThis, "localStorage");

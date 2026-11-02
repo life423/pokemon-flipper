@@ -38,6 +38,10 @@ export function photoReviewStatus(evaluation: Evaluation | null, listing?: Listi
     const newConcerns = deeperPhotoConcerns(evaluation);
     const reasons = [...newConcerns];
     const photoNotes = photoIssueNotes(check);
+    // A readable, accepted label can have informational seller-data notes.
+    // The slab validator retains material label/case/authenticity conflicts as
+    // review reasons; presentation never discards them by matching their text.
+    if (evaluation.slab?.status === "OK") photoNotes.push(...evaluation.slab.concerns);
     if (evaluation.identity?.status !== "IDENTIFIED") reasons.push(...(evaluation.identity?.reasons.length ? evaluation.identity.reasons : ["The exact card identity is uncertain."]));
     if (evaluation.slab?.status !== "OK" && evaluation.slab) reasons.push(...(evaluation.slab.reasons.length ? evaluation.slab.reasons : evaluation.slab.concerns.length ? evaluation.slab.concerns : ["The slab label or authenticity needs review."]));
     if (evaluation.underwriting?.verdict === "NEEDS_REVIEW" && (!deferred || evaluation.condition)) reasons.push(...(evaluation.underwriting.reasons.length ? evaluation.underwriting.reasons : ["The purchase recommendation needs review."]));

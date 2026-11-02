@@ -20,7 +20,7 @@ function retryDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
         signal?.addEventListener("abort", cancel, { once: true });
     });
 }
-export function fetchAiUsage(): Promise<AiUsageDay> { return request("/api/ai-usage"); }
+export function fetchAiUsage(searchRunId?: string): Promise<AiUsageDay> { return request(`/api/ai-usage${searchRunId ? `?searchId=${encodeURIComponent(searchRunId)}` : ""}`); }
 export class ApiRequestError extends Error {
     constructor(message: string, readonly retryable = false, readonly retryAfterMs = 1500, readonly code?: string) { super(message); }
 }

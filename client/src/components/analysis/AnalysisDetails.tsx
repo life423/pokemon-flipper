@@ -84,7 +84,6 @@ export function AnalysisDetails({
 
             <footer className={styles.footer}>
                 <p className={styles.small}>
-                    {evaluation.answeredAt && `Analyzed ${new Date(evaluation.answeredAt).toLocaleString()}. `}
                     {evaluation.usage.length > 0
                         ? `The initial analysis used ${tokens.toLocaleString()} tokens.`
                         : "The initial analysis reused saved AI assessments."}

@@ -32,6 +32,27 @@ test("readable verified slabs keep incidental glare as notes, but identity, case
     e.identity!.status = "IDENTIFIED"; e.deeperPhotoReview = deep("NEW_CONCERN");
     assert.equal(photoReviewStatus(e).needsYourReview, true);
 });
+
+test("readable slab confidence and informational seller-certificate notes remain separate from manual concerns", () => {
+    const e = cardEvaluation();
+    e.condition = null;
+    e.photoCheck!.holder = "GRADED_SLAB";
+    e.photoCheck!.confidence = "HIGH";
+    const note = "The seller-entered certificate number differs from the readable slab label. The photographed label's certificate number is used.";
+    e.slab = { status: "OK", grader: "PSA", grade: "5", gradeQualifier: null, certNumber: "123", certUrl: null, labelText: "PSA 5", caseCondition: "INTACT", reasons: [], concerns: [note] };
+    const status = photoReviewStatus(e);
+    assert.equal(status.confidence, "HIGH");
+    assert.equal(status.needsYourReview, false);
+    assert.ok(status.photoNotes.includes(note));
+    assert.deepEqual(status.reasons, []);
+    e.slab.status = "NEEDS_REVIEW";
+    e.slab.reasons = ["Visible label alteration needs review."];
+    const held = photoReviewStatus(e);
+    assert.equal(held.confidence, "HIGH", "a clear photo reading is distinct from purchase or authenticity certainty");
+    assert.equal(held.needsYourReview, true);
+    assert.ok(held.reasons.includes("Visible label alteration needs review."));
+    assert.equal(photoEvidence(e).confidence, held.confidence);
+});
 test("a completed low-confidence AI review is distinguished from pending and preliminary photo checks", () => {
     const e = cardEvaluation(); e.condition!.confidence = "LOW"; e.condition!.gradeRange.likely = null;
     const status = photoReviewStatus(e);

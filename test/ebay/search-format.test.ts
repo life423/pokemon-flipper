@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { searchListings } from "../../server/ebay/listings.ts";
 import { offlineEbayCredentials } from "../fixtures/ebay-credentials.ts";
+import { EnglishOnlyError } from "../../shared/card-language.ts";
 
 test("source searches apply selected format, grading kind and12hour auction range without mixing cache scopes", async t => {
     offlineEbayCredentials(t);
@@ -10,6 +11,7 @@ test("source searches apply selected format, grading kind and12hour auction rang
         const address = String(url);
         if (address.includes("oauth2/token")) return Response.json({ access_token: "offline", expires_in: 3600 });
         if (address.includes("rate_limit")) return Response.json({ rateLimits: [{ apiName: "Browse", resources: [{ name: "buy.browse", rates: [{ count: 0, limit: 5000, remaining: 5000 }] }] }] });
+        assert.equal(new URL(address).searchParams.get("aspect_filter"), "categoryId:183454,Language:{English}");
         filters.push(new URL(address).searchParams.get("filter")!);
         return Response.json({ total: 0, itemSummaries: [] });
     });
@@ -25,6 +27,31 @@ test("source searches apply selected format, grading kind and12hour auction rang
     assert.equal(filters[2], "buyingOptions:{AUCTION|FIXED_PRICE},conditionIds:{4000|2750}");
 });
 
+test("English source searches exclude contradictory title/aspect evidence and preserve category discovery", async t => {
+    offlineEbayCredentials(t);
+    let pages = 0;
+    t.mock.method(globalThis, "fetch", async input => {
+        const address = String(input);
+        if (address.includes("oauth2/token")) return Response.json({ access_token: "offline", expires_in: 3600 });
+        if (address.includes("rate_limit")) return Response.json({ rateLimits: [{ apiName: "Browse", resources: [{ name: "buy.browse", rates: [{ count: 0, limit: 5000, remaining: 5000 }] }] }] });
+        const params = new URL(address).searchParams;
+        if (pages++ === 0) assert.equal(params.get("aspect_filter"), "categoryId:183454,Language:{English}");
+        else { assert.equal(params.get("category_ids"), null); assert.equal(params.get("aspect_filter"), null); assert.match(params.get("q")!, / english$/); }
+        return Response.json({ total: 3, itemSummaries: [
+            { itemId: "v1|english|0", title: "Charizard Base Set 4/102 Holo English" },
+            { itemId: "v1|german|0", title: "Charizard Base Set 4/102 Holo German" },
+            { itemId: "v1|foreign-aspect|0", title: "Charizard Base Set 4/102 Holo", localizedAspects: [{ name: "Language", value: "Japanese" }] },
+        ] });
+    });
+    const query = `offline-english-${Date.now()}`;
+    for (const anyCategory of [false, true]) {
+        const result = await searchListings(query, { anyCategory });
+        assert.deepEqual(result.listings.map(row => row.id), ["v1|english|0"]);
+        assert.equal(result.skipped, 2);
+    }
+    assert.equal(pages, 2);
+});
+
 test("development retrieves one200-row Browse page before limiting paid screening", async t => {
     offlineEbayCredentials(t); let pages = 0;
     t.mock.method(globalThis, "fetch", async (url: unknown) => {
@@ -36,4 +63,10 @@ test("development retrieves one200-row Browse page before limiting paid screenin
         return Response.json({ total: 1000, itemSummaries: [] });
     });
     await searchListings(`offline-development-page-${Date.now()}`, { maxResults: 200 }); assert.equal(pages, 1);
+});
+
+test("explicit foreign-language searches consume no eBay requests", async t => {
+    const fetch = t.mock.method(globalThis, "fetch", async () => { throw new Error("No source request is needed for an excluded language"); });
+    await assert.rejects(searchListings("Japanese Charizard"), EnglishOnlyError);
+    assert.equal(fetch.mock.callCount(), 0);
 });

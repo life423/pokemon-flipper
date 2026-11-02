@@ -5,6 +5,7 @@ import { DATA_DIR } from "../lib/paths.ts";
 import { aiSpending } from "./spending.ts";
 import { getAiUsageContext, getAiDispatchSignal, type AiUsageContext } from "./usage-context.ts";
 import type { AiUsageDay, AiUsageStage } from "../../shared/ai-usage.ts";
+import { sqlAiDispatch } from "./sql-dispatch.ts";
 
 export interface AiAttempt extends AiUsageContext {
     at: string;
@@ -81,30 +82,34 @@ export const trackedAiFetch: typeof fetch = async (input, init) => {
     // local request must never reach the provider or appear as paid usage.
     const dispatchSignal = getAiDispatchSignal();
     dispatchSignal?.throwIfAborted();
-    const reservation = await aiSpending.reserve(body, getAiUsageContext());
-    // Stop may arrive while waiting for the spending lock/preflight/fsync.
-    // Keep the conservative reservation, but never send a cancelled request.
-    dispatchSignal?.throwIfAborted();
-    let response: Response;
-    try { response = await globalThis.fetch(input, init); }
-    catch (error) {
-        await save({ ...base, ...usageFields(null), status: null, durationMs: Date.now() - started,
-            responseId: null, requestId: null, serviceTier: null, responseStatus: null, hasRefusal: false });
-        throw error;
-    }
-    const result: any = await response.clone().json().catch(() => null);
-    // A failed/unknown reconciliation keeps its full conservative reservation.
-    // The accepted provider answer remains available for normal checkpoints.
-    await aiSpending.settle(reservation, result).catch(() => console.error("AI spending reconciliation could not finish; its reservation was retained."));
-    const hasRefusal = Array.isArray(result?.output) && result.output.some((part: any) =>
-        Array.isArray(part?.content) && part.content.some((item: any) => item?.type === "refusal"));
-    await save({
-        ...base, ...usageFields(result), model: text(result?.model) ?? base.model,
-        status: response.status, durationMs: Date.now() - started,
-        responseId: text(result?.id), requestId: response.headers.get("x-request-id"),
-        serviceTier: text(result?.service_tier), responseStatus: text(result?.status), hasRefusal,
-    });
-    return response;
+    return sqlAiDispatch(body, async beforeSend => {
+        const reservation = await aiSpending.reserve(body, getAiUsageContext());
+        // Stop may arrive while waiting for the spending lock/preflight/fsync.
+        // Keep the conservative reservation, but never send a cancelled request.
+        dispatchSignal?.throwIfAborted();
+        await beforeSend();
+        dispatchSignal?.throwIfAborted();
+        let response: Response;
+        try { response = await globalThis.fetch(input, init); }
+        catch (error) {
+            await save({ ...base, ...usageFields(null), status: null, durationMs: Date.now() - started,
+                responseId: null, requestId: null, serviceTier: null, responseStatus: null, hasRefusal: false });
+            throw error;
+        }
+        const result: any = await response.clone().json().catch(() => null);
+        // A failed/unknown reconciliation keeps its full conservative reservation.
+        // The accepted provider answer remains available for normal checkpoints.
+        await aiSpending.settle(reservation, result).catch(() => console.error("AI spending reconciliation could not finish; its reservation was retained."));
+        const hasRefusal = Array.isArray(result?.output) && result.output.some((part: any) =>
+            Array.isArray(part?.content) && part.content.some((item: any) => item?.type === "refusal"));
+        await save({
+            ...base, ...usageFields(result), model: text(result?.model) ?? base.model,
+            status: response.status, durationMs: Date.now() - started,
+            responseId: text(result?.id), requestId: response.headers.get("x-request-id"),
+            serviceTier: text(result?.service_tier), responseStatus: text(result?.status), hasRefusal,
+        });
+        return response;
+    }, dispatchSignal);
 };
 
 function addReported(total: number | null | undefined, value: unknown): number | null {

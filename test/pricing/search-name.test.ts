@@ -16,7 +16,7 @@ test("Unown letter queries match provider naming without broadening unrelated na
 test("provider lookup for Unown A retains exact card-number selection", async t => {
     const previous = process.env.PKMNPRICES_API_KEY; process.env.PKMNPRICES_API_KEY = "offline-test";
     t.after(() => { if (previous === undefined) delete process.env.PKMNPRICES_API_KEY; else process.env.PKMNPRICES_API_KEY = previous; });
-    t.mock.method(fs, "readFile", async () => { throw new Error("offline cache miss"); });
+    t.mock.method(fs, "readFile", async () => { throw Object.assign(new Error("offline cache miss"), { code: "ENOENT" }); });
     t.mock.method(fs, "writeFile", async () => {}); t.mock.method(fs, "mkdir", async () => undefined);
     t.mock.method(fs, "rename", async () => {}); t.mock.method(fs, "rm", async () => {});
     const paths: string[] = [];

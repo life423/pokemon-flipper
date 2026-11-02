@@ -8,6 +8,7 @@ import { planDeeperPhotos } from "../../shared/photo-review.ts";
 import type { DeeperPhotoReview } from "../../shared/types.ts";
 import type { SavedRecord } from "./types.ts";
 import { reconcileIdentityReadings } from "./resolve-evidence.ts";
+import { cardLanguageStatus } from "../../shared/card-language.ts";
 
 const DEEP_VERSION = "focused-photos-1";
 export class PhotoReviewError extends Error {
@@ -45,6 +46,7 @@ export function createDeeperPhotoReviewer({ load = loadSaved, save = saveRecord,
         }
         const original = applyPhotoCheckRules(record.photoCheck.result, record.reviewContext.photos.length);
         const checked = record.identityPasses?.length ? reconcileIdentityReadings(original, record.identityPasses.map(pass => pass.result)).check : original;
+        if (cardLanguageStatus(record.reviewContext.title, [checked.cardIdentity?.language]) === "OTHER") throw new PhotoReviewError("Deeper review currently supports English cards only.", 422);
         const plan = planDeeperPhotos(checked, record.reviewContext.photos);
         if (!plan.photos.length) throw new PhotoReviewError(plan.reason!, 422);
         const { mode } = getGradingMode(checked);

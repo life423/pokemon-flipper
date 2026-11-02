@@ -6,6 +6,7 @@ import { createSingleFlight } from "../lib/single-flight.ts";
 import { photoEvidenceKey, searchPhotosFitDetails } from "../../shared/listing-evidence.ts";
 import type { BuyingOption, ListingSummary, Seller } from "../../shared/types.ts";
 import type { ListingFilters } from "../../shared/listing-filters.ts";
+import { cardLanguageStatus, EnglishOnlyError } from "../../shared/card-language.ts";
 
 // Toys & Hobbies > Collectible Card Games > CCG Individual Cards
 export const CCG_INDIVIDUAL_CARDS = "183454";
@@ -179,13 +180,14 @@ export async function searchListings(
         asOf = Date.now(),
     }: { maxResults?: number; anyCategory?: boolean; keepReserve?: boolean; signal?: AbortSignal; sort?: "newlyListed" | "price"; filters?: ListingFilters; auctionEndsWithinHours?: number; asOf?: number } = {}
 ): Promise<{ listings: ListingSummary[]; total: number; skipped: number }> {
+    if (cardLanguageStatus(search) === "OTHER") throw new EnglishOnlyError();
     const scope = anyCategory ? "any" : "cards";
     signal?.throwIfAborted();
     const buyingOption = filters?.typeFilter && filters.typeFilter !== "all" ? filters.typeFilter : undefined;
     const kind = filters?.kindFilter && filters.kindFilter !== "all" ? filters.kindFilter : undefined;
     const endWindow = buyingOption === "AUCTION" && typeof auctionEndsWithinHours === "number" && Number.isFinite(auctionEndsWithinHours) && auctionEndsWithinHours > 0 ? auctionEndsWithinHours : undefined;
     const filterScope = buyingOption || kind || endWindow ? `:filters:${JSON.stringify([buyingOption ?? null, kind ?? null, endWindow ?? null])}` : "";
-    const key = `ebay:search:${maxResults}:${scope}:${sort ? `${sort}:` : ""}${normalizeText(search).trim()}${shippingCacheScope()}${filterScope}`;
+    const key = `ebay:search:${maxResults}:${scope}:language:en:${sort ? `${sort}:` : ""}${normalizeText(search).trim()}${shippingCacheScope()}${filterScope}`;
     const saved = await readCache<{ listings: ListingSummary[]; total: number; skipped: number }>(key, sort ? 1 / 60 : SEARCH_MAX_AGE_HOURS);
     signal?.throwIfAborted();
 
@@ -213,9 +215,9 @@ export async function searchListings(
         const filter = [`buyingOptions:{${buyingOption ?? "AUCTION|FIXED_PRICE"}}`, `conditionIds:{${kind === "raw" ? UNGRADED : kind === "graded" ? GRADED : `${UNGRADED}|${GRADED}`}}`];
         if (endWindow) filter.push(`itemEndDate:[${new Date(sourceNow).toISOString()}..${new Date(sourceNow + endWindow * 3600000).toISOString()}]`);
         const params = new URLSearchParams({
-            q: `pokemon ${search}`.trim(),
+            q: `pokemon ${search}${anyCategory ? " english" : ""}`.trim(),
             // Outside the card category, for listings filed in the wrong one.
-            ...(anyCategory ? {} : { category_ids: CCG_INDIVIDUAL_CARDS }),
+            ...(anyCategory ? {} : { category_ids: CCG_INDIVIDUAL_CARDS, aspect_filter: `categoryId:${CCG_INDIVIDUAL_CARDS},Language:{English}` }),
             filter: filter.join(","),
             limit: String(PAGE_SIZE),
             offset: String(offset),
@@ -232,7 +234,7 @@ export async function searchListings(
         for (const item of items) {
             if (seen.has(item.itemId)) continue;
 
-            if (exclusionReason(item) !== null) {
+            if (exclusionReason(item) !== null || cardLanguageStatus(item.title, item.localizedAspects?.filter(aspect => aspect.name.toLowerCase() === "language").map(aspect => aspect.value)) === "OTHER") {
                 skipped += 1;
                 continue;
             }

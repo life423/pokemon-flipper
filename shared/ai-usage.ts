@@ -23,4 +23,18 @@ export interface AiUsageDay {
     searchId?: string;
     unattributedCalls?: number;
     stages: AiUsageStage[];
+    budget?: AiSearchBudget;
+}
+
+export interface AiSearchBudget {
+    configured: boolean;
+    paused: boolean;
+    searchId: string | null;
+    capUsd: number | null;
+    committedUsd: number;
+    settledUsd: number;
+    heldUsd: number;
+    remainingUsd: number | null;
+    attempts: number;
+    unsettledAttempts: number;
 }

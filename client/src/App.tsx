@@ -6,8 +6,10 @@ import type { AiUsageDay } from "../../shared/ai-usage.ts";
 import { fetchAiUsage, ApiRequestError } from "./api";
 import { analysisConcurrency, canAutoAnalyze } from "../../shared/analysis.ts";
 import { matchesListingFilters } from "../../shared/listing-filters.ts";
+import { englishListingEligible } from "../../shared/card-language.ts";
 import type { ListingFilters } from "../../shared/listing-filters.ts";
 import { compareAnalysisPriority } from "../../shared/analysis-priority.ts";
+import { DEVELOPMENT_SEARCH_LIMIT } from "../../shared/research-policy.ts";
 import { withFreshListing } from "../../shared/fresh-listing.ts";
 import { looksLikeListingLink, parseListingLink } from "../../shared/listing-link.ts";
 import { withResolvedCriteria } from "../../shared/search-criteria.ts";
@@ -16,6 +18,7 @@ import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.t
 import { evaluateListing, fetchEbayUsage, fetchSetYears, reviewListingPhotos, streamDeals, streamNewDeals, fetchShortlist, saveListing, removeSavedListing, updateSavedListing, refreshSavedListings, resolveListingLink, retryPricingBatch, type DealsMessage } from "./api";
 import type { ShortlistEntry } from "../../shared/shortlist.ts";
 import { ShortlistView } from "./components/ShortlistView";
+import { AiBudgetStatus } from "./components/AiBudgetStatus";
 import type { DeeperReviewState } from "./components/PhotoReview";
 import { DealCard } from "./components/DealCard";
 import { PricingRetries } from "./components/PricingRetries";
@@ -34,18 +37,30 @@ import { SearchControls } from "./search/SearchControls";
 import type { AnalysisState } from "./analysis-state";
 import { filterSearchResults, groupSearchResults, sortSearchResults, countSearchResults, evaluationOf, type View, type SortKey, type TypeFilter, type KindFilter } from "./search/results";
 import { ALL, AUTO_KEY, RECENT_KEY, RECENT_LIMIT, STARTER_SEARCHES, readRecentSearches, readTargets, readAutoSetting, readResultsSetting, targetText } from "./search/settings";
-import { describeIntent, describeUsage } from "./search/presentation";
+import { analysisBlockPolicy, describeIntent, describeUsage, type AnalysisBlockCode } from "./search/presentation";
 import styles from "./App.module.css";
 
 export type { AnalysisState } from "./analysis-state";
 
 // The views, in order, and what each is called everywhere it appears.
-const VIEWS: View[] = ["deals", "offers", "candidates", "review"];
+const VIEWS: View[] = ["all", "deals", "offers", "candidates", "review"];
 
 // The search shortcut, as this keyboard writes it.
 const SHORTCUT = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘ K" : "Ctrl K";
 
 type SearchSummary = Extract<DealsMessage, { type: "start" }>;
+
+export function AnalysisBlockedNotice({ message, code, onRetry }: { message: string; code: AnalysisBlockCode | null; onRetry: () => void }) {
+    const policy = analysisBlockPolicy(code);
+    return <div className={styles.searchUpdate} role="alert" data-analysis-block={code ?? "AI_PAUSED"}>
+        <div><p><strong>{policy.title}</strong></p><p>{message}</p><p>{policy.detail}</p></div>
+        {policy.retryLabel && <button type="button" className={styles.secondary} onClick={onRetry}>{policy.retryLabel}</button>}
+    </div>;
+}
+
+export function EnglishOnlyNotice() {
+    return <p className={styles.warning} role="status">English cards only. This listing is identified as non-English and is excluded. No additional AI analysis will start for it.</p>;
+}
 
 export function App() {
     const now = useNow(30_000);
@@ -116,6 +131,7 @@ export function App() {
     const [searchStatus, setSearchStatus] = useState<"idle" | "checking" | "done" | "error">("idle");
     const [searchError, setSearchError] = useState("");
     const [analysisBlocked, setAnalysisBlocked] = useState("");
+    const [analysisBlockCode, setAnalysisBlockCode] = useState<AnalysisBlockCode | null>(null);
     const analysisPaused = useRef(false);
     // Release years by set, loaded once, for the cards' subtitles.
     const [setYearsByKey, setSetYearsByKey] = useState<Record<string, number>>({});
@@ -134,7 +150,7 @@ export function App() {
     const searchAbort = useRef<AbortController | null>(null);
     const [stopped, setStopped] = useState(false);
 
-    const [view, setView] = useState<View>("deals");
+    const [view, setView] = useState<View>("all");
     const [sort, setSort] = useState<SortKey>("best");
     const [typeFilter, setTypeFilter] = useState<TypeFilter>("FIXED_PRICE");
     const [kindFilter, setKindFilter] = useState<KindFilter>("all");
@@ -170,7 +186,8 @@ export function App() {
     const [aiUsage, setAiUsage] = useState<AiUsageDay | null>(null);
     const refreshUsage = useCallback(() => {
         fetchEbayUsage().then(setUsage, () => {});
-        fetchAiUsage().then(setAiUsage, () => {});
+        const id = searchRunId.current;
+        fetchAiUsage(id).then(value => { if (searchRunId.current === id) setAiUsage(value); }, () => {});
     }, []);
 
     useEffect(refreshUsage, [refreshUsage]);
@@ -194,6 +211,16 @@ export function App() {
     const [drawerOpen, setDrawerOpen] = useState(false);
 
     const [rawAnalyses, setAnalyses] = useState<Record<string, AnalysisState>>({});
+    useEffect(() => {
+        if (!Object.values(rawAnalyses).some(analysis => analysis.status === "loading")) return;
+        let active = true;
+        // This endpoint reads local accounting only; it never calls providers.
+        const timer = window.setInterval(() => {
+            const id = searchRunId.current;
+            fetchAiUsage(id).then(value => { if (active && searchRunId.current === id) setAiUsage(value); }, () => {});
+        }, 1500);
+        return () => { active = false; window.clearInterval(timer); };
+    }, [rawAnalyses]);
     const pricingAnalyses = useRef(rawAnalyses);
     pricingAnalyses.current = rawAnalyses;
     const [analysisOutcomes, setAnalysisOutcomes] = useState<boolean[]>([]);
@@ -256,6 +283,12 @@ export function App() {
 
         return repriced;
     }, [rawAnalyses, targets, rawListings, shortlist, directListing, page, now]);
+
+    // Language evidence remains useful when saved prices have expired.
+    const languageEvaluations = useRef(new Map<string, Evaluation>());
+    languageEvaluations.current = new Map(shortlist.filter(entry => entry.evaluation).map(entry => [entry.id, entry.evaluation!]));
+    for (const [id, analysis] of Object.entries(analyses)) if (analysis.status === "done") languageEvaluations.current.set(id, analysis.evaluation);
+    const shortlistForDisplay = shortlist.map(entry => ({ ...entry, evaluation: languageEvaluations.current.get(entry.id) ?? entry.evaluation }));
 
     const toggleSaved = async (listing: ListingSummary) => {
         if (activeSaves.current.has(listing.id)) return;
@@ -352,6 +385,14 @@ export function App() {
     }, [listings, page, typeFilter, kindFilter, maxPrice, minPrice]);
 
     const runAnalysis = useCallback(async (listing: ListingSummary, fresh = false, automatic = false): Promise<void> => {
+        const current = latestListings.current.get(listing.id) ?? listing;
+        if (!englishListingEligible(current, languageEvaluations.current.get(listing.id))) {
+            pendingAnalyses.current.delete(listing.id);
+            return;
+        }
+        // A direct listing or saved-card analysis gets one capped research run.
+        // Retries retain this ID and its already committed spending.
+        searchRunId.current ??= crypto.randomUUID();
         const evidenceKey = listingEvidenceKey(listing);
         if (activeAnalyses.current.has(listing.id) || activePhotoReviews.current.has(listing.id)) {
             pendingAnalyses.current.set(listing.id, { listing, fresh, automatic });
@@ -394,15 +435,31 @@ export function App() {
                 return;
             }
             const message = error instanceof Error ? error.message : "Analysis failed";
-            if (error instanceof ApiRequestError && ["AI_CREDITS", "AI_PAUSED", "AI_BUDGET"].includes(error.code ?? "")) {
+            if (error instanceof ApiRequestError && error.code === "OTHER_LANGUAGE") {
+                pendingAnalyses.current.delete(listing.id);
+                if (stillCurrent()) {
+                    const excluded = (item: ListingSummary): ListingSummary => item.id === listing.id ? { ...item, match: "OTHER_LANGUAGE" } : item;
+                    latestListings.current.set(listing.id, excluded(latestListings.current.get(listing.id) ?? listing));
+                    setDirectListing(previous => previous ? excluded(previous) : previous);
+                    setListings(previous => previous.map(excluded));
+                    setShortlist(previous => previous.map(entry => entry.id === listing.id ? { ...entry, listing: excluded(entry.listing) } : entry));
+                    setAnalyses(previous => { const next = { ...previous }; delete next[listing.id]; return next; });
+                }
+                return;
+            }
+            if (error instanceof ApiRequestError && ["AI_CREDITS", "AI_PAUSED", "AI_BUDGET", "STORAGE_UNAVAILABLE"].includes(error.code ?? "")) {
                 analysisPaused.current = true;
                 searchAbort.current?.abort();
                 searchId.current += 1;
                 pendingAnalyses.current.clear();
-                for (const other of analysisControllers.current.values()) if (other !== controller) other.abort();
+                // Budget admission can stop a new candidate while another
+                // accepted bounded assessment is finishing. Keep its result.
+                if (error.code !== "AI_BUDGET") for (const other of analysisControllers.current.values()) if (other !== controller) other.abort();
                 pricingAbort.current?.abort();
                 setSearchStatus("done");
                 setAnalysisBlocked(message);
+                setAnalysisBlockCode(error.code as AnalysisBlockCode);
+                setDigStatus(previous => previous === "checking" ? "idle" : previous);
                 setBudget(0);
                 if (stillCurrent()) setAnalyses(previous => { const next = { ...previous }; delete next[listing.id]; return next; });
                 return;
@@ -423,6 +480,7 @@ export function App() {
     }, [loadShortlist, refreshUsage]);
 
     const runPhotoReview = useCallback(async (listing: ListingSummary, evaluation: Evaluation) => {
+        if (!englishListingEligible(listing, evaluation)) return;
         const key = evaluation.photoReviewKey;
         if (!key || activeAnalyses.current.has(listing.id) || activePhotoReviews.current.has(listing.id)) return;
         activePhotoReviews.current.add(listing.id);
@@ -467,10 +525,14 @@ export function App() {
             setQuery((previous) => previous.trim() === input.trim() ? listing.url : previous);
             setDirectListing(listing); latestListings.current.set(listing.id, listing);
             setListings((previous) => previous.map((item) => item.id === listing.id ? listing : item));
-            setLinkStatus("idle"); openPanel(listing.id);
+            setLinkStatus("idle");
             // The explicit submit authorizes this one analysis, independent of
             // the search's automatic-analysis budget. No search/discovery starts.
-            void runAnalysis(listing, false, true);
+            if (englishListingEligible(listing, languageEvaluations.current.get(listing.id))) {
+                openPanel(listing.id);
+                searchRunId.current = crypto.randomUUID();
+                void runAnalysis(listing);
+            }
         } catch (error) {
             if (!controller.signal.aborted && linkRevision.current === revision) { setLinkStatus("error"); setLinkError((error as Error).message); }
         } finally { if (linkRevision.current === revision) linkRequest.current = null; refreshUsage(); }
@@ -574,10 +636,11 @@ export function App() {
         setSummary(null);
         setSelectedId(null);
         setBudget(autoSetting);
-        setView("deals");
+        setView(onlyNew ? "new" : "all");
         setSearchStatus("checking");
         setSearchError("");
         setAnalysisBlocked("");
+        setAnalysisBlockCode(null);
         analysisPaused.current = false;
         setSubmittedFilters(currentFilters);
 
@@ -648,6 +711,7 @@ export function App() {
         if (remaining <= 0) return;
 
         const waiting = listings
+            .filter(listing => englishListingEligible(listing, languageEvaluations.current.get(listing.id)))
             .filter(listing => matchesListingFilters(listing, { typeFilter, kindFilter, maxPrice: maxPrice === "" ? undefined : Number(maxPrice), minPrice: Number(minPrice) || 0 }))
             // Resolve metadata and unusual prices as they arrive too. Auction
             // likelihood affects presentation and priority, not permission to
@@ -663,7 +727,7 @@ export function App() {
             autoQueued.current.add(listing.id);
             free -= 1;
             remaining -= 1;
-            void runAnalysis(listing);
+            void runAnalysis(listing, false, true);
         }
     }, [listings, analyses, budget, runAnalysis, analysisOutcomes, targets, photoReviews, page, newMode, newIds, typeFilter, kindFilter, maxPrice, minPrice]);
 
@@ -695,7 +759,9 @@ export function App() {
     const counts = useMemo(() => countSearchResults({ listings, analyses, newMode, newIds, page, intent: summary?.intent,
         filters: { typeFilter, kindFilter, maxPrice, minPrice, minGrade } }), [listings, analyses, newMode, newIds, page, summary, typeFilter, kindFilter, maxPrice, minPrice, minGrade]);
 
-    const selected = (page === "shortlist" ? shortlist.map((entry) => entry.listing) : page === "listing" ? directListing ? [directListing] : [] : listings).find((listing) => listing.id === selectedId) ?? null;
+    const selectedCandidate = (page === "shortlist" ? shortlist.map((entry) => entry.listing) : page === "listing" ? directListing ? [directListing] : [] : listings).find((listing) => listing.id === selectedId) ?? null;
+    const selected = selectedCandidate && englishListingEligible(selectedCandidate, languageEvaluations.current.get(selectedCandidate.id)) ? selectedCandidate : null;
+    const directLanguageEligible = !directListing || englishListingEligible(directListing, languageEvaluations.current.get(directListing.id));
 
     // Filters narrowing the results, shown as a count on the Filters button.
     const activeFilters = [typeFilter !== "all", kindFilter !== "all", maxPrice !== "", minPrice !== "", minGrade > 0, sort !== "best"].filter(
@@ -778,15 +844,16 @@ export function App() {
                   ? "ai"
                   : "done";
 
-    // Discovery always runs; only extra full analyses require a button.
-    const showMoreAi = counts.waiting > 0 && budgetLeft <= 0;
+    // Additional work stays within the loaded development batch and is never
+    // offered as a way around a server spending pause or a stopped search.
+    const showMoreAi = !analysisBlocked && !stopped && counts.waiting > 0 && budgetLeft <= 0;
     const progressActions = (showMoreAi || digStatus !== "idle") && (
         <div className={styles.progressActions}>
             {showMoreAi && (
                 <div className={styles.progressButtons}>
                     {showMoreAi && (
-                        <button type="button" className={styles.secondary} onClick={() => setBudget((current) => current + 5)}>
-                            Analyze 5 more (paid)
+                        <button type="button" className={styles.secondary} onClick={() => setBudget((current) => current + Math.min(DEVELOPMENT_SEARCH_LIMIT, counts.waiting))}>
+                            Analyze {Math.min(DEVELOPMENT_SEARCH_LIMIT, counts.waiting)} remaining (paid)
                         </button>
                     )}
                 </div>
@@ -807,8 +874,7 @@ export function App() {
     const progressDetails = summary && (
         <>
             {newMode ? <p>Loaded a window of {summary.found} newest listings. Skipped {summary.previouslySeen ?? 0} already seen; selected {summary.count} unseen listings for screening.{(summary.deferred ?? 0) > 0 ? ` Another ${summary.deferred} remain in this window for a later scan.` : ""} This scan does not cover all eBay inventory.</p> : <p>
-                eBay has {summary.total.toLocaleString()} results. Of the first {summary.found.toLocaleString()},{" "}
-                {summary.count.toLocaleString()} are {describeIntent(summary.intent)}.
+                eBay reports {summary.total.toLocaleString()} results. Loaded {summary.found.toLocaleString()} listings and admitted {summary.count.toLocaleString()} for preliminary screening. This limited window does not cover all eBay inventory.
             </p>}
             <p>
                 {counts.candidates} listings are eligible for AI analysis; {counts.mismatched} set aside as other cards, sets, languages or search criteria.
@@ -930,24 +996,31 @@ export function App() {
                         />
                     </header>
 
-                    {analysisBlocked && <div className={styles.searchUpdate} role="alert">
-                        <p>{analysisBlocked}</p>
-                        <button type="button" className={styles.secondary} onClick={() => { analysisPaused.current = false; setAnalysisBlocked(""); setBudget(autoSetting); if (page === "listing" && directListing) void runAnalysis(directListing); }}>Resume AI analysis</button>
-                    </div>}
-                    {page === "shortlist" ? <ShortlistView entries={shortlist} loading={shortlistLoading} error={shortlistError} refreshing={refreshingSaved} refreshErrors={refreshErrors}
+                    <AiBudgetStatus budget={aiUsage?.budget} calls={aiUsage?.calls ?? 0} />
+                    {analysisBlocked && <AnalysisBlockedNotice message={analysisBlocked} code={analysisBlockCode} onRetry={() => {
+                        if (!analysisBlockPolicy(analysisBlockCode).retryLabel) return;
+                        // Reuse this search and its existing server allowance.
+                        // Completed cards keep their slot; interrupted ones may retry.
+                        autoQueued.current = new Set([...autoQueued.current].filter(id => rawAnalyses[id]?.status === "done"));
+                        analysisPaused.current = false;
+                        setAnalysisBlocked(""); setAnalysisBlockCode(null); setBudget(autoSetting);
+                        if (page === "listing" && directListing) void runAnalysis(directListing);
+                    }} />}
+                    {page === "shortlist" ? <ShortlistView entries={shortlistForDisplay} loading={shortlistLoading} error={shortlistError} refreshing={refreshingSaved} refreshErrors={refreshErrors}
                         onRetry={() => void loadShortlist()} onRefresh={refreshSaved} onRemove={removeSaved} onUpdate={updateSaved} now={now}
                         renderCard={(entry) => <DealCard listing={entry.listing} analysis={analyses[entry.id]} selected={entry.id === selectedId} now={now} years={setYearsByKey} targets={targets} minGrade={minGrade} photoReviewState={photoReviews[entry.id]}
                             onOpen={() => { openPanel(entry.id); if (!analyses[entry.id]) void runAnalysis(entry.listing); }} />} /> : page === "listing" ? <section className={styles.linkEvaluation} aria-labelledby="link-evaluation-heading">
                         <h2 id="link-evaluation-heading">Listing evaluation</h2>
                         {linkStatus === "loading" && <div className={styles.linkLoading} role="status"><p>Reading the listing from eBay…</p><button type="button" className={styles.secondary} onClick={() => { cancelLink(); if (!directListing) setPage("search"); }}>Cancel</button></div>}
                         {linkStatus === "error" && <p role="alert" className={styles.warning}>{linkError}{directListing ? " Your previous listing is still shown below." : ""}</p>}
-                        {directListing && linkStatus !== "loading" && <div className={styles.directCard}><DealCard listing={directListing} analysis={analyses[directListing.id]} selected={directListing.id === selectedId}
+                        {directListing && linkStatus !== "loading" && !directLanguageEligible && <EnglishOnlyNotice />}
+                        {directListing && linkStatus !== "loading" && directLanguageEligible && <div className={styles.directCard}><DealCard listing={directListing} analysis={analyses[directListing.id]} selected={directListing.id === selectedId}
                             now={now} years={setYearsByKey} targets={targets} minGrade={0} photoReviewState={photoReviews[directListing.id]}
                             saved={shortlist.some((entry) => entry.id === directListing.id)} saving={savingIds.has(directListing.id)} onSave={() => void toggleSaved(directListing)}
                             onOpen={() => openPanel(directListing.id)} /></div>}
                         {!directListing && linkStatus === "idle" && <p>Paste an eBay listing link above, then choose Evaluate listing.</p>}
                     </section> : <>
-                    {searchStatus !== "idle" && summary && <p className={styles.searchMeaning} role="status">Looking for: {describeIntent(summary.intent)}.{(summary.intent.grader || summary.intent.minGrade != null || summary.intent.finish) ? " Requested grader, slab grade and finish must match; unconfirmed listings are set aside." : ""}</p>}
+                    {searchStatus !== "idle" && summary && <p className={styles.searchMeaning} role="status">Search criteria: {describeIntent(summary.intent)}.{(summary.intent.grader || summary.intent.minGrade != null || summary.intent.finish) ? " Requested grader, slab grade and finish must match; unconfirmed listings are set aside." : ""}</p>}
                     {searchStatus !== "idle" && (
                         <SearchProgress
                             phase={phase}
@@ -978,7 +1051,7 @@ export function App() {
                     )}
                     {searchStatus !== "idle" && <PricingRetries listings={filtered} reviewCount={groups.review.length} searching={searchStatus === "checking"} recovery={pricingRecovery} analyzed={new Set(Object.entries(analyses).filter(([, analysis]) => analysis.status === "done" || analysis.status === "loading").map(([id]) => id))}
                         busy={pricingBusy} note={pricingNote} onRetry={(tickets) => void retryPrices(tickets)} onCancel={cancelPricing} />}
-                    {newMode && <p className={styles.discoveryNote}>Checks the 200 newest listings and screens every unseen match. Full AI analysis follows your selected setting; repeated scans share a one-minute search cache.</p>}
+                    {newMode && <p className={styles.discoveryNote}>Loaded one window of up to 200 newest listings and admitted at most 3 unseen candidates for screening. Earlier results stay in All matching; this is a limited development batch.</p>}
 
                     {needsWiderSearch && <div className={styles.searchUpdate} role="status">
                         <p>Search filters changed. Run the search again to fetch matching listings. Paid work from the previous filter selection has stopped.</p>
@@ -1022,7 +1095,7 @@ export function App() {
                             <div className={styles.searchUpdate} role="status">
                                 <div>
                                     <p><strong>No verified deals in this development batch.</strong></p>
-                                    <p>Looked for {describeIntent(summary.intent)}. Screened {summary.count} matching listings from {summary.found} returned; this does not cover all eBay inventory.</p>
+                                    <p>Looked for {describeIntent(summary.intent)}. Admitted {summary.count} candidates from {summary.found} returned; {newMode ? newChecked : listings.length} screening results are saved. This limited batch does not cover all eBay inventory.</p>
                                     <p>{counts.dropped} below your research/value or profit targets · {counts.mismatched} other cards, sets or criteria · {groups.review.length} need specific evidence.</p>
                                     {counts.waiting > 0 && <p>{counts.waiting} still await assessment{analysisBlocked ? " because paid AI is paused or budget-limited" : " in Sorting"}. An unassessed card is not a confirmed deal.</p>}
                                 </div>
@@ -1039,7 +1112,7 @@ export function App() {
                         ))}
 
                     {view === "all" && visible.length > 0 && <p className={styles.discoveryNote}>
-                        {filtered.filter((listing) => evaluationOf(analyses[listing.id])?.photoCheck).length} AI photo reviews complete · {filtered.filter((listing) => !analyses[listing.id] && listing.screen && listing.screen.status !== "UNSCREENED").length} screened only. Automatic analysis focuses on promising candidates within your AI limit.
+                        {visible.length} matching {visible.length === 1 ? "listing" : "listings"} in the loaded results, including passes and unfinished assessments. Known wrong cards and junk are excluded. {filtered.filter((listing) => evaluationOf(analyses[listing.id])?.photoCheck).length} AI photo reviews complete; other cards remain preliminary. Each development scan admits at most 3 candidates and does not cover all eBay inventory.
                     </p>}
                     <div className={styles.results}>
                         {/* Before the first results: placeholders in the shape of cards. */}

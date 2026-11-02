@@ -1,7 +1,8 @@
 import { getListingDetails, type ListingDetails } from "../ebay/listings.ts";
 import { lookupCards, fetchComps, fetchRawComps } from "../pricing/pkmnprices.ts";
 import { isEnglish, setMatches } from "../search/relevance.ts";
-import { fillFromTitle, readTitle } from "../ai/title-reader.ts";
+import { cardLanguageStatus } from "../../shared/card-language.ts";
+import { fillFromTitle, readTitle, readTitleWithoutAi } from "../ai/title-reader.ts";
 import { checkComps } from "../ai/comp-checker.ts";
 import { matchMainPhoto, type ClaimedCard, type PhotoMatch } from "../ai/photo-match.ts";
 import { prescreen, type ScreenInput } from "./prescreen.ts";
@@ -12,6 +13,7 @@ import { criteriaMismatch, searchAttributes } from "../../shared/search-criteria
 import { pricingRetries } from "./pricing-retries.ts";
 import type { PricingRetry } from "../../shared/pricing-retries.ts";
 import { MONEY_CONFIG, type MoneyConfig } from "../../shared/money/config.ts";
+import { printingClaimFromText, isPrinting, sameCardNumber } from "../identity/card-identity.ts";
 
 // Zero shipping is an optimistic bound for deciding whether to request a
 // quote, never a replacement for an unknown quote in the actual valuation.
@@ -72,6 +74,33 @@ function withFilled(screen: Screen, filled: string[]): Screen {
     return filled.length > 0 ? { ...screen, filledFromTitle: filled } : screen;
 }
 
+// Search admission needs no new title/photo/price AI. Seller claims only help
+// remove obvious mismatches; the bounded evaluator verifies actual evidence.
+export async function screenListingWithoutAi(listing: ListingSummary, intent: SearchIntent | null = null, signal?: AbortSignal,
+    read = readTitleWithoutAi): Promise<ListingSummary> {
+    signal?.throwIfAborted();
+    const reading = await read(listing.title, signal);
+    signal?.throwIfAborted();
+    if (cardLanguageStatus(listing.title, [reading.language]) === "OTHER") return { ...listing, match: "OTHER_LANGUAGE" };
+    if (reading.kind && reading.kind !== "SINGLE_CARD") return { ...listing, match: "JUNK" };
+    if (intent && !setMatches(reading.set, intent)) return { ...listing, match: "OTHER_SET" };
+    if (intent?.cardNumber && reading.cardNumber && !sameCardNumber(intent.cardNumber, reading.cardNumber)) return { ...listing, match: "OTHER_CARD" };
+    const attributes = searchAttributes(listing.title, { ...(reading.grader ? { "Professional Grader": reading.grader } : {}), ...(reading.grade ? { Grade: reading.grade } : {}) });
+    const mismatch = intent && criteriaMismatch(attributes, intent, false);
+    if (mismatch) return { ...listing, match: mismatch };
+    const claim = printingClaimFromText(listing.title);
+    if (intent?.printing && isPrinting(claim) && intent.printing !== claim) return { ...listing, match: "OTHER_PRINTING" };
+    const card = reading.cardName || reading.set || reading.cardNumber ? {
+        name: reading.cardName, set: reading.set, cardNumber: reading.cardNumber,
+        printing: isPrinting(claim) ? claim : "UNKNOWN" as const, printingLabel: null,
+    } : null;
+    return { ...listing, listedAttributes: attributes,
+        ...(reading.condition ? { cardCondition: reading.condition } : {}),
+        screen: { status: "UNSCREENED", needsAnalysis: listing.isGraded ? "SLAB_LABEL" : "IDENTITY",
+            reason: "Photos and resale evidence have not been assessed.", card, bestCase: null, assumed: null,
+            evidence: { photos: availablePhotoCount(listing.images), mainPhoto: "UNKNOWN" } } };
+}
+
 export async function screenListing(
     listing: ListingSummary,
     steps: ScreenSteps = REAL_STEPS,
@@ -79,6 +108,7 @@ export async function screenListing(
     signal?: AbortSignal
 ): Promise<ListingSummary> {
     signal?.throwIfAborted();
+    if (cardLanguageStatus(listing.title) === "OTHER") return { ...listing, match: "OTHER_LANGUAGE" };
     const expired = () => listing.buyingOption === "AUCTION" && Boolean(listing.endTime) && Date.parse(listing.endTime!) <= Date.now();
     const unavailable = () => ({ ...listing, availability: "UNAVAILABLE" as const });
     if (expired()) return unavailable();
@@ -180,6 +210,7 @@ export async function screenListing(
 
     // Then with the listing's own details; the title only fills gaps.
     if (expired()) return unavailable();
+    if (cardLanguageStatus(details.title, [details.aspects.Language]) === "OTHER") return { ...listing, match: "OTHER_LANGUAGE" };
     const { aspects, filled } = await steps.readTitle(details);
     signal?.throwIfAborted();
     if (expired()) return unavailable();

@@ -6,6 +6,7 @@ import { evaluatedCriteriaMismatch } from "../../../shared/search-criteria.ts";
 import { rateDeal } from "../../../shared/money/rating.ts";
 import { compareListingEvidence, listingSignals } from "../../../shared/signals.ts";
 import { matchesListingFilters } from "../../../shared/listing-filters.ts";
+import { englishListingEligible } from "../../../shared/card-language.ts";
 
 export type View = ResultGroup | "hidden" | "all" | "new";
 
@@ -50,7 +51,8 @@ export function filterSearchResults({ listings, analyses, filters: { typeFilter,
     return listings
         // Another set, card, or printing than the one searched for, including
         // a reprint the photos gave away.
-        .filter((listing) => !listing.match && !evaluationOf(analyses[listing.id])?.identity?.notThisCard)
+        .filter((listing) => !listing.match && !listing.screen?.junk && !evaluationOf(analyses[listing.id])?.identity?.notThisCard)
+        .filter((listing) => englishListingEligible(listing, evaluationOf(analyses[listing.id])))
         .filter((listing) => {
             const evaluation = evaluationOf(analyses[listing.id]);
             return page !== "search" || !intent || !evaluation || !evaluatedCriteriaMismatch(evaluation, intent);
@@ -110,23 +112,29 @@ export function countSearchResults({ listings, analyses, newMode, newIds, page, 
         minPrice: Number(filters.minPrice) || 0, maxPrice: filters.maxPrice === "" ? undefined : Number(filters.maxPrice),
     })) : listings;
     const count = (status: string) => listings.filter((listing) => listing.screen?.status === status).length;
-    const analyzing = listings.filter((listing) => analyses[listing.id]?.status === "loading").length;
+    const eligibleLanguage = (listing: ListingSummary) => englishListingEligible(listing, evaluationOf(analyses[listing.id]));
+    const eligibleEvidence = (listing: ListingSummary) => {
+        const evaluation = evaluationOf(analyses[listing.id]);
+        return eligibleLanguage(listing) && !evaluation?.identity?.notThisCard &&
+            !(page === "search" && intent && evaluation && evaluatedCriteriaMismatch(evaluation, intent));
+    };
+    const analyzing = listings.filter((listing) => eligibleLanguage(listing) && analyses[listing.id]?.status === "loading").length;
 
     return {
-        candidates: listings.filter((listing) => (!newMode || newIds.has(listing.id)) && canAutoAnalyze(listing)).length,
+        candidates: listings.filter((listing) => eligibleEvidence(listing) && (!newMode || newIds.has(listing.id)) && canAutoAnalyze(listing)).length,
         dropped: count("DROPPED"),
-        unchecked: listings.filter((listing) => listing.screen?.status === "UNSCREENED" && !listing.match &&
+        unchecked: listings.filter((listing) => eligibleEvidence(listing) && listing.screen?.status === "UNSCREENED" && !listing.match &&
             !(listing.screen.priceAnomaly && !listing.screen.priceAnomaly.photoChecked)).length,
         mismatched: listings.filter(
             (listing) =>
-                (listing.match && listing.match !== "JUNK") || Boolean(evaluationOf(analyses[listing.id])?.identity?.notThisCard) ||
+                (listing.match && listing.match !== "JUNK") || !eligibleLanguage(listing) || Boolean(evaluationOf(analyses[listing.id])?.identity?.notThisCard) ||
                 Boolean(page === "search" && intent && evaluationOf(analyses[listing.id]) && evaluatedCriteriaMismatch(evaluationOf(analyses[listing.id])!, intent))
         ).length,
         // Junk the AI spotted in titles; the free rules' count comes with the search.
         junk: listings.filter((listing) => listing.match === "JUNK").length,
         analyzing,
         waiting: listings.filter(
-            (listing) => (!newMode || newIds.has(listing.id)) && canAutoAnalyze(listing) && !analyses[listing.id]
+            (listing) => eligibleEvidence(listing) && (!newMode || newIds.has(listing.id)) && canAutoAnalyze(listing) && !analyses[listing.id]
         ).length,
     };
 }
