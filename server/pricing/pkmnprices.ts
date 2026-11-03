@@ -28,7 +28,6 @@ const share = createSingleFlight();
 let coolingUntil = 0;
 let coolingKind: PricingIssue["kind"] = "RATE_LIMIT";
 let lastRequestAt = 0;
-class OptionalFeatureUnavailable extends Error {}
 export function pricingCooldown(): PricingIssue | null {
     return Date.now() < coolingUntil ? { kind: coolingKind, retryAt: new Date(coolingUntil).toISOString() } : null;
 }
@@ -109,9 +108,6 @@ async function load(path: string, maxAgeHours: number): Promise<ApiBody> {
 async function finish(path: string, response: Response, body: ApiBody): Promise<ApiBody> {
     if (!response.ok) {
         const message = `pkmnprices request failed (${response.status}): ${body.error?.message ?? "unknown error"}`;
-        // Volume is plan-gated. Its absence must not disable otherwise working
-        // card prices or sold comps through the global pricing cooldown.
-        if (response.status === 403 && path.includes("/sales/volume?")) throw new OptionalFeatureUnavailable(message);
         if (response.status >= 500 || [401, 403].includes(response.status)) {
             coolingKind = response.status >= 500 ? "TEMPORARY" : "CONFIG";
             coolingUntil = Math.max(coolingUntil, Date.now() + 30_000);
@@ -353,16 +349,4 @@ export function createScreeningPriceSource({ signal, maxRequests = 8 }: { signal
         stats: () => ({ requests, limit: requestLimit }),
     };
     return source;
-}
-
-export async function fetchSalesVolume(recordId: CardRecord["id"], variant: string, graded: boolean): Promise<{ data: unknown[]; pagination?: { total_pages?: number } }> {
-    const params = new URLSearchParams({ graded: String(graded), period: "30d", currency: "usd", variant, limit: "30" });
-    const path = `/cards/${recordId}/sales/volume?${params}`;
-    const deniedKey = `pkmnprices:optional-denied:${path}`;
-    if (await readCache(deniedKey, 15 / 60)) throw new OptionalFeatureUnavailable("Sales volume is unavailable on this provider plan.");
-    try { return await apiGet(path, 6); }
-    catch (error) {
-        if (error instanceof OptionalFeatureUnavailable) await writeCache(deniedKey, true);
-        throw error;
-    }
 }

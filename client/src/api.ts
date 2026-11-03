@@ -1,6 +1,6 @@
 import type { DeeperPhotoReview, EbayUsage, Evaluation, ListingSummary, SearchIntent, Targets } from "./types";
 import type { ShortlistEntry, RefreshResult } from "../../shared/shortlist.ts";
-import type { PricingRetryResult, PricingRecoveryProgress } from "../../shared/pricing-retries.ts";
+import type { PricingRetryResult } from "../../shared/pricing-retries.ts";
 import type { AiUsageDay } from "../../shared/ai-usage.ts";
 import type { ListingFilters } from "../../shared/listing-filters.ts";
 
@@ -59,9 +59,6 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 export type DealsMessage =
     | { type: "start"; total: number; found: number; count: number; skipped: number; intent: SearchIntent; mode?: "new" | "development"; deferred?: number; previouslySeen?: number }
     | { type: "listing"; listing: ListingSummary }
-    | { type: "discovery"; status: "checking" | "done" | "error"; checked: number; total: number; note?: string }
-    | ({ type: "pricing" } & PricingRecoveryProgress)
-    | { type: "pricing-listing"; listing: ListingSummary; snapshotKey: string }
     | { type: "done" }
     | { type: "error"; error: string };
 
@@ -149,18 +146,6 @@ export function refreshSavedListings(ids: string[], searchRunId?: string): Promi
     return request("/api/shortlist/refresh", { method: "POST", headers: { "Content-Type": "application/json", ...searchHeaders(searchRunId) }, body: JSON.stringify({ ids }) });
 }
 
-export type DigMessage =
-    | { type: "start"; total: number; queries: string[] }
-    | { type: "listing"; listing: ListingSummary }
-    | { type: "done" }
-    | { type: "error"; error: string };
-
-// Dig deeper: misspelled, vague, wrong-category, and lot listings, checked by photo.
-export function streamDig(query: string, minPrice: number, onMessage: (message: DigMessage) => void, targets?: Targets, includeOffers = false, searchRunId?: string): Promise<void> {
-    const criteria = targets ? `&profit=${targets.minProfit}&roi=${targets.minRoi}` : "";
-    return streamLines(`/api/dig?q=${encodeURIComponent(query)}&min=${minPrice}${criteria}&offers=${includeOffers ? 1 : 0}`, onMessage, undefined, { headers: searchHeaders(searchRunId) });
-}
-
 // A friendly note to send with a Best Offer, written fresh each time.
 export async function writeOfferNote(title: string): Promise<string> {
     const { note } = await request<{ note: string }>("/api/offer-note", {
@@ -178,7 +163,7 @@ export function fetchEbayUsage(searchRunId?: string): Promise<EbayUsage | null> 
 }
 
 // Paid the first time for a listing; the server reuses saved answers
-// after that. fresh asks the model again.
+// after that. fresh refreshes listing terms while compatible photos are reused.
 // The listing's current price, bid, and end time go along, so the server
 // can use its saved details instead of asking eBay again.
 export async function evaluateListing(listing: ListingSummary, { fresh = false, signal, searchRunId = crypto.randomUUID(), automatic = false }: { fresh?: boolean; signal?: AbortSignal; searchRunId?: string; automatic?: boolean } = {}): Promise<Evaluation> {

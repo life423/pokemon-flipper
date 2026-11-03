@@ -1,215 +1,107 @@
+import "../fixtures/isolated-data.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { findDeals, screenListing } from "../../server/deals/find-deals.ts";
+import { findDeals } from "../../server/deals/find-deals.ts";
+import { screenListingWithoutAi } from "../../server/deals/screen-listing.ts";
+import { readTitleByRules } from "../../server/ai/title-reader.ts";
+import { readSearchLocally } from "../../server/search/intent.ts";
 import { canAutoAnalyze } from "../../shared/analysis.ts";
+import { analysisPriority } from "../../shared/analysis-priority.ts";
+import { sellerConditionClues } from "../../shared/raw-condition-claim.ts";
 import { EnglishOnlyError } from "../../shared/card-language.ts";
+import { offlineSearchSteps } from "../fixtures/search-steps.ts";
+import type { ListingSummary, ScreeningSoldEvidence } from "../../shared/types.ts";
 
-test("foreign-language search intent is rejected before paid query interpretation", async () => {
-    await assert.rejects(findDeals("Japanese Charizard", {}, { readIntent: async () => { throw new Error("Excluded searches must not reach AI intent parsing"); } }), EnglishOnlyError);
+const listing = (title = "Charizard Base Set 4/102 Unlimited Holo English", extra: Partial<ListingSummary> = {}): ListingSummary => ({
+    id: "v1|1|0", title, currentPrice: 80, shipping: 5, bids: 0, isGraded: false, buyingOption: "FIXED_PRICE", endTime: null,
+    images: ["offline-photo"], url: "#", seller: null, ...extra,
+});
+const read = async (title: string) => readTitleByRules(title);
+
+test("foreign-language searches stop before query interpretation or source requests", async () => {
+    const steps = offlineSearchSteps([], { readIntent: async () => assert.fail("foreign searches cannot start query research"),
+        search: async () => assert.fail("foreign searches cannot consume eBay allowance") });
+    await assert.rejects(findDeals("Japanese Charizard", {}, steps), EnglishOnlyError);
 });
 
-const listing = (title, extra = {}) => ({
-    id: "v1|1|0",
-    title,
-    currentPrice: 300,
-    shipping: 5,
-    bids: 0,
-    isGraded: false,
-    buyingOption: "FIXED_PRICE",
-    endTime: null,
-    images: [],
-    url: "",
-    seller: null,
-    ...extra,
-});
-
-const screen = (status, extra = {}) => ({ status, reason: null, card: null, bestCase: null, assumed: null, ...extra });
-
-// Steps that record what they were asked, with the check's answers in order.
-function steps(answers, { detailsFail = false, photoAnswer = null } = {}) {
-    const calls = { details: 0, checks: [] };
-
-    return {
-        calls,
-        readTitle: async (listing) => ({ aspects: { ...listing.aspects, Set: "Base Set" }, filled: listing.aspects.Set ? [] : ["Set"] }),
-        loadDetails: async () => {
-            calls.details += 1;
-            if (detailsFail) throw new Error("eBay request failed (429): Too many requests");
-            return { title: "Charizard 4/102", aspects: { Set: "Base Set" }, shipping: 5, cardCondition: "Lightly played (Excellent)", conditionNotes: [], seller: null };
-        },
-        matchPhoto: async (imageUrl, card) => {
-            calls.photos = (calls.photos ?? 0) + 1;
-            return photoAnswer;
-        },
-        check: async (input) => {
-            calls.checks.push(input);
-            return answers.shift();
-        },
-    };
-}
-
-test("a listing dropped on its title never costs an eBay detail request", async () => {
-    const s = steps([screen("DROPPED")]);
-    const result = await screenListing(listing("Charizard 4/102 Base Set Holo"), s);
-
-    assert.equal(result.screen.status, "DROPPED");
-    assert.equal(s.calls.details, 0);
-    assert.equal(s.calls.checks[0].cardCondition, null);
-});
-
-test("a candidate gets its details and a second check with the seller's condition", async () => {
-    const s = steps([screen("CANDIDATE"), screen("DROPPED")]);
-    const result = await screenListing(listing("Charizard 4/102 Base Set Holo"), s);
-
-    assert.equal(s.calls.details, 1);
-    assert.equal(s.calls.checks[1].cardCondition, "Lightly played (Excellent)");
-    assert.equal(result.screen.status, "DROPPED");
-    assert.equal(result.cardCondition, "Lightly played (Excellent)");
-});
-
-
-test("a title missing pieces gets its details, which might settle it", async () => {
-    const s = steps([screen("UNSCREENED", { incomplete: true }), screen("CANDIDATE")]);
-    const result = await screenListing(listing("Charizard Holo WOTC"), s);
-
-    assert.equal(s.calls.details, 1);
-    assert.equal(result.screen.status, "CANDIDATE");
-});
-
-test("when eBay refuses the detail request, the title's check stands", async () => {
-    const s = steps([screen("CANDIDATE")], { detailsFail: true });
-    const result = await screenListing(listing("Charizard 4/102 Base Set Holo"), s);
-
-    assert.equal(s.calls.details, 1);
-    assert.equal(result.screen.status, "CANDIDATE");
-});
-
-test("a title in another language is set aside without any checks", async () => {
-    const s = steps([]);
-    s.readTitle = async () => ({ aspects: { Language: "Japanese" }, filled: ["Language"] });
-    const result = await screenListing(listing("Charizard Base Set"), s);
-
-    assert.equal(result.match, "OTHER_LANGUAGE");
-    assert.equal(s.calls.details, 0);
-    assert.equal(s.calls.checks.length, 0);
-});
-
-test("an explicitly foreign title is rejected before even paid title reading", async () => {
-    const s = steps([]);
-    s.readTitle = async () => { throw new Error("foreign title must not be sent to AI"); };
-    const result = await screenListing(listing("Charizard Japanese Base Set Holo"), s);
-    assert.equal(result.match, "OTHER_LANGUAGE");
-    assert.equal(s.calls.details, 0);
-    assert.equal(s.calls.checks.length, 0);
-});
-
-test("a title the AI reads as junk is skipped before any check or eBay request", async () => {
-    const s = steps([]);
-    s.readTitle = async () => ({ aspects: {}, filled: [], condition: null, kind: "LOT" });
-    const result = await screenListing(listing("Vintage Pokemon Cards WOTC Holo Collection"), s);
-
-    assert.equal(result.match, "JUNK");
-    assert.equal(s.calls.checks.length, 0);
-    assert.equal(s.calls.details, 0);
-});
-
-test("a listing the check calls junk is skipped before any eBay request", async () => {
-    const s = steps([screen("UNSCREENED", { junk: true })]);
-    const result = await screenListing(listing("Charizard 4/102 Base Set Holo", { currentPrice: 5 }), s);
-
-    assert.equal(result.match, "JUNK");
-    assert.equal(s.calls.details, 0);
-});
-
-test("an incomplete unusually cheap listing can queue full AI immediately without a preliminary detail request", async () => {
-    const pending = { referencePrice: 315, photoChecked: false };
-    const s = steps([screen("UNSCREENED", { incomplete: true, priceAnomaly: pending })]);
-    const result = await screenListing(listing("Lugia", { currentPrice: 5, images: ["photo"] }), s);
-    assert.equal(result.match, undefined);
-    assert.equal(result.screen.priceAnomaly.photoChecked, false);
-    assert.equal(canAutoAnalyze(result), true);
-    assert.equal(s.calls.details, 0);
-    assert.equal(s.calls.photos ?? 0, 0);
-});
-
-test("an inconclusive preliminary photo can queue full AI, while an explicit mismatch stays excluded", async () => {
-    for (const verdict of ["CANT_TELL", "MISMATCH", null]) {
-        const s = steps([screen("CANDIDATE", { card: { name: "Lugia" }, priceAnomaly: { referencePrice: 315, photoChecked: true } })], { photoAnswer: verdict ? { verdict, problems: [] } : null });
-        const result = await screenListing(listing("Lugia", { currentPrice: 5, images: ["photo"] }), s);
-        assert.equal(canAutoAnalyze(result), verdict !== "MISMATCH");
-        assert.equal(s.calls.details, 0);
-        if (verdict === "MISMATCH") assert.equal(result.match, "OTHER_CARD");
+test("saved or literal metadata removes foreign, junk and wrong-identity cards without provider work", async t => {
+    const fetch = t.mock.method(globalThis, "fetch", async () => assert.fail("metadata screening cannot dispatch provider requests"));
+    const intent = readSearchLocally("Charizard Base Set 4/102 Unlimited holo");
+    for (const [title, mismatch] of [["Charizard Base Set 4/102 Japanese Holo", "OTHER_LANGUAGE"],
+        ["Charizard Base Set 4/102 custom proxy", "JUNK"], ["Charizard Base Set 2 4/130 Holo", "OTHER_SET"],
+        ["Charizard Base Set 5/102 Holo", "OTHER_CARD"], ["Charizard Base Set 4/102 First Edition Holo", "OTHER_PRINTING"]]) {
+        assert.equal((await screenListingWithoutAi(listing(title), intent, undefined, read)).match, mismatch);
     }
+    assert.equal(fetch.mock.callCount(), 0);
 });
 
-test("matching cheap photos allow existing detail and full-analysis flow and retain available-photo evidence", async () => {
-    const priced = screen("CANDIDATE", { card: { name: "Lugia" }, priceAnomaly: { referencePrice: 315, photoChecked: true } });
-    const s = steps([priced, priced], { photoAnswer: { verdict: "MATCH", problems: [] } });
-    const result = await screenListing(listing("Lugia", { currentPrice: 5, images: ["front", "back"] }), s);
-    assert.equal(canAutoAnalyze(result), true);
-    assert.equal(s.calls.details, 1);
-    assert.deepEqual(result.screen.evidence, { photos: 2, mainPhoto: "MATCH" });
+test("metadata transcribes seller grade and condition without claiming label or photo confirmation", async () => {
+    const raw = await screenListingWithoutAi(listing("Charizard Base Set 4/102 Unlimited Holo LP"), null, undefined, read);
+    assert.equal(raw.cardCondition, "Lightly Played"); assert.equal(raw.screen?.needsAnalysis, "IDENTITY");
+    assert.equal(raw.screen?.status, "UNSCREENED"); assert.equal(raw.screen?.bestCase, null);
+    const slab = await screenListingWithoutAi(listing("Charizard Base Set 4/102 Unlimited Holo CGC 8.5", { isGraded: true }), null, undefined, read);
+    assert.deepEqual([slab.listedAttributes?.grader, slab.listedAttributes?.grade], ["CGC", 8.5]);
+    assert.equal(slab.screen?.needsAnalysis, "SLAB_LABEL"); assert.equal(slab.screen?.evidence?.mainPhoto, "UNKNOWN");
 });
 
-test("a title naming another set than the one searched is set aside before any check", async () => {
-    const s = steps([]);
-    s.readTitle = async () => ({ aspects: { Set: "Scarlet & Violet 151" }, filled: ["Set"], condition: null, kind: "SINGLE_CARD" });
-    const intent = { cardName: "Charizard", sets: ["Base Set"], cardNumber: null, printing: null, graded: null, titleWords: ["charizard"], source: "ai" };
-    const result = await screenListing(listing("Charizard ex 199/165 151 SIR", { currentPrice: 5 }), s, intent);
-
-    assert.equal(result.match, "OTHER_SET");
-    assert.equal(s.calls.checks.length, 0);
-    assert.equal(s.calls.details, 0);
+test("title condition only fills an absent field and preserves structured seller claims and notes", async t => {
+    const fetch = t.mock.method(globalThis, "fetch", async () => assert.fail("local metadata cannot call a provider"));
+    const title = "Charizard Base Set 4/102 Unlimited Holo Mint English";
+    for (const cardCondition of ["Heavily played (Poor)", "Damaged", "Unknown", " Near Mint "]) {
+        const notes = ["Seller condition details remain available."];
+        const original = listing(title, { cardCondition, conditionNotes: notes });
+        const result = await screenListingWithoutAi(original, null, undefined, read);
+        assert.equal(result.cardCondition, cardCondition); assert.equal(result.conditionNotes, notes);
+        assert.equal(original.cardCondition, cardCondition, "the source listing is not changed");
+    }
+    for (const cardCondition of [undefined, null, "", "   "]) {
+        const result = await screenListingWithoutAi(listing(title, { cardCondition }), null, undefined, read);
+        assert.equal(result.cardCondition, "Near Mint", "retain the existing title-reader vocabulary for a missing field");
+    }
+    assert.equal(fetch.mock.callCount(), 0);
 });
 
-test("a candidate whose main photo shows another card is set aside before any eBay request", async () => {
-    const card = { name: "Charizard", set: "Base Set", cardNumber: "004/102", printing: "UNLIMITED", printingLabel: "Unlimited" };
-    const s = steps([screen("CANDIDATE", { card })], {
-        photoAnswer: { verdict: "MISMATCH", problems: ["a Pikachu 30th anniversary logo on the artwork"] },
+test("the search pipeline retains HP metadata against a Mint title for cautious priority without rejecting the card", async t => {
+    const fetch = t.mock.method(globalThis, "fetch", async () => assert.fail("only injected metadata/sold evidence may run"));
+    const row = listing("Charizard Base Set 4/102 Unlimited Holo Mint English", {
+        currentPrice: 40, shipping: 5, images: ["front-photo", "back-photo"], cardCondition: "Heavily played (Poor)",
+        conditionNotes: ["The card is heavily played."],
     });
-    const result = await screenListing(listing("Charizard Base Set 4/102 Holo", { images: ["https://i.ebayimg.com/images/g/x/s-l225.jpg"] }), s);
-
-    assert.equal(result.match, "OTHER_CARD");
-    assert.equal(canAutoAnalyze(result), false);
-    assert.match(result.screen.reason, /30th anniversary/);
-    assert.equal(s.calls.details, 0);
+    const source = JSON.stringify(row);
+    const sold: ScreeningSoldEvidence = { status: "AVAILABLE", exactScope: true, note: "Saved matched raw market context", references: [{
+        recordId: 1, name: "Charizard", set: "Base Set", cardNumber: "4/102", printing: "UNLIMITED", finish: "HOLO", grader: null, grade: null, condition: null,
+        summary: { grader: "RAW", grade: "UNSPECIFIED", windowDays: 90, count: 3, median: 100, low: 90, high: 110,
+            newestSale: new Date(Date.now() - 86400000).toISOString(), confidence: "MEDIUM", dropped: {}, sales: [] },
+    }] };
+    const results = await findDeals("Charizard Base Set 4/102 Unlimited holo", {}, offlineSearchSteps([row], {
+        soldScreening: () => async () => structuredClone(sold),
+    }));
+    assert.equal(results.length, 1); const result = results[0];
+    assert.equal(result.cardCondition, row.cardCondition); assert.deepEqual(result.conditionNotes, row.conditionNotes);
+    const clues = sellerConditionClues(result);
+    assert.equal(clues.claim, null); assert.equal(clues.conflict, true); assert.equal(clues.severe, true);
+    const priority = analysisPriority(result);
+    assert.equal(priority.rawMarketContext?.caution, "SELLER_DAMAGE"); assert.equal(priority.contextPriority, false);
+    assert.equal(result.match, undefined); assert.equal(result.screen?.status, "UNSCREENED"); assert.equal(canAutoAnalyze(result), true);
+    assert.equal(priority.expectedProfit, null); assert.equal(result.screen?.bestCase, null);
+    assert.equal(JSON.stringify(row), source); assert.equal(fetch.mock.callCount(), 0);
 });
 
-test("a main photo that matches, or can't be judged, lets the candidate go on", async () => {
-    const card = { name: "Charizard", set: "Base Set", cardNumber: "004/102", printing: "UNLIMITED", printingLabel: "Unlimited" };
-    const s = steps([screen("CANDIDATE", { card }), screen("CANDIDATE", { card })], {
-        photoAnswer: { verdict: "CANT_TELL", problems: [] },
-    });
-    const result = await screenListing(listing("Charizard Base Set 4/102 Holo", { images: ["https://i.ebayimg.com/images/g/x/s-l225.jpg"] }), s);
-
-    assert.equal(result.match, undefined);
-    assert.equal(canAutoAnalyze(result), true);
-    assert.equal(s.calls.photos, 1);
-    assert.equal(s.calls.details, 1);
+test("unknown requested slab grades stay unpriced while explicit wrong grades are excluded before sold research", async () => {
+    const rows = [listing("Aquapolis Holo PSA 6", { id: "low", isGraded: true }), listing("Aquapolis Holo CGC 8", { id: "other", isGraded: true }),
+        listing("Aquapolis Holo PSA", { id: "unknown", isGraded: true }), listing("Aquapolis Holo PSA 8", { id: "eight", isGraded: true })];
+    const researched: string[] = [];
+    const result = await findDeals("Aquapolis PSA 7 or better holo", {}, offlineSearchSteps(rows, { soldScreening: () => async row => {
+        researched.push(row.id); return { status: "UNAVAILABLE", exactScope: false, references: [], note: "No exact saved grade market" };
+    } }));
+    assert.deepEqual(researched, ["unknown", "eight"]); assert.deepEqual(result.map(row => row.id), ["unknown", "eight"]);
+    assert.ok(result.every(row => !canAutoAnalyze(row))); assert.equal(result[0].listedAttributes?.grade, null);
 });
 
-test("cancelling while a title is being read prevents pricing and eBay details", async () => {
-    const controller = new AbortController();
-    const s = steps([]);
-    s.readTitle = async () => {
-        controller.abort();
-        return { aspects: { Set: "Base Set" }, filled: [] };
-    };
-
-    await assert.rejects(screenListing(listing("Charizard Base Set"), s, null, controller.signal), { name: "AbortError" });
-    assert.equal(s.calls.checks.length, 0);
-    assert.equal(s.calls.details, 0);
-});
-
-test("cancelling during the first check prevents photo and detail requests", async () => {
-    const controller = new AbortController();
-    const s = steps([]);
-    s.check = async () => {
-        controller.abort();
-        return screen("CANDIDATE", { card: { name: "Charizard" } });
-    };
-
-    await assert.rejects(screenListing(listing("Charizard Base Set", { images: ["photo"] }), s, null, controller.signal), { name: "AbortError" });
-    assert.equal(s.calls.photos ?? 0, 0);
-    assert.equal(s.calls.details, 0);
+test("metadata preserves unknown shipping and a real zero quote as different inputs", async () => {
+    for (const shipping of [null, 0, 7]) {
+        const result = await screenListingWithoutAi(listing(undefined, { shipping }), null, undefined, read);
+        assert.equal(result.shipping, shipping);
+        assert.equal(result.screen?.money, undefined, "metadata cannot invent an investment or safe bid");
+    }
 });

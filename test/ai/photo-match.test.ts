@@ -1,7 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createMainPhotoMatcher, type ClaimedCard, type PhotoMatch } from "../../server/ai/photo-match.ts";
-import { screeningSteps } from "../../server/deals/screen-listing.ts";
 import { MODEL } from "../../server/ai/openai.ts";
 
 const thumbnail = "https://i.ebayimg.com/images/g/offline/s-l225.jpg";
@@ -132,10 +131,4 @@ test("a new search waits for a canceled search's dispatched photo to save before
     assert.equal(await next, reading);
     assert.equal(calls, 1);
     assert.equal(cache.saved.size, 1);
-});
-
-test("screening passes its cancellation signal into main-photo checks", async () => {
-    const stop = new AbortController();
-    stop.abort();
-    await assert.rejects(screeningSteps(undefined, false, stop.signal).matchPhoto(thumbnail, card), { name: "AbortError" });
 });

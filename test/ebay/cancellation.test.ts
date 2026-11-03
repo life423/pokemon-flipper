@@ -22,7 +22,7 @@ test("stopping the first primary search page prevents all later page requests", 
         controller.abort();
         return Response.json({ total: 1000, itemSummaries: Array.from({ length: 200 }, (_, index) => ({ itemId: `v1|${index}|0`, title: "Venusaur Base Set Holo", buyingOptions: ["FIXED_PRICE"], price: { value: "20", currency: "USD" } })) });
     });
-    await assert.rejects(findDeals(query, { maxResults: 1000, signal: controller.signal }), { name: "AbortError" });
+    await assert.rejects(findDeals(query, { signal: controller.signal }), { name: "AbortError" });
     assert.equal(pages, 1);
     await assert.rejects(searchListings(query, { maxResults: 1000, signal: controller.signal }), { name: "AbortError" });
     assert.equal(pages, 1);

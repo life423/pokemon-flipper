@@ -8,7 +8,7 @@ export const BOUNDED_VISION_MODEL = process.env.OPENAI_BOUNDED_VISION_MODEL ?? "
 export const BOUNDED_MAX_OUTPUT_TOKENS = 2200;
 // User-approved throughput. Provider rate limits still trigger their normal
 // backoff; these are concurrency ceilings, not spending budgets.
-export { AI_CONCURRENCY as AI_REQUEST_CONCURRENCY, AI_CONCURRENCY as SOLD_REVIEW_CONCURRENCY } from "../../shared/work-limits.ts";
+export { AI_CONCURRENCY as AI_REQUEST_CONCURRENCY } from "../../shared/work-limits.ts";
 const VISION_SCHEMAS = new Set(["photo_check", "card_condition", "focused_photo_review", "shadowless_confirmation", "identity_resolution", "sold_card_condition"]);
 export function aiPolicy(schema: string) {
     const assessment = VISION_SCHEMAS.has(schema);

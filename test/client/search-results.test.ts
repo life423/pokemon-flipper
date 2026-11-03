@@ -170,14 +170,14 @@ test("high-confidence actual holo, reverse-holo and non-holo finishes stay disti
     assert.deepEqual(groupSearchResults(filter(copies, analyses, {}, "search", holoIntent), analyses, false, new Set()).deals, []);
 });
 
-test("deliberately deferred low-value copies stay out of deals, offers and hidden finds even with a reused profit estimate", () => {
+test("deliberately deferred low-value copies stay out of deals and offers even with a reused profit estimate", () => {
     const deferred = listing("deferred", { found: { how: "PHOTO_SHOWS_IT", note: "The photo identifies this card." } });
     const normal = listing("fully-researched");
     const e = evaluation(deferred, 300, "STRONG"); e.researchMode = "DEFERRED_LOW_RESALE";
     const analyses = { [deferred.id]: done(e), [normal.id]: done(evaluation(normal, 250, "GOOD")) };
     const groups = groupSearchResults([deferred, normal], analyses, true, new Set());
     assert.deepEqual(ids(groups.deals), [normal.id]);
-    assert.deepEqual(groups.offers, []); assert.deepEqual(groups.hidden, []); assert.deepEqual(groups.review, []);
+    assert.deepEqual(groups.offers, []); assert.deepEqual(groups.review, []);
     assert.deepEqual(ids(groups.all), [deferred.id, normal.id]);
     assert.deepEqual(ids(sortSearchResults([deferred, normal], analyses, "best", targets, NOW)), [normal.id, deferred.id]);
 });
@@ -288,6 +288,68 @@ test("explicit grader and grade criteria narrow search results without leaking i
     assert.equal(countSearchResults({ listings, analyses, page: "shortlist", intent, newMode: false, newIds: new Set() }).mismatched, 0);
 });
 
+test("photographed holders override wrong raw/graded metadata in all result groups and counts", t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("holder filtering must reuse paid evidence"));
+    const miscategorized = listing("raw-category-slab");
+    const ordinary = listing("ordinary-raw");
+    const certified = slab(miscategorized, "PSA", "8");
+    const analyses = { [miscategorized.id]: done(certified), [ordinary.id]: done(evaluation(ordinary)) };
+    const snapshot = structuredClone({ miscategorized, ordinary, analyses });
+    const rawRows = filter([miscategorized, ordinary], analyses, { kindFilter: "raw" });
+    assert.deepEqual(ids(rawRows), [ordinary.id]);
+    const groups = groupSearchResults(rawRows, analyses, true, new Set([miscategorized.id]));
+    assert.deepEqual(groups.new, []);
+    for (const rows of Object.values(groups)) assert.equal(rows.some(row => row.id === miscategorized.id), false);
+    assert.deepEqual(ids(filter([miscategorized, ordinary], analyses, { kindFilter: "graded" })), [miscategorized.id]);
+    assert.deepEqual(ids(filter([miscategorized, ordinary], analyses)), [miscategorized.id, ordinary.id]);
+    const counts = countSearchResults({ listings: [miscategorized], analyses, filters: { ...filters, kindFilter: "raw" }, page: "search", newMode: false, newIds: new Set() });
+    assert.equal(counts.candidates, 0); assert.equal(counts.waiting, 0); assert.equal(counts.unchecked, 0);
+    assert.deepEqual({ miscategorized, ordinary, analyses }, snapshot, "classifying a holder does not rewrite terms, grades or financial advice");
+});
+
+test("bare, sleeved and top-loaded cards stay raw despite seller graded categories", () => {
+    for (const holder of ["NONE", "SLEEVE", "TOPLOADER"]) {
+        const item = listing(holder, { isGraded: true });
+        const value = evaluation(item); value.photoCheck!.holder = holder;
+        const analyses = { [item.id]: done(value) };
+        assert.deepEqual(ids(filter([item], analyses, { kindFilter: "raw" })), [item.id]);
+        assert.deepEqual(filter([item], analyses, { kindFilter: "graded" }), []);
+    }
+});
+
+test("unreadable slab grades and certificate concerns do not turn certified holders into raw cards", () => {
+    const item = listing("unreadable-slab");
+    const value = slab(item, "PSA", "8");
+    value.photoCheck!.slab!.grade = null;
+    value.slab = { ...value.slab!, grade: null, status: "NEEDS_REVIEW", reasons: ["The numeric label grade is unreadable."] };
+    value.underwriting = null;
+    const analyses = { [item.id]: done(value) };
+    assert.deepEqual(filter([item], analyses, { kindFilter: "raw" }), []);
+    const rows = filter([item], analyses, { kindFilter: "graded" });
+    assert.deepEqual(ids(groupSearchResults(rows, analyses, false, new Set()).review), [item.id]);
+});
+
+test("raw/graded query constraints use observed kind with Both selected and stay out of shortlist browsing", () => {
+    const mislabeledRaw = listing("actually-slab");
+    const mislabeledSlab = listing("actually-raw", { isGraded: true });
+    const analyses = { [mislabeledRaw.id]: done(slab(mislabeledRaw, "CGC", "8")), [mislabeledSlab.id]: done(evaluation(mislabeledSlab)) };
+    const rows = [mislabeledRaw, mislabeledSlab];
+    assert.deepEqual(ids(filter(rows, analyses, {}, "search", { ...holoIntent, graded: false })), [mislabeledSlab.id]);
+    assert.deepEqual(ids(filter(rows, analyses, {}, "search", { ...holoIntent, graded: true })), [mislabeledRaw.id]);
+    assert.deepEqual(ids(filter(rows, analyses, {}, "shortlist", { ...holoIntent, graded: true })), rows.map(row => row.id));
+    assert.deepEqual(filter(rows, analyses, { kindFilter: "raw" }, "search", { ...holoIntent, graded: true }), [], "query and control constraints cannot silently replace one another");
+});
+
+test("unknown photo holders preserve preliminary category without claiming they were confirmed raw", () => {
+    for (const holder of ["UNKNOWN", "OTHER"]) {
+        const item = listing(holder, { isGraded: true });
+        const value = evaluation(item); value.photoCheck!.holder = holder;
+        const analyses = { [item.id]: done(value) };
+        assert.deepEqual(filter([item], analyses, { kindFilter: "raw" }), []);
+        assert.deepEqual(ids(filter([item], analyses, { kindFilter: "graded" })), [item.id]);
+    }
+});
+
 test("offer-dependent discoveries stay separate from confirmed deals and respect the 10-percent cutoff", () => {
     const found = { how: "WRONG_CATEGORY" as const, note: "Offline discovery." };
     const deal = listing("buy-now-deal", { bestOffer: true, found }), offer = listing("offer-only", { bestOffer: true, found });
@@ -302,10 +364,8 @@ test("offer-dependent discoveries stay separate from confirmed deals and respect
     const listings = filter([deal, offer, lowball, waiting, review, rejected], analyses);
     const without = groupSearchResults(listings, analyses, false, new Set([offer.id, lowball.id]));
     assert.deepEqual(ids(without.deals), ["buy-now-deal"]); assert.deepEqual(ids(without.offers), []);
-    assert.deepEqual(without.hidden, []);
     const withOffers = groupSearchResults(listings, analyses, true, new Set([offer.id, lowball.id]));
     assert.deepEqual(ids(withOffers.offers), ["offer-only"]); assert.deepEqual(ids(withOffers.deals), ["buy-now-deal"]);
-    assert.deepEqual(withOffers.hidden, []);
     assert.deepEqual(ids(withOffers.new), ["offer-only", "requires-lowball"], "new inventory includes a newly discovered rejection in All/New, not Deals");
 });
 
@@ -319,7 +379,7 @@ test("photographic discoveries use ordinary deal outcomes", () => {
     const discovered = listing("discovered-auction", { buyingOption: "AUCTION", found: { how: "PHOTO_SHOWS_IT", note: "Photo discovery" } });
     const value = evaluation(discovered, 250, "GOOD");
     const grouped = groupSearchResults([discovered], { [discovered.id]: done(value) }, false, new Set());
-    assert.deepEqual(ids(grouped.deals), [discovered.id]); assert.deepEqual(grouped.hidden, []);
+    assert.deepEqual(ids(grouped.deals), [discovered.id]);
     assert.equal(value.rating?.level, "GOOD", "classification does not rewrite saved provider evidence");
 });
 

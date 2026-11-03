@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { normalizeAuthenticity } from "../../server/analysis/authenticity.ts";
-import { applyConditionRules, selectConditionAssessment } from "../../server/analysis/rules.ts";
+import { applyConditionRules } from "../../server/analysis/rules.ts";
 import { underwrite } from "../../shared/money/underwriting.ts";
 import { cardEvaluation } from "../fixtures/card-evaluation.ts";
 import type { Authenticity, Condition } from "../../shared/types.ts";
@@ -46,18 +46,7 @@ test("old reports retain their concern until a new condition assessment supplies
     const legacy: Authenticity = { concern: "POSSIBLE", reasons: ["Cannot inspect stock."] };
     assert.deepEqual(normalizeAuthenticity(legacy), legacy);
 });
-test("both opinions are normalized before choosing cautious wear; real anomalies still win", () => {
-    const generic = condition(auth({ concern: "POSSIBLE", observations: [limitation] }), 8);
-    const worn = condition(auth(), 4);
-    let selected = selectConditionAssessment([generic, worn], "FULL", { closeUps: true, photoCount: 2 })!;
-    assert.equal(selected.result.gradeRange.likely, 4);
-    assert.equal(selected.validCount, 2);
-    assert.deepEqual(selected.setAside, [generic]);
-    selected = selectConditionAssessment([worn, condition(auth({ observations: [suspicious] }), 8)], "FULL", { closeUps: true, photoCount: 2 })!;
-    assert.equal(selected.result.authenticity.concern, "POSSIBLE");
-    assert.equal(selectConditionAssessment([condition(auth({ concern: "LIKELY_FAKE" }))], "FULL"), null);
-});
-test("normalization is stable across saved selection and final underwriting validation", () => {
+test("normalization is stable across repeated condition validation", () => {
     const first = applyConditionRules(condition(), "FULL", { photoCount: 2 })!;
     assert.deepEqual(applyConditionRules(first, "FULL", { photoCount: 2 }), first);
 });

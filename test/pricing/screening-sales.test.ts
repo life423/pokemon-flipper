@@ -194,6 +194,77 @@ test("fifty listings share canonical catalog and market work without sharing mut
     assert.equal((await run(listing(), intent)).references[0].summary.median, 100);
 });
 
+test("saved and literal Venusaur name boilerplate shares one catalog research target", async () => {
+    const wanted: SearchIntent = { ...intent, cardName: "Venusaur", cardNumber: "15/102", titleWords: ["venusaur"] };
+    const forms = [
+        ["Venusaur 15/102 Holo Base Set Unlimited Pokemon Light Play", "venusaur light play", false],
+        ["Venusaur 15/102 Holo Rare Base Set Unlimited Pokemon 1999 Wizards LP", "venusaur wizards", false],
+        ["1999 Pokemon Base Set Venusaur Holo #15/102 PSA 8 NM-MT Unlimited WOTC", "venusaur -mt", true],
+        ["Pokemon 1999 Venusaur 15/102 Holo Rare Base Set Unlimited BGS 9 Centering 10", "venusaur centering", true],
+        ["Pokemon TCG Venusaur 15/102 Base Set Holo Unlimited English 1999 WOTC SWIRL", "venusaur swirl", false],
+        ["Venusaur 15/102 Base Set Holo Rare Unlimited WOTC Pokemon Card MP 1999 Arita", "venusaur arita", false],
+        ["1999 Pokémon Base Set Unlimited Venusaur Holo 15/102 PSA 6 EX-MT", "venusaur ex-mt", true],
+        ["1999 Pokémon Base Set Unlimited Venusaur Holo 15/102 PSA 5 EX", "venusaur ex", true],
+        ["Pokémon TCG Venusaur Base Set Holo Rare 15/102 1999 Pokemon Game PSA 6 English", "venusaur game", true],
+        ["1999 Wizards Pokémon TCG Venusaur Holo Rare Card 15/102 Unlimited Base Set", "wizards venusaur", false],
+    ] as const;
+    const queries: unknown[] = [];
+    const { run, calls } = harness({ lookup: async query => { queries.push(query); return [card({ name: "Venusaur", cardNumber: "015/102" })]; },
+        raw: async () => three({ title: "Venusaur 15/102 Base Set Unlimited Holo NM Wizards" }),
+        graded: async (_id, target) => three({ title: `Venusaur 15/102 Base Set Unlimited Holo ${target.grader} ${target.grade} NM-MT`, grader: target.grader, grade: target.grade }),
+    });
+    const results = await Promise.all(forms.map(([title, name, isGraded], index) => run(listing({ id: String(index), title, isGraded,
+        screen: { status: "UNSCREENED", reason: "Saved literal claim", card: { name, set: "Base Set", cardNumber: "15/102", printing: "UNLIMITED", printingLabel: null }, bestCase: null, assumed: null } }), wanted)));
+    assert.ok(results.every(result => result.status === "AVAILABLE" && result.exactScope));
+    assert.equal(calls.lookup, 1);
+    assert.deepEqual(queries, [{ name: "Venusaur", set: "Base Set", cardNumber: "15/102" }]);
+    assert.equal(calls.raw.length, 1);
+    assert.equal(calls.graded.length, 4, "each real exact grade remains a separate market; duplicate PSA 6 rows reuse it");
+});
+
+test("canonical names do not bypass set, number or conflicting saved-card claims", async () => {
+    const subjects = [
+        listing({ title: "Charizard Base Set 2 4/130 Unlimited Holo Wizards", screen: { status: "UNSCREENED", reason: null, card: { name: "Charizard", set: "Base Set", cardNumber: "4/102", printing: "UNLIMITED", printingLabel: null }, bestCase: null, assumed: null } }),
+        listing({ title: "Charizard Base Set 5/102 Unlimited Holo Wizards", screen: { status: "UNSCREENED", reason: null, card: { name: "Charizard", set: "Base Set", cardNumber: "4/102", printing: "UNLIMITED", printingLabel: null }, bestCase: null, assumed: null } }),
+        listing({ title: "Dark Charizard Team Rocket 4/82 Unlimited Holo", screen: { status: "UNSCREENED", reason: null, card: { name: "Charizard", set: "Team Rocket", cardNumber: "4/82", printing: "UNLIMITED", printingLabel: null }, bestCase: null, assumed: null } }),
+    ];
+    for (const subject of subjects) {
+        const { run, calls } = harness();
+        const result = await run(subject, intent);
+        assert.equal(result.status, "UNAVAILABLE"); assert.equal(result.exactScope, false);
+        assert.equal(calls.lookup + calls.raw.length + calls.graded.length, 0);
+    }
+});
+
+test("scoped catalog matching preserves modern printed forms and a post-grade EX descriptor", async () => {
+    const name = "Charizard ex", set = "Scarlet & Violet 151", number = "199/165";
+    const wanted: SearchIntent = { ...intent, cardName: name, sets: [set], cardNumber: number };
+    const queries: unknown[] = [];
+    const { run, calls } = harness({ lookup: async query => { queries.push(query); return [card({ name, setName: set, cardNumber: number }), card({ id: 2, name: "Charizard", setName: set, cardNumber: number })]; },
+        graded: async () => three({ title: `${name} ${set} ${number} Unlimited Holo PSA 5 EX`, grader: "PSA", grade: "5" }),
+    });
+    const subject = listing({ title: `${name} ${set} ${number} Unlimited Holo PSA 5 EX`, isGraded: true,
+        screen: { status: "UNSCREENED", reason: null, card: { name, set, cardNumber: number, printing: "UNLIMITED", printingLabel: null }, bestCase: null, assumed: null } });
+    const result = await run(subject, wanted);
+    assert.equal(result.status, "AVAILABLE"); assert.equal(result.exactScope, true);
+    assert.equal(result.references[0].name, name); assert.equal(result.references[0].summary.count, 3);
+    assert.deepEqual(queries, [{ name, set, cardNumber: number }]); assert.equal(calls.graded.length, 1);
+});
+
+test("unknown residual words and lookalike name forms never trigger fallback catalog loops", async () => {
+    for (const name of ["Dark Charizard", "Charizard ex", "Charizard VMAX", "Charizard curious variant"]) {
+        const { run, calls } = harness();
+        const result = await run(listing({ title: `${name} Base Set 4/102 Unlimited Holo` }), intent);
+        assert.equal(result.status, "UNAVAILABLE", name);
+        assert.equal(calls.lookup, 1); assert.equal(calls.raw.length + calls.graded.length, 0);
+    }
+    const { run, calls } = harness({ cards: [card({ name: "Nidoran♂", setName: "Jungle", cardNumber: "57/64" })] });
+    const subject = listing({ title: "Nidoran Female Jungle 57/64 Unlimited Holo",
+        screen: { status: "UNSCREENED", reason: null, card: { name: "Nidoran♀", set: "Jungle", cardNumber: "57/64", printing: "UNLIMITED", printingLabel: null }, bestCase: null, assumed: null } });
+    const result = await run(subject, { ...intent, cardName: "Nidoran♀", sets: ["Jungle"], cardNumber: "57/64" });
+    assert.equal(result.status, "UNAVAILABLE"); assert.equal(calls.raw.length, 0);
+});
+
 test("bounded price exhaustion defers missing markets while retaining accepted sparse or complete facts", async () => {
     const { run, calls } = harness({ cards: [card({ variants: [variant(), variant("1st Edition Holofoil", "FIRST_EDITION")] })], raw: async (_id, label) => {
         if (label.startsWith("1st")) throw new ScreeningPriceBudgetError();

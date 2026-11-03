@@ -2,8 +2,9 @@
 
 This maps the current bounded HTTP workflow. Searches research recent sold
 prices before admitting automatic photo work, while final advice still requires
-the applicable identity, condition or slab-label evidence. Legacy diagnostic
-entry points remain available; they are not the current browser search path.
+the applicable identity, condition or slab-label evidence. The app, single-listing
+CLI and benchmark use the same evaluator. Older request writers are retired;
+small compatibility readers preserve already-paid evidence.
 
 ## Follow one listing
 
@@ -35,8 +36,8 @@ flowchart TD
    eight uncached PKMNPrices requests including catalog work, and one page of
    up to 20 sales per requested market. SQL/file response caches and shared
    catalog/market work avoid repeated requests. This stage calls neither AI nor
-   eBay Browse. Broad discovery and automatic pricing recovery remain disabled
-   for bounded search.
+   eBay Browse. The retired broad-discovery and automatic pricing-recovery
+   branches are no longer alternative search paths.
 3. Exact slab grader, grade, printing and finish scopes stay separate. Medians
    rank candidates; only three or more matched sales within 90 days in one
    explicit scope can reject a listing using the upper observed resale value
@@ -93,25 +94,33 @@ All paths below are relative to the repository root.
 | Responsibility | Main files | Boundary |
 | --- | --- | --- |
 | HTTP routes and stream messages | `server/app.ts`, `client/src/api.ts` | Keep transport validation and cancellation separate from valuation. |
-| Normal search and legacy discovery | `server/deals/search.ts`, `find-deals.ts`, `dig.ts` | Bounded HTTP searches stop before broad discovery/recovery; legacy unbounded callers retain those separate paths. |
+| Normal search | `server/deals/search.ts`, `find-deals.ts` | One source page and one bounded pipeline for HTTP and diagnostics; no legacy broad-discovery branch. |
 | New-inventory scan and history | `server/deals/new-listings.ts`, `server/search/history.ts` | Deduplicate before provider work; preserve the newest-search cache and reserve. |
 | Query interpretation and criteria | `server/search/intent.ts`, `server/search/relevance.ts`, `shared/search-criteria.ts` | Seller keywords and requested slab grades are not verified photo evidence. |
-| Local metadata screening | `server/deals/screen-listing.ts` | Bounded searches use saved/local readings without new AI or listing-detail calls. Legacy `prescreen.ts` is not the bounded admission path. |
+| Local metadata screening | `server/deals/screen-listing.ts` | Saved/local readings only, without new AI or listing-detail calls. `prescreen.ts` remains behind the compatibility pricing-retry endpoint, not normal admission. |
 | Sold-price-first admission | `server/deals/price-first.ts`, `server/pricing/screening-sales.ts`, `shared/money/sold-screen.ts` | Shared matched sold references precede browser emission; public observations stay separate from private fee/target calculations and verified photo identity. |
 | Screening price transport | `server/pricing/pkmnprices.ts` (`createScreeningPriceSource`) | Cache first, eight uncached requests including catalog work, one 20-sale page per market; no AI/Browse calls or automatic retry loop. |
 | Direct links and shortlist | `server/listings/resolve.ts`, `server/shortlist/service.ts`, `server/shortlist/store.ts` | Isolated listing lookup, durable snapshots and targeted refresh. |
 | Advisory assessment planning | `server/analysis/bounded-plan.ts` | Stable original RAW selection/key plus compact SLAB_LABEL plan; seller metadata chooses request scope, never the physical holder or final certified grade. |
 | Bounded request/schema | `server/ai/bounded-assessment.ts` | Original RAW body/schema retained; compact label schema forces null condition. Both delegate guarded structured transport to `openai.ts`. |
-| Photo assessment | `server/analysis/bounded-evaluate.ts`, `rules.ts` | Compatible saved-evidence reuse, physical-holder routing and applicable pricing; no automatic paid raw fallback after a disproved slab claim. Legacy `evaluate.ts`, `condition-runs.ts` and `resolve-evidence.ts` retain their separate diagnostic flow. |
+| Photo assessment | `server/analysis/bounded-evaluate.ts`, `rules.ts` | One evaluator owns saved-evidence reuse, physical-holder routing and pricing; no automatic paid raw fallback after a disproved slab claim. |
+| Older paid evidence | `server/analysis/legacy-evidence.ts`, `store.ts`, `resolve-evidence.ts` | Retain exact version identifiers, saved record shapes and deterministic correction readers without the old request writers. |
+| Explicit deeper photo review | `server/analysis/deeper-review.ts`, `server/ai/deeper-photo-review.ts` | Keep the original assessment and a separately keyed focused report; no broad discovery. |
 | AI transport and identity rules | `server/ai/openai.ts`, `server/ai/policy.ts`, `server/identity/` | Exact preflight, spending and SDK dispatch remain distinct from canonical identification and label checks. |
-| Raw resale evidence | `server/pricing/raw-comps.ts`, `raw-prices.ts`, `server/ai/sold-condition.ts` | Match condition/printing/finish; keep any market-price fallback labeled. |
-| Existing slabs and grading scenarios | `server/pricing/graded-comps.ts`, `active-comps.ts` | Exact grader/grade sold evidence; current-listing references remain separate from sold prices. |
+| Raw resale evidence | `server/pricing/raw-comps.ts`, `raw-prices.ts`, `server/ai/sold-condition.ts` | Match condition/printing/finish; reuse saved sold-copy findings and keep any market-price fallback labeled. No new sold-photo writer. |
+| Existing slabs and grading scenarios | `server/pricing/graded-comps.ts` | Exact grader/grade sold evidence; asking references in older saved records remain distinct from sales. |
 | Shared sold-evidence rules | `server/pricing/sold-comps.ts` | Pure comp rejection, median, outlier and summary helpers shared by raw/graded pricing. Provider access stays outside this module. |
 | Money and purchase decisions | `shared/money/underwriting.ts`, `config.ts`, `offer.ts`, `rating.ts`, `targets.ts` | Deterministic calculations shared by server and browser. |
 | App orchestration | `client/src/App.tsx`, `client/src/analysis-state.ts` | Requests, queues, cancellation and loading/error/completed state. |
 | Search display and settings | `client/src/search/results.ts`, `settings.ts`, `presentation.ts`, `SearchControls.tsx`, `TargetFields.tsx` | Pure result selectors, preferences, labels and controls; no provider calls. |
 | Cards and analysis details | `client/src/components/DealCard.tsx`, `DetailPanel.tsx`, `components/analysis/` | `AnalysisDetails` composes financial, evidence, price and offer sections with shared presentation primitives. |
-| Liquidity/activity labels | `server/pricing/activity.ts`, `shared/liquidity.ts` | Distinguish matched-sale samples from broader market observations. |
+| Liquidity/activity labels | `shared/liquidity.ts` | Describe retained matched-sale samples honestly; a broader volume fetch no longer runs as a separate writer. |
+
+The manual pricing-retry endpoint, trusted ticket consumer and UI remain for
+compatibility. The current bounded price-first path already did not issue new
+tickets before this cleanup. Reconnecting an explicit bounded retry or retiring
+that surface remains a separate task; preserving the consumer does not mean
+normal searches now offer working retries or automatic price recovery.
 
 ## Invariants to preserve
 
@@ -198,14 +207,15 @@ For result selectors use `test/client/search-results.test.ts`; money changes
 require the existing `test/money/` coverage. Broaden to the full suite before a
 release.
 
-`npm run evaluate`, `npm run consistency`, review scripts, and searches or
-analysis actions in a running app can use real providers. They are not needed
+`npm run evaluate`, the bounded-search benchmark, and searches or analysis
+actions in a running app can use real providers. They are not needed
 just to verify a mechanical extraction. Keep live validation separate and record
 its provider-request counts and limitations.
 
 Recorded sales and activity do **not** establish when this particular copy will
 sell. This architecture does not add or guarantee a 30–60 day resale forecast.
 The compact route also does not establish a full-search cost saving or repair
-every photo/identity judgment. Deferred early-completion, English/visibility
-warning reports, the saved positive-deal example and the controlled useful-search
-benchmark remain separate work.
+every photo/identity judgment. A controlled cost benchmark is recorded in
+`search-cost-benchmark-2026-11-03.md`; useful-deal validation, deferred
+early-completion/English/visibility reports and the positive-deal example remain
+separate work.

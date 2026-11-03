@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyConditionRules, moreCautious, selectConditionAssessment } from "../../server/analysis/rules.ts";
+import { applyConditionRules } from "../../server/analysis/rules.ts";
 import { underwrite } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { cardEvaluation } from "../fixtures/card-evaluation.ts";
@@ -50,19 +50,6 @@ test("an explicit absent grade differs from a missing or invalid numeric grade r
     for (const gradeRange of [undefined, {}, { low: 9, likely: 8, high: 7 }, { low: 1, likely: 12, high: 3 }]) {
         assert.equal(applyConditionRules({ ...source, gradeRange } as Condition, "FULL", { closeUps: true }), null);
     }
-});
-
-test("cautious opinion selection compares actual raw condition without fabricating missing grades", () => {
-    const damaged = rawOnly("DAMAGED", 75.46, 15).condition!;
-    const nearMint = rawOnly("NEAR_MINT", 50, 300).condition!;
-    nearMint.gradeRange = { low: 7, likely: 8, high: 9 };
-    assert.equal(moreCautious(damaged, nearMint), damaged);
-    assert.equal(moreCautious(nearMint, damaged), damaged);
-    const selected = selectConditionAssessment([nearMint, damaged], "FULL", { closeUps: true });
-    assert.equal(selected?.result.rawCondition, "DAMAGED");
-    assert.equal(selected?.result.gradeRange, null);
-    const unsupportedNearMint = { ...nearMint, gradeRange: null };
-    assert.equal(moreCautious(nearMint, unsupportedNearMint), unsupportedNearMint);
 });
 
 test("a photographed damaged raw card with no numeric grade can still be a completed priced rejection", t => {

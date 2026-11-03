@@ -8,7 +8,7 @@ import { compareListingEvidence, listingSignals } from "../../../shared/signals.
 import { matchesListingFilters } from "../../../shared/listing-filters.ts";
 import { englishListingEligible } from "../../../shared/card-language.ts";
 
-export type View = ResultGroup | "hidden" | "all" | "new";
+export type View = ResultGroup | "all" | "new";
 
 export type SortKey = "best" | "overlooked" | "ending" | "priceLow" | "priceHigh";
 export type TypeFilter = "all" | "AUCTION" | "FIXED_PRICE";
@@ -58,7 +58,7 @@ export function filterSearchResults({ listings, analyses, filters: { typeFilter,
             return page !== "search" || !intent || !evaluation || !evaluatedCriteriaMismatch(evaluation, intent);
         })
         .filter((listing) => listing.availability !== "UNAVAILABLE")
-        .filter((listing) => matchesListingFilters(listing, { typeFilter, kindFilter, maxPrice: limit, minPrice: floor }))
+        .filter((listing) => matchesListingFilters(listing, { typeFilter, kindFilter, maxPrice: limit, minPrice: floor }, evaluationOf(analyses[listing.id]), page === "search" ? intent?.graded : null))
         .filter((listing) => {
             const evaluation = evaluationOf(analyses[listing.id]);
             return !evaluation || meetsMinimumGrade(evaluation, minGrade);
@@ -75,8 +75,7 @@ export function groupSearchResults(filtered: ListingSummary[], analyses: Record<
         if (group) grouped[group].push(listing);
     }
 
-    // Compatibility keys remain empty; discovery uses the ordinary outcome groups.
-    return { ...grouped, hidden: [], all: filtered, new: filtered.filter((listing) => newIds.has(listing.id)) };
+    return { ...grouped, all: filtered, new: filtered.filter((listing) => newIds.has(listing.id)) };
 }
 
 export function sortSearchResults(listings: ListingSummary[], analyses: Record<string, AnalysisState>, sort: SortKey, targets: Targets, now: number): ListingSummary[] {
@@ -109,15 +108,16 @@ export function countSearchResults({ listings, analyses, newMode, newIds, page, 
     listings = filters ? listings.filter(listing => matchesListingFilters(listing, {
         typeFilter: filters.typeFilter, kindFilter: filters.kindFilter,
         minPrice: Number(filters.minPrice) || 0, maxPrice: filters.maxPrice === "" ? undefined : Number(filters.maxPrice),
-    })) : listings;
+    }, evaluationOf(analyses[listing.id]))) : listings;
     const count = (status: string) => listings.filter((listing) => listing.screen?.status === status).length;
     const eligibleLanguage = (listing: ListingSummary) => englishListingEligible(listing, evaluationOf(analyses[listing.id]));
+    const eligibleKind = (listing: ListingSummary) => matchesListingFilters(listing, {}, evaluationOf(analyses[listing.id]), page === "search" ? intent?.graded : null);
     const eligibleEvidence = (listing: ListingSummary) => {
         const evaluation = evaluationOf(analyses[listing.id]);
-        return eligibleLanguage(listing) && !evaluation?.identity?.notThisCard &&
+        return eligibleLanguage(listing) && eligibleKind(listing) && !evaluation?.identity?.notThisCard &&
             !(page === "search" && intent && evaluation && evaluatedCriteriaMismatch(evaluation, intent));
     };
-    const analyzing = listings.filter((listing) => eligibleLanguage(listing) && analyses[listing.id]?.status === "loading").length;
+    const analyzing = listings.filter((listing) => eligibleLanguage(listing) && eligibleKind(listing) && analyses[listing.id]?.status === "loading").length;
 
     return {
         candidates: listings.filter((listing) => eligibleEvidence(listing) && (!newMode || newIds.has(listing.id)) && canAutoAnalyze(listing)).length,
@@ -126,7 +126,7 @@ export function countSearchResults({ listings, analyses, newMode, newIds, page, 
             !(listing.screen.priceAnomaly && !listing.screen.priceAnomaly.photoChecked)).length,
         mismatched: listings.filter(
             (listing) =>
-                (listing.match && listing.match !== "JUNK") || !eligibleLanguage(listing) || Boolean(evaluationOf(analyses[listing.id])?.identity?.notThisCard) ||
+                (listing.match && listing.match !== "JUNK") || !eligibleLanguage(listing) || !eligibleKind(listing) || Boolean(evaluationOf(analyses[listing.id])?.identity?.notThisCard) ||
                 Boolean(page === "search" && intent && evaluationOf(analyses[listing.id]) && evaluatedCriteriaMismatch(evaluationOf(analyses[listing.id])!, intent))
         ).length,
         // Junk the AI spotted in titles; the free rules' count comes with the search.

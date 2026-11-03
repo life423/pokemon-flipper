@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { DATA_DIR } from "../lib/paths.ts";
-import type { GradingMode, SavedAssessment, SavedRecord } from "./types.ts";
+import type { SavedRecord } from "./types.ts";
 import { writeJsonAtomic } from "../lib/atomic-json.ts";
 import { createKeyedLock } from "../lib/keyed-lock.ts";
 import { storageBackend, readAssessmentRecord, writeAssessmentRecord, StorageUnavailableError } from "../storage/index.ts";
@@ -85,20 +85,4 @@ export function reusableRecord(
     if (saved.reviewContext?.title.trim() !== title.trim()) return null;
 
     return saved;
-}
-
-// A saved condition answer counts only if it was made in the same
-// grading mode, from the same photos, that today's rules pick.
-export function assessmentStillFits(
-    savedAssessment: SavedAssessment | null,
-    mode: GradingMode,
-    photoNumbers: number[],
-    version?: string
-): boolean {
-    return (
-        savedAssessment !== null &&
-        (!version || savedAssessment.version === version && savedAssessment.completedRuns === 2) &&
-        savedAssessment.mode === mode &&
-        savedAssessment.photoNumbers.join(",") === photoNumbers.join(",")
-    );
 }

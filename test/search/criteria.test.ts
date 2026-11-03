@@ -2,11 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { criteriaMismatch, describeSearchCriteria, evaluatedCriteriaMismatch, explicitCriteria, finishIn, marketplaceQuery, searchAttributes } from "../../shared/search-criteria.ts";
 import { cleanReading, readSearchByRules } from "../../server/search/intent.ts";
-import { screenListing } from "../../server/deals/find-deals.ts";
 import { canAutoAnalyze } from "../../shared/analysis.ts";
 import { photoFitsSearch } from "../../server/ai/photo-find.ts";
-import { digQueries } from "../../server/search/dig.ts";
-import { digDeeper } from "../../server/deals/dig.ts";
 
 const query = "aquapolis cards psa 7 or better holo";
 const intent = () => readSearchByRules(query);
@@ -74,36 +71,6 @@ test("only the requested grader and in-range slab grades match", () => {
     assert.equal(searchAttributes("Aquapolis holo", { "Professional Grader": "Professional Sports Authenticator (PSA)", Grade: "NM-MT 8" }).grade, 8);
 });
 
-test("explicit title mismatches stop before pricing, photos and eBay details", async () => {
-    for (const title of ["Aquapolis Holo PSA 6", "Aquapolis Holo CGC 9", "Aquapolis Non-Holo PSA 9"]) {
-        let calls = 0;
-        const result = await screenListing(listing(title), { readTitle: async () => ({ aspects: {}, filled: [] }), check: async () => { calls++; throw Error("not expected"); }, loadDetails: async () => { calls++; throw Error("not expected"); }, matchPhoto: async () => { calls++; return null; } }, intent());
-        assert.ok(result.match);
-        assert.equal(canAutoAnalyze(result), false);
-        assert.equal(calls, 0);
-    }
-});
-
-test("missing title criteria can be settled by normal details; a contradictory grade cannot slip through", async () => {
-    for (const grade of ["8", "6"]) {
-        let checks = 0;
-        const result = await screenListing(listing("Aquapolis Holo PSA"), {
-            readTitle: async (value) => ({ aspects: value.aspects ?? {}, filled: [] }),
-            check: async () => { checks++; return { status: "CANDIDATE", reason: null, card: null, bestCase: null, assumed: null }; },
-            loadDetails: async () => ({ title: "Aquapolis Holo PSA", aspects: { "Professional Grader": "PSA", Grade: grade, Finish: "Holo" }, shipping: 5, images: [], cardCondition: null, conditionNotes: [], seller: null }),
-            matchPhoto: async () => null,
-        }, intent());
-        assert.equal(result.match, grade === "8" ? undefined : "OTHER_GRADE");
-        assert.equal(checks, grade === "8" ? 2 : 1);
-    }
-});
-
-test("unknown required grade cannot queue paid analysis when details fail", async () => {
-    const result = await screenListing(listing("Aquapolis Holo PSA"), { readTitle: async () => ({ aspects: {}, filled: [] }), check: async () => ({ status: "CANDIDATE", reason: null, card: null, bestCase: null, assumed: null }), loadDetails: async () => { throw Error("unavailable"); }, matchPhoto: async () => null }, intent());
-    assert.equal(result.match, "UNCONFIRMED_CRITERIA");
-    assert.equal(canAutoAnalyze(result), false);
-});
-
 test("photo discovery cannot recover the wrong finish as a matching holo", () => {
     const photo = { cardCount: 1, isStockImage: false, card: { name: "Espeon", set: "Aquapolis", cardNumber: "H9/H32", language: "English", confidence: "HIGH", finish: "REVERSE_HOLO" }, printingMarks: {}, shows: "card" };
     assert.equal(photoFitsSearch(photo, intent()), false);
@@ -115,25 +82,4 @@ test("a full photo assessment overrides matching seller claims for search result
     assert.equal(evaluatedCriteriaMismatch(evaluation, intent()), false);
     assert.equal(evaluatedCriteriaMismatch({ ...evaluation, photoCheck: { slab: { present: true, grader: "PSA", grade: "6" } } }, intent()), true);
     assert.equal(evaluatedCriteriaMismatch({ ...evaluation, identity: { finish: "REVERSE_HOLO" } }, intent()), true);
-});
-
-test("a broad slab search uses one targeted discovery query rather than unrelated raw-card queries", async () => {
-    assert.deepEqual(await digQueries(query, { ...intent(), sets: ["Aquapolis"] }), [
-        { query: "aquapolis holo PSA", how: "WRONG_CATEGORY", anyCategory: true },
-    ]);
-});
-
-test("automatic discovery rejects other graders and low grades before spending on photo checks", async () => {
-    let photos = 0;
-    const sent = [];
-    await digDeeper(query, { intent: { ...intent(), sets: ["Aquapolis"] }, onListing: (value) => sent.push(value) }, {
-        plan: async () => [{ query: "aquapolis holo PSA", how: "WRONG_CATEGORY" }],
-        readIntent: async () => { throw Error("must reuse interpretation"); },
-        search: async () => ({ listings: [listing("Aquapolis Holo PSA 6", { id: "low", images: ["low"] }), listing("Aquapolis Holo CGC 8", { id: "other", images: ["other"] }), listing("Aquapolis Holo PSA 8", { id: "match", images: ["match"] })], total: 3, skipped: 0 }),
-        findPhoto: async () => { photos++; return { found: "YES", cardCount: 1, set: "Aquapolis", cardNumber: "H9/H32", shows: "the card" }; },
-        screening: () => ({ readTitle: async () => ({ aspects: { Set: "Aquapolis" }, filled: [] }), loadDetails: async () => { throw Error("not needed"); }, matchPhoto: async () => null, check: async () => ({ status: "DROPPED", reason: null, card: { set: "Aquapolis" }, bestCase: null, assumed: null }) }),
-    });
-    assert.equal(photos, 1);
-    assert.deepEqual(sent.map((value) => value.id), ["match"]);
-    assert.equal(sent[0].match, undefined);
 });

@@ -1,5 +1,5 @@
 import { readTitleByRules } from "../ai/title-reader.ts";
-import { isPrinting, normalizeCardNumber, normalizeSetName, normalizeWords, printingClaimFromText, sameCardNumber, sameSetFamily, setFamily, titleDecidesPrinting } from "../identity/card-identity.ts";
+import { isPrinting, normalizeCardNumber, normalizeSetName, printingClaimFromText, sameCardNumber, sameSetFamily, setFamily, titleDecidesPrinting } from "../identity/card-identity.ts";
 import { finishClaim } from "../../shared/finish.ts";
 import { RAW_CONDITIONS } from "../../shared/conditions.ts";
 import { StorageUnavailableError } from "../storage/index.ts";
@@ -8,6 +8,7 @@ import type { CardRecord, Comp, FetchComps, FetchRawComps, LookupCards } from ".
 import { compCondition } from "./raw-comps.ts";
 import { compProblem, summarizeComps, type CompCriteria } from "./sold-comps.ts";
 import { createScreeningPriceSource, ScreeningPriceBudgetError } from "./pkmnprices.ts";
+import { resolveScreeningName, screeningNameKey } from "../identity/screening-name.ts";
 
 type Source = { lookupCards: LookupCards; fetchComps: FetchComps; fetchRawComps: FetchRawComps };
 type Finish = ScreeningSoldReference["finish"];
@@ -23,8 +24,9 @@ const unique = (sales: Comp[]) => [...new Map(sales.map(sale => [sale.id ?? sale
 const readClaims = (title: string) => readTitleByRules(title.replace(/\b(?:no|not|without|non)[\s-]*(?:1st|first)[\s-]*ed(?:ition|it)?\b/gi, "Unlimited"));
 function matchesSaleTarget(sale: Comp, record: CardRecord, grader: string | null, grade: string | null) {
     const reading = readClaims(sale.title);
+    const name = resolveScreeningName({ title: sale.title, claims: [reading.cardName], candidate: record.name });
     return !(reading.kind && reading.kind !== "SINGLE_CARD" || reading.language === "Other" ||
-        reading.cardName && normalizeWords(reading.cardName) !== normalizeWords(record.name) ||
+        reading.cardName && (!name || screeningNameKey(name) !== screeningNameKey(record.name)) ||
         reading.set && !sameSetFamily(reading.set, record.setName) ||
         reading.cardNumber && !sameCardNumber(reading.cardNumber, record.cardNumber) ||
         grader && reading.grader && reading.grader !== grader ||
@@ -109,10 +111,11 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
         const claimedNames = [card?.name, reading.cardName].filter((value): value is string => Boolean(value?.trim()));
         const claimedSets = [card?.set, reading.set].filter((value): value is string => Boolean(value?.trim()));
         const claimedNumbers = [card?.cardNumber, reading.cardNumber].filter((value): value is string => Boolean(value?.trim()));
-        if (new Set(claimedNames.map(normalizeWords)).size > 1 ||
-            claimedSets.some(value => !sameSetFamily(value, claimedSets[0]) && !sameSetFamily(claimedSets[0], value)) ||
+        if (claimedSets.some(value => !sameSetFamily(value, claimedSets[0]) && !sameSetFamily(claimedSets[0], value)) ||
             claimedNumbers.some(value => !sameCardNumber(value, claimedNumbers[0]))) return evidence;
-        const name = claimedNames[0] ?? intent.cardName;
+        const resolvedName = resolveScreeningName({ title: listing.title, claims: claimedNames, candidate: intent.cardName });
+        if (claimedNames.length && !resolvedName) return evidence;
+        const name = resolvedName ?? intent.cardName;
         const set = claimedSets[0] ?? (intent.sets.length === 1 ? intent.sets[0] : null);
         const number = claimedNumbers[0] ?? intent.cardNumber;
         if (!name || !set) return evidence;
@@ -132,9 +135,9 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
         const grade = listing.isGraded ? listedGrade == null ? titleGrade : String(listedGrade) : null;
         if (listing.isGraded && (!grader || !/^(?:PSA|CGC|BGS|SGC|TAG)$/.test(grader) || !grade || !/^(?:10|[1-9](?:\.5)?)$/.test(grade))) return evidence;
         try {
-            const catalogKey = JSON.stringify([normalizeWords(name), setFamily(set).sort(), normalizeCardNumber(number)]);
+            const catalogKey = JSON.stringify([screeningNameKey(name), setFamily(set).sort(), normalizeCardNumber(number)]);
             const found = await memo(catalogs, catalogKey, () => source.lookupCards({ name, set, cardNumber: number ?? "" }));
-            const matches = [...new Map(found.filter(record => record.source === "pkmnprices" && sameSetFamily(record.setName, set) && (!number || sameCardNumber(record.cardNumber, number)) && normalizeWords(record.name) === normalizeWords(name)).map(record => [record.id, record])).values()];
+            const matches = [...new Map(found.filter(record => record.source === "pkmnprices" && sameSetFamily(record.setName, set) && (!number || sameCardNumber(record.cardNumber, number)) && screeningNameKey(record.name) === screeningNameKey(name)).map(record => [record.id, record])).values()];
             const identities = matches.map(record => JSON.stringify([normalizeSetName(record.setName), normalizeCardNumber(record.cardNumber)]));
             if (!matches.length || new Set(identities).size !== matches.length) return evidence;
             const markets = new Map<string, Market>();

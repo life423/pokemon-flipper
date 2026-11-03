@@ -13,6 +13,23 @@ const SEALED = /\b(booster (packs?|box(es)?)|elite trainer box(es)?|etb|sealed (
 const MERCH = /\b(plush(ie)?|stickers?|decals?|figures?|figurines?|funko|keychains?|posters?|art prints?|binders?|playmats?|deck box(es)?|coins?|pins?|burger king|topps)\b/i;
 const NOT_A_CARD = /\b(empty (slab|case|box)|(slab|case|label|flip) only|no card)\b/i;
 
+// These phrases describe a seller assurance or an accompanying holder. Remove
+// only their ambiguous trigger words; every other junk rule still runs. A
+// second "custom" describing the card itself must continue to reject it.
+const AUTHENTICITY_ASSURANCE = /\b(?:(?:authenticity|authentic|genuine)[\s-]+guaranteed|guaranteed[\s-]+(?:authentic|genuine))\b/gi;
+const GENERIC_SINGLE_CARD = /\(\s*1\s*\)[ -]+(?:pokemon[ -]+)?card\b|\b(?:one|1)[ -]+pokemon[ -]+card\b/i;
+const CUSTOM_HOLDER = "custom[ -]+(?:(?:protective|protection|magnetic|acrylic|hard|fitted|display)[ -]+)*(?:card[ -]+)?(?:cases?|holders?|sleeves?|top[ -]?loaders?)";
+const ACCOMPANYING_CUSTOM_HOLDER = new RegExp(`\\b(?:with|in|inside|includes?|including)[ -]+(?:(?:a|an|the)[ -]+)?${CUSTOM_HOLDER}\\b`, "gi");
+const INCLUDED_CUSTOM_HOLDER = new RegExp(`\\b${CUSTOM_HOLDER}(?=[ -]+included\\b)`, "gi");
+
+function exclusionText(title: string): string {
+    const normalized = normalizeText(title).replace(/[\u2010-\u2015]/g, "-").replace(/\s+/g, " ");
+    return normalized
+        .replace(AUTHENTICITY_ASSURANCE, phrase => GENERIC_SINGLE_CARD.test(normalized) ? phrase : "authentic")
+        .replace(ACCOMPANYING_CUSTOM_HOLDER, phrase => phrase.replace(/\bcustom\b/i, ""))
+        .replace(INCLUDED_CUSTOM_HOLDER, phrase => phrase.replace(/\bcustom\b/i, ""));
+}
+
 // Lowercase and strip accents, so "Pokémon" matches "pokemon".
 export function normalizeText(text: unknown): string {
     return String(text ?? "")
@@ -23,7 +40,7 @@ export function normalizeText(text: unknown): string {
 
 // Returns why a listing should be dropped, or null to keep it.
 export function exclusionReason(item: { title: string; itemId: string; itemGroupType?: string }): string | null {
-    const title = normalizeText(item.title);
+    const title = exclusionText(item.title);
 
     // Variation listings match on any option's name, and their
     // price belongs to whichever option is priciest. A plain

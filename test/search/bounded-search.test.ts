@@ -17,9 +17,8 @@ const row = (id: string, title = "Charizard Base Set 4/102 Holo English", extra:
 function noPaidSteps(search: (query: string, options: any) => Promise<any>) {
     return { search,
         soldScreening: () => async () => ({ status: "UNAVAILABLE" as const, exactScope: false, references: [], note: "No saved sold-price evidence in this metadata fixture." }),
-        readIntent: async () => { assert.fail("bounded searches cannot buy query interpretation"); },
-        readTitle: async () => { assert.fail("bounded searches cannot enqueue a title batch"); },
-        screening: () => { assert.fail("bounded searches cannot start prescreen prices, main-photo AI or eBay detail checks"); },
+        readIntent: async (query: string) => readSearchLocally(query),
+        readTitle: async (title: string) => readTitleByRules(title),
     };
 }
 
@@ -45,7 +44,7 @@ test("bounded search admits50 matching metadata rows from one newest BIN page wi
     let summary: SearchSummary | undefined;
     const emitted: ListingSummary[] = [];
     const page = Array.from({ length: 200 }, (_, index) => row(String(index)));
-    const result = await findDeals("1999 Base Set Charizard holo", { bounded: true, maxResults: 1000, screenLimit: 100,
+    const result = await findDeals("1999 Base Set Charizard holo", {
         filters: { typeFilter: "FIXED_PRICE" }, onStart: value => { summary = value; }, onListing: value => { emitted.push(value); } }, noPaidSteps(async (query, settings) => {
             sources++;
             assert.match(query, /charizard/);
@@ -74,7 +73,7 @@ test("wrong cards, sets, numbers, foreign titles, junk, budget exclusions and fa
         row("junk", "Charizard Base Set 4/102 custom proxy"), row("absurd", undefined, { currentPrice: 223200 }),
         row("far-auction", undefined, { buyingOption: "AUCTION", endTime: new Date(Date.now() + 7 * 86400000).toISOString() }),
         row("filtered-price", undefined, { currentPrice: 250 }), row("known"), row("one"), row("two"), row("three")];
-    const result = await findDeals("Charizard Base Set 4/102 holo", { bounded: true, filters: { maxPrice: 200 }, newOnly: { excludeIds: ["known"], limit: 200 } },
+    const result = await findDeals("Charizard Base Set 4/102 holo", { filters: { maxPrice: 200 }, newOnly: { excludeIds: ["known"] } },
         noPaidSteps(async () => ({ listings: page, total: page.length, skipped: 0 })));
     assert.deepEqual(result.map(listing => listing.id), ["one", "two", "three"]);
 });
@@ -85,11 +84,11 @@ test("known cached mismatches are excluded before filling50 slots, including new
     const emitted: ListingSummary[] = [];
     let reads = 0;
     const dependencies = { ...noPaidSteps(async () => ({ listings: page, total: 100, skipped: 0 })),
-        readTitleWithoutAi: async (title: string) => {
+        readTitle: async (title: string) => {
             const reading = readTitleByRules(title);
             return { ...reading, set: reads++ < 6 ? "Jungle" : reading.set };
         } };
-    const result = await findDeals("Charizard Base Set 4/102 holo", { bounded: true,
+    const result = await findDeals("Charizard Base Set 4/102 holo", {
         newOnly: { excludeIds: [], limit: 50 }, onListing: listing => emitted.push(listing) }, dependencies);
     assert.equal(result.length, 50);
     assert.deepEqual(result.map(listing => listing.id), Array.from({ length: 50 }, (_, index) => String(index + 6)));
@@ -100,7 +99,7 @@ test("known cached mismatches are excluded before filling50 slots, including new
 });
 
 test("number-only bounded searches do not invent a Pokemon or reject a matching card", async () => {
-    const result = await findDeals("4/102", { bounded: true }, noPaidSteps(async () => ({ listings: [row("one")], total: 1, skipped: 0 })));
+    const result = await findDeals("4/102", {}, noPaidSteps(async () => ({ listings: [row("one")], total: 1, skipped: 0 })));
     assert.equal(result.length, 1);
     assert.equal(result[0].screen?.card?.cardNumber, "4/102");
 });
@@ -115,7 +114,7 @@ test("explicit reprint releases are excluded before bounded slots without paid i
         row("legendary", "Charizard Base Set Legendary Collection Holo 3/110"),
         row("base-two", "Charizard Base Set 2 4/102 Holo"), row("one"), row("two"), row("three"),
     ];
-    const result = await findDeals("1999 Base Set Charizard holo", { bounded: true }, noPaidSteps(async () => ({ listings: page, total: page.length, skipped: 0 })));
+    const result = await findDeals("1999 Base Set Charizard holo", {}, noPaidSteps(async () => ({ listings: page, total: page.length, skipped: 0 })));
     assert.deepEqual(result.map(listing => listing.id), ["one", "two", "three"]);
     assert.equal(fetch.mock.callCount(), 0);
     assert.equal(readTitleByRules(page[0].title).set, "30th Celebration");
@@ -159,8 +158,8 @@ test("invalid saved bounded metadata fails closed rather than becoming a new AI 
 test("cancelling bounded query interpretation prevents the source request", async () => {
     const stopped = new AbortController();
     const dependencies = noPaidSteps(async () => { assert.fail("cancelled search cannot consume eBay allowance"); });
-    const result = await findDeals("charizard", { bounded: true, signal: stopped.signal }, { ...dependencies,
-        readIntentWithoutAi: async () => { stopped.abort(); return readSearchLocally("charizard"); } });
+    const result = await findDeals("charizard", { signal: stopped.signal }, { ...dependencies,
+        readIntent: async () => { stopped.abort(); return readSearchLocally("charizard"); } });
     assert.deepEqual(result, []);
 });
 
@@ -168,8 +167,8 @@ test("cancelling a bounded cached title read prevents emitted work and later sta
     const stopped = new AbortController();
     let emitted = 0;
     const dependencies = noPaidSteps(async () => ({ listings: [row("one")], total: 1, skipped: 0 }));
-    const result = await findDeals("charizard", { bounded: true, signal: stopped.signal, onListing: () => { emitted++; } }, { ...dependencies,
-        readTitleWithoutAi: async title => { stopped.abort(); return readTitleByRules(title); } });
+    const result = await findDeals("charizard", { signal: stopped.signal, onListing: () => { emitted++; } }, { ...dependencies,
+        readTitle: async title => { stopped.abort(); return readTitleByRules(title); } });
     assert.deepEqual(result, []);
     assert.equal(emitted, 0);
 });

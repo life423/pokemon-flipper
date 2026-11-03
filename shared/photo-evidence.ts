@@ -2,6 +2,17 @@ import type { Evaluation, PhotoCheck } from "./types.ts";
 
 const VIEW_NAMES: Record<string, string> = { FRONT: "front", BACK: "back", FRONT_DETAIL: "front close-up", BACK_DETAIL: "back close-up" };
 
+// Holder evidence is independent of readable grades, certificate checks and
+// raw condition. Unknown holders and stock-only/multiple-card views prove neither.
+export function observedCardKind(evaluation?: Pick<Evaluation, "photoCheck"> | null): "raw" | "graded" | null {
+    const check = evaluation?.photoCheck;
+    if (check?.cardCount !== "ONE" || !Array.isArray(check.images) || !check.images.some(photo => photo?.usable && !photo.isStockImage &&
+        (photo.view === "FRONT" || photo.view === "FRONT_DETAIL"))) return null;
+    if (check.holder === "GRADED_SLAB" && check.slab?.present) return "graded";
+    if (["NONE", "SLEEVE", "TOPLOADER"].includes(check.holder) && !check.slab?.present) return "raw";
+    return null;
+}
+
 export function photoIssueNotes(check: PhotoCheck | null) {
     return [...new Set((check?.images ?? []).flatMap((photo, index) => {
         const number = Number.isInteger(photo.number) && photo.number > 0 ? photo.number : index + 1;

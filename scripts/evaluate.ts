@@ -1,33 +1,40 @@
 // Grades one live eBay listing and prints a readable summary.
-// Usage: npm run evaluate -- <eBay link or item number> [--fresh]
-// Reuses the saved answer for a listing while its photos haven't
-// changed. --fresh ignores it and pays for a new one.
+// Usage: npm run evaluate -- <eBay link or item number>
+// Refreshes listing terms, reuses unchanged paid evidence and performs only
+// the current bounded raw/slab assessment when evidence is missing.
 import "dotenv/config";
-import { evaluateListing } from "../server/analysis/evaluate.ts";
 import { toItemId } from "./item-id.ts";
 import { CONDITION_AREAS } from "../shared/conditions.ts";
 import { describeRange, dollars, percent } from "../shared/format.ts";
 import { createCliResearchScope } from "./review/research-scope.ts";
 
-const STEP_NAMES: Record<string, string> = { photoCheck: "photo check", condition: "condition report" };
+const STEP_NAMES: Record<string, string> = { photoCheck: "saved photo check", condition: "saved condition report", boundedPhotoAssessment: "bounded photo assessment", savedEvaluation: "saved evaluation" };
 
 const args = process.argv.slice(2);
-const fresh = args.includes("--fresh");
+if (args.includes("--help")) {
+    console.log("Usage: npm run evaluate -- <eBay link or item number>. Refreshes listing terms; unchanged paid photo evidence is reused.");
+    process.exit(0);
+}
+if (args.includes("--fresh")) {
+    console.error("--fresh photo reanalysis has been retired. Run evaluate without it to refresh listing terms and reuse unchanged paid photo evidence under the existing search budget.");
+    process.exit(1);
+}
 const itemId = toItemId(args.find((arg) => !arg.startsWith("--")));
 
 if (!itemId) {
-    console.log("Usage: npm run evaluate -- <eBay link or item number> [--fresh]");
+    console.log("Usage: npm run evaluate -- <eBay link or item number>");
     process.exit(1);
 }
 
-console.log(`Evaluating ${itemId}${fresh ? ", ignoring any saved answer" : ""}.`);
+console.log(`Evaluating ${itemId} with current listing terms and reusable photo evidence.`);
 
 const started = Date.now();
 const research = createCliResearchScope();
 let evaluation;
 
 try {
-    evaluation = await research(() => evaluateListing(itemId, { fresh }));
+    const { evaluateBoundedListing } = await import("../server/analysis/bounded-evaluate.ts");
+    evaluation = await research(() => evaluateBoundedListing(itemId));
 } catch (error) {
     console.error(`Evaluation failed: ${(error as Error).message}`);
     process.exit(1);

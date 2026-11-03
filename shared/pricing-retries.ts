@@ -13,15 +13,6 @@ export interface PricingRetry {
     attemptsLeft: number;
     expiresAt?: string;
 }
-export interface PricingRecoveryProgress {
-    status: "checking" | "done";
-    total: number;
-    pending: number;
-    checked: number;
-    priced: number;
-    retryAt: string | null;
-    note?: string;
-}
 export interface PricingRetryResult {
     results: { id: string; snapshotKey: string; screen: Screen; match?: ListingSummary["match"] }[];
     note: string | null;

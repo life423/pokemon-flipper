@@ -1,5 +1,5 @@
 import { getListingDetails, listingCacheKey, type ListingDetails } from "../ebay/listings.ts";
-import { ANALYSIS_VERSION, CONDITION_VERSION } from "../ai/openai.ts";
+import { ANALYSIS_VERSION, CONDITION_VERSION } from "./legacy-evidence.ts";
 import { assessBoundedListing, type BoundedReading } from "../ai/bounded-assessment.ts";
 import { BOUNDED_ASSESSMENT_VERSION, BOUNDED_CONDITION_VERSION, BOUNDED_SLAB_ASSESSMENT_VERSION, compatibleBoundedPlans, type BoundedAssessmentPlan } from "./bounded-plan.ts";
 export { assessBoundedListing, BOUNDED_ASSESSMENT_SCHEMA, type BoundedReading } from "../ai/bounded-assessment.ts";
@@ -32,10 +32,11 @@ import type { Evaluation } from "../../shared/types.ts";
 import type { Usage } from "./types.ts";
 import type { Comp } from "../pricing/types.ts";
 import { createPrivateEvaluationStore, evaluationContextKey } from "./private-evaluation.ts";
+import { reconcileIdentityReadings } from "./resolve-evidence.ts";
 
 const CACHE_HOURS = 24 * 365 * 10;
 interface SavedBoundedReading extends BoundedReading { version: string; answeredAt: string; usage: Usage }
-export interface BoundedOptions { fresh?: boolean; automatic?: boolean; signal?: AbortSignal; current?: { title?: string; images?: string[]; price: number | null; shipping: number | null; bids: number; endTime: string | null } | null }
+export interface BoundedOptions { automatic?: boolean; signal?: AbortSignal; current?: import("./types.ts").CurrentState | null }
 
 const hasStrings = (value: unknown): value is string[] => Array.isArray(value) && value.length <= 8 && value.every(note => typeof note === "string" && note.length <= 1200);
 function invalidReading(): never { throw new StorageUnavailableError("The bounded photo assessment is incomplete or invalid. Saved evidence was kept; no automatic replacement assessment was authorized."); }
@@ -185,13 +186,20 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         }
         const legacyCondition = legacy?.assessment?.version === CONDITION_VERSION ? legacy.assessment.result : null;
         const canReuseLegacy = Boolean(legacy?.photoCheck && (legacy.photoCheck.result.holder === "GRADED_SLAB" || legacyCondition));
+        let legacyResolution: ReturnType<typeof reconcileIdentityReadings> | null = null;
         if (canReuseLegacy) {
             evaluation.photoCheck = applyPhotoCheckRules(legacy!.photoCheck!.result, listing.images.length);
+            if (legacy?.identityPasses?.length) {
+                // Retiring the old request writer must not discard corrections
+                // already bought for an expired/missing financial checkpoint.
+                legacyResolution = reconcileIdentityReadings(evaluation.photoCheck, legacy.identityPasses.map(pass => pass.result));
+                evaluation.photoCheck = legacyResolution.check;
+            }
             evaluation.condition = legacyCondition ? structuredClone(legacyCondition) : null;
             evaluation.answeredAt = legacy!.answeredAt;
             evaluation.assessmentVersion = legacy!.version; evaluation.conditionVersion = legacyCondition ? CONDITION_VERSION : undefined;
             evaluation.listing.photosAnalyzed = evaluation.photoCheck.images.length;
-            evaluation.reusedSteps = ["photoCheck", ...(legacyCondition ? ["condition"] : [])];
+            evaluation.reusedSteps = ["photoCheck", ...(legacyCondition ? ["condition"] : []), ...(legacyResolution ? ["identityResolution"] : [])];
         } else {
             const { photos, key } = requestedPlan;
             const consumers = neededReadings.get(key) ?? new Set<() => boolean>();
@@ -259,11 +267,16 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         if (card?.confidence === "HIGH") for (const [field, value] of [["Card Name", card.name], ["Set", card.set], ["Card Number", card.cardNumber], ["Language", card.language], ["Finish", card.finish === "UNKNOWN" ? null : card.finish]]) if (value && !aspects[field!]) aspects[field!] = value;
         let hardFailure: Error | null = null;
         const guarded = async <T>(work: () => Promise<T>): Promise<T> => { signal.throwIfAborted(); try { return await work(); } catch (error) { const stop = stopFailure(error); if (stop) hardFailure = stop; throw error; } };
-        const identified = await deps.identify({ ...listing, aspects }, check, { lookupCards: query => guarded(() => deps.lookup(query)) });
+        const identified = await deps.identify({ ...listing, aspects }, check, { lookupCards: query => guarded(() => deps.lookup(query)),
+            ...(legacyResolution?.confirmation ? { photoIdentity: legacyResolution.confirmation } : {}) });
         if (hardFailure) throw hardFailure;
         evaluation.identity = identified.identity;
+        if (legacyResolution?.finishConflict) {
+            evaluation.identity.finish = "CONFLICTING"; evaluation.identity.status = "NEEDS_REVIEW";
+            evaluation.identity.reasons.push("Saved independent photo readings disagree about this card's finish.");
+        }
         if (cardLanguageStatus(listing.title, [identified.identity.language]) === "OTHER") throw new EnglishOnlyError();
-        if (check.cardMatch?.verdict === "MISMATCH" && !evaluation.identity.notThisCard) {
+        if (check.cardMatch?.verdict === "MISMATCH" && !evaluation.identity.notThisCard && !legacyResolution?.confirmation) {
             evaluation.identity.status = "NEEDS_REVIEW"; evaluation.identity.notThisCard = check.cardMatch.problems.join("; ") || "The photographed card differs from the listing.";
             evaluation.identity.reasons.push(evaluation.identity.notThisCard);
         }

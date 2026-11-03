@@ -74,13 +74,3 @@ test("a full assessment removes a disproved Shadowless lead and its bargain boos
     assert.ok(!listingSignals(listing, evaluation).some((signal) => signal.id === "FOUND" || signal.id === "SELLER_SHADOWLESS"));
     assert.ok(!kinds("Charizard Shadowless 1st Edition", { ...scan, printingMarks: { ...marks, firstEditionStamp: "NOT_PRESENT" } }).includes("SHADOWLESS"));
 });
-
-test("a missing art shadow alone cannot corroborate a Shadowless premium", async () => {
-    const { supportsShadowless } = await import("../../server/ai/shadowless-check.ts");
-    const finding = { cardType: "POKEMON", hpFont: "THIN_EARLY_BASE_SET", artworkShadow: "ABSENT", confidence: "HIGH", evidence: ["Legible thin HP type and absent artwork border shadow"] };
-    assert.equal(supportsShadowless(finding), true);
-    assert.equal(supportsShadowless({ ...finding, hpFont: "CANT_TELL" }), false);
-    assert.equal(supportsShadowless({ ...finding, hpFont: "THICK_UNLIMITED" }), false);
-    assert.equal(supportsShadowless({ ...finding, cardType: "TRAINER" }), false);
-    assert.equal(supportsShadowless({ ...finding, confidence: "LOW" }), false);
-});

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ANALYSIS_VERSION } from "../../server/ai/openai.ts";
+import { ANALYSIS_VERSION } from "../../server/analysis/legacy-evidence.ts";
 import { photoFingerprint, withAssessmentLock } from "../../server/analysis/store.ts";
 import { createDeeperPhotoReviewer, photoReviewKey, cleanDeeperAnswer } from "../../server/analysis/deeper-review.ts";
 import { cardEvaluation } from "../fixtures/card-evaluation.ts";

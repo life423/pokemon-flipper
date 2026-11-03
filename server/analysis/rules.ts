@@ -1,5 +1,5 @@
-import { CONDITION_AREAS as AREAS, RAW_CONDITIONS } from "../../shared/conditions.ts";
-import type { Condition, PhotoCheck, PhotoReport, SetAsideAnswer } from "../../shared/types.ts";
+import { CONDITION_AREAS as AREAS } from "../../shared/conditions.ts";
+import type { Condition, PhotoCheck, PhotoReport } from "../../shared/types.ts";
 import type { GradingMode } from "./types.ts";
 import { cleanPhotoCard } from "../ai/photo-card-schema.ts";
 import { normalizeSlabReading } from "../identity/slab-check.ts";
@@ -9,55 +9,6 @@ import { normalizeAuthenticity } from "./authenticity.ts";
 // sees; these decide how much grading the evidence allows, and anything
 // missing or unexpected fails closed.
 
-
-// Risk order for picking the more cautious answer. Anything the
-// table doesn't know ranks as the riskiest, so surprises fail closed.
-const AUTHENTICITY_RISK = ["NONE_SEEN", "POSSIBLE", "LIKELY_FAKE"];
-const CREASE_RISK = ["NONE_SEEN", "SUSPECTED", "PRESENT"];
-const RAW_CONDITION_RISK = [...RAW_CONDITIONS, "UNKNOWN"];
-
-function riskOf(order: readonly string[], value: string): number {
-    const index = order.indexOf(value);
-    return index === -1 ? order.length : index;
-}
-
-// Returns the more cautious of two condition answers. A red flag in
-// either one wins first (authenticity, then creases), then the lower
-// grade range, then the worse raw condition. Ties keep the first.
-export function moreCautious(a: Condition, b: Condition): Condition {
-    const gradeComparisons = a.gradeRange && b.gradeRange ? [
-        a.gradeRange.low - b.gradeRange.low,
-        (a.gradeRange.likely ?? 0) - (b.gradeRange.likely ?? 0),
-        a.gradeRange.high - b.gradeRange.high,
-    ] : [];
-
-    const comparisons = [
-        riskOf(AUTHENTICITY_RISK, b.authenticity.concern) -
-            riskOf(AUTHENTICITY_RISK, a.authenticity.concern),
-        riskOf(CREASE_RISK, b.creases) - riskOf(CREASE_RISK, a.creases),
-        ...gradeComparisons,
-        riskOf(RAW_CONDITION_RISK, b.rawCondition) -
-            riskOf(RAW_CONDITION_RISK, a.rawCondition),
-        // Equal raw assessments do not invent a numeric estimate merely
-        // because the other answer supplied one.
-        Number(a.gradeRange !== null) - Number(b.gradeRange !== null),
-    ];
-
-    for (const difference of comparisons) {
-        if (difference > 0) return b;
-        if (difference < 0) return a;
-    }
-
-    return a;
-}
-
-export function summarizeAnswer(answer: Condition): SetAsideAnswer {
-    return {
-        gradeRange: answer.gradeRange,
-        rawCondition: answer.rawCondition,
-        authenticity: answer.authenticity.concern,
-    };
-}
 
 const CLOSE_UP_VIEWS = ["FRONT_DETAIL", "BACK_DETAIL"];
 
@@ -221,17 +172,4 @@ export function applyConditionRules(
         [condition.corners, condition.edges, condition.surface].some(area => !["NONE", "MINOR"].includes(area.severity)))) condition.rawCondition = "UNKNOWN";
 
     return condition;
-}
-
-// Normalize each opinion before comparison: generic uncertainty must not defeat
-// a more cautious wear/grade assessment simply because it said POSSIBLE.
-export function selectConditionAssessment(answers: Condition[], mode: GradingMode,
-    options: { closeUps?: boolean; photoCount?: number } = {}) {
-    const valid = answers.flatMap(source => {
-        const result = applyConditionRules(source, mode, options);
-        return result ? [{ source, result }] : [];
-    });
-    if (!valid.length) return null;
-    const selected = valid.reduce((a, b) => moreCautious(a.result, b.result) === b.result ? b : a);
-    return { result: selected.result, validCount: valid.length, setAside: answers.filter(answer => answer !== selected.source) };
 }

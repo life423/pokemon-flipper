@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { ANALYSIS_VERSION } from "../ai/openai.ts";
+import { ANALYSIS_VERSION } from "./legacy-evidence.ts";
 import { reviewPhotosDeeper, type DeeperAnswer } from "../ai/deeper-photo-review.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
 import { loadSaved, saveRecord, photoFingerprint, withAssessmentLock } from "./store.ts";

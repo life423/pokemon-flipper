@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { setImmediate } from "node:timers/promises";
 import { createBoundedEvaluator, boundedAssessmentKey, boundedAssessmentPlan, selectBoundedPhotos,
     BOUNDED_ASSESSMENT_VERSION, BOUNDED_SLAB_ASSESSMENT_VERSION, type BoundedReading } from "../../server/analysis/bounded-evaluate.ts";
-import { ANALYSIS_VERSION } from "../../server/ai/openai.ts";
+import { ANALYSIS_VERSION } from "../../server/analysis/legacy-evidence.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
 import { photoFingerprint } from "../../server/analysis/store.ts";
 import { currentPriceEvidence } from "../../shared/pricing-freshness.ts";

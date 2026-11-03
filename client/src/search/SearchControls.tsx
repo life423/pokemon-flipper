@@ -46,15 +46,12 @@ interface SearchControlsProps {
     aiUsage: AiUsageDay | null;
 }
 
-// Shorter tab names where phones need the room.
-const VIEW_SHORT: Partial<Record<View, string>> = { hidden: "Hidden" };
 const VIEW_ICONS: Record<View, ReactNode> = {
     new: <SparkleIcon />,
     deals: <TagIcon />,
     offers: <DollarIcon />,
     candidates: <ClockIcon />,
     review: <ReviewIcon />,
-    hidden: <SparkleIcon />,
     all: <GridIcon />,
 };
 
@@ -64,7 +61,6 @@ const VIEW_NAMES: Record<View, string> = {
     offers: "Offers",
     candidates: "Sorting",
     review: "Needs attention",
-    hidden: "Hidden finds",
     all: "All matching",
 };
 function Segmented<T extends string>({
@@ -99,11 +95,10 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
     const { drawerOpen, setDrawerOpen } = drawer;
 
     // A view's count, in its color when it holds something worth a look:
-    // deals green, review amber, hidden finds blue.
+    // deals green, review amber.
     const COUNT_TONES: Partial<Record<View, string>> = {
         deals: styles.countBuy,
         review: styles.countWatch,
-        hidden: styles.countAction,
     };
     const viewCount = (key: View) => {
         const count = groups[key].length;
@@ -194,14 +189,7 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
                                 key,
                                 <span className={styles.tabLabel}>
                                     {VIEW_ICONS[key]}
-                                    {VIEW_SHORT[key] ? (
-                                        <>
-                                            <span className={styles.wideOnly}>{VIEW_NAMES[key]}</span>
-                                            <span className={styles.narrowOnly}>{VIEW_SHORT[key]}</span>
-                                        </>
-                                    ) : (
-                                        VIEW_NAMES[key]
-                                    )}
+                                    {VIEW_NAMES[key]}
                                     {viewCount(key)}
                                 </span>,
                             ])}

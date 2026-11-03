@@ -35,9 +35,7 @@ function evidence(slab = false, median = 100): ScreeningSoldEvidence {
 const factory = (run: ReturnType<SoldScreeningFactory>): SoldScreeningFactory => () => run;
 function steps(rows: ListingSummary[], soldScreening: SoldScreeningFactory) {
     return { soldScreening, search: async () => ({ listings: rows, total: rows.length, skipped: 0 }),
-        readIntentWithoutAi: async (query: string) => readSearchLocally(query), readTitleWithoutAi: async (title: string) => readTitleByRules(title),
-        readIntent: async () => assert.fail("no paid query interpretation"), readTitle: async () => assert.fail("no paid title interpretation"),
-        screening: () => assert.fail("no legacy photo/price/detail stage"),
+        readIntent: async (query: string) => readSearchLocally(query), readTitle: async (title: string) => readTitleByRules(title),
     };
 }
 
@@ -48,7 +46,7 @@ test("no browser candidate is emitted until the batch's sold evidence is ready",
     const emitted: ListingSummary[] = [];
     let factories = 0;
     const prices: SoldScreeningFactory = () => { factories++; return async () => { started(); await pending; return evidence(); }; };
-    const work = findDeals("Charizard Base Set 4/102 holo", { bounded: true, targets, onListing: row => emitted.push(row) }, steps([listing("one"), listing("two")], prices));
+    const work = findDeals("Charizard Base Set 4/102 holo", { targets, onListing: row => emitted.push(row) }, steps([listing("one"), listing("two")], prices));
     await ready;
     assert.equal(emitted.length, 0);
     release();
@@ -70,7 +68,7 @@ test("fifty admitted rows reuse one canonical catalog lookup and sold page befor
         fetchComps: async () => assert.fail("raw screening must not research hypothetical slab grades"),
     } });
     const rows = Array.from({ length: 50 }, (_, index) => listing(String(index)));
-    const result = await findDeals("Charizard Base Set 4/102 holo", { bounded: true, targets }, steps(rows, prices));
+    const result = await findDeals("Charizard Base Set 4/102 holo", { targets }, steps(rows, prices));
     assert.equal(result.length, 50); assert.equal(catalogCalls, 1); assert.equal(rawCalls, 1);
     assert.ok(result.every(row => row.screen?.soldEvidence?.references[0].summary.median === 100));
     assert.deepEqual(result.map(row => row.id), rows.map(row => row.id), "equal priority preserves newest/source order");
@@ -84,13 +82,13 @@ test("known wrong cards and search-filter exclusions never reach sold research",
         listing("reprint", { title: "Charizard Celebrations 4/102 Holo English" }),
         listing("foreign", { title: "Charizard Base Set 4/102 Japanese Holo" }),
         listing("too-high", { currentPrice: 500 }), listing("one")];
-    const result = await findDeals("Charizard Base Set 4/102 holo", { bounded: true, filters: { maxPrice: 100 } }, steps(rows, prices));
+    const result = await findDeals("Charizard Base Set 4/102 holo", { filters: { maxPrice: 100 } }, steps(rows, prices));
     assert.deepEqual(checked, ["one"]); assert.deepEqual(result.map(row => row.id), ["one"]);
 });
 
 test("missing and budget-deferred markets remain visible Sorting rows without paid eligibility or invented money", async () => {
     const rows = [listing("missing"), listing("budget")];
-    const result = await findDeals("Charizard Base Set 4/102 holo", { bounded: true }, steps(rows, factory(async row => unavailable(row.id === "budget" ? "DEFERRED" : "UNAVAILABLE"))));
+    const result = await findDeals("Charizard Base Set 4/102 holo", {}, steps(rows, factory(async row => unavailable(row.id === "budget" ? "DEFERRED" : "UNAVAILABLE"))));
     assert.equal(result.length, 2);
     for (const row of result) {
         assert.equal(canAutoAnalyze(row), false); assert.equal(resultGroup(row, null), "candidates");
@@ -101,7 +99,7 @@ test("missing and budget-deferred markets remain visible Sorting rows without pa
 test("an exact expensive slab is terminal for automatic work while raw grading upside remains eligible", async () => {
     const slab = listing("slab", { title: "Charizard Base Set 4/102 Unlimited Holo PSA 8 English", isGraded: true, currentPrice: 1000 });
     const raw = listing("raw", { currentPrice: 1000 });
-    const result = await findDeals("Charizard Base Set 4/102 holo", { bounded: true, targets }, steps([slab, raw], factory(async row => evidence(row.isGraded))));
+    const result = await findDeals("Charizard Base Set 4/102 holo", { targets }, steps([slab, raw], factory(async row => evidence(row.isGraded))));
     const rejected = result.find(row => row.id === "slab")!;
     assert.equal(rejected.screen?.status, "DROPPED"); assert.equal(canAutoAnalyze(rejected), false); assert.equal(resultGroup(rejected, null), null);
     const candidate = result.find(row => row.id === "raw")!;
@@ -109,7 +107,7 @@ test("an exact expensive slab is terminal for automatic work while raw grading u
 });
 
 test("cheap First Edition Base Set leads are an explicit focused exception, never a blanket missing-price bypass", async () => {
-    const result = await findDeals("Charizard Base Set 4/102 holo", { bounded: true }, steps([
+    const result = await findDeals("Charizard Base Set 4/102 holo", {}, steps([
         listing("cheap", { title: "Charizard Base Set 4/102 1st Edition Holo English", currentPrice: 5 }),
         listing("normal", { title: "Charizard Base Set 4/102 1st Edition Holo English", currentPrice: 50 }), listing("unlimited", { currentPrice: 5 }),
     ], factory(async () => unavailable())));
@@ -130,7 +128,7 @@ test("Stop during sold research prevents queued lookups, candidate emission and 
         });
         return evidence();
     };
-    const work = findDeals("Charizard Base Set 4/102 holo", { bounded: true, signal: stopped.signal, onListing: () => { emitted++; } },
+    const work = findDeals("Charizard Base Set 4/102 holo", { signal: stopped.signal, onListing: () => { emitted++; } },
         steps(Array.from({ length: 50 }, (_, index) => listing(String(index))), prices));
     await ready; stopped.abort();
     assert.deepEqual(await work, []);
@@ -162,9 +160,8 @@ test("new-listing discovery uses the same price-first path and remembers only em
     const discover = createNewListingDiscovery({ usage: async () => null,
         history: { seen: async () => ["seen"], remember: async (_query, _minimum, ids) => { remembered = ids; } },
         find: async (query, options) => findDeals(query, options, dependencies),
-        recover: async () => assert.fail("bounded search cannot start automatic price-recovery stages"),
     });
-    await discover("Charizard Base Set 4/102 holo", { bounded: true, targets, onListing: row => emitted.push(row) });
+    await discover("Charizard Base Set 4/102 holo", { targets, onListing: row => emitted.push(row) });
     assert.deepEqual(researched, ["new"]); assert.deepEqual(remembered, ["new"]);
     assert.equal(emitted[0].screen?.soldEvidence?.status, "AVAILABLE");
 });

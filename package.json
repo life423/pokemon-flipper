@@ -8,7 +8,6 @@
     "start": "node --import tsx scripts/start.mjs",
     "test": "node scripts/test.mjs",
     "evaluate": "tsx scripts/evaluate.ts",
-    "consistency": "tsx scripts/consistency.ts",
     "build": "vite build --config client/vite.config.js",
     "typecheck": "tsc -p . && tsc -p client",
     "db": "tsx scripts/database.ts",

@@ -1,28 +1,14 @@
-import { RAW_CONDITIONS, type RawCondition } from "../../shared/conditions.ts";
+import { RAW_CONDITIONS } from "../../shared/conditions.ts";
 import type { CompSummary, Identity, RawPrice, RawPricing } from "../../shared/types.ts";
 import { rawPricesFor, variantFor } from "./raw-prices.ts";
 import { compProblem, summarizeComps } from "./sold-comps.ts";
 import type { CheckComps, Comp, FetchRawComps, PricedCard } from "./types.ts";
 import type { SoldConditionEvidence } from "../ai/sold-condition.ts";
-import { createSharedWork } from "../lib/shared-work.ts";
 import { readyForPricing } from "../../shared/identity.ts";
 
-// Seller text is used only for screening/bootstrap. Final valuations classify
-// sold-copy photos independently; an unknown condition is never assumed NM.
-export function compCondition(title: string): RawCondition | null {
-    if (/\b(?:mint|nm|lp|mp|hp|dmg|damaged)\s*\?/i.test(title)) return null;
-    const text = title.replace(/\b\d+\s*hp\b/gi, "");
-    const patterns: [RawCondition, RegExp][] = [
-        ["NEAR_MINT", /\bnear[ -]?mint\b|\bnm\b/i],
-        ["MINT", /\bmint\b/i],
-        ["LIGHTLY_PLAYED", /\blightly[ -]?played\b|\blp\b/i],
-        ["MODERATELY_PLAYED", /\bmoderately[ -]?played\b|\bmp\b/i],
-        ["HEAVILY_PLAYED", /\bheavily[ -]?played\b|\bhp\b/i],
-        ["DAMAGED", /\bdamaged\b|\bdmg\b/i],
-    ];
-    const matches = patterns.filter(([condition, pattern]) => pattern.test(condition === "MINT" ? text.replace(/\bnear[ -]?mint\b/gi, "") : text));
-    return matches.length === 1 ? matches[0][0] : null;
-}
+// Seller text only bootstraps screening; final valuations inspect sold photos.
+export { rawConditionClaim as compCondition } from "../../shared/raw-condition-claim.ts";
+import { rawConditionClaim as compCondition } from "../../shared/raw-condition-claim.ts";
 
 export async function rawPricesWithSales(card: PricedCard | null, identity: Identity, {
     fetchRawComps, checkComps, now = Date.now(), assessCondition, signal,
@@ -99,16 +85,4 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
         signal?.throwIfAborted();
         return { ...fallback, prices: fallback.prices?.map(p => ({ ...p, basis: "TCGPLAYER" })), evidenceNote: "eBay raw sales are temporarily unavailable; using the condition-specific TCGplayer market fallback." };
     }
-}
-
-// Multiple listings of one printing share the complete in-flight market job,
-// including filtering and comp checks. No completed quote is retained here:
-// provider freshness and photo-evidence caches remain responsible for reuse.
-export function createSharedRawSalesPricer(deps: Parameters<typeof rawPricesWithSales>[2]) {
-    const share = createSharedWork();
-    return async (card: PricedCard | null, identity: Identity, signal?: AbortSignal): Promise<RawPricing> => {
-        const key = JSON.stringify([card, identity.status, identity.name, identity.set, identity.cardNumber, identity.language, identity.printing, identity.finish]);
-        const result = await share(key, workSignal => rawPricesWithSales(card, identity, { ...deps, signal: workSignal }), signal);
-        return structuredClone(result);
-    };
 }

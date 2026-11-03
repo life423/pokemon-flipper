@@ -4,7 +4,6 @@ import { createPricingRetries } from "../../server/deals/pricing-retries.ts";
 import { PricingProviderError, pricingIssue, retryAfterMs } from "../../server/pricing/errors.ts";
 import { applyPricingRetry, canRetryPricing, pricingSnapshotKey } from "../../shared/pricing-retries.ts";
 import { prescreen } from "../../server/deals/prescreen.ts";
-import { screenListing } from "../../server/deals/find-deals.ts";
 import { cardDetails } from "../../shared/card-details.ts";
 import { withFreshListing } from "../../shared/fresh-listing.ts";
 
@@ -137,12 +136,6 @@ test("a recovered identity still has to match the original search", async () => 
     let time=TIME;const queue=createPricingRetries({now:()=>time,cooldown:()=>null,price:async()=>({...priced(),card:{set:"Skyridge"}})});
     const hint=queue.register(listing(),input(),{cardName:null,sets:["Aquapolis"],titleWords:[],printing:null,cardNumber:null,graded:true,source:"rules"});time+=31_000;
     assert.equal((await queue.retry([hint.ticket],targets,false)).results[0].match,"OTHER_SET");
-});
-
-test("normal screening captures only a failed pricing input and structured seller attributes", async()=>{
-    let captured;
-    const result=await screenListing(listing(),{readTitle:async()=>({aspects:input().aspects,filled:[]}),check:async()=>pending(),loadDetails:async()=>{throw Error("not needed");},matchPhoto:async()=>{throw Error("not needed");},deferPricing:(value,pricingInput)=>{captured={value,pricingInput};return {ticket:"ticket",retryAt:new Date(TIME).toISOString(),snapshotKey:pricingSnapshotKey(value),attemptsLeft:3};}});
-    assert.equal(captured.pricingInput.aspects.Grade,"9");assert.equal(result.screen.pricingRetry.ticket,"ticket");assert.deepEqual(result.listedAttributes,{grader:"PSA",grade:9,finish:"HOLO"});
 });
 
 test("card headers distinguish listed, checked, raw, unknown and qualified grades",()=>{

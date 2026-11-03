@@ -1,10 +1,10 @@
 import "../fixtures/isolated-data.ts";
 import { test } from "../fixtures/search-context.ts";
 import assert from "node:assert/strict";
-import { evaluateListing } from "../../server/analysis/evaluate.ts";
+import { evaluateBoundedListing as evaluateListing } from "../../server/analysis/bounded-evaluate.ts";
 import { offlineEbayCredentials } from "../fixtures/ebay-credentials.ts";
 
-test("fresh evaluations share paid work and use server terms; different browser snapshots stay separate", async t => {
+test("terms-refresh evaluations share work and use server terms; different browser snapshots stay separate", async t => {
     offlineEbayCredentials(t);
     const id = `v1|fresh-concurrent-${Date.now()}|0`;
     const end = new Date(Date.now() + 86400000).toISOString();
@@ -20,15 +20,15 @@ test("fresh evaluations share paid work and use server terms; different browser 
             localizedAspects: [{ name: "Card Name", value: "Venusaur" }, { name: "Set", value: "Base Set" }, { name: "Card Number", value: "15/102" }] });
     });
     const old = { title: "Old browser title", images: [], price: 1, shipping: 0, bids: 0, endTime: "2000-01-01T00:00:00Z" };
-    const [first, duplicate] = await Promise.all([evaluateListing(id, { fresh: true, current: old }), evaluateListing(id, { fresh: true, current: { ...old, price: 2 } })]);
+    const [first, duplicate] = await Promise.all([evaluateListing(id), evaluateListing(id)]);
     assert.equal(items, 1); assert.equal(first, duplicate);
     assert.equal(first.listing.price, 18); assert.equal(first.listing.shipping, null); assert.equal(first.listing.bids, 5); assert.equal(first.listing.endTime, end); assert.ok(first.listing.termsCheckedAt);
     const current = { ...old, title: first.listing.title, price: 10, endTime: end };
     const [a, b] = await Promise.all([evaluateListing(id, { current }), evaluateListing(id, { current: { ...current, price: 12 } })]);
     assert.equal(a.listing.price, 10); assert.equal(b.listing.price, 12); assert.equal(items, 1);
     failed = true;
-    await assert.rejects(evaluateListing(id, { fresh: true }), /temporary offline failure/);
+    await assert.rejects(evaluateListing(id), /temporary offline failure/);
     failed = false;
-    assert.equal((await evaluateListing(id, { fresh: true })).listing.price, 18);
+    assert.equal((await evaluateListing(id)).listing.price, 18);
     assert.equal(items, 3, "a failed request must release both the queue and shared work");
 });

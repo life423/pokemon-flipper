@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { createShortlistStore } from "../../server/shortlist/store.ts";
 import { createShortlistService } from "../../server/shortlist/service.ts";
-import { ANALYSIS_VERSION } from "../../server/ai/openai.ts";
+import { ANALYSIS_VERSION } from "../../server/analysis/legacy-evidence.ts";
 import { EbayError } from "../../server/ebay/api.ts";
 import type { ListingDetails } from "../../server/ebay/listings.ts";
 import type { SavedRecord } from "../../server/analysis/types.ts";

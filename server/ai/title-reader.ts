@@ -9,6 +9,8 @@ import { searchAttributes } from "../../shared/search-criteria.ts";
 import { cardLanguageStatus } from "../../shared/card-language.ts";
 import { StorageUnavailableError } from "../storage/index.ts";
 import { explicitReprintSet, withoutReprintRelease } from "../../shared/reprint-release.ts";
+import { rawConditionClaim } from "../../shared/raw-condition-claim.ts";
+import { CONDITION_NAMES } from "../../shared/conditions.ts";
 
 // Many sellers leave the set, number, or name out of the item details
 // but put them in the title ("CHARIZARD 1999 POKEMON BASE SET 4/102").
@@ -117,11 +119,10 @@ export function readTitleByRules(title: string): TitleReading {
     const number = cardNumberIn(title);
     const language = cardLanguageStatus(title);
     const excluded = exclusionReason({ title, itemId: "local-title|0" });
-    const condition = /\b(?:damaged|dmg)\b/i.test(title) ? "Damaged"
-        : /\b(?:heavily played|hp)\b/i.test(title) ? "Heavily Played"
-        : /\b(?:moderately played|mp)\b/i.test(title) ? "Moderately Played"
-        : /\b(?:lightly played|lp|excellent)\b/i.test(title) ? "Lightly Played"
-        : /\b(?:near mint|nm|mint)\b/i.test(title) ? "Near Mint" : null;
+    // Preserve this reader's Excellent->LP and Mint->NM vocabulary while
+    // sharing the ambiguity/HP-stat rules with sold-title screening.
+    const claim = rawConditionClaim(title.replace(/\bexcellent\b/gi, "Lightly Played"));
+    const condition = claim ? CONDITION_NAMES[claim === "MINT" ? "NEAR_MINT" : claim] : null;
     // Only use a compact literal name after removing explicit metadata. This
     // does not claim that an unknown phrase is a canonical Pokemon identity.
     const name = normalizeText(withoutReprintRelease(title))

@@ -181,8 +181,8 @@ Open **http://localhost:3017** and search for a card. This app uses its own port
 so it can run alongside Ascend Avoid on port 3000. Startup never kills another
 process; if 3017 is already occupied, use the running instance or set `PORT`.
 
-The current development search is English-only. Browse searches use the card
-category's Language aspect; wrong-category discovery uses English keywords.
+The current search is English-only. Browse searches use the card category's
+Language aspect.
 Known foreign title, item-specific and saved photo evidence is excluded before
 further paid assessment. Unknown language stays preliminary until identified.
 
@@ -203,7 +203,7 @@ rejected eBay credentials now appear as an actionable search error.
 | `EBAY_SHIP_TO_ZIP` | No | Lets eBay quote calculated shipping to your ZIP |
 | `OPENAI_MODEL` | No | Overrides legacy text/vision defaults |
 | `OPENAI_BOUNDED_VISION_MODEL` | No | Bounded photo model; unsupported pricing remains blocked |
-| `POKEMON_PRICE_TRACKER_API_KEY` | No | A second price source, kept as a cross-check |
+| `POKEMON_PRICE_TRACKER_API_KEY` | No | Optional set-release-year catalog for the interface |
 | `PORT` | No | Server port, 3017 by default |
 
 **Money settings, in [`shared/money/config.ts`](shared/money/config.ts)**
@@ -219,8 +219,7 @@ eBay fees, sales tax, shipping costs, PSA and CGC service levels, and default ta
 | `npm run typecheck` | Type-checks the server and the page |
 | `npm run build` | Builds the page for production |
 | `npm start` | Runs the production build |
-| `npm run evaluate -- <eBay link>` | Prints the full analysis of one listing |
-| `npm run consistency -- <eBay link> [runs]` | Re-runs the AI several times to measure how much its answers vary (paid) |
+| `npm run evaluate -- <eBay link>` | Refreshes one listing's terms, reuses paid evidence and uses the app's bounded raw/slab evaluator |
 | `npx tsx scripts/bounded-search-benchmark.ts --help` | Shows the explicit one-search diagnostic and provider-blocked cache replay; no provider work from help |
 
 ## Project layout
@@ -297,8 +296,8 @@ condition is always null. Both use the same exact-input preflight, durable
 reservation and two-cent ceiling. A disproved seller slab claim does not launch
 a second paid raw assessment. Bounded HTTP research does not buy separate
 identity passes, a second condition opinion, fresh comp-check batches or sold
-listing photo reviews. Legacy diagnostic evaluators retain their older workflow
-and remain subject to the same spending guard. Smaller request bounds do not
+listing photo reviews. The CLI uses this same evaluator; the separate legacy
+evaluator and repeated fresh-opinion command have been retired. Smaller request bounds do not
 establish a measured cost saving or guarantee label-reading quality.
 
 A controlled four-photo assessment's reported token usage cost **$0.0030728**
@@ -449,8 +448,8 @@ checks used local synthetic images at mobile and desktop sizes. They do not
 certify future model judgments, complete market coverage or profitable flips.
 The subsequent [financial calculation audit](docs/financial-calculation-audit-2026-11-03.md)
 corrects currency rounding, target ceilings, ROI, promotion fees and sold-price
-eligibility, and documents the remaining input assumptions. A measured complete
-live search remains pending. No new OpenAI generation, token-count or eBay Browse calls were used
+eligibility, and documents the remaining input assumptions. The later controlled
+search is recorded below. No new OpenAI generation, token-count or eBay Browse calls were used
 for that offline audit, and paid processing was paused at its checkpoint. The
 bounded-workflow canary described above was performed later; it does not replace
 a complete search benchmark.
@@ -470,7 +469,7 @@ per-search limit as one shared development allowance. Invalid new accounting or
 a retained per-search lock blocks Browse work. After a crash, stop all app
 instances and verify the owner is no longer running before removing only that
 search's `.json.lock` file. Keep its JSON ledger and used count; old locks are
-never stolen automatically. The evaluate, consistency and search-review CLI
+never stolen automatically. The evaluate and bounded-search-benchmark CLI
 commands establish one research ID through their shared scope helper; new CLI
 callers must also establish a scope before making uncached Browse requests.
 
@@ -492,6 +491,18 @@ No confirmed Deal resulted. Replaying those completed assessments used no new
 provider calls. The diagnostic separates actual transports, conservative budget
 reservations, token preflight and cached evidence; it does not run automatically.
 
+The subsequent [candidate-selection follow-up](docs/candidate-selection-2026-11-03.md)
+reuses canonical catalog research and orders unpriced raw prospects by delivered
+asking versus one exact recent raw market. Saved-only replay recovered price
+context for 42/50 rows versus 35/50, with zero new provider calls. These
+comparisons order research; completed photo/pricing/cost checks still decide
+Deals, including supported raw-to-CGC and raw-to-PSA opportunities.
+
+The [listing-filter corrections](docs/listing-filter-corrections-2026-11-03.md)
+preserve ordinary authenticity/holder wording, recheck raw/graded choices against
+saved photo evidence and retain conflicting seller-condition clues without
+turning them into grades or automatic rejections.
+
 ## Known gaps
 
 - **PSA fees need account verification.** Public service levels were checked against PSA's October 30 schedule, including available Standard and the current Express fee. PSA remains unverified against your invoice/account. Your recorded 13.6% eBay fee, shipping assumptions, purchase tax and CGC schedule remain configurable in [`shared/money/config.ts`](shared/money/config.ts).
@@ -500,3 +511,4 @@ reservations, token preflight and cached evidence; it does not run automatically
 - **Grade odds are a fixed rule:** the likely grade counts most and each grade away counts less. It isn't yet measured against real grading results.
 - **Price-data limits cover separate stages.** Preliminary screening has an eight-request allowance. Final raw/slab valuation can make further requests; a unified production all-stage price-data budget and durable request/credit reporting remain pending. The benchmark's extra sixteen-request ceiling applies only to that diagnostic.
 - **Workflow quality remains unproven.** One controlled full-flow search measured bounded costs and successful cache reuse, but found no Deal and retained two printing reviews. Raw priority, broader accuracy/positive-deal validation, deferred early-completion and photo/language warning reports remain later work. Reduced request bounds alone do not establish better deal detection.
+- **Manual pricing retry admission is disconnected.** The compatibility endpoint and ticket UI remain, but the bounded price-first path does not issue new retry tickets. Reconnecting a bounded explicit retry or retiring the compatibility surface needs a separate decision; it is not automatic pricing recovery.

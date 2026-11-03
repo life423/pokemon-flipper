@@ -34,3 +34,15 @@ test("slabs are identified as graded and provider failures remain failures", asy
     const offline = createListingResolver({ details: async () => { throw new Error("offline provider"); } });
     await assert.rejects(offline("267743966894"), /offline provider/);
 });
+
+test("direct links use the same assurance/holder exclusions as search without buying analysis", async () => {
+    for (const [suffix, accepted] of [["Authenticity Guaranteed with a custom protective case", true],
+        ["custom card Authenticity Guaranteed with a custom protective case", false],
+        ["mystery repack Authenticity Guaranteed", false]] as const) {
+        let calls = 0;
+        const resolve = createListingResolver({ details: async () => { calls++; return { ...details(), title: `${details().title} ${suffix}` }; } });
+        if (accepted) assert.match((await resolve("267743966894")).title, /Authenticity Guaranteed/);
+        else await assert.rejects(resolve("267743966894"), error => error instanceof ListingLinkError && error.status === 422);
+        assert.equal(calls, 1, "only the injected canonical detail read runs");
+    }
+});

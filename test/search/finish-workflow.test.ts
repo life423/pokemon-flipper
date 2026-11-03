@@ -64,9 +64,9 @@ test("bounded admission excludes explicit wrong finishes before paid work and do
         listing("non-holo", "Dark Blastoise Team Rocket 20/82 Non-Holo English")];
     for (const [query, expected] of phrases) {
         let sources = 0;
-        const result = await findDeals(query, { bounded: true, filters: { typeFilter: "FIXED_PRICE" } }, {
-            readIntent: async () => assert.fail("no paid query reading"), readIntentWithoutAi: async () => readSearchLocally(query),
-            readTitle: async () => assert.fail("no paid title reading"), readTitleWithoutAi: async title => readTitleByRules(title),
+        const result = await findDeals(query, { filters: { typeFilter: "FIXED_PRICE" } }, {
+            readIntent: async () => readSearchLocally(query),
+            readTitle: async title => readTitleByRules(title),
             screening: () => assert.fail("no paid preliminary screening"),
             search: async (_query, options) => { sources++; assert.equal(options?.maxResults, 200); return { listings: rows, total: rows.length, skipped: 0 }; },
         });

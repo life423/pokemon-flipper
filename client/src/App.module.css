@@ -444,8 +444,7 @@
    something worth a look. */
 .count,
 .countBuy,
-.countWatch,
-.countAction {
+.countWatch {
     font-variant-numeric: tabular-nums;
 }
 
@@ -460,11 +459,6 @@
 
 .countWatch {
     color: var(--tone-watch);
-    font-weight: 750;
-}
-
-.countAction {
-    color: var(--action-text);
     font-weight: 750;
 }
 

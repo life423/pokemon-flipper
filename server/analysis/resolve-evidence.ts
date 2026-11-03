@@ -1,5 +1,5 @@
 import type { PhotoCheck, SlabReading } from "../../shared/types.ts";
-import type { IdentityPhotoReading } from "../ai/openai.ts";
+import type { IdentityPhotoReading } from "./legacy-evidence.ts";
 import { normalizeWords, sameCardNumber, sameSetFamily, type PhotoConfirmation } from "../identity/card-identity.ts";
 import { confirmPhotoIdentity } from "../identity/photo-confirmation.ts";
 import { normalizeSlabReading } from "../identity/slab-check.ts";

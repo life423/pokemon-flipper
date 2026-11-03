@@ -47,7 +47,7 @@ test("cards show real listed dates, distinguish creation, and keep the card-type
     assert.doesNotMatch(panel, /Your review needed/);
 
     const noop = () => {};
-    const groups = Object.fromEntries(["new", "deals", "offers", "candidates", "review", "hidden", "all"].map(view => [view, []]));
+    const groups = Object.fromEntries(["new", "deals", "offers", "candidates", "review", "all"].map(view => [view, []]));
     const controls = { showSearchOptions: true, hidden: true, idle: true,
         views: { view: "all", availableViews: ["all"], groups, allTab: { current: null }, setView: noop },
         filters: { typeFilter: "all", kindFilter: "all", sort: "best", minPrice: "", maxPrice: "", minGrade: 0,

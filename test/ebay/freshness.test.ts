@@ -1,7 +1,7 @@
 import { test } from "../fixtures/search-context.ts";
 import assert from "node:assert/strict";
 import { getListingDetails, type ListingDetails } from "../../server/ebay/listings.ts";
-import { evaluateListing } from "../../server/analysis/evaluate.ts";
+import { evaluateBoundedListing as evaluateListing } from "../../server/analysis/bounded-evaluate.ts";
 import { writeCache } from "../../server/lib/cache.ts";
 import { photoEvidenceKey } from "../../shared/listing-evidence.ts";
 import { offlineEbayCredentials } from "../fixtures/ebay-credentials.ts";
@@ -61,7 +61,7 @@ test("unchanged legacy search photos reuse details, while changed, removed photo
     }
 });
 
-test("a changed-photo search and explicit full reanalysis both reject cached photo details", async (t) => {
+test("a changed-photo search and explicit terms refresh both reject cached photo details", async (t) => {
     offlineEbayCredentials(t);
     let requests = 0;
     let current: ListingDetails;
@@ -77,7 +77,7 @@ test("a changed-photo search and explicit full reanalysis both reject cached pho
         cached.searchPhotoKey = photoEvidenceKey(cached.images);
         await writeCache(`ebay:item:${id}`, cached);
         current = details(id, []);
-        const evaluation = await evaluateListing(id, { fresh, current: { price: 20, shipping: 0, bids: 0, endTime: null, title: cached.title, images: fresh ? cached.images : [] } });
+        const evaluation = await evaluateListing(id, { current: fresh ? null : { price: 20, shipping: 0, bids: 0, endTime: null, title: cached.title, images: [] } });
         assert.deepEqual(evaluation.listing.photos, []);
         assert.equal(evaluation.photoCheck, null, "old photo assessments cannot be displayed");
         assert.equal(evaluation.gradingMode, "BLOCKED");

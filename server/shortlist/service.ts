@@ -1,6 +1,6 @@
 import { getListingDetails, listingCacheKey, type ListingDetails } from "../ebay/listings.ts";
 import { loadSaved } from "../analysis/store.ts";
-import { ANALYSIS_VERSION } from "../ai/openai.ts";
+import { ANALYSIS_VERSION } from "../analysis/legacy-evidence.ts";
 import { createLimiter } from "../lib/concurrency.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
 import { EbayError } from "../ebay/api.ts";

@@ -12,12 +12,12 @@ test("AI assessment progress is visible throughout searching and respects pause,
         server: { middlewareMode: true, hmr: false, ws: false, watch: null }, logLevel: "error" });
     t.after(() => vite.close());
     const { SearchProgress } = await vite.ssrLoadModule("/src/components/SearchProgress.tsx");
-    const defaults = { phase: "discovering", query: "1999 base set holo", error: null, ebayTotal: 1000, checked: 25, total: 100,
+    const defaults = { phase: "filtering", query: "1999 base set holo", error: null, ebayTotal: 1000, checked: 25, total: 100,
         ai: { done: 5, target: 20, analyzing: 3, waiting: 12, failed: 1 },
         stats: { junk: 0, dropped: 0, unchecked: 0, deals: 1 }, usage: null, onStop: () => {} };
     const render = (change: Record<string, unknown> = {}) => renderToStaticMarkup(createElement(SearchProgress, { ...defaults, ...change }));
     const status = (markup: string) => markup.match(/<div[^>]+data-ai-state="([^"]+)"[^>]*>([\s\S]*?)<\/div>/)!;
-    for (const phase of ["finding", "filtering", "discovering", "pricing", "ai"]) {
+    for (const phase of ["finding", "filtering", "ai"]) {
         const markup = render({ phase });
         const [, state, content] = status(markup);
         assert.equal(state, "working");
@@ -27,13 +27,13 @@ test("AI assessment progress is visible throughout searching and respects pause,
         assert.ok(markup.indexOf('data-ai-state="working"') < markup.indexOf('inert=""'), "the indicator is outside collapsed details");
     }
     assert.match(status(render({ ai: { ...defaults.ai, analyzing: 1 } }))[2], /AI assessing 1 card</);
-    for (const [phase, paused, expected] of [["discovering", true, "paused"], ["paused", true, "paused"], ["stopped", true, "stopped"], ["done", false, "idle"]] as const) {
+    for (const [phase, paused, expected] of [["filtering", true, "paused"], ["paused", true, "paused"], ["stopped", true, "stopped"], ["done", false, "idle"]] as const) {
         const [, state, content] = status(render({ phase, ai: { ...defaults.ai, analyzing: phase === "done" ? 0 : 3, paused } }));
         assert.equal(state, expected);
         assert.doesNotMatch(content, /AI assessing|aria-hidden/);
         assert.match(content, /4 completed/);
     }
-    for (const phase of ["finding", "filtering", "discovering", "pricing"]) {
+    for (const phase of ["finding", "filtering"]) {
         const metadataContinues = render({ phase, ai: { ...defaults.ai, analyzing: 1, paused: true } });
         assert.match(metadataContinues, new RegExp(`data-phase="${phase}"`));
         assert.equal(status(metadataContinues)[1], "paused");

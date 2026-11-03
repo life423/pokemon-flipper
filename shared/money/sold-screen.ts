@@ -3,6 +3,7 @@ import type { ListingSummary, Screen, ScreeningSoldEvidence, ScreeningSoldRefere
 import { MONEY_CONFIG, type MoneyConfig } from "./config.ts";
 import { offerPlan, offerWorthMaking } from "./offer.ts";
 import { bestPath, netFromSale, pathNumbers } from "./underwriting.ts";
+import { usableSoldReference, soldReferenceScope } from "../sold-evidence.ts";
 
 type SoldScreenListing = Pick<ListingSummary, "currentPrice" | "shipping" | "isGraded" | "buyingOption" | "bestOffer" | "screen">;
 interface SoldScreenOptions {
@@ -13,32 +14,6 @@ interface SoldScreenOptions {
 
 const positive = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value > 0;
 const normalize = (value: unknown) => String(value ?? "").trim().toUpperCase();
-
-// The provider layer has already matched the card, currency, confirmed sale
-// amounts and dates. Recheck the compact numerical/scope contract before these
-// reusable public facts can influence an owner's purchase decision.
-function usableReference(reference: ScreeningSoldReference, slab: boolean): boolean {
-    const { summary } = reference;
-    if (!summary || !Number.isInteger(summary.count) || summary.count < 3 || !positive(summary.median) ||
-        !positive(summary.windowDays) || summary.windowDays > 180 ||
-        !["HIGH", "MEDIUM", "LOW"].includes(summary.confidence)) return false;
-    if (summary.low !== null && (!positive(summary.low) || summary.low > summary.median)) return false;
-    if (summary.high !== null && (!positive(summary.high) || summary.high < summary.median)) return false;
-    if (!reference.name || !reference.set || !reference.cardNumber ||
-        !["FIRST_EDITION", "SHADOWLESS", "UNLIMITED"].includes(reference.printing) ||
-        !["HOLO", "NON_HOLO", "REVERSE_HOLO"].includes(reference.finish)) return false;
-
-    if (slab) return reference.condition === null && !!normalize(reference.grader) && positive(Number(reference.grade)) &&
-        normalize(summary.grader) === normalize(reference.grader) && Number(summary.grade) === Number(reference.grade);
-    return reference.grader === null && reference.grade === null && normalize(summary.grader) === "RAW" &&
-        (isRawCondition(reference.condition) ? summary.grade === reference.condition :
-            reference.condition === null && summary.grade === "UNSPECIFIED");
-}
-
-function scope(reference: ScreeningSoldReference): string {
-    return JSON.stringify([reference.recordId, normalize(reference.name), normalize(reference.set), normalize(reference.cardNumber),
-        reference.printing, reference.finish, normalize(reference.grader), reference.grade === null ? null : Number(reference.grade)]);
-}
 
 function label(reference: ScreeningSoldReference, slab: boolean): string {
     return slab ? `Preliminary ${normalize(reference.grader)} ${reference.grade} resale` :
@@ -79,7 +54,7 @@ export function applySoldPriceScreen<T extends SoldScreenListing>(
     const finish = () => ({ ...listing, screen });
     if (evidence.status !== "AVAILABLE") return finish();
 
-    const references = evidence.references.filter((reference) => usableReference(reference, listing.isGraded));
+    const references = evidence.references.filter((reference) => usableSoldReference(reference, listing.isGraded));
     if (!references.length) {
         screen.soldEvidence = { ...evidence, status: "UNAVAILABLE", note: "No usable recent matched sold-price reference is available." };
         screen.reason = screen.soldEvidence.note;
@@ -117,7 +92,7 @@ export function applySoldPriceScreen<T extends SoldScreenListing>(
 
     // An unusable second scope must not disappear and make the remaining
     // cheaper printing/grade look uniquely applicable.
-    const singleScope = new Set(evidence.references.map(scope)).size === 1;
+    const singleScope = new Set(evidence.references.map(soldReferenceScope)).size === 1;
     screen.money = {
         shipping,
         paths,

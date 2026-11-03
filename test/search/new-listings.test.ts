@@ -12,7 +12,7 @@ import type { ListingSummary } from "../../shared/types.ts";
 test("seen listings persist per query and minimum price; discovery skips them before screening",async t=>{
     const folder=await fs.mkdtemp(path.join(os.tmpdir(),"pokemon-new-"));t.after(()=>fs.rm(folder,{recursive:true,force:true}));const history=createSearchHistory(path.join(folder,"history.json"));
     await history.remember("Vénusaur",10,["old"]);assert.deepEqual(await createSearchHistory(path.join(folder,"history.json")).seen("  venusaur ",10),["old"]);assert.deepEqual(await history.seen("venusaur",0),[]);
-    let calls=0;const discover=createNewListingDiscovery({history,usage:async()=>null,find:async(_query,options)=>{calls++;assert.equal(options?.newOnly?.limit,200);assert.ok(options?.newOnly?.excludeIds.includes("old"));assert.ok(options?.newOnly?.excludeIds.includes("client"));options?.onListing?.({id:"new"} as never);return [];}});
+    let calls=0;const discover=createNewListingDiscovery({history,usage:async()=>null,find:async(_query,options)=>{calls++;assert.ok(options?.newOnly?.excludeIds.includes("old"));assert.ok(options?.newOnly?.excludeIds.includes("client"));options?.onListing?.({id:"new"} as never);return [];}});
     await discover("venusaur",{minPrice:10},["client"]);assert.equal(calls,1);assert.deepEqual(await history.seen("venusaur",10),["old","new"]);
 });
 test("the reserve blocks discovery and overlapping scans cannot duplicate work",async()=>{
@@ -52,15 +52,14 @@ test("filtered-out new listings are never remembered and a broader scan has its 
     const filters = { kindFilter: "raw" as const, maxPrice: 100, minPrice: 30 };
     const row = (id: string, price: number, isGraded = false): ListingSummary => ({ id, title: "Pokemon card", currentPrice: price, shipping: 0, bids: 0, isGraded, buyingOption: "FIXED_PRICE", endTime: null, images: [], url: "#", seller: null });
     const rows = [row("raw", 50), row("slab", 50, true), row("expensive", 223_200)];
-    const recovered: string[][] = []; let calls = 0;
+    let calls = 0;
     const discover = createNewListingDiscovery({ history, usage: async () => null,
         find: async (_query, options) => { calls++; assert.deepEqual(options?.newOnly?.excludeIds, []); for (const value of rows) options?.onListing?.(value); return rows; },
-        recover: async values => { recovered.push(values.map(value => value.id)); },
     });
     await discover("pokemon", { filters });
     assert.deepEqual(await history.seen("pokemon", 30, filters), ["raw"]);
     assert.deepEqual(await history.seen("pokemon", 30), [], "narrower history cannot hide the unseen slab in a broader search");
     await discover("pokemon", { minPrice: 30 });
     assert.deepEqual(await history.seen("pokemon", 30), ["raw", "slab"]);
-    assert.deepEqual(recovered, [["raw"], ["raw", "slab"]]); assert.equal(calls, 2);
+    assert.equal(calls, 2);
 });

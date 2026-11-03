@@ -70,3 +70,19 @@ test("explicit foreign-language searches consume no eBay requests", async t => {
     await assert.rejects(searchListings("Japanese Charizard"), EnglishOnlyError);
     assert.equal(fetch.mock.callCount(), 0);
 });
+
+test("source filtering keeps assurance/holder wording without admitting other junk beside it", async t => {
+    offlineEbayCredentials(t);
+    const titles = ["Charizard Base Set 4/102 Holo Authenticity Guaranteed", "Charizard Base Set 4/102 Holo with a custom protective case",
+        "Charizard custom card Authenticity Guaranteed with a custom protective case", "Charizard random mystery card Authenticity Guaranteed",
+        "Charizard empty slab Authenticity Guaranteed", "Charizard replica with a custom protective case"];
+    t.mock.method(globalThis, "fetch", async input => {
+        const address = String(input);
+        if (address.includes("oauth2/token")) return Response.json({ access_token: "offline", expires_in: 3600 });
+        if (address.includes("rate_limit")) return Response.json({ rateLimits: [{ apiName: "Browse", resources: [{ name: "buy.browse", rates: [{ count: 0, limit: 5000, remaining: 5000 }] }] }] });
+        return Response.json({ total: titles.length, itemSummaries: titles.map((title, index) => ({ itemId: `v1|filter-${index}|0`, title, buyingOptions: ["FIXED_PRICE"], price: { currency: "USD", value: "100" } })) });
+    });
+    const result = await searchListings(`offline-filter-context-${Date.now()}`);
+    assert.deepEqual(result.listings.map(row => row.title), titles.slice(0, 2));
+    assert.equal(result.skipped, 4);
+});

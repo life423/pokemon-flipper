@@ -1,10 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { prescreen, type ScreenInput, type ScreenDeps } from "../../server/deals/prescreen.ts";
-import { digDeeper } from "../../server/deals/dig.ts";
 import type { CardRecord } from "../../server/pricing/types.ts";
-import type { ListingSummary, SearchIntent } from "../../shared/types.ts";
-import type { PhotoInspection } from "../../server/ai/photo-find.ts";
+import type { ListingSummary } from "../../shared/types.ts";
 import { retargetScreen } from "../../shared/money/targets.ts";
 import { canAutoAnalyze } from "../../shared/analysis.ts";
 
@@ -79,36 +77,6 @@ test("missing prices, unidentified cards and certified slabs are not rejected us
         if (listing.isGraded) assert.ok(calls.gradedComps > 0, "raw value does not cap certified resale");
         if (!record) assert.equal(result.status, "UNSCREENED");
     }
-});
-
-test("photo discovery can reopen a low-value generic listing when an omitted first-edition stamp is visible", async () => {
-    const { calls, deps } = fixture(card(1, 30));
-    const original = input({ title: "Old Pokemon card", price: 5 });
-    const rejected = await prescreen(original, deps);
-    assert.equal(rejected.status, "DROPPED"); assert.equal(rejected.lowResale?.cheapFirstEditionBaseSet, false);
-    const primary: ListingSummary = { id: "hidden-first-edition", title: original.title, currentPrice: 5, shipping: 0, bids: 0,
-        isGraded: false, buyingOption: "FIXED_PRICE", endTime: null, images: ["front-stamp"], url: "#", seller: null, screen: rejected };
-    const intent: SearchIntent = { cardName: "Machop", sets: ["Base Set"], cardNumber: "52/102", printing: null, graded: false, titleWords: ["machop"], source: "rules" };
-    const photo: PhotoInspection = { cardCount: 1, isStockImage: false, shows: "Machop 52/102 with visible first-edition stamp",
-        card: { name: "Machop", set: "Base Set", cardNumber: "52/102", language: "English", finish: "NON_HOLO", confidence: "HIGH", evidence: ["Legible name and number, matching artwork and edition stamp"] },
-        printingMarks: { firstEditionStamp: "VISIBLE", artBoxShadow: "ABSENT" } };
-    const found: ListingSummary[] = [];
-    await digDeeper("Machop Base Set", { intent, primaryListings: [primary], excludeIds: [primary.id], onListing: row => { found.push(row); } }, {
-        plan: async () => [], readIntent: async () => intent,
-        search: async () => { assert.fail("known primary recovery needs no additional search"); },
-        findPhoto: async () => ({ found: "YES", cardCount: 1, set: "Base Set", cardNumber: "52/102", shows: photo.shows, inspection: photo }),
-        screening: () => ({
-            readTitle: async () => ({ aspects: original.aspects, filled: [], condition: null, kind: "SINGLE_CARD" }),
-            check: value => prescreen(value, deps),
-            matchPhoto: async () => { assert.fail("a low-value focused exception does not start a second preliminary photo check"); },
-            loadDetails: async () => { assert.fail("a focused exception does not fetch detail or comp research yet"); },
-        }),
-    });
-    assert.equal(found.length, 1); assert.ok(found[0].mistakes?.some(mistake => mistake.kind === "FIRST_EDITION"));
-    assert.equal(found[0].screen?.focusedReview, "CHEAP_FIRST_EDITION_BASE_SET");
-    assert.equal(found[0].screen?.needsAnalysis, "IDENTITY");
-    assert.equal(found[0].screen?.card, null, "one discovery reading does not manufacture a confirmed premium printing");
-    assert.equal(found[0].screen?.status, "UNSCREENED"); assert.equal(calls.rawComps, 0); assert.equal(calls.gradedComps, 0);
 });
 
 test("LP-to-NM and NM-to-Mint opportunities reopen only when existing better-condition feed quotes clear targets", async () => {

@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import {
     photoFingerprint,
     reusableRecord,
-    assessmentStillFits,
 } from "../../server/analysis/store.ts";
 
 const urls = [
@@ -46,13 +45,4 @@ test("a title change or missing legacy title invalidates otherwise identical pho
     assert.equal(reusableRecord(saved(), { ...current, title: "Venusaur corrected printing" }), null);
     assert.equal(reusableRecord(saved({ reviewContext: undefined }), current), null);
     assert.ok(reusableRecord(saved(), { ...current, title: ` ${current.title} ` }));
-});
-
-test("a saved condition answer fits only the same mode and photos", () => {
-    const assessment = { mode: "FULL", photoNumbers: [1, 2] };
-
-    assert.equal(assessmentStillFits(assessment, "FULL", [1, 2]), true);
-    assert.equal(assessmentStillFits(assessment, "LIMITED", [1, 2]), false);
-    assert.equal(assessmentStillFits(assessment, "FULL", [1]), false);
-    assert.equal(assessmentStillFits(null, "FULL", [1, 2]), false);
 });

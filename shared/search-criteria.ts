@@ -3,6 +3,7 @@ import { finishClaim } from "./finish.ts";
 import { isPrinting } from "./identity.ts";
 import { setKey } from "./sets.ts";
 import { explicitReprintSet } from "./reprint-release.ts";
+import { observedCardKind } from "./photo-evidence.ts";
 
 type Finish = NonNullable<SearchIntent["finish"]>;
 const GRADER = "(?:psa|cgc|bgs|sgc|tag)";
@@ -114,6 +115,8 @@ export function evaluatedIdentityMismatch(evaluation: Evaluation, intent: Search
 
 export function evaluatedCriteriaMismatch(evaluation: Evaluation, intent: SearchIntent): boolean {
     if (evaluatedIdentityMismatch(evaluation, intent)) return true;
+    const kind = observedCardKind(evaluation);
+    if (kind && typeof intent.graded === "boolean" && kind !== (intent.graded ? "graded" : "raw")) return true;
     const attributes = searchAttributes(evaluation.listing.title, evaluation.listing.aspects);
     const slab = evaluation.photoCheck?.slab;
     if (slab?.present) {

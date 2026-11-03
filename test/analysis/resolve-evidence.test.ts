@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { reconcileIdentityReadings } from "../../server/analysis/resolve-evidence.ts";
 import { cardEvaluation } from "../fixtures/card-evaluation.ts";
-import type { IdentityPhotoReading } from "../../server/ai/openai.ts";
+import type { IdentityPhotoReading } from "../../server/analysis/legacy-evidence.ts";
 import type { PhotoCheck } from "../../shared/types.ts";
 
 function base(): PhotoCheck {

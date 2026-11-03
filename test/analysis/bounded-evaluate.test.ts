@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createBoundedEvaluator, selectBoundedPhotos, boundedAssessmentKey, validateBoundedReading, BOUNDED_ASSESSMENT_VERSION, type BoundedReading } from "../../server/analysis/bounded-evaluate.ts";
-import { ANALYSIS_VERSION, CONDITION_VERSION } from "../../server/ai/openai.ts";
+import { ANALYSIS_VERSION, CONDITION_VERSION } from "../../server/analysis/legacy-evidence.ts";
 import { photoFingerprint } from "../../server/analysis/store.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
 import { AiSpendingError } from "../../server/ai/spending.ts";
@@ -207,6 +207,50 @@ test("saved legacy full evidence is preferred without overwriting or repurchasin
     assert.equal([...cache.keys()].filter(key => key.startsWith("bounded-assessment:")).length, 0);
     assert.equal(result.assessmentVersion, ANALYSIS_VERSION);
     assert.deepEqual(result.reusedSteps, ["photoCheck", "condition"]);
+});
+
+test("legacy identity-pass corrections survive absent or expired valuation checkpoints without another assessment", async () => {
+    for (const stale of [false, true]) {
+        const listing = details(), full = reading();
+        full.photoCheck.holder = "GRADED_SLAB";
+        full.photoCheck.cardIdentity!.finish = "UNKNOWN";
+        full.photoCheck.slab = { present: true, grader: "CGC", grade: null, gradeQualifier: null, labelText: null, certNumber: null,
+            caseCondition: "INTACT", authenticity: "NONE_SEEN", concerns: [] };
+        const pass = { cardCount: "ONE", cardIdentity: { ...full.photoCheck.cardIdentity!, finish: "HOLO" as const },
+            printedName: "Venusaur", printedNumber: "15/102", printingMarks: full.photoCheck.printingMarks,
+            slab: { ...full.photoCheck.slab, grade: "8.5", labelText: "1999 BASE SET VENUSAUR HOLO CGC 8.5", certNumber: "12345678" } };
+        const oldEvaluation = cardEvaluation();
+        oldEvaluation.assessmentVersion = ANALYSIS_VERSION; oldEvaluation.conditionVersion = CONDITION_VERSION;
+        oldEvaluation.pricingVersion = PRICING_VERSION; oldEvaluation.pricesCheckedAt = new Date(now - 7 * 86400000).toISOString();
+        const record: SavedRecord = { itemId: listing.id, version: ANALYSIS_VERSION, photoFingerprint: photoFingerprint(listing.images), answeredAt: new Date(now - 86400000).toISOString(),
+            photoCheck: { result: full.photoCheck, usage: { inputTokens: 3000, outputTokens: 1000 } }, assessment: null,
+            identityPasses: [pass, structuredClone(pass)].map(result => ({ result, usage: { inputTokens: 500, outputTokens: 100 } })),
+            reviewContext: { title: listing.title, photos: listing.images },
+            ...(stale ? { latestEvaluation: { evidenceKey: listingEvidenceKey(listing), evaluation: oldEvaluation } } : {}) };
+        const original = structuredClone(record);
+        const { evaluate, calls } = harness({ saved: async () => record });
+        const result = await evaluate(listing.id);
+        assert.equal(calls.assessed, 0); assert.equal(calls.raw, 0);
+        assert.equal(result.photoCheck?.slab?.grade, "8.5"); assert.equal(result.photoCheck?.cardIdentity?.finish, "HOLO");
+        assert.equal(result.identity?.finish, "HOLO"); assert.equal(result.slab?.grade, "8.5"); assert.equal(result.slab?.status, "OK");
+        assert.ok(result.reusedSteps.includes("identityResolution"));
+        assert.equal(result.slabPricing?.summary?.grade, "8.5");
+        assert.deepEqual(record, original, "the paid original and independent passes remain unchanged");
+    }
+});
+
+test("legacy identity-pass finish disagreements remain blocking without new assessments or pricing", async () => {
+    const listing = details(), full = reading(); full.photoCheck.cardIdentity!.finish = "UNKNOWN";
+    const pass = (finish: "HOLO" | "REVERSE_HOLO") => ({ result: { cardCount: "ONE", cardIdentity: { ...full.photoCheck.cardIdentity!, finish },
+        printedName: "Venusaur", printedNumber: "15/102", printingMarks: full.photoCheck.printingMarks, slab: null }, usage: { inputTokens: 1, outputTokens: 1 } });
+    const { evaluate, calls } = harness({ saved: async id => ({ itemId: id, version: ANALYSIS_VERSION, photoFingerprint: photoFingerprint(listing.images), answeredAt: new Date(now - 86400000).toISOString(),
+        photoCheck: { result: full.photoCheck, usage: { inputTokens: 3000, outputTokens: 1000 } },
+        assessment: { version: CONDITION_VERSION, completedRuns: 2, mode: "FULL", photoNumbers: [1, 2, 3, 4], result: full.condition!, setAside: [] },
+        identityPasses: [pass("HOLO"), pass("REVERSE_HOLO")], reviewContext: { title: listing.title, photos: listing.images } }) });
+    const result = await evaluate(listing.id);
+    assert.equal(calls.assessed, 0); assert.equal(calls.comps, 0); assert.equal(calls.raw, 0);
+    assert.equal(result.identity?.status, "NEEDS_REVIEW"); assert.equal(result.identity?.finish, "CONFLICTING");
+    assert.doesNotMatch(result.underwriting?.verdict ?? "", /^BUY/);
 });
 
 test("an existing slab verifies and prices its exact grade without estimating raw condition", async () => {

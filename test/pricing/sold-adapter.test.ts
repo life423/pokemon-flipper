@@ -1,6 +1,7 @@
+import "../fixtures/isolated-data.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fetchComps, fetchRawComps, fetchSalesVolume, pricingCooldown } from "../../server/pricing/pkmnprices.ts";
+import { fetchComps, fetchRawComps } from "../../server/pricing/pkmnprices.ts";
 
 test("sold adapters bound pages, request recent sales and exclude non-USD rows before money math", async (t) => {
     const original = process.env.PKMNPRICES_API_KEY;
@@ -21,28 +22,5 @@ test("sold adapters bound pages, request recent sales and exclude non-USD rows b
         assert.equal(calls[1].searchParams.get("cursor"), "next-page");
         assert.equal(calls[2].searchParams.get("period"), "90d");
         assert.equal(calls[3].searchParams.get("cursor"), "next-page");
-        await fetchSalesVolume(id, "Unlimited Holofoil", false);
-        assert.equal(calls[4].searchParams.get("graded"), "false");
-        assert.equal(calls[4].searchParams.get("period"), "30d");
-        assert.equal(calls[4].searchParams.get("currency"), "usd");
-        assert.equal(calls[4].searchParams.get("limit"), "30");
-    } finally { if (original === undefined) delete process.env.PKMNPRICES_API_KEY; else process.env.PKMNPRICES_API_KEY = original; }
-});
-
-test("a plan-gated liquidity endpoint does not pause working prices and does not repeatedly request a denied feature", async (t) => {
-    const original = process.env.PKMNPRICES_API_KEY;
-    process.env.PKMNPRICES_API_KEY = "offline-test-key";
-    let volumeRequests = 0;
-    t.mock.method(globalThis, "fetch", async (value: string) => {
-        if (String(value).includes("/sales/volume?")) { volumeRequests++; return Response.json({ error: { message: "Pro plan required" } }, { status: 403 }); }
-        return Response.json({ data: [] });
-    });
-    const id = `offline-plan-${Date.now()}`;
-    try {
-        await assert.rejects(fetchSalesVolume(id, "Holofoil", false));
-        await assert.rejects(fetchSalesVolume(id, "Holofoil", false));
-        assert.equal(volumeRequests, 1);
-        assert.equal(pricingCooldown(), null);
-        assert.deepEqual(await fetchComps(id, { grader: "PSA", grade: 8 }), []);
     } finally { if (original === undefined) delete process.env.PKMNPRICES_API_KEY; else process.env.PKMNPRICES_API_KEY = original; }
 });

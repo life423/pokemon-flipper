@@ -78,7 +78,7 @@ try {
     const { ebayUsage } = await import("../server/ebay/usage.ts");
     const { evaluationFailure } = await import("../server/analysis/failure.ts");
     const { createBoundedEvaluator } = await import("../server/analysis/bounded-evaluate.ts");
-    const { searchWithDiscovery } = await import("../server/deals/search.ts");
+    const { searchDeals } = await import("../server/deals/search.ts");
     const scope = <T>(phase: string, work: () => T, listingId?: string): T => context.run({ searchId, phase, listingId }, () =>
         withAiUsageContext({ searchId, ...(listingId ? { listingId } : {}) }, work));
     const snapshots = async (phase: string) => scope(phase, async () => ({
@@ -97,12 +97,11 @@ try {
         if (previous) {
             report.summary = previous.summary;
             report.listings = previous.listings;
-        } else await scope("sold-screening", () => searchWithDiscovery(query, {
-            bounded: true, developmentLimit: DEVELOPMENT_SEARCH_LIMIT, maxResults: DEVELOPMENT_SEARCH_LIMIT, minPrice: 0,
+        } else await scope("sold-screening", () => searchDeals(query, {
+            minPrice: 0,
             targets, filters, includeOffers, signal: stopped.signal,
             onStart: summary => { report.summary = summary; report.events.push({ type: "metadata", elapsedMs: elapsedMs(), summary }); },
             onListing: listing => { report.listings.push(listing); },
-            onDiscovery: progress => { report.events.push({ type: "discovery", elapsedMs: elapsedMs(), ...progress }); },
         }));
         report.events.push({ type: "metadata-finished", elapsedMs: elapsedMs(), loaded: report.listings.length,
             admissions: Object.fromEntries(report.listings.map(listing => [listing.id, candidateAdmission(listing, filters, Date.now(), targets)])) });

@@ -5,12 +5,12 @@ import http from "node:http";
 import path from "node:path";
 import express from "express";
 import { CLIENT_ROOT } from "./lib/paths.ts";
-import { DEVELOPMENT_SEARCH_LIMIT, searchWithDiscovery } from "./deals/search.ts";
+import { searchDeals } from "./deals/search.ts";
 import { evaluateBoundedListing } from "./analysis/bounded-evaluate.ts";
 import { EbayError } from "./ebay/api.ts";
 import { ebayUsage, EbayBudgetError } from "./ebay/usage.ts";
 import { writeOfferNote } from "./ai/offer-note.ts";
-import type { CurrentState } from "./analysis/evaluate.ts";
+import type { CurrentState } from "./analysis/types.ts";
 import { MONEY_CONFIG } from "../shared/money/config.ts";
 import { ProviderError } from "./lib/http.ts";
 import { PhotoReviewError, reviewListingPhotos } from "./analysis/deeper-review.ts";
@@ -83,7 +83,7 @@ app.get("/api/storage", async (_req, res) => {
         res.status(503).json({ ready: false, error: storageFailure(error)?.message ?? "Saved evidence storage is unavailable." });
     }
 });
-app.get(["/api/deals", "/api/dig"], validSearchRequest);
+app.get("/api/deals", validSearchRequest);
 app.post("/api/deals/new", validSearchRequest);
 app.get("/api/ai-usage", async (req, res) => {
     try {
@@ -154,10 +154,8 @@ app.post("/api/deals/new", async (req, res) => {
         const query = typeof req.body?.query === "string" ? req.body.query.trim() : "";
         const known: unknown = req.body?.knownIds ?? [];
         if (!query || query.length > 300 || !Array.isArray(known) || known.length > 500 || known.some((id) => typeof id !== "string" || id.length > 120)) throw new Error("A search and up to 500 known listing IDs are required.");
-        await discoverNewListings(query, { bounded: true, developmentLimit: DEVELOPMENT_SEARCH_LIMIT, signal: controller.signal, filters: readListingFilters(req.query), targets: searchTargets(req), includeOffers: req.query.offers === "1", minPrice: Math.max(0, Number(req.query.min) || 0),
-            onStart: (summary) => send({ type: "start", ...summary }), onListing: (listing) => send({ type: "listing", listing }),
-            onPricing: (progress) => send({ type: "pricing", ...progress }),
-            onPricingListing: (listing, snapshotKey) => send({ type: "pricing-listing", listing, snapshotKey }) }, known as string[]);
+        await discoverNewListings(query, { signal: controller.signal, filters: readListingFilters(req.query), targets: searchTargets(req), includeOffers: req.query.offers === "1", minPrice: Math.max(0, Number(req.query.min) || 0),
+            onStart: (summary) => send({ type: "start", ...summary }), onListing: (listing) => send({ type: "listing", listing }) }, known as string[]);
         send({ type: "done" });
     } catch (error) { if (!controller.signal.aborted) send({ type: "error", error: (error as Error).message }); }
     res.end();
@@ -185,10 +183,8 @@ app.get("/api/ebay-usage", async (req, res) => {
     res.json(await ebayUsage());
 });
 
-// Every listing in a search, screened with rules, prices and AI title/comp reads: what each one
-// is worth at its best, and whether it could clear your targets.
-// Streamed as one JSON object per line, so the page fills in as listings
-// are checked.
+// Current search pipeline: one live page, matching metadata and sold evidence.
+// Full photo assessments are requested separately within the same search budget.
 app.get("/api/deals", async (req, res) => {
     res.setHeader("Content-Type", "application/x-ndjson");
 
@@ -200,20 +196,14 @@ app.get("/api/deals", async (req, res) => {
     res.on("close", () => stopped.abort());
 
     try {
-        await searchWithDiscovery(searchText(req), {
-            bounded: true,
-            developmentLimit: DEVELOPMENT_SEARCH_LIMIT,
+        await searchDeals(searchText(req), {
             signal: stopped.signal,
             filters: readListingFilters(req.query),
             targets: searchTargets(req),
             includeOffers: req.query.offers === "1",
-            maxResults: Number(req.query.max) || undefined,
             minPrice: Number(req.query.min) || 0,
             onStart: (summary) => send({ type: "start", ...summary }),
             onListing: (listing) => { seen.add(listing.id); send({ type: "listing", listing }); },
-            onDiscovery: (progress) => send({ type: "discovery", ...progress }),
-            onPricing: (progress) => send({ type: "pricing", ...progress }),
-            onPricingListing: (listing, snapshotKey) => send({ type: "pricing-listing", listing, snapshotKey }),
         });
         await searchHistory.remember(searchText(req), Math.max(0, Number(req.query.min) || 0), [...seen], readListingFilters(req.query)).catch((error) => console.error("Search history was not saved", error));
         send({ type: "done" });
@@ -223,14 +213,6 @@ app.get("/api/deals", async (req, res) => {
         if (!stopped.signal.aborted) send({ type: "error", error: searchFailureMessage(error) });
     }
 
-    res.end();
-});
-
-// The discovery implementation remains available offline/for future workflows;
-// local HTTP development cannot launch its broad paid scan.
-app.get("/api/dig", (_req, res) => {
-    res.setHeader("Content-Type", "application/x-ndjson");
-    res.write(`${JSON.stringify({ type: "error", error: `Broad discovery is paused in development mode. Find deals screens at most ${DEVELOPMENT_SEARCH_LIMIT} listings.` })}\n`);
     res.end();
 });
 

@@ -2,14 +2,13 @@ import { useState, type ReactNode } from "react";
 import { CheckIcon, ChevronIcon, InfoIcon, SearchIcon, StackIcon, StopIcon } from "./Icons";
 import { Tween, wholeNumber } from "./Tween";
 import styles from "./SearchProgress.module.css";
-import type { PricingRecoveryProgress } from "../../../shared/pricing-retries.ts";
 
 // Where a search is: finding listings on eBay, the free check, the AI,
 // then done. Or stopped, or failed.
-export type SearchPhase = "finding" | "filtering" | "discovering" | "pricing" | "ai" | "done" | "paused" | "stopped" | "error";
+export type SearchPhase = "finding" | "filtering" | "ai" | "done" | "paused" | "stopped" | "error";
 
 const STEPS = ["Finding listings", "Filtering listings", "AI analysis", "Finalizing results"];
-const STEP_OF: Record<SearchPhase, number> = { finding: 0, filtering: 1, discovering: 1, pricing: 1, ai: 2, done: 4, paused: -1, stopped: -1, error: -1 };
+const STEP_OF: Record<SearchPhase, number> = { finding: 0, filtering: 1, ai: 2, done: 4, paused: -1, stopped: -1, error: -1 };
 const COLLAPSED_KEY = "searchProgressCollapsed";
 
 interface Props {
@@ -22,11 +21,10 @@ interface Props {
     checked: number;
     total: number | null;
     ai: { done: number; target: number; analyzing: number; waiting: number; failed: number; paused?: boolean };
-    pricing?: PricingRecoveryProgress | null;
     stats: { junk: number; dropped: number; unchecked: number; deals: number };
     usage: { text: string; note: string; braking: boolean } | null;
     onStop: () => void;
-    // The buttons that apply right now (Analyze more, Dig deeper) and the dig's status.
+    // Explicit additional analysis controls, within the current search budget.
     actions?: ReactNode;
     // Everything else, one tap down.
     details?: ReactNode;
@@ -42,9 +40,9 @@ function readCollapsed(): boolean {
 
 // The search's progress, expanded with every step and count, or collapsed
 // to one line to leave room for results.
-export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal, checked, total, ai, pricing, stats, usage, onStop, actions, details }: Props) {
+export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal, checked, total, ai, stats, usage, onStop, actions, details }: Props) {
     const [collapsed, setCollapsed] = useState(readCollapsed);
-    const listingWork = requestedPhase === "finding" || requestedPhase === "filtering" || requestedPhase === "discovering" || requestedPhase === "pricing";
+    const listingWork = requestedPhase === "finding" || requestedPhase === "filtering";
     // A paid-AI pause does not stop the independently bounded metadata stream.
     // Keep its progress and Stop action, while the AI strip reports the pause.
     const phase = requestedPhase === "stopped" || requestedPhase === "error" ? requestedPhase
@@ -61,7 +59,7 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
         });
     };
 
-    const running = phase === "finding" || phase === "filtering" || phase === "discovering" || phase === "pricing" || phase === "ai";
+    const running = phase === "finding" || phase === "filtering" || phase === "ai";
     const halted = phase === "paused" || phase === "stopped" || phase === "error";
     const step = STEP_OF[phase];
     const aiState = phase === "stopped" ? "stopped" : phase === "error" ? "idle" : phase === "paused" || ai.paused ? "paused" : ai.analyzing > 0 ? "working" : "idle";
@@ -76,7 +74,7 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
 
     // How far along: the free check while it runs, then the AI.
     const percent =
-        phase === "finding" || phase === "discovering" || phase === "pricing"
+        phase === "finding"
             ? null
             : phase === "ai"
               ? ai.target > 0
@@ -92,8 +90,6 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
     const title = {
         finding: "Searching eBay",
         filtering: "Checking listings and sold prices",
-        discovering: "Looking for overlooked listings",
-        pricing: "Recovering temporary price lookups",
         ai: "AI analysis",
         done: "Search complete",
         paused: "Analysis paused",
@@ -109,17 +105,13 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
               : phase === "stopped"
                 ? `Stopped after ${checked.toLocaleString()} of ${(total ?? checked).toLocaleString()} checks. Results so far stay below.`
                 : phase === "paused" ? `New checks are stopped for “${query}”. Results checked so far stay below.`
-                : phase === "pricing" ? `Automatically recovering prices for “${query}”`
                 : phase === "ai"
                   ? `Checking the best candidates for \u201c${query}\u201d`
                   : `Scanning listings for \u201c${query}\u201d`;
 
     const caption =
-        phase === "pricing" ? `${pricing?.priced ?? 0} prices recovered · ${pricing?.pending ?? 0} pending`
-        : phase === "ai"
+        phase === "ai"
             ? `${ai.done} of ${ai.target} analysis attempts finished`
-            : phase === "discovering"
-              ? "Checking extra search coverage…"
             : phase === "finding"
               ? "Finding listings..."
             : phase === "done"
@@ -133,9 +125,6 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
             : phase === "error" ? "The search could not finish. Any results checked so far are kept."
             : ai.paused && listingWork ? "Listing checks are still running. New AI assessments are paused; unassessed listings remain preliminary."
             : ai.analyzing > 0 ? `${aiStatus}. Results appear as each assessment finishes.`
-            : phase === "pricing" ? "Temporary failures retry automatically after the provider cooldown. Results remain available below."
-            : phase === "discovering"
-                ? "Automatic discovery is running; results stay available below."
             : phase === "finding"
             ? "Searching eBay..."
             : phase === "filtering"
@@ -151,7 +140,7 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
             ? (error ?? "Search failed")
             : [
                   phase === "done" ? "" : percentText,
-                  phase === "pricing" ? `${pricing?.priced ?? 0} prices recovered · ${pricing?.pending ?? 0} pending` : phase === "done" ? `${checked.toLocaleString()} checks` : `${checked.toLocaleString()}/${(total ?? 0).toLocaleString()} checked`,
+                  phase === "done" ? `${checked.toLocaleString()} checks` : `${checked.toLocaleString()}/${(total ?? 0).toLocaleString()} checked`,
                   `${stats.deals} ${stats.deals === 1 ? "deal" : "deals"} found`,
               ]
                   .filter(Boolean)
@@ -171,7 +160,7 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
                     {collapsed ? (
                         <>
                             <p className={styles.compactTitle}>
-                                {phase === "done" ? "Done:" : phase === "paused" ? "Analysis paused:" : phase === "pricing" ? "Recovering prices:" : phase === "stopped" ? "Stopped:" : phase === "error" ? "Search incomplete:" : phase === "ai" ? "AI assessing" : "Searching"} “{query}”
+                                {phase === "done" ? "Done:" : phase === "paused" ? "Analysis paused:" : phase === "stopped" ? "Stopped:" : phase === "error" ? "Search incomplete:" : phase === "ai" ? "AI assessing" : "Searching"} “{query}”
                             </p>
                             <p className={styles.sub}>{compact}</p>
                             {!halted && <ProgressBar percent={percent} thin />}
@@ -206,7 +195,7 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
                 </button>
             </div>
 
-            {/* Full photo work overlaps searching and discovery, and stays visible
+            {/* Full photo work overlaps searching, and stays visible
                 when the optional search details are collapsed. */}
             <div className={styles.aiStatus} data-ai-state={aiState} aria-label="AI assessment progress">
                 <span className={styles.aiStatusLabel}>

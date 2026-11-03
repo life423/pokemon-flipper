@@ -1,6 +1,7 @@
 import { MONEY_CONFIG } from "./money/config.ts";
 import { pathNumbers } from "./money/underwriting.ts";
 import type { ListingSummary, Targets } from "./types.ts";
+import { rawMarketContext, type RawMarketContext } from "./raw-market-context.ts";
 
 export interface AnalysisPriority {
     band: number;
@@ -9,6 +10,8 @@ export interface AnalysisPriority {
     expectedProfit: number | null;
     investment: number | null;
     reason: string;
+    rawMarketContext?: RawMarketContext | null;
+    contextPriority?: boolean;
 }
 
 // Availability is a useful hint, not proof of front/back coverage. Different
@@ -28,9 +31,15 @@ export function analysisPriority(listing: ListingSummary, targets: Targets = MON
     const photoSupport = Math.min(2, Math.floor(Math.max(0, photos) / 2)) +
         (screen?.evidence?.mainPhoto === "MATCH" ? 2 : screen?.evidence?.mainPhoto === "CANT_TELL" ? -1 : 0) -
         (listing.shipping === null ? 1 : 0);
+    const context = rawMarketContext(listing);
     const unknown: AnalysisPriority = { band: 0, evidence: photoSupport, conservativeProfit: null, expectedProfit: null, investment: null,
+        rawMarketContext: context, contextPriority: context !== null && context.caution === null && availablePhotoCount(listing.images) >= 2,
         reason: screen?.priceAnomaly && !screen.priceAnomaly.photoChecked
             ? "Unusually low price: awaiting bounded photo verification."
+            : context?.caution === "UNUSUALLY_LOW" ? "Unusually low asking price needs verification; its price alone does not establish value."
+            : context?.caution === "SELLER_DAMAGE" ? "Seller describes heavy play or damage; inspect supported exceptions after ordinary raw prospects."
+            : context?.caution === "SELLER_CONDITION_CONFLICT" ? "Seller condition claims disagree; photos must establish the card's actual condition and grading upside."
+            : context ? "Research priority compares delivered asking with matching sales of unspecified condition; resale value and grading upside still need assessment."
             : "Photo lead still needs identity or price confirmation." };
     if (listing.match || (screen?.priceAnomaly && !screen.priceAnomaly.photoChecked) || !money || price === null || !Number.isFinite(price)) return unknown;
     const config = { ...MONEY_CONFIG, targets };
@@ -45,7 +54,7 @@ export function analysisPriority(listing: ListingSummary, targets: Targets = MON
             : path.path === "GRADED_RESALE" && samples >= 3 && ["HIGH", "MEDIUM"].includes(path.compConfidence ?? "") ? path.downsideNet : undefined;
         const conservative = floorNet === undefined ? null : pathNumbers({ expectedNet: floorNet, fixedCosts: path.fixedCosts, shipping: money.shipping, price }, config);
         const band = conservative?.clears ? 3 : asIs && expected.clears ? 2 : expected.clears ? 1 : 0;
-        return { band, evidence: photoSupport + compSupport,
+        return { band, evidence: photoSupport + compSupport, rawMarketContext: context, contextPriority: band === 0 && unknown.contextPriority,
             conservativeProfit: conservative?.profit ?? null, expectedProfit: expected.profit, investment: expected.cost,
             reason: band === 3 ? "Targets fit a lower resale estimate; full photo verification is still required."
                 : band === 2 ? "As-is resale estimate meets targets; photos must confirm the card and condition."
@@ -58,7 +67,9 @@ export function analysisPriority(listing: ListingSummary, targets: Targets = MON
 // A deterministic comparison avoids a huge optimistic ROI overwhelming
 // stronger resale evidence. Lower capital breaks otherwise comparable ties.
 export function comparePriority(a: AnalysisPriority, b: AnalysisPriority): number {
-    return b.band - a.band || b.evidence - a.evidence ||
+    return b.band - a.band || Number(b.band === 0 && b.contextPriority === true) - Number(a.band === 0 && a.contextPriority === true) ||
+        (a.band === 0 && b.band === 0 && a.contextPriority === true && b.contextPriority === true
+            ? a.rawMarketContext!.askingToSoldMedian - b.rawMarketContext!.askingToSoldMedian : 0) || b.evidence - a.evidence ||
         (b.conservativeProfit ?? -Number.MAX_VALUE) - (a.conservativeProfit ?? -Number.MAX_VALUE) ||
         (b.expectedProfit ?? -Number.MAX_VALUE) - (a.expectedProfit ?? -Number.MAX_VALUE) ||
         (a.investment ?? Number.MAX_VALUE) - (b.investment ?? Number.MAX_VALUE);

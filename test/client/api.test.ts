@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { streamDeals, streamNewDeals, streamDig, evaluateListing } from "../../client/src/api.ts";
+import { streamDeals, streamNewDeals, evaluateListing } from "../../client/src/api.ts";
 
 test("known filters and a search identifier reach both search modes before paid work", async t => {
     const requests: { url: string; searchId: string | null }[] = [];
@@ -112,7 +112,7 @@ test("Any targets and offer settings reach both search endpoints as explicit zer
     });
     const targets = { minProfit: 0, minRoi: 0 };
     await streamDeals("1999 base set holo", { maxResults: 200, minPrice: 0, targets, includeOffers: false }, () => {});
-    await streamDig("lugia", 0, () => {}, targets, true);
+    await streamNewDeals("lugia", { minPrice: 0, targets, includeOffers: true, knownIds: [] }, () => {});
     assert.equal(new URL(urls[0], "http://local").searchParams.get("offers"), "0");
     assert.equal(new URL(urls[1], "http://local").searchParams.get("offers"), "1");
     for (const url of urls) {
