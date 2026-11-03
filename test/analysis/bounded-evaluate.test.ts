@@ -41,7 +41,7 @@ function reading(count = 4): BoundedReading {
 function harness(extra: Parameters<typeof createBoundedEvaluator>[0] = {}) {
     const cache = new Map<string, any>();
     const calls = { assessed: 0, details: [] as string[], comps: 0, raw: 0 };
-    const evaluate = createBoundedEvaluator({ now: () => now, details: async id => { calls.details.push(id); return details({ id }); }, saved: async () => null,
+    const evaluate = createBoundedEvaluator({ assertPriceAvailable: async () => {}, now: () => now, details: async id => { calls.details.push(id); return details({ id }); }, saved: async () => null,
         cached: async key => cache.get(key) ?? null, save: async (key, value) => { cache.set(key, structuredClone(value)); },
         assess: async (_listing, photos) => { calls.assessed++; return { result: reading(photos.length), usage: { inputTokens: 900, outputTokens: 700 } }; },
         lookup: async () => [structuredClone(card)],

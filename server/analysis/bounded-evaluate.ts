@@ -33,6 +33,8 @@ import type { Usage } from "./types.ts";
 import type { Comp } from "../pricing/types.ts";
 import { createPrivateEvaluationStore, evaluationContextKey } from "./private-evaluation.ts";
 import { reconcileIdentityReadings } from "./resolve-evidence.ts";
+import { assertPriceResearchAvailable, PriceResearchBudgetError, withPriceResearchSignal } from "../pricing/research-budget.ts";
+import { getAiUsageContext, withAiUsageContext, type AiUsageContext } from "../ai/usage-context.ts";
 
 const CACHE_HOURS = 24 * 365 * 10;
 interface SavedBoundedReading extends BoundedReading { version: string; answeredAt: string; usage: Usage }
@@ -73,7 +75,7 @@ export function validateBoundedReading(value: unknown, photoCount: number, mode:
 interface Dependencies {
     details: typeof getListingDetails; saved: typeof loadSaved; cached: typeof readCache; save: typeof writeCache;
     assess: typeof assessBoundedListing; identify: typeof identifyCard; lookup: typeof lookupCards; fetchComps: typeof fetchComps; fetchRawComps: typeof fetchRawComps;
-    compChecks: typeof cachedCompChecks; now: () => number;
+    compChecks: typeof cachedCompChecks; now: () => number; assertPriceAvailable: typeof assertPriceResearchAvailable;
 }
 function stopFailure(error: unknown) { return aiSpendingFailure(error) ?? storageFailure(error); }
 class CandidateOutsideWindow extends Error {}
@@ -92,12 +94,13 @@ function recheckSavedSlab(evaluation: Evaluation, aspects: Record<string, string
 
 export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
     const deps: Dependencies = { details: getListingDetails, saved: loadSaved, cached: readCache, save: writeCache, assess: assessBoundedListing, identify: identifyCard,
-        lookup: lookupCards, fetchComps, fetchRawComps, compChecks: cachedCompChecks, now: Date.now, ...overrides };
+        lookup: lookupCards, fetchComps, fetchRawComps, compChecks: cachedCompChecks, now: Date.now, assertPriceAvailable: assertPriceResearchAvailable, ...overrides };
     const share = createSharedWork();
     const shareReading = createSharedWork();
-    const neededReadings = new Map<string, Set<() => boolean>>();
+    type ReadingConsumer = { needed: () => boolean; context: AiUsageContext };
+    const neededReadings = new Map<string, Set<ReadingConsumer>>();
     const privateEvaluations = createPrivateEvaluationStore({ cached: deps.cached, save: deps.save });
-    return (itemId: string, options: BoundedOptions = {}): Promise<Evaluation> => share(JSON.stringify([itemId, options.current ?? null, options.automatic ?? false]), async signal => {
+    return (itemId: string, options: BoundedOptions = {}): Promise<Evaluation> => share(JSON.stringify([getAiUsageContext().searchId ?? null, itemId, options.current ?? null, options.automatic ?? false]), signal => withPriceResearchSignal(signal, async () => {
         signal.throwIfAborted();
         const details = await deps.details(itemId, { ...(!options.current ? { maxAgeHours: 0 } : {}), expectedPhotos: options.current?.images, expectedTitle: options.current?.title });
         const listing = options.current ? { ...details, price: options.current.price ?? details.price, shipping: options.current.shipping ?? details.shipping,
@@ -165,7 +168,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         };
         const latest = legacy?.latestEvaluation?.evaluation;
         const revisedLatest = latest ? recheckSavedSlab(latest, listing.aspects) : null;
-        if (latest && !revisedLatest!.needsPricing && legacy?.latestEvaluation?.evidenceKey === listingEvidenceKey({ title: listing.title, images: listing.images }) && currentPriceEvidence(latest, deps.now()) && !await hasNewerSharedReading(latest)) {
+        if (latest && !latest.pricingDeferred && !revisedLatest!.needsPricing && legacy?.latestEvaluation?.evidenceKey === listingEvidenceKey({ title: listing.title, images: listing.images }) && currentPriceEvidence(latest, deps.now()) && !await hasNewerSharedReading(latest)) {
             if (cardLanguageStatus(listing.title, [latest.identity?.language, latest.photoCheck?.cardIdentity?.language]) === "OTHER") throw new EnglishOnlyError();
             const reused = revisedLatest!.evaluation;
             reused.listing = { ...reused.listing, ...evaluation.listing, photosAnalyzed: latest.listing.photosAnalyzed };
@@ -176,7 +179,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         const remembered = await privateEvaluations.load(itemId);
         const revisedRemembered = remembered ? recheckSavedSlab(remembered.evaluation, listing.aspects) : null;
         if (remembered?.contextKey === privateContext.contextKey &&
-            !revisedRemembered!.needsPricing && [BOUNDED_ASSESSMENT_VERSION, BOUNDED_SLAB_ASSESSMENT_VERSION, ANALYSIS_VERSION].includes(remembered.evaluation.assessmentVersion ?? "") && currentPriceEvidence(remembered.evaluation, deps.now()) && !await hasNewerSharedReading(remembered.evaluation)) {
+            !remembered.evaluation.pricingDeferred && !revisedRemembered!.needsPricing && [BOUNDED_ASSESSMENT_VERSION, BOUNDED_SLAB_ASSESSMENT_VERSION, ANALYSIS_VERSION].includes(remembered.evaluation.assessmentVersion ?? "") && currentPriceEvidence(remembered.evaluation, deps.now()) && !await hasNewerSharedReading(remembered.evaluation)) {
             const reused = revisedRemembered!.evaluation;
             if (cardLanguageStatus(listing.title, [reused.identity?.language, reused.photoCheck?.cardIdentity?.language]) === "OTHER") throw new EnglishOnlyError();
             reused.listing = { ...reused.listing, ...evaluation.listing, photosAnalyzed: reused.listing.photosAnalyzed };
@@ -202,8 +205,9 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             evaluation.reusedSteps = ["photoCheck", ...(legacyCondition ? ["condition"] : []), ...(legacyResolution ? ["identityResolution"] : [])];
         } else {
             const { photos, key } = requestedPlan;
-            const consumers = neededReadings.get(key) ?? new Set<() => boolean>();
-            consumers.add(eligibleNow); neededReadings.set(key, consumers);
+            const consumers = neededReadings.get(key) ?? new Set<ReadingConsumer>();
+            const consumer: ReadingConsumer = { needed: eligibleNow, context: { ...getAiUsageContext(), listingId: itemId } };
+            consumers.add(consumer); neededReadings.set(key, consumers);
             let startedHere = false;
             let answer: SharedAnswer;
             try {
@@ -212,10 +216,27 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                     const cached = await readShared();
                     if (cached) return cached;
                     readingSignal.throwIfAborted();
-                    // Recheck all live consumers immediately before paid work;
-                    // one stopped/expired listing must not cancel another copy.
-                    if (![...(neededReadings.get(key) ?? [])].some(needed => needed())) throw new CandidateOutsideWindow();
-                    const accepted = await deps.assess(listing, photos, readingSignal, requestedPlan.mode);
+                    // Shared photo facts have one live sponsor. Re-select after
+                    // an awaited advisory check: its original caller may have
+                    // stopped while another search still needs the same photos.
+                    const denied = new Map<ReadingConsumer, PriceResearchBudgetError>();
+                    let accepted: Awaited<ReturnType<typeof deps.assess>>;
+                    for (;;) {
+                        readingSignal.throwIfAborted();
+                        const live = [...(neededReadings.get(key) ?? [])].filter(value => value.needed());
+                        if (!live.length) throw new CandidateOutsideWindow();
+                        const sponsor = live.find(value => !denied.has(value));
+                        if (!sponsor) throw denied.get(live[0])!;
+                        try { await withAiUsageContext(sponsor.context, () => deps.assertPriceAvailable(readingSignal)); }
+                        catch (error) {
+                            if (error instanceof PriceResearchBudgetError && error.reason === "LIMIT") { denied.set(sponsor, error); continue; }
+                            throw error;
+                        }
+                        readingSignal.throwIfAborted();
+                        if (!sponsor.needed()) continue;
+                        accepted = await withAiUsageContext(sponsor.context, () => deps.assess(listing, photos, readingSignal, requestedPlan.mode));
+                        break;
+                    }
                     const reading = validateBoundedReading(accepted.result, photos.length, requestedPlan.mode), answeredAt = new Date(deps.now()).toISOString();
                     // Save accepted evidence even if every browser has stopped.
                     await deps.save(key, { ...reading, version: requestedPlan.version, answeredAt, usage: accepted.usage });
@@ -225,7 +246,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                 if (error instanceof CandidateOutsideWindow) return deferWindow();
                 throw error;
             } finally {
-                consumers.delete(eligibleNow);
+                consumers.delete(consumer);
                 if (!consumers.size && neededReadings.get(key) === consumers) neededReadings.delete(key);
             }
             signal.throwIfAborted();
@@ -262,35 +283,59 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         evaluation.gradeStatus = evaluation.condition?.gradeRange ? "ESTIMATED" : evaluation.condition ? "RAW_CONDITION_ONLY" : check.holder === "GRADED_SLAB" ? "CERTIFIED_SLAB" : "UNKNOWN_PHOTO_EVIDENCE";
         signal.throwIfAborted();
         if (check.cardCount !== "ONE" || !hasUsableFront) return finish();
+        if (check.holder === "GRADED_SLAB") evaluation.slab = checkSlab(check, listing.aspects);
         const card = check.cardIdentity;
         const aspects = { ...listing.aspects };
         if (card?.confidence === "HIGH") for (const [field, value] of [["Card Name", card.name], ["Set", card.set], ["Card Number", card.cardNumber], ["Language", card.language], ["Finish", card.finish === "UNKNOWN" ? null : card.finish]]) if (value && !aspects[field!]) aspects[field!] = value;
         let hardFailure: Error | null = null;
-        const guarded = async <T>(work: () => Promise<T>): Promise<T> => { signal.throwIfAborted(); try { return await work(); } catch (error) { const stop = stopFailure(error); if (stop) hardFailure = stop; throw error; } };
+        let priceLimits = 0;
+        const deferPrices = () => {
+            evaluation.pricingDeferred ??= { provider: "PKMNPRICES", note: "This search's price-research allowance is exhausted. Accepted photos and completed prices are retained; unfinished resale routes are not priced." };
+        };
+        const guarded = async <T>(work: () => Promise<T>): Promise<T> => {
+            signal.throwIfAborted();
+            try { return await withPriceResearchSignal(signal, work); }
+            catch (error) {
+                if (error instanceof PriceResearchBudgetError) {
+                    if (error.reason === "LIMIT") { priceLimits++; deferPrices(); }
+                    else hardFailure = error;
+                } else { const stop = stopFailure(error); if (stop) hardFailure = stop; }
+                throw error;
+            }
+        };
         const identified = await deps.identify({ ...listing, aspects }, check, { lookupCards: query => guarded(() => deps.lookup(query)),
             ...(legacyResolution?.confirmation ? { photoIdentity: legacyResolution.confirmation } : {}) });
         if (hardFailure) throw hardFailure;
         evaluation.identity = identified.identity;
+        if (priceLimits && identified.lookupFailed) evaluation.pricingDeferred!.identityLookupPending = true;
         if (legacyResolution?.finishConflict) {
+            if (evaluation.pricingDeferred) delete evaluation.pricingDeferred.identityLookupPending;
             evaluation.identity.finish = "CONFLICTING"; evaluation.identity.status = "NEEDS_REVIEW";
             evaluation.identity.reasons.push("Saved independent photo readings disagree about this card's finish.");
         }
         if (cardLanguageStatus(listing.title, [identified.identity.language]) === "OTHER") throw new EnglishOnlyError();
         if (check.cardMatch?.verdict === "MISMATCH" && !evaluation.identity.notThisCard && !legacyResolution?.confirmation) {
+            if (evaluation.pricingDeferred) delete evaluation.pricingDeferred.identityLookupPending;
             evaluation.identity.status = "NEEDS_REVIEW"; evaluation.identity.notThisCard = check.cardMatch.problems.join("; ") || "The photographed card differs from the listing.";
             evaluation.identity.reasons.push(evaluation.identity.notThisCard);
         }
         if (!canReuseLegacy && (!card?.name || !card.set || !card.cardNumber || !card.evidence.length || card.confidence === "LOW" || cardLanguageStatus("", [card.language]) !== "ENGLISH")) {
+            if (evaluation.pricingDeferred) delete evaluation.pricingDeferred.identityLookupPending;
             evaluation.identity.status = "NEEDS_REVIEW";
             evaluation.identity.reasons.push("The bounded photos do not establish the exact English card identity. Seller wording alone cannot confirm it.");
         }
         if (check.cardCount !== "ONE" || !readyForPricing(evaluation.identity)) return finish();
         const identity = evaluation.identity;
-        const unavailable = (error: unknown) => { const stop = stopFailure(error); if (stop) throw stop; return { status: "PRICE_UNAVAILABLE" as const, reason: "Matching market evidence is currently unavailable. Saved photo evidence is retained." }; };
+        const unavailable = (error: unknown) => {
+            const stop = stopFailure(error);
+            if (stop) throw stop;
+            if (error instanceof PriceResearchBudgetError && error.reason !== "LIMIT") throw error;
+            return { status: "PRICE_UNAVAILABLE" as const, reason: evaluation.pricingDeferred?.note ?? "Matching market evidence is currently unavailable. Saved photo evidence is retained." };
+        };
         if (check.holder === "GRADED_SLAB") {
-            evaluation.slab = checkSlab(check, listing.aspects);
-            if (evaluation.slab.status === "OK") try {
-                evaluation.slabPricing = await compsForGrade(identified.card, identity, { grader: evaluation.slab.grader!, grade: evaluation.slab.grade!,
+            const slab = evaluation.slab;
+            if (slab?.status === "OK") try {
+                evaluation.slabPricing = await compsForGrade(identified.card, identity, { grader: slab.grader!, grade: slab.grade!,
                     fetchComps: (...args) => guarded(() => deps.fetchComps(...args)), checkComps: (...args) => guarded(() => deps.compChecks(...args)) });
             } catch (error) { evaluation.slabPricing = unavailable(error); }
         } else {
@@ -307,7 +352,13 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                 const first = saved && ("primary" in saved ? saved.primary : saved);
                 return first ? acceptedSoldCondition(first, identity, photos.length) ?? (saved && "corroboration" in saved && saved.corroboration ? corroboratedSoldCondition(first, saved.corroboration, identity, photos.length) : null) : null;
             };
-            if (condition.rawCondition !== "UNKNOWN") evaluation.rawPricing = await rawPricesWithSales(identified.card, identity, { fetchRawComps: (...args) => guarded(() => deps.fetchRawComps(...args)), assessCondition: cachedSoldCondition, signal, now: deps.now() });
+            if (condition.rawCondition !== "UNKNOWN") {
+                const beforeRaw = priceLimits;
+                const raw = await rawPricesWithSales(identified.card, identity, { fetchRawComps: (...args) => guarded(() => deps.fetchRawComps(...args)), assessCondition: cachedSoldCondition, signal, now: deps.now() });
+                // The raw helper's ordinary outage fallback cannot turn a denied
+                // sold-research request into a fresh market-price recommendation.
+                evaluation.rawPricing = priceLimits > beforeRaw ? { status: "PRICE_UNAVAILABLE", reason: evaluation.pricingDeferred!.note } : raw;
+            }
             if (hardFailure) throw hardFailure;
             if (evaluation.rawPricing?.conditionEvidence === "AI_PHOTOS") evaluation.rawPricing.evidenceNote = `${evaluation.rawPricing.reviewedSoldCopies ?? 0} sold copies reused accepted saved photo-condition evidence. No historical listing photos or new sold-copy AI reviews were requested. Conditions without three matched sales use a labeled market fallback.`;
             if (evaluation.condition) {
@@ -322,6 +373,6 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         signal.throwIfAborted();
         evaluation.pricesCheckedAt = new Date(deps.now()).toISOString();
         return finish();
-    }, options.signal);
+    }), options.signal);
 }
 export const evaluateBoundedListing = createBoundedEvaluator();

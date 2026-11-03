@@ -25,17 +25,17 @@ test("diagnostic queue uses two slots, continues beyond three and excludes known
     assert.equal(started.includes("junk"), false); assert.deepEqual(result.waiting, []);
 });
 
-test("budget denial stops admissions and preserves another accepted response", async () => {
+for (const code of ["AI_BUDGET", "PRICE_RESEARCH_BUDGET"]) test(`${code} denial stops admissions and preserves another accepted response`, async () => {
     const accepted = deferred(); let calls = 0;
     const work = runBenchmarkQueue(Array.from({ length: 5 }, (_, n) => listing(String(n))), {
         ...base, evaluate: async () => {
             calls++;
-            if (calls === 1) throw Object.assign(new Error("Insufficient reservation"), { code: "AI_BUDGET" });
+            if (calls === 1) throw Object.assign(new Error("Insufficient reservation"), { code });
             await accepted.promise; return { saved: true };
         },
     });
     await tick(); accepted.resolve(); const result = await work;
-    assert.equal(calls, 2); assert.equal(result.stopped?.code, "AI_BUDGET");
+    assert.equal(calls, 2); assert.equal(result.stopped?.code, code);
     assert.deepEqual(result.errors, {}, "a spending pause is not a manual-review error");
     assert.equal(Object.keys(result.evaluations).length, 1); assert.equal(result.waiting.length, 3);
 });

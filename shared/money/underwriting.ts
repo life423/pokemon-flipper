@@ -18,6 +18,7 @@ import type {
     SlabPricing,
     UnavailablePath,
     Underwriting,
+    Evaluation,
     DeeperPhotoReview,
     Verdict,
 } from "../types.ts";
@@ -34,6 +35,7 @@ export const GRADERS: Grader[] = ["PSA", "CGC"];
 // one of these from the seller's details; the full analysis, from the
 // photos.
 export interface UnderwritingInput {
+    pricingDeferred?: Evaluation["pricingDeferred"];
     pricesCheckedAt?: string;
     deeperPhotoReview?: DeeperPhotoReview;
     listing: { price: number | null; shipping: number | null; availability?: string };
@@ -588,6 +590,16 @@ export function underwrite(input: UnderwritingInput, config: MoneyConfig = MONEY
     // purchase advice when the optional second opinion finds a new risk.
     if (concerns.length && result.best && result.verdict !== "NEEDS_REVIEW") return {
         ...result, verdict: "NEEDS_REVIEW", reasons: [...concerns.map((concern) => `Your review needed: ${concern}`), ...result.reasons],
+    };
+    const deferred = input.pricingDeferred;
+    const lookupOnly = deferred?.identityLookupPending && result.verdict === "NEEDS_REVIEW" && !input.identity?.notThisCard &&
+        (!input.slab || input.slab.status === "OK") && (!input.condition || input.condition.authenticity.concern === "NONE_SEEN");
+    // An unfinished alternative cannot discredit a completed profitable route,
+    // or turn partial negative evidence into a completed rejection. Keep this
+    // rule here so target changes retain the same meaning without new research.
+    if (deferred && input.listing.availability !== "UNAVAILABLE" && !concerns.length &&
+        (result.verdict === "PASS" && result.best || lookupOnly)) return {
+        ...result, verdict: "CANT_PRICE", reasons: [deferred.note],
     };
     return result;
 }

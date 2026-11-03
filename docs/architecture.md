@@ -33,7 +33,7 @@ flowchart TD
    automatic auctions must fall within the fixed search-start 12-hour window.
 2. Before candidates are emitted to the browser, `price-first.ts` runs shared
    sold research with at most four candidates in flight. Its source permits
-   eight uncached PKMNPrices requests including catalog work, and one page of
+   32 uncached PKMNPrices requests including catalog work, and one page of
    up to 20 sales per requested market. SQL/file response caches and shared
    catalog/market work avoid repeated requests. This stage calls neither AI nor
    eBay Browse. The retired broad-discovery and automatic pricing-recovery
@@ -99,7 +99,8 @@ All paths below are relative to the repository root.
 | Query interpretation and criteria | `server/search/intent.ts`, `server/search/relevance.ts`, `shared/search-criteria.ts` | Seller keywords and requested slab grades are not verified photo evidence. |
 | Local metadata screening | `server/deals/screen-listing.ts` | Saved/local readings only, without new AI or listing-detail calls. `prescreen.ts` remains behind the compatibility pricing-retry endpoint, not normal admission. |
 | Sold-price-first admission | `server/deals/price-first.ts`, `server/pricing/screening-sales.ts`, `shared/money/sold-screen.ts` | Shared matched sold references precede browser emission; public observations stay separate from private fee/target calculations and verified photo identity. |
-| Screening price transport | `server/pricing/pkmnprices.ts` (`createScreeningPriceSource`) | Cache first, eight uncached requests including catalog work, one 20-sale page per market; no AI/Browse calls or automatic retry loop. |
+| Screening price transport | `server/pricing/pkmnprices.ts` (`createScreeningPriceSource`) | Cache first, 32 uncached requests including catalog work within the all-stage 64-request allowance, one 20-sale page per market; no AI/Browse calls or automatic retry loop. |
+| All-stage price accounting | `server/pricing/research-budget.ts`, `shared/pricing-usage.ts` | Per-search durable reservations before transport; actual credits from provider headers, cached responses remain in SQL/file storage. |
 | Direct links and shortlist | `server/listings/resolve.ts`, `server/shortlist/service.ts`, `server/shortlist/store.ts` | Isolated listing lookup, durable snapshots and targeted refresh. |
 | Advisory assessment planning | `server/analysis/bounded-plan.ts` | Stable original RAW selection/key plus compact SLAB_LABEL plan; seller metadata chooses request scope, never the physical holder or final certified grade. |
 | Bounded request/schema | `server/ai/bounded-assessment.ts` | Original RAW body/schema retained; compact label schema forces null condition. Both delegate guarded structured transport to `openai.ts`. |
@@ -149,9 +150,13 @@ normal searches now offer working retries or automatic price recovery.
 - **Offers remain conditional:** an unaccepted Best Offer is separate from a
   deal at asking price. Preserve the maximum 10% discount and explicit amount.
   The app does not submit bids, offers or seller messages automatically.
-- **Requests stay bounded:** the sold-screen source's eight-request allowance
-  includes uncached catalog calls; returned rows still determine PKMNPrices
-  credits. It does not replace later pricing rules, the persistent two-cent AI
+- **Requests stay bounded:** the sold-screen source's 32-request sublimit
+  includes uncached catalog calls; final valuation and retries share one durable
+  64-request allowance per search UUID. Failed/unknown attempts remain counted;
+  credits come from provider response headers, independently of request counts.
+  Cached response reads consume neither. The ledger is local to the configured
+  key and does not establish provider-wide accounting across key rotation or
+  independent replicas. It does not replace the persistent two-cent AI
   cap or the 25 actual Browse requests per search. `server/ebay/api.ts` reserves
   Browse calls through `usage.ts` and `daily-budget.ts`; optional work preserves
   the daily reserve. Cached reads do not consume Browse calls. Cancellation

@@ -11,7 +11,7 @@ import type { SearchSummary } from "../server/deals/find-deals.ts";
 import type { AiSearchBudget } from "../shared/ai-usage.ts";
 import { DEVELOPMENT_SEARCH_LIMIT } from "../shared/research-policy.ts";
 import { runBenchmarkQueue, type BenchmarkQueueResult } from "./review/benchmark-queue.ts";
-import { createBenchmarkTransport } from "./review/benchmark-transport.ts";
+import { BENCHMARK_TRANSPORT_LIMITS, createBenchmarkTransport } from "./review/benchmark-transport.ts";
 import { candidateAdmission, summarizeBenchmark } from "./review/benchmark-results.ts";
 
 const args = process.argv.slice(2);
@@ -52,11 +52,11 @@ const report: {
         "One exact Buy It Now search, not an exhaustive marketplace scan or a general model accuracy evaluation.",
         "Not a browser timing test: automatic assessment begins after metadata screening; initial UI bootstrap/shortlist/set-year work is excluded.",
         "This diagnostic does not automatically retry network failures, force photo refreshes or run deeper reviews.",
-        "An extra diagnostic ceiling of 16 total uncached PKMNPrices requests includes screening and final valuation. It is not a production dollar/credit cap; truncation is reported.",
+        `The diagnostic transport ceiling is ${BENCHMARK_TRANSPORT_LIMITS.prices} uncached PKMNPrices requests, alongside the production persistent all-stage allowance. Requests and charged credits are reported separately.`,
         "Token-charge totals use actual returned usage and the existing configured rates; provider credit headers are not a cash invoice.",
         ...(live ? [] : ["Replayed listing availability is a saved snapshot, not a new eBay live check. Missing AI evidence fails before any reservation/preflight."]),
     ],
-    settings: { targets, filters, includeOffers, matchingRows: DEVELOPMENT_SEARCH_LIMIT, aiCapUsd: 0.02, browseCap: 25, priceTransportsDiagnosticCap: 16 },
+    settings: { targets, filters, includeOffers, matchingRows: DEVELOPMENT_SEARCH_LIMIT, aiCapUsd: 0.02, browseCap: 25, priceTransportsDiagnosticCap: BENCHMARK_TRANSPORT_LIMITS.prices },
     listings: [], snapshots: {}, events: [],
 };
 const started = performance.now();
@@ -74,6 +74,7 @@ try {
     await storage.assertSqlStorageReady();
     const { aiSpending } = await import("../server/ai/spending.ts");
     const { aiUsageToday } = await import("../server/ai/usage.ts");
+    const { priceResearchSummary, withPriceResearchSignal } = await import("../server/pricing/research-budget.ts");
     const { browseSearchAllowance } = await import("../server/ebay/search-budget.ts");
     const { ebayUsage } = await import("../server/ebay/usage.ts");
     const { evaluationFailure } = await import("../server/analysis/failure.ts");
@@ -82,7 +83,7 @@ try {
     const scope = <T>(phase: string, work: () => T, listingId?: string): T => context.run({ searchId, phase, listingId }, () =>
         withAiUsageContext({ searchId, ...(listingId ? { listingId } : {}) }, work));
     const snapshots = async (phase: string) => scope(phase, async () => ({
-        ai: await aiUsageToday(searchId), budget: await aiSpending.summary(searchId), browse: await browseSearchAllowance(),
+        ai: await aiUsageToday(searchId), budget: await aiSpending.summary(searchId), browse: await browseSearchAllowance(), pricing: await priceResearchSummary(searchId),
         ...(live ? { accountEbay: await ebayUsage({ fresh: true }) } : {}),
     }));
     report.snapshots.before = await snapshots("before");
@@ -97,12 +98,12 @@ try {
         if (previous) {
             report.summary = previous.summary;
             report.listings = previous.listings;
-        } else await scope("sold-screening", () => searchDeals(query, {
+        } else await scope("sold-screening", () => withPriceResearchSignal(stopped.signal, () => searchDeals(query, {
             minPrice: 0,
             targets, filters, includeOffers, signal: stopped.signal,
             onStart: summary => { report.summary = summary; report.events.push({ type: "metadata", elapsedMs: elapsedMs(), summary }); },
             onListing: listing => { report.listings.push(listing); },
-        }));
+        })));
         report.events.push({ type: "metadata-finished", elapsedMs: elapsedMs(), loaded: report.listings.length,
             admissions: Object.fromEntries(report.listings.map(listing => [listing.id, candidateAdmission(listing, filters, Date.now(), targets)])) });
         await checkpoint();

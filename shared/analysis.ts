@@ -4,6 +4,7 @@ import { canRetryPricing } from "./pricing-retries.ts";
 import { AI_CONCURRENCY } from "./work-limits.ts";
 import { AUTOMATIC_PRICE_CEILING, withinAutomaticAuctionWindow } from "./listing-filters.ts";
 import { photoReviewStatus } from "./photo-review.ts";
+import { observedCardKind } from "./photo-evidence.ts";
 
 // Automatic analysis and its progress counts use the same eligibility rule.
 export function canAutoAnalyze(listing: ListingSummary): boolean {
@@ -31,6 +32,18 @@ export type ResultGroup = "deals" | "offers" | "candidates" | "review";
 
 export function resultGroup(listing: ListingSummary, evaluation: Evaluation | null, includeOffers = false, analysisFailed = false): ResultGroup | null {
     const verdict = evaluation?.underwriting?.verdict;
+    if (evaluation?.pricingDeferred && evaluation.listing.availability !== "UNAVAILABLE" && !verdict?.startsWith("BUY")) {
+        const check = evaluation.photoCheck, card = check?.cardIdentity;
+        const materialReview = evaluation.identity?.notThisCard ||
+            evaluation.identity?.status === "NEEDS_REVIEW" && !evaluation.pricingDeferred.identityLookupPending ||
+            evaluation.slab?.status === "NEEDS_REVIEW" ||
+            !check || !observedCardKind(evaluation) ||
+            !card?.name || !card.set || !card.cardNumber || card.confidence === "LOW" ||
+            check.cardMatch?.verdict === "MISMATCH" ||
+            !evaluation.slab && (!evaluation.condition || evaluation.condition.rawCondition === "UNKNOWN" || evaluation.condition.authenticity.concern !== "NONE_SEEN") ||
+            evaluation.deeperPhotoReview?.findings.some(finding => finding.impact === "NEW_CONCERN");
+        return materialReview ? "review" : "candidates";
+    }
     // A priced rejection is finished work. Keep its paid evidence in All
     // matching, but do not turn old screen/photo notes back into a queue item.
     // The only actionable alternative is an explicitly enabled, realistic offer.

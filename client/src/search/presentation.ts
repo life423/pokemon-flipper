@@ -2,9 +2,13 @@ import type { EbayUsage, SearchIntent } from "../types";
 import { describeSearchCriteria } from "../../../shared/search-criteria.ts";
 import { name } from "../format";
 
-export type AnalysisBlockCode = "AI_CREDITS" | "AI_PAUSED" | "AI_BUDGET" | "STORAGE_UNAVAILABLE";
+export type AnalysisBlockCode = "AI_CREDITS" | "AI_PAUSED" | "AI_BUDGET" | "STORAGE_UNAVAILABLE" | "PRICE_RESEARCH_BUDGET" | "PRICE_RESEARCH_UNAVAILABLE";
 export function analysisBlockPolicy(code: AnalysisBlockCode | null) {
     switch (code) {
+        case "PRICE_RESEARCH_BUDGET": return { title: "Price research limit reached", retryLabel: null,
+            stopListingStream: false, detail: "New assessments are paused because this search's price-research allowance is used. Saved evidence remains available; retrying does not reset the allowance." };
+        case "PRICE_RESEARCH_UNAVAILABLE": return { title: "Price research accounting unavailable", retryLabel: "Retry when accounting is available",
+            stopListingStream: true, detail: "New analysis is stopped until price-request accounting is available. Saved photo findings and results remain available." };
         case "AI_CREDITS": return { title: "AI credits unavailable", retryLabel: "Retry after adding credits",
             stopListingStream: true, detail: "New analysis is stopped. Retry the remaining saved candidates after credits are available." };
         case "STORAGE_UNAVAILABLE": return { title: "Saved evidence unavailable", retryLabel: "Retry when storage is available",

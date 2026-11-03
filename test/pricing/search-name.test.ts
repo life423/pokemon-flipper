@@ -1,6 +1,6 @@
-import { test } from "node:test";
+import "../fixtures/isolated-data.ts";
+import { test } from "../fixtures/search-context.ts";
 import assert from "node:assert/strict";
-import fs from "node:fs/promises";
 import { pricingSearchName } from "../../server/pricing/search-name.ts";
 import { lookupCards } from "../../server/pricing/pkmnprices.ts";
 
@@ -16,9 +16,6 @@ test("Unown letter queries match provider naming without broadening unrelated na
 test("provider lookup for Unown A retains exact card-number selection", async t => {
     const previous = process.env.PKMNPRICES_API_KEY; process.env.PKMNPRICES_API_KEY = "offline-test";
     t.after(() => { if (previous === undefined) delete process.env.PKMNPRICES_API_KEY; else process.env.PKMNPRICES_API_KEY = previous; });
-    t.mock.method(fs, "readFile", async () => { throw Object.assign(new Error("offline cache miss"), { code: "ENOENT" }); });
-    t.mock.method(fs, "writeFile", async () => {}); t.mock.method(fs, "mkdir", async () => undefined);
-    t.mock.method(fs, "rename", async () => {}); t.mock.method(fs, "rm", async () => {});
     const paths: string[] = [];
     t.mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
         const parsed = new URL(String(url)); paths.push(parsed.pathname + parsed.search);

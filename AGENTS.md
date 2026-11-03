@@ -52,7 +52,7 @@ Read docs/architecture.md for the source map and reading order.
   Automatic auctions must end within the search window's next 12 hours.
   Minimum Buy It Now price does not exclude low auction starts. Widening a
   server-side filter requires an explicit rerun, never paid work while typing.
-- Sold screening shares catalog/market work across rows: four workers, eight
+- Sold screening shares catalog/market work across rows: four workers, 32
   uncached PKMNPrices requests including catalog work, one 20-sale page per market.
   It makes no AI or eBay-detail requests. Missing/deferred data stays Sorting.
   Three applicable sales authorize automatic photos, retaining the focused
@@ -88,9 +88,27 @@ Read docs/architecture.md for the source map and reading order.
   account quota/reserve. Retries, nested calls and restarts retain spent counts.
   Cache hits, OAuth and Analytics are separate. The old expiring development
   ledger is historical, not a daily app limit.
-- The two-cent cap does not cover PKMNPrices credits or eBay quota. PKMNPrices
-  credits depend on returned rows. The eight-request screening allowance is
-  not a unified all-stage price budget; later valuation may request more data.
+- The two-cent cap does not cover PKMNPrices credits or eBay quota. Screening
+  permits 32 uncached requests; final valuation and retries share one persistent
+  **64-request PKMNPrices allowance per search UUID**. Cache hits cost no new
+  request; failed/unknown attempts remain counted across restarts/days. Actual
+  credits are read from provider headers separately from returned rows and USD.
+  The user's subscription supplies 20,000 daily credits. Local request accounting
+  is keyed to the configured API key, not an actual provider-account identity;
+  rotation/independent replicas require shared authority. Do not reset ledgers.
+  Price-only deferral stays Sorting while accepted photos and completed prices
+  remain reusable; a supported profitable route can still reach Deals.
+  The user authorizes broader PKMNPrices research as needed within reason.
+  Treat 32/64 as tunable runaway safeguards, not desired consumption or a reason
+  to starve useful comparisons. Raise them when measured useful work is deferred
+  and provider capacity supports it; preserve rate limits and shared cache reuse.
+- Optimize AI cost per correctly identified deal. Two cents is a ceiling, not
+  desired spending. Evaluate cheap first checks and selective stronger reviews
+  without automatically running both models or discarding accepted work.
+  Reuse source-linked observations and relevant original photos for one specific
+  unresolved question; prior model guesses are context, not physical proof.
+  Measure accuracy, missed deals, corrections, latency and total cost before a
+  production model/prompt change. Preserve existing accepted keys and records.
 - Cancellation prevents subsequent paid dispatch; accepted responses may finish
   saving. No automatic bounded assessment retries/fallback opinions. Never clear
   quota ledgers or paid caches to work around failures.
@@ -170,5 +188,8 @@ Read docs/architecture.md for the source map and reading order.
   three new assessments, zero Deals; replay added no provider calls.
 - docs/candidate-selection-2026-11-03.md: saved-only 50-row replay recovered
   42 sold contexts versus 35, improving research priority, not verified Deals.
+- docs/price-research-accounting-2026-11-03.md: shared 32/64 PKMN request
+  safeguards, 830 offline tests, live 65-credit / 0.3991-cent slab sample,
+  zero additional provider work on replay; this sample found no Deal.
 - Dated reports retain measured scope. Git records delivery history; private
   notes retain the full strategy and implementation backlog.

@@ -36,7 +36,8 @@ prioritize newly listed inventory. Normal searches and **Find new listings**
 use this same stage; automatic broad discovery and pricing recovery remain off.
 
 Sold screening processes at most four candidates concurrently and permits at
-most eight uncached PKMNPrices requests, including catalog lookups. It reads
+most 32 uncached PKMNPrices requests, including catalog lookups, within the
+same persistent 64-request search allowance used by final valuation. It reads
 one page of up to 20 sold records per requested market. Repeated listings share
 catalog and sales work. At least three eligible matched sales are needed to
 authorize automatic photo assessment; missing or deferred evidence stays in
@@ -316,10 +317,16 @@ Budget/credit pauses stop later work and leave unfinished cards in Sorting,
 rather than pretending analysis completed. Completed priced rejections stay
 available in All matching instead of remaining in the work queue.
 
-**pkmnprices.** Credits are charged per row returned, so eight requests are not
-an eight-credit ceiling. The current price-first screening allowance is at most
-eight uncached requests including catalog work, with one 20-record sales page
-per requested market. Cache hits do not consume this allowance; identical
+**pkmnprices.** Requests and credits are separate units: a request returning
+20 sales can use 20 credits. The subscription currently supplies 20,000 daily
+credits; actual reported remaining credits are read from provider headers,
+not inferred from our local request counter. See the
+[provider's credit rules](https://www.pkmnprices.com/docs/rate-limits).
+The price-first stage permits at most 32 uncached requests, including catalog
+work, within a persistent **64-request all-stage allowance per search ID**.
+Final valuation and retries share that total; failed or unknown attempts remain
+counted across restarts and days. One screening page holds up to 20 sales per
+requested market. Cache hits do not consume requests or new credits; identical
 catalog/market requests share work. Graded references prefer three or more
 90-day matches, retaining a labeled 180-day reference when necessary; that
 older reference cannot trigger a preliminary hard rejection. Raw screening
@@ -329,10 +336,21 @@ allowance defer evidence rather than buying retries or creating zero prices.
 
 Card/market-price responses are saved for a day; recent eBay sales and
 sales-volume responses for six hours. Later full pricing retains its existing
-separate behavior: raw evidence can sample up to two pages (40 sales) per
+sampling behavior within the shared allowance: raw evidence can sample up to two pages (40 sales) per
 printing over 90 days, and volume uses one bounded 30-row page per
 printing/raw-or-graded scope with incomplete coverage labeled. Bounded HTTP
 assessment does not buy a new volume lookup. No background polling is added.
+
+The existing usage panel now reports price requests and provider-reported
+credits separately from the two-cent OpenAI budget and eBay Browse quota.
+Missing charge headers remain explicitly incomplete. The remaining daily
+credit count is the last provider observation, not a live balance from polling.
+Accepted responses are saved to the configured SQL/file response cache even
+after Stop; Stop prevents subsequent requests. If price research reaches its
+limit after photos finish, completed routes remain usable and unfinished routes
+stay deferred. A fully supported profitable route can still reach Deals.
+The request ledger is local and keyed to the configured API key, not a shared
+provider-account authority across key rotation or independent replicas.
 
 Saved shortlist valuations from an older pricing version or more than six hours ago do not supply current advice. Opening them refreshes the valuation, reusing valid unchanged photo assessments. The full-analysis setting still controls automatic search evaluations.
 
@@ -509,6 +527,6 @@ turning them into grades or automatic rejections.
 - **Unconfirmed listing claims.** Preliminary screening uses available listing metadata, not a new photo assessment. Unstated printings/finishes stay separate research scopes; they cannot establish a uniquely applicable ceiling or exclude premium-printing upside.
 - **Exact slab markets need coverage.** A readable grader/grade does not ensure matching sold prices are available. Non-English cards are excluded from the current scope.
 - **Grade odds are a fixed rule:** the likely grade counts most and each grade away counts less. It isn't yet measured against real grading results.
-- **Price-data limits cover separate stages.** Preliminary screening has an eight-request allowance. Final raw/slab valuation can make further requests; a unified production all-stage price-data budget and durable request/credit reporting remain pending. The benchmark's extra sixteen-request ceiling applies only to that diagnostic.
+- **Price-data accounting remains local.** Screening and final valuation share a durable 64-request allowance, with a 32-request screening sublimit. Provider headers report credit usage separately. API-key rotation and independent replicas need a shared account authority; the configured key's local ledger cannot enforce a global provider quota.
 - **Workflow quality remains unproven.** One controlled full-flow search measured bounded costs and successful cache reuse, but found no Deal and retained two printing reviews. Raw priority, broader accuracy/positive-deal validation, deferred early-completion and photo/language warning reports remain later work. Reduced request bounds alone do not establish better deal detection.
 - **Manual pricing retry admission is disconnected.** The compatibility endpoint and ticket UI remain, but the bounded price-first path does not issue new retry tickets. Reconnecting a bounded explicit retry or retiring the compatibility surface needs a separate decision; it is not automatic pricing recovery.

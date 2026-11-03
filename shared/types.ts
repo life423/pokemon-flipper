@@ -541,6 +541,7 @@ export interface DeeperPhotoReview {
 }
 
 export interface Evaluation {
+    pricingDeferred?: { provider: "PKMNPRICES"; note: string; identityLookupPending?: boolean };
     researchMode?: "FULL" | "FOCUSED_LOW_RESALE" | "DEFERRED_LOW_RESALE";
     conditionVersion?: string;
     assessmentVersion?: string;

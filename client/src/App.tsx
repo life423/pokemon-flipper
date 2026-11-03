@@ -19,6 +19,7 @@ import { evaluateListing, fetchEbayUsage, fetchSetYears, reviewListingPhotos, st
 import type { ShortlistEntry } from "../../shared/shortlist.ts";
 import { ShortlistView } from "./components/ShortlistView";
 import { AiBudgetStatus } from "./components/AiBudgetStatus";
+import { PriceResearchStatus } from "./components/PriceResearchStatus";
 import type { DeeperReviewState } from "./components/PhotoReview";
 import { DealCard } from "./components/DealCard";
 import { PricingRetries } from "./components/PricingRetries";
@@ -444,9 +445,9 @@ export function App() {
                 }
                 return;
             }
-            if (error instanceof ApiRequestError && ["AI_CREDITS", "AI_PAUSED", "AI_BUDGET", "STORAGE_UNAVAILABLE"].includes(error.code ?? "")) {
+            if (error instanceof ApiRequestError && ["AI_CREDITS", "AI_PAUSED", "AI_BUDGET", "STORAGE_UNAVAILABLE", "PRICE_RESEARCH_BUDGET", "PRICE_RESEARCH_UNAVAILABLE"].includes(error.code ?? "")) {
                 analysisPaused.current = true;
-                // Paid-AI admission must not truncate the independently bounded
+                // Analysis admission must not truncate the independently bounded
                 // metadata stream. Storage/provider outages still stop it.
                 if (analysisBlockPolicy(error.code as AnalysisBlockCode).stopListingStream) {
                     searchAbort.current?.abort();
@@ -456,7 +457,7 @@ export function App() {
                 pendingAnalyses.current.clear();
                 // Budget admission can stop a new candidate while another
                 // accepted bounded assessment is finishing. Keep its result.
-                if (error.code !== "AI_BUDGET") for (const other of analysisControllers.current.values()) if (other !== controller) other.abort();
+                if (error.code !== "AI_BUDGET" && error.code !== "PRICE_RESEARCH_BUDGET") for (const other of analysisControllers.current.values()) if (other !== controller) other.abort();
                 pricingAbort.current?.abort();
                 setAnalysisBlocked(message);
                 setAnalysisBlockCode(error.code as AnalysisBlockCode);
@@ -964,6 +965,7 @@ export function App() {
                     </header>
 
                     <AiBudgetStatus budget={aiUsage?.budget} calls={aiUsage?.calls ?? 0} />
+                    <PriceResearchStatus usage={aiUsage?.pricing} />
                     {analysisBlocked && <AnalysisBlockedNotice message={analysisBlocked} code={analysisBlockCode} onRetry={() => {
                         if (!analysisBlockPolicy(analysisBlockCode).retryLabel) return;
                         // Reuse this search and its existing server allowance.

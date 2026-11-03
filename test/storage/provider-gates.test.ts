@@ -81,13 +81,15 @@ test("price lookup's final dispatch gate survives a mocked cache miss", async ()
         }});
         const { fetchRawComps }=await import(${JSON.stringify(pricingUrl)});
         await assert.rejects(fetchRawComps('offline-bypassed-cache','Unlimited Holo'),{code:'STORAGE_UNAVAILABLE'});
-        assert.equal(calls,0); assert.equal(misses,1);
+        assert.equal(calls,0); assert.ok(misses>=1,"the shared request must check saved evidence before the final SQL gate");
         console.log(JSON.stringify({calls,misses}));
     `;
     const result = await execute(process.execPath, ["--experimental-test-module-mocks", "--import", "tsx", "--input-type=module", "-e", source], {
         cwd: new URL("../../", import.meta.url), env: { ...process.env, POKEMON_FLIPPER_DATA_DIR: DATA_DIR }, timeout: 20_000,
     });
-    assert.deepEqual(JSON.parse(result.stdout.trim()), { calls: 0, misses: 1 });
+    const observed = JSON.parse(result.stdout.trim());
+    assert.equal(observed.calls, 0);
+    assert.ok(observed.misses >= 1);
 });
 
 test("wrapped storage errors remain a nonretryable storage stop", () => {

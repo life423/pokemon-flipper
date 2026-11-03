@@ -5,14 +5,17 @@ import { conditionOf } from "./raw-prices.ts";
 import { cardNumberOf, cardVariants } from "./records.ts";
 import type { CardRecord, Comp, FetchComps, FetchRawComps, LookupCards } from "./types.ts";
 import { createLimiter } from "../lib/concurrency.ts";
-import { createSingleFlight } from "../lib/single-flight.ts";
 import { createSharedWork } from "../lib/shared-work.ts";
 import { fetchJson, ProviderError } from "../lib/http.ts";
 import { PricingProviderError, retryAfterMs } from "./errors.ts";
 import type { PricingIssue } from "../../shared/pricing-retries.ts";
+import { getAiUsageContext, withAiUsageContext } from "../ai/usage-context.ts";
+import { getPriceResearchSignal, reservePriceRequest, PriceResearchBudgetError } from "./research-budget.ts";
+import { PRICE_SCREEN_REQUEST_LIMIT } from "../../shared/research-policy.ts";
 
 // pkmnprices.com: TCGplayer prices by printing and condition, and
-// individual eBay sold comps. Every call costs credits per returned item.
+// individual eBay sold comps. Provider credits describe returned-item quota,
+// not a dollar charge; record the reported counters without inferring billing.
 // Positive metadata is saved for a day; sold pages for six hours.
 const BASE = "https://api.pkmnprices.com/v1";
 const DAY = 24;
@@ -24,7 +27,8 @@ const MAX_IN_FLIGHT = 2;
 const RETRY_WAITS_MS = [5_000, 15_000, 30_000, 60_000];
 
 const limit = createLimiter(MAX_IN_FLIGHT);
-const share = createSingleFlight();
+const share = createSharedWork();
+const requestSponsors = new Map<string, Set<RequestSponsor>>();
 let coolingUntil = 0;
 let coolingKind: PricingIssue["kind"] = "RATE_LIMIT";
 let lastRequestAt = 0;
@@ -32,13 +36,130 @@ export function pricingCooldown(): PricingIssue | null {
     return Date.now() < coolingUntil ? { kind: coolingKind, retryAt: new Date(coolingUntil).toISOString() } : null;
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
+    return new Promise((resolve, reject) => {
+        const stop = () => { clearTimeout(timer); reject(signal!.reason); };
+        const timer = setTimeout(() => { signal?.removeEventListener("abort", stop); resolve(); }, ms);
+        signal?.addEventListener("abort", stop, { once: true });
+    });
+}
+
+function combinedSignal(first?: AbortSignal, second?: AbortSignal): AbortSignal | undefined {
+    return first && second && first !== second ? AbortSignal.any([first, second]) : first ?? second;
+}
+
+type RequestReservation = Awaited<ReturnType<typeof reservePriceRequest>>;
+interface SponsoredReservation extends RequestReservation { available(): boolean; dispatch(): void }
+interface RequestSponsor {
+    signal?: AbortSignal;
+    available(): boolean;
+    dispatch(): void;
+    reserve(path: string, signal: AbortSignal): Promise<RequestReservation>;
+}
+function requestSponsor(signal?: AbortSignal, allowance = () => true, dispatch = () => {}): RequestSponsor {
+    const owner = { ...getAiUsageContext() };
+    return { signal, available: () => !signal?.aborted && allowance(), dispatch,
+        reserve: (path, workSignal) => withAiUsageContext(owner, () => reservePriceRequest(path, workSignal)),
+    };
+}
+function attachSponsor(sponsors: Map<string, Set<RequestSponsor>>, key: string, sponsor: RequestSponsor) {
+    const consumers = sponsors.get(key) ?? new Set<RequestSponsor>();
+    consumers.add(sponsor); sponsors.set(key, consumers);
+    return () => { consumers.delete(sponsor); if (!consumers.size && sponsors.get(key) === consumers) sponsors.delete(key); };
+}
+async function reserveSponsored(path: string, sponsors: Map<string, Set<RequestSponsor>>, key: string, signal: AbortSignal): Promise<SponsoredReservation> {
+    signal.throwIfAborted();
+    let exhausted: PriceResearchBudgetError | undefined;
+    for (const sponsor of [...(sponsors.get(key) ?? [])]) {
+        if (!sponsor.available()) continue;
+        const dispatchSignal = combinedSignal(signal, sponsor.signal)!;
+        let reservation: RequestReservation;
+        try { reservation = await sponsor.reserve(path, dispatchSignal); }
+        catch (error) {
+            signal.throwIfAborted();
+            if (sponsor.signal?.aborted) continue;
+            if (error instanceof PriceResearchBudgetError && error.reason === "LIMIT") { exhausted = error; continue; }
+            throw error;
+        }
+        if (signal.aborted || !sponsor.available()) {
+            await reservation.unresolved();
+            signal.throwIfAborted();
+            continue;
+        }
+        return { ...reservation, available: () => !signal.aborted && sponsor.available(), dispatch: sponsor.dispatch };
+    }
+    throw exhausted ?? new ScreeningPriceBudgetError();
+}
+
+// Reservation is immediately before actual transport. Accepted responses are
+// accounted for and can save even when every subscriber stops after dispatch.
+async function request(path: string, apiKey: string, signal: AbortSignal, sponsors: Map<string, Set<RequestSponsor>>, key: string) {
+    let reservation = await reserveSponsored(path, sponsors, key, signal);
+    while (!reservation.available()) {
+        await reservation.unresolved();
+        signal.throwIfAborted();
+        reservation = await reserveSponsored(path, sponsors, key, signal);
+    }
+    // No await between this final cancellation/allowance check and fetch.
+    signal.throwIfAborted();
+    reservation.dispatch();
+    let result: Awaited<ReturnType<typeof fetchJson>>;
+    try {
+        result = await fetchJson(`${BASE}${path}`, { headers: { "x-api-key": apiKey } }, { service: "Price lookup" });
+    } catch (error) {
+        await reservation.unresolved();
+        if (error instanceof ProviderError || error instanceof TypeError) {
+            coolingKind = "TEMPORARY"; coolingUntil = Math.max(coolingUntil, Date.now() + 30_000);
+            throw new PricingProviderError((error as Error).message, "TEMPORARY", coolingUntil);
+        }
+        throw error;
+    }
+    try { await reservation.complete(result.response, result.body); }
+    catch (error) {
+        // An accounting write failure must fail closed without throwing away
+        // an already accepted paid response or mislabeling it as provider throttle.
+        try { if (result.response.ok) await finish(path, result.response, result.body); }
+        finally { await reservation.unresolved(); }
+        throw error;
+    }
+    return result;
+}
 
 // pkmnprices responses are read field by field where they're used.
 type ApiBody = any;
 
+function creditLimitReached(body: ApiBody): boolean {
+    if (body.error?.limit_type === "daily") return true;
+    if (body.error?.limit_type === "per_minute") return false;
+    return /credit/i.test(`${body.error?.code ?? ""} ${body.error?.message ?? ""}`);
+}
+
 async function apiGet(path: string, maxAgeHours = DAY): Promise<ApiBody> {
-    return share(`${path}:${maxAgeHours}`, () => load(path, maxAgeHours));
+    const signal = getPriceResearchSignal();
+    signal?.throwIfAborted();
+    const saved = await readApiCache(path, maxAgeHours);
+    signal?.throwIfAborted();
+    if (saved) return saved;
+    const key = `${path}:${maxAgeHours}`;
+    const detach = attachSponsor(requestSponsors, key, requestSponsor(signal));
+    try {
+        for (let attempt = 0; ; attempt += 1) {
+            const { response, body } = await share(key, workSignal => loadAttempt(path, maxAgeHours, workSignal, key), signal);
+            if (!response || response.ok) return body;
+            const creditLimit = creditLimitReached(body);
+            if (response.status === 429 && creditLimit) throw creditLimitError(response);
+            if (response.status === 429 && attempt < RETRY_WAITS_MS.length) {
+                const waitMs = retryAfterMs(response.headers.get("retry-after"), Date.now(), RETRY_WAITS_MS[attempt]);
+                coolingKind = "RATE_LIMIT";
+                coolingUntil = Math.max(coolingUntil, Date.now() + waitMs);
+                if (waitMs > 15_000 || attempt >= 2) throw new PricingProviderError("Price service is rate limited. Retry pricing after the cooldown.", "RATE_LIMIT", coolingUntil);
+                await sleep(waitMs, signal);
+                continue;
+            }
+            return finish(path, response, body);
+        }
+    } finally { detach(); }
 }
 
 async function readApiCache(path: string, maxAgeHours: number): Promise<ApiBody | null> {
@@ -48,61 +169,54 @@ async function readApiCache(path: string, maxAgeHours: number): Promise<ApiBody 
     if ((path.startsWith("/cards?") || path.includes("/listings/ebay?")) && Array.isArray(cached?.data) && cached.data.length === 0) {
         cached = await readCache(`pkmnprices:${path}`, Math.min(maxAgeHours, 5 / 60));
     }
-
     return cached;
 }
+async function cachedApiGet(path: string, maxAgeHours: number): Promise<ApiBody | null> {
+    const signal = getPriceResearchSignal();
+    signal?.throwIfAborted();
+    const saved = await readApiCache(path, maxAgeHours);
+    signal?.throwIfAborted();
+    return saved;
+}
 
-async function load(path: string, maxAgeHours: number): Promise<ApiBody> {
+function creditLimitError(response: Response): PricingProviderError {
+    coolingKind = "CREDITS";
+    coolingUntil = Math.max(coolingUntil, Date.now() + retryAfterMs(response.headers.get("retry-after"), Date.now(), 60 * 60_000));
+    return new PricingProviderError("Price-service credits are unavailable. Check the provider account; cached prices still work.", "CREDITS", coolingUntil);
+}
+
+// Share one transport attempt across every stage. Retries belong to normal
+// subscribers, so screening alone can never trigger a later paid attempt.
+async function loadAttempt(path: string, maxAgeHours: number, signal: AbortSignal, key: string): Promise<{ response: Response | null; body: ApiBody }> {
+    signal.throwIfAborted();
     const cached = await readApiCache(path, maxAgeHours);
-    if (cached) return cached;
-
+    signal.throwIfAborted();
+    if (cached) return { response: null, body: cached };
     const apiKey = process.env.PKMNPRICES_API_KEY;
-
-    if (!apiKey) {
-        throw new PricingProviderError("PKMNPRICES_API_KEY is not set", "CONFIG");
-    }
-
-    for (let attempt = 0; ; attempt += 1) {
-        const { response, body } = await limit(async () => {
-            if (Date.now() < coolingUntil) {
-                throw new PricingProviderError(coolingKind === "CREDITS" ? "Price-service credits are unavailable. Check the provider account; cached prices still work." : "Price service is cooling down. Cached prices still work; retry missing prices after the cooldown.", coolingKind, coolingUntil);
-            }
-            // Pace uncached requests across searches and retries, not per browser.
-            const slot = Math.max(Date.now(), lastRequestAt + 1000);
-            lastRequestAt = slot;
-            if (slot > Date.now()) await sleep(slot - Date.now());
-            if (Date.now() < coolingUntil) throw new PricingProviderError("Price service is cooling down; cached prices still work.", coolingKind, coolingUntil);
-            const { assertSqlStorageReady } = await import("../storage/index.ts");
-            await assertSqlStorageReady();
-            try { return await fetchJson(`${BASE}${path}`, { headers: { "x-api-key": apiKey } }, { service: "Price lookup" }); }
-            catch (error) {
-                if (error instanceof ProviderError || error instanceof TypeError) { coolingKind = "TEMPORARY"; coolingUntil = Math.max(coolingUntil, Date.now() + 30_000); throw new PricingProviderError((error as Error).message, "TEMPORARY", coolingUntil); }
-                throw error;
-            }
-        });
-
-        const creditLimit = /credit/i.test(`${body.error?.code ?? ""} ${body.error?.message ?? ""}`);
-
-        if (response.status === 429 && creditLimit) {
-            coolingKind = "CREDITS";
-            coolingUntil = Math.max(coolingUntil, Date.now() + retryAfterMs(response.headers.get("retry-after"), Date.now(), 60 * 60_000));
-            throw new PricingProviderError("Price-service credits are unavailable. Check the provider account; cached prices still work.", "CREDITS", coolingUntil);
+    if (!apiKey) throw new PricingProviderError("PKMNPRICES_API_KEY is not set", "CONFIG");
+    return limit(async () => {
+        signal.throwIfAborted();
+        if (Date.now() < coolingUntil) {
+            throw new PricingProviderError(coolingKind === "CREDITS" ? "Price-service credits are unavailable. Check the provider account; cached prices still work." : "Price service is cooling down. Cached prices still work; retry missing prices after the cooldown.", coolingKind, coolingUntil);
         }
-        if (response.status === 429 && attempt < RETRY_WAITS_MS.length) {
-            // Retry-After, in seconds, when pkmnprices sends one.
-            const waitMs = retryAfterMs(response.headers.get("retry-after"), Date.now(), RETRY_WAITS_MS[attempt]);
-            coolingKind = "RATE_LIMIT";
-            coolingUntil = Math.max(coolingUntil, Date.now() + waitMs);
-            // A long server-directed wait is deferred, never retried early.
-            if (waitMs > 15_000 || attempt >= 2) {
-                throw new PricingProviderError("Price service is rate limited. Retry pricing after the cooldown.", "RATE_LIMIT", coolingUntil);
-            }
-            await sleep(waitMs);
-            continue;
-        }
-
-        return finish(path, response, body);
-    }
+        const slot = Math.max(Date.now(), lastRequestAt + 1000);
+        lastRequestAt = slot;
+        if (slot > Date.now()) await sleep(slot - Date.now(), signal);
+        signal.throwIfAborted();
+        if (Date.now() < coolingUntil) throw new PricingProviderError("Price service is cooling down; cached prices still work.", coolingKind, coolingUntil);
+        const { assertSqlStorageReady } = await import("../storage/index.ts");
+        await assertSqlStorageReady();
+        signal.throwIfAborted();
+        const result = await request(path, apiKey, signal, requestSponsors, key);
+        // Accepted responses and provider cooldowns persist even after Stop.
+        // This stage records a throttle; only normal subscribers can retry it.
+        if (result.response.status === 429) {
+            const credits = creditLimitReached(result.body);
+            coolingKind = credits ? "CREDITS" : "RATE_LIMIT";
+            coolingUntil = Math.max(coolingUntil, Date.now() + retryAfterMs(result.response.headers.get("retry-after"), Date.now(), credits ? 60 * 60_000 : RETRY_WAITS_MS[0]!));
+        } else await finish(path, result.response, result.body);
+        return result;
+    });
 }
 
 async function finish(path: string, response: Response, body: ApiBody): Promise<ApiBody> {
@@ -208,7 +322,7 @@ async function lookupCardsFrom({ set, name, cardNumber }: Parameters<LookupCards
     return cards;
 }
 
-export const lookupCards: LookupCards = query => lookupCardsFrom(query, apiGet, readApiCache);
+export const lookupCards: LookupCards = query => lookupCardsFrom(query, apiGet, cachedApiGet);
 
 // One page of recent graded eBay sales for a card record and printing.
 export const fetchComps: FetchComps = async (recordId, { grader, grade, variant }) => {
@@ -251,18 +365,8 @@ export class ScreeningPriceBudgetError extends Error {
     constructor() { super("The search's price-screening request allowance is exhausted. Saved price evidence remains available."); }
 }
 
-interface ScreeningSponsor {
-    available(): boolean;
-    dispatch(): void;
-}
-
-// Shared URL jobs retain independent consumers. If one search stops while
-// another still needs the page, a live search with allowance sponsors dispatch.
-// Accepted responses save even when all consumers stop after dispatch.
-const shareScreening = createSharedWork();
-const screeningSponsors = new Map<string, Set<ScreeningSponsor>>();
-
-export function createScreeningPriceSource({ signal, maxRequests = 8 }: { signal?: AbortSignal; maxRequests?: number } = {}) {
+export function createScreeningPriceSource({ signal: sourceSignal, maxRequests = PRICE_SCREEN_REQUEST_LIMIT }: { signal?: AbortSignal; maxRequests?: number } = {}) {
+    const signal = combinedSignal(sourceSignal, getPriceResearchSignal());
     if (!Number.isSafeInteger(maxRequests) || maxRequests < 0) throw new RangeError("The price-screening request allowance must be a nonnegative integer.");
     const requestLimit = maxRequests;
     let requests = 0;
@@ -276,61 +380,19 @@ export function createScreeningPriceSource({ signal, maxRequests = 8 }: { signal
         const saved = await cached(path, maxAgeHours);
         if (saved) return saved;
         const key = `${path}:${maxAgeHours}`;
-        const sponsors = screeningSponsors.get(key) ?? new Set<ScreeningSponsor>();
-        const sponsor: ScreeningSponsor = {
-            available: () => !signal?.aborted && requests < requestLimit,
-            dispatch: () => { requests += 1; },
-        };
-        sponsors.add(sponsor); screeningSponsors.set(key, sponsors);
+        const sponsor = requestSponsor(signal, () => requests < requestLimit, () => { requests += 1; });
+        const detach = attachSponsor(requestSponsors, key, sponsor);
         try {
-            return await shareScreening(key, async workSignal => {
-                workSignal.throwIfAborted();
-                const stored = await readApiCache(path, maxAgeHours);
-                workSignal.throwIfAborted();
-                if (stored) return stored;
-                return limit(async () => {
-                    workSignal.throwIfAborted();
-                    if (Date.now() < coolingUntil) throw new PricingProviderError("Price service is cooling down; saved prices remain available.", coolingKind, coolingUntil);
-                    if (![...(screeningSponsors.get(key) ?? [])].some(consumer => consumer.available())) throw new ScreeningPriceBudgetError();
-                    const apiKey = process.env.PKMNPRICES_API_KEY;
-                    if (!apiKey) throw new PricingProviderError("PKMNPRICES_API_KEY is not set", "CONFIG");
-                    const slot = Math.max(Date.now(), lastRequestAt + 1000);
-                    lastRequestAt = slot;
-                    if (slot > Date.now()) await sleep(slot - Date.now());
-                    workSignal.throwIfAborted();
-                    if (Date.now() < coolingUntil) throw new PricingProviderError("Price service is cooling down; saved prices remain available.", coolingKind, coolingUntil);
-                    const { assertSqlStorageReady } = await import("../storage/index.ts");
-                    await assertSqlStorageReady();
-                    workSignal.throwIfAborted();
-                    const payer = [...(screeningSponsors.get(key) ?? [])].find(consumer => consumer.available());
-                    if (!payer) throw new ScreeningPriceBudgetError();
-                    payer.dispatch();
-                    let result: Awaited<ReturnType<typeof fetchJson>>;
-                    try {
-                        // Do not cancel an accepted provider request: its answer
-                        // can still save and prevent replacement research.
-                        result = await fetchJson(`${BASE}${path}`, { headers: { "x-api-key": apiKey } }, { service: "Price screening" });
-                    } catch (error) {
-                        if (error instanceof ProviderError || error instanceof TypeError) {
-                            coolingKind = "TEMPORARY"; coolingUntil = Math.max(coolingUntil, Date.now() + 30_000);
-                            throw new PricingProviderError((error as Error).message, "TEMPORARY", coolingUntil);
-                        }
-                        throw error;
-                    }
-                    const { response, body } = result;
-                    if (response.status === 429) {
-                        const credits = /credit/i.test(`${body.error?.code ?? ""} ${body.error?.message ?? ""}`);
-                        coolingKind = credits ? "CREDITS" : "RATE_LIMIT";
-                        coolingUntil = Math.max(coolingUntil, Date.now() + retryAfterMs(response.headers.get("retry-after"), Date.now(), credits ? 60 * 60_000 : RETRY_WAITS_MS[0]!));
-                        throw new PricingProviderError(credits ? "Price-service credits are unavailable; saved prices remain available." : "Price service is rate limited; screening will not retry this request.", coolingKind, coolingUntil);
-                    }
-                    return finish(path, response, body);
-                });
-            }, signal);
-        } finally {
-            sponsors.delete(sponsor);
-            if (!sponsors.size && screeningSponsors.get(key) === sponsors) screeningSponsors.delete(key);
-        }
+            const { response, body } = await share(key, workSignal => loadAttempt(path, maxAgeHours, workSignal, key), signal);
+            if (!response || response.ok) return body;
+            if (response.status === 429) {
+                if (creditLimitReached(body)) throw creditLimitError(response);
+                coolingKind = "RATE_LIMIT";
+                coolingUntil = Math.max(coolingUntil, Date.now() + retryAfterMs(response.headers.get("retry-after"), Date.now(), RETRY_WAITS_MS[0]!));
+                throw new PricingProviderError("Price service is rate limited; screening will not retry this request.", coolingKind, coolingUntil);
+            }
+            return finish(path, response, body);
+        } finally { detach(); }
     };
     const source: { lookupCards: LookupCards; fetchComps: FetchComps; fetchRawComps: FetchRawComps; stats(): { requests: number; limit: number } } = {
         lookupCards: query => lookupCardsFrom(query, get, cached, { maxCards: 4 }),

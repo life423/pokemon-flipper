@@ -2,7 +2,7 @@
 // retries, cache contents, cancellation signals or accepted-response handling.
 import { createHash } from "node:crypto";
 
-export const BENCHMARK_TRANSPORT_LIMITS = Object.freeze({ ebayBrowse: 25, prices: 16, aiGeneration: 25, aiPreflight: 25 });
+export const BENCHMARK_TRANSPORT_LIMITS = Object.freeze({ ebayBrowse: 25, prices: 64, aiGeneration: 25, aiPreflight: 25 });
 type BenchmarkLimits = { -readonly [Key in keyof typeof BENCHMARK_TRANSPORT_LIMITS]: number };
 export type BenchmarkService = keyof typeof BENCHMARK_TRANSPORT_LIMITS | "ebayAnalytics" | "ebayOAuth" | "photos" | "azureAuth" | "unknown";
 export interface BenchmarkContext { searchId?: string; listingId?: string; phase?: string }

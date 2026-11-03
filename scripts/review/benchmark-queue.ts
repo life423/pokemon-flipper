@@ -54,12 +54,12 @@ export async function runBenchmarkQueue(listings: ListingSummary[], {
             } catch (error) {
                 const failure = failureOf(error);
                 result.failures[listing.id] = failure;
-                const wideStop = ["AI_BUDGET", "AI_PAUSED", "AI_CREDITS", "STORAGE_UNAVAILABLE"].includes(failure.code ?? "");
+                const wideStop = ["AI_BUDGET", "AI_PAUSED", "AI_CREDITS", "STORAGE_UNAVAILABLE", "PRICE_RESEARCH_BUDGET", "PRICE_RESEARCH_UNAVAILABLE"].includes(failure.code ?? "");
                 if (failure.code === "OTHER_LANGUAGE") result.otherLanguage.push(listing.id);
                 else if (!wideStop && !workSignal.aborted) { result.errors[listing.id] = failure.error; outcomes.push(false); }
                 if (wideStop) {
                     result.stopped ??= failure;
-                    if (failure.code !== "AI_BUDGET") for (const other of controllers) if (other !== controller) other.abort();
+                    if (failure.code !== "AI_BUDGET" && failure.code !== "PRICE_RESEARCH_BUDGET") for (const other of controllers) if (other !== controller) other.abort();
                 }
             } finally {
                 controllers.delete(controller);

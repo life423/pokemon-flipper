@@ -1,4 +1,5 @@
-import { test } from "node:test";
+import "../fixtures/isolated-data.ts";
+import { test } from "../fixtures/search-context.ts";
 import assert from "node:assert/strict";
 import { createSingleFlight } from "../../server/lib/single-flight.ts";
 import { fetchJson } from "../../server/lib/http.ts";

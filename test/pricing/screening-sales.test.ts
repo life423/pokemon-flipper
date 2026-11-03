@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createSoldScreening } from "../../server/pricing/screening-sales.ts";
 import { ScreeningPriceBudgetError } from "../../server/pricing/pkmnprices.ts";
+import { PriceResearchBudgetError } from "../../server/pricing/research-budget.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
 import type { CardRecord, Comp } from "../../server/pricing/types.ts";
 import type { ListingSummary, SearchIntent } from "../../shared/types.ts";
@@ -321,6 +322,18 @@ test("storage failures propagate rather than authorizing replacement research", 
         const { run, calls } = harness(point === "lookup" ? { lookup: fail } : { raw: fail });
         await assert.rejects(run(listing(), intent), StorageUnavailableError);
         assert.equal(calls.graded.length, 0);
+    }
+});
+
+test("the total price allowance defers research while invalid accounting fails closed", async () => {
+    const limited = harness({ raw: async () => { throw new PriceResearchBudgetError("Search request allowance reached", "LIMIT"); } });
+    assert.equal((await limited.run(listing(), intent)).status, "DEFERRED");
+    await limited.run(listing(), intent);
+    assert.equal(limited.calls.raw.length, 1, "a deferred market is not repurchased in the same search");
+    for (const reason of ["SCOPE", "ACCOUNT", "STORAGE", "STATE", "LOCK"] as const) {
+        const failure = new PriceResearchBudgetError("Research accounting unavailable", reason);
+        const subject = harness({ raw: async () => { throw failure; } });
+        await assert.rejects(subject.run(listing(), intent), error => error === failure);
     }
 });
 

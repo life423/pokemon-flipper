@@ -33,7 +33,7 @@ test("each hard cap reserves only real attempts and cannot be loosened", async (
         assert.equal(observer.snapshot().actual[service], maximum);
         assert.equal(observer.snapshot().blocked[service], 1);
     }
-    assert.throws(() => createBenchmarkTransport({ limits: { prices: 17 } }), /only stricter/);
+    assert.throws(() => createBenchmarkTransport({ limits: { prices: BENCHMARK_TRANSPORT_LIMITS.prices + 1 } }), /only stricter/);
     assert.throws(() => createBenchmarkTransport({ limits: { aiGeneration: -1 } }), /only stricter/);
 });
 

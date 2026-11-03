@@ -22,7 +22,7 @@ test("BGS and TAG compact label assessments price only the photographed certifie
             images: ["front", "back"].map(view => `https://i.ebayimg.com/images/g/${grader}-${view}/s-l1600.jpg`),
             availability: "ACTIVE", condition: "Graded", cardCondition: null, conditionNotes: [],
             aspects: { Set: "Neo Genesis", "Card Name": "Lugia", "Card Number": "9/111", Language: "English", Finish: "Holo", "Professional Grader": grader, Grade: "6.5" } };
-        const evaluate = createBoundedEvaluator({ now: () => now, details: async () => structuredClone(listing), saved: async () => null,
+        const evaluate = createBoundedEvaluator({ assertPriceAvailable: async () => {}, now: () => now, details: async () => structuredClone(listing), saved: async () => null,
             cached: async key => cache.get(key) ?? null, save: async (key, value) => { cache.set(key, structuredClone(value)); },
             assess: async (_listing, photos, _signal, mode) => {
                 photoCalls++; assert.equal(mode, "SLAB_LABEL"); assert.equal(photos.length, 2);

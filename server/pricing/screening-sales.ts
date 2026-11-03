@@ -8,6 +8,7 @@ import type { CardRecord, Comp, FetchComps, FetchRawComps, LookupCards } from ".
 import { compCondition } from "./raw-comps.ts";
 import { compProblem, summarizeComps, type CompCriteria } from "./sold-comps.ts";
 import { createScreeningPriceSource, ScreeningPriceBudgetError } from "./pkmnprices.ts";
+import { PriceResearchBudgetError } from "./research-budget.ts";
 import { resolveScreeningName, screeningNameKey } from "../identity/screening-name.ts";
 
 type Source = { lookupCards: LookupCards; fetchComps: FetchComps; fetchRawComps: FetchRawComps };
@@ -73,8 +74,8 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
                         ? source.fetchComps(record.id, { grader, grade, variant }) : source.fetchRawComps(record.id, variant)));
                 } catch (error) {
                     signal?.throwIfAborted();
-                    if (error instanceof StorageUnavailableError) throw error;
-                    issue = error instanceof ScreeningPriceBudgetError ? "BUDGET" : "UNAVAILABLE";
+                    if (error instanceof StorageUnavailableError || error instanceof PriceResearchBudgetError && error.reason !== "LIMIT") throw error;
+                    issue = error instanceof ScreeningPriceBudgetError || error instanceof PriceResearchBudgetError ? "BUDGET" : "UNAVAILABLE";
                     break;
                 }
             }
@@ -165,8 +166,8 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
             return structuredClone(evidence);
         } catch (error) {
             signal?.throwIfAborted();
-            if (error instanceof StorageUnavailableError) throw error;
-            return incompleteEvidence(evidence, error instanceof ScreeningPriceBudgetError);
+            if (error instanceof StorageUnavailableError || error instanceof PriceResearchBudgetError && error.reason !== "LIMIT") throw error;
+            return incompleteEvidence(evidence, error instanceof ScreeningPriceBudgetError || error instanceof PriceResearchBudgetError);
         }
     };
 }

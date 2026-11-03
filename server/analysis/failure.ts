@@ -5,9 +5,12 @@ import { AiCreditsError, isAiCreditFailure } from "../ai/errors.ts";
 import { aiSpendingFailure } from "../ai/spending.ts";
 import { storageFailure } from "../lib/storage-failure.ts";
 import { EnglishOnlyError } from "../../shared/card-language.ts";
+import { PriceResearchBudgetError } from "../pricing/research-budget.ts";
 export { EnglishOnlyError } from "../../shared/card-language.ts";
 export function evaluationFailure(error: unknown) {
     if (error instanceof EnglishOnlyError) return { status: 422, code: "OTHER_LANGUAGE", error: error.message, retryable: false };
+    if (error instanceof PriceResearchBudgetError) return { status: 503,
+        code: error.reason === "LIMIT" ? "PRICE_RESEARCH_BUDGET" : "PRICE_RESEARCH_UNAVAILABLE", error: error.message, retryable: false };
     const storage = storageFailure(error);
     if (storage) return { status: 503, code: storage.code, error: storage.message, retryable: false };
     const spending = aiSpendingFailure(error);

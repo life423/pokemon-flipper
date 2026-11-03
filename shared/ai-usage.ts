@@ -1,3 +1,5 @@
+import type { PricingResearchUsage } from "./pricing-usage.ts";
+
 export interface AiUsageStage {
     step: string;
     model: string;
@@ -24,6 +26,7 @@ export interface AiUsageDay {
     unattributedCalls?: number;
     stages: AiUsageStage[];
     budget?: AiSearchBudget;
+    pricing?: PricingResearchUsage | null;
 }
 
 export interface AiSearchBudget {

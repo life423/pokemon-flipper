@@ -14,18 +14,20 @@ test("server AI pauses and spending blocks have no impossible resume control; re
         server: { middlewareMode: true, hmr: false, ws: false, watch: null }, logLevel: "error" });
     t.after(() => vite.close());
     const { AnalysisBlockedNotice, App } = await vite.ssrLoadModule("/src/App.tsx");
-    for (const code of ["AI_PAUSED", "AI_BUDGET"] as const) {
+    for (const code of ["AI_PAUSED", "AI_BUDGET", "PRICE_RESEARCH_BUDGET"] as const) {
         const html = renderToStaticMarkup(createElement(AnalysisBlockedNotice, { code, message: "Backend guard blocked this task.", onRetry: () => assert.fail("cannot retry a persistent guard") }));
-        assert.match(html, /New analysis is stopped/);
+        assert.match(html, code === "PRICE_RESEARCH_BUDGET" ? /New assessments are paused/ : /New analysis is stopped/);
         assert.match(html, new RegExp(`data-analysis-block="${code}"`));
         assert.doesNotMatch(html, /<button|Resume AI analysis/);
         assert.equal(analysisBlockPolicy(code).retryLabel, null);
     }
-    for (const [code, label] of [["AI_CREDITS", "Retry after adding credits"], ["STORAGE_UNAVAILABLE", "Retry when storage is available"]] as const) {
+    for (const [code, label] of [["AI_CREDITS", "Retry after adding credits"], ["STORAGE_UNAVAILABLE", "Retry when storage is available"], ["PRICE_RESEARCH_UNAVAILABLE", "Retry when accounting is available"]] as const) {
         const html = renderToStaticMarkup(createElement(AnalysisBlockedNotice, { code, message: "Temporary availability problem.", onRetry: () => {} }));
         assert.match(html, new RegExp(`<button[^>]*>${label}</button>`));
         assert.doesNotMatch(html, /Resume AI analysis/);
     }
+    assert.equal(analysisBlockPolicy("PRICE_RESEARCH_BUDGET").stopListingStream, false);
+    assert.equal(analysisBlockPolicy("PRICE_RESEARCH_UNAVAILABLE").stopListingStream, true);
     const app = renderToStaticMarkup(createElement(App));
     const views = app.match(/<div[^>]*aria-label="Show">([\s\S]*?)<\/div>/)?.[1];
     assert.ok(views, "the result views remain present before a search");

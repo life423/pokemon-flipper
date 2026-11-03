@@ -1,5 +1,5 @@
 import "../fixtures/isolated-data.ts";
-import { test } from "node:test";
+import { test } from "../fixtures/search-context.ts";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -9,6 +9,7 @@ import { DATA_DIR } from "../../server/lib/paths.ts";
 import { readCache, writeCache } from "../../server/lib/cache.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
 import { createScreeningPriceSource, ScreeningPriceBudgetError, lookupCards } from "../../server/pricing/pkmnprices.ts";
+import { PRICE_SCREEN_REQUEST_LIMIT } from "../../shared/research-policy.ts";
 
 let clock = Date.now();
 function offline(t: { after(run: () => void): void; mock: { method(...args: any[]): unknown } }) {
@@ -46,7 +47,7 @@ test("screening uses canonical first-page sold URLs, exact half grades and no cu
     assert.deepEqual(await source.fetchComps(81001, { grader: "CGC", grade: "8.5", variant: "Unlimited Holofoil" }), [sale(1)]);
     assert.deepEqual(await source.fetchRawComps(81001, "Unlimited Holofoil"), [sale(1)]);
     assert.deepEqual(paths, [gradedPath(81001, "CGC", "8.5"), rawPath(81001)]);
-    assert.deepEqual(source.stats(), { requests: 2, limit: 8 });
+    assert.deepEqual(source.stats(), { requests: 2, limit: PRICE_SCREEN_REQUEST_LIMIT });
 });
 
 test("existing catalog and sold pages stay usable with zero new-request allowance", async t => {
@@ -103,7 +104,7 @@ test("screening without a collector number loads at most four exact-name card de
     const source = createScreeningPriceSource();
     const result = await source.lookupCards({ set: "Expedition", name: "Charizard", cardNumber: "" });
     assert.deepEqual(result.map(record => record.id), [89002, 89003, 89004, 89005]);
-    assert.equal(paths.length, 4); assert.deepEqual(source.stats(), { requests: 4, limit: 8 });
+    assert.equal(paths.length, 4); assert.deepEqual(source.stats(), { requests: 4, limit: PRICE_SCREEN_REQUEST_LIMIT });
     assert.deepEqual(await lookupCards({ set: "Expedition", name: "Charizard", cardNumber: "" }), [], "ordinary lookup semantics still require a collector-number match");
     assert.equal(paths.length, 4);
 });

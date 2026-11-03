@@ -30,6 +30,7 @@ import { readListingFilters } from "./search/listing-filters.ts";
 import { assertSqlStorageReady, storageBackend } from "./storage/index.ts";
 import { storageFailure } from "./lib/storage-failure.ts";
 import { aiSpending } from "./ai/spending.ts";
+import { priceResearchSummary, withPriceResearchSignal } from "./pricing/research-budget.ts";
 
 const app = express();
 
@@ -72,6 +73,15 @@ const isProduction = process.env.NODE_ENV === "production";
 const searchId = (value: unknown) => typeof value === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(value) ? value : undefined;
 app.use("/api", localApi);
 app.use("/api", (req, _res, next) => withAiUsageContext({ searchId: searchId(req.get("X-Pokemon-Flipper-Search-Id")) }, next));
+app.use("/api", (req, res, next) => {
+    const stopped = new AbortController();
+    const disconnect = () => { if (!res.writableEnded) stopped.abort(); };
+    const release = () => { req.off("aborted", disconnect); res.off("close", disconnect); };
+    req.once("aborted", disconnect);
+    res.once("close", disconnect);
+    res.once("finish", release);
+    withPriceResearchSignal(stopped.signal, next);
+});
 app.use("/api/listings/:id", (req, _res, next) => withAiUsageContext({ listingId: req.params.id }, next));
 app.use(express.json());
 app.get("/api/storage", async (_req, res) => {
@@ -88,10 +98,10 @@ app.post("/api/deals/new", validSearchRequest);
 app.get("/api/ai-usage", async (req, res) => {
     try {
         const id = searchId(req.query.searchId);
-        const [usage, budget] = await Promise.all([aiUsageToday(id), aiSpending.summary(id)]);
-        res.json({ ...usage, budget });
+        const [usage, budget, pricing] = await Promise.all([aiUsageToday(id), aiSpending.summary(id), priceResearchSummary(id)]);
+        res.json({ ...usage, budget, pricing });
     }
-    catch { res.status(500).json({ error: "AI usage could not be read. Provider operations are unchanged." }); }
+    catch { res.status(500).json({ error: "Search usage could not be read. Provider operations are unchanged." }); }
 });
 
 app.post("/api/pricing/retry", async (req, res) => {
