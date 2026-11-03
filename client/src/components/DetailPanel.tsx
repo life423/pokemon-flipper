@@ -6,6 +6,7 @@ import { useDialog } from "../useDialog";
 import { MONEY_CONFIG } from "../../../shared/money/config.ts";
 import { PhotoGallery } from "./PhotoGallery";
 import { PhotoReview, type DeeperReviewState } from "./PhotoReview";
+import { SoldPriceScreening } from "./SoldPriceScreening";
 import { AnalysisDetails } from "./analysis/AnalysisDetails";
 import { FinancialDecision } from "./analysis/FinancialDecision";
 import styles from "./DetailPanel.module.css";
@@ -57,6 +58,7 @@ export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closin
                     {onSave && <button type="button" className={styles.secondary} onClick={() => { if (!saving) onSave(); }} aria-disabled={saving} aria-pressed={saved}>{saving ? "Saving…" : saved ? "Remove from shortlist" : "Save to shortlist"}</button>}
                 </div>
                 <PhotoGallery images={analysis?.status === "done" ? analysis.evaluation.listing.photos ?? listing.images : listing.images} />
+                {analysis?.status !== "done" && <SoldPriceScreening listing={listing} />}
 
                 {analysis?.status === "done" && <FinancialDecision evaluation={analysis.evaluation} targets={targets} now={now} />}
                 <PhotoReview listing={listing} evaluation={analysis?.status === "done" ? analysis.evaluation : null}

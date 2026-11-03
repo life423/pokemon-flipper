@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { fetchJson, ProviderError } from "../lib/http.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
 import { reserveBrowseRequest } from "./usage.ts";
-import { reserveDevelopmentBrowseRequest } from "./development-budget.ts";
+import { requireBrowseSearchId, reserveSearchBrowseRequest } from "./search-budget.ts";
 
 const EBAY_API = "https://api.ebay.com";
 
@@ -85,6 +85,7 @@ async function requestAccessToken(): Promise<string> {
 
 export async function ebayGet<T>(path: string, { signal, keepReserve = false }: { signal?: AbortSignal; keepReserve?: boolean } = {}): Promise<T> {
     signal?.throwIfAborted();
+    if (path.startsWith("/buy/browse/")) requireBrowseSearchId();
     const { assertSqlStorageReady } = await import("../storage/index.ts");
     await assertSqlStorageReady();
     signal?.throwIfAborted();
@@ -100,7 +101,7 @@ export async function ebayGet<T>(path: string, { signal, keepReserve = false }: 
         headers["X-EBAY-C-ENDUSERCTX"] = `contextualLocation=${encodeURIComponent(`country=US,zip=${process.env.EBAY_SHIP_TO_ZIP.trim()}`)}`;
     }
 
-    if (path.startsWith("/buy/browse/")) await reserveDevelopmentBrowseRequest(() => reserveBrowseRequest(keepReserve), signal);
+    if (path.startsWith("/buy/browse/")) await reserveSearchBrowseRequest(() => reserveBrowseRequest(keepReserve), signal);
     signal?.throwIfAborted();
     const { response, body: data } = await fetchJson(`${EBAY_API}${path}`, { headers, signal }, { service: "eBay" });
 

@@ -24,7 +24,7 @@ export const CONDITION_DEFINITIONS: Record<RawCondition, string> = {
     LIGHTLY_PLAYED: "Minor edge or corner wear and light surface scratches, with no major defects or structural damage.",
     MODERATELY_PLAYED: "Noticeable wear across edges, corners or surface, beyond light play; no severe structural damage.",
     HEAVILY_PLAYED: "Extensive edge/corner wear, substantial scratching or scuffing, and major visible wear, without a defect that requires Damaged.",
-    DAMAGED: "Creases, dents, tears, peeling, water damage, severe bends or other structural damage; visible structural damage takes precedence over cleaner-looking areas.",
+    DAMAGED: "Creases, dents, tears, peeling, water damage, severe bends, permanent ink/marker marks, substantial staining or other material damage; visible material damage takes precedence over cleaner-looking areas.",
 };
 export const CONDITION_RULES_VERSION = 1;
 

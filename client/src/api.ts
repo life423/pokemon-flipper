@@ -21,12 +21,15 @@ function retryDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
     });
 }
 export function fetchAiUsage(searchRunId?: string): Promise<AiUsageDay> { return request(`/api/ai-usage${searchRunId ? `?searchId=${encodeURIComponent(searchRunId)}` : ""}`); }
+// One explicit operation keeps one ID through retries and nested analysis.
+// Standalone link/shortlist actions receive their own bounded request group.
+const searchHeaders = (searchRunId: string = crypto.randomUUID()): Record<string, string> => ({ "X-Pokemon-Flipper-Search-Id": searchRunId });
 export class ApiRequestError extends Error {
     constructor(message: string, readonly retryable = false, readonly retryAfterMs = 1500, readonly code?: string) { super(message); }
 }
 
-export function retryPricingBatch(tickets: string[], targets: Targets, includeOffers: boolean, signal: AbortSignal): Promise<PricingRetryResult> {
-    return request(`/api/pricing/retry?profit=${targets.minProfit}&roi=${targets.minRoi}&offers=${includeOffers ? 1 : 0}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tickets }), signal });
+export function retryPricingBatch(tickets: string[], targets: Targets, includeOffers: boolean, signal: AbortSignal, searchRunId?: string): Promise<PricingRetryResult> {
+    return request(`/api/pricing/retry?profit=${targets.minProfit}&roi=${targets.minRoi}&offers=${includeOffers ? 1 : 0}`, { method: "POST", headers: { "Content-Type": "application/json", ...searchHeaders(searchRunId) }, body: JSON.stringify({ tickets }), signal });
 }
 
 // fetch, with a plain message when the server can't be reached at all.
@@ -122,16 +125,16 @@ export function streamDeals(
 ): Promise<void> {
     const criteria = targets ? `&profit=${targets.minProfit}&roi=${targets.minRoi}` : "";
     return streamLines(`/api/deals?q=${encodeURIComponent(query)}&max=${maxResults}&min=${minPrice}${criteria}&offers=${includeOffers ? 1 : 0}${filterQuery(filters)}`, onMessage, signal,
-        searchRunId ? { headers: { "X-Pokemon-Flipper-Search-Id": searchRunId } } : undefined);
+        { headers: searchHeaders(searchRunId) });
 }
 
 export function streamNewDeals(query: string, options: { minPrice: number; signal?: AbortSignal; targets: Targets; includeOffers: boolean; knownIds: string[]; filters?: ListingFilters; searchRunId?: string }, onMessage: (message: DealsMessage) => void): Promise<void> {
     return streamLines(`/api/deals/new?min=${options.minPrice}&profit=${options.targets.minProfit}&roi=${options.targets.minRoi}&offers=${options.includeOffers ? 1 : 0}${filterQuery(options.filters)}`, onMessage, options.signal,
-        { method: "POST", headers: { "Content-Type": "application/json", ...(options.searchRunId ? { "X-Pokemon-Flipper-Search-Id": options.searchRunId } : {}) }, body: JSON.stringify({ query, knownIds: options.knownIds.slice(-500) }) });
+        { method: "POST", headers: { "Content-Type": "application/json", ...searchHeaders(options.searchRunId) }, body: JSON.stringify({ query, knownIds: options.knownIds.slice(-500) }) });
 }
 
-export function resolveListingLink(input: string, signal?: AbortSignal): Promise<ListingSummary> {
-    return request("/api/listings/resolve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ input }), signal });
+export function resolveListingLink(input: string, signal?: AbortSignal, searchRunId?: string): Promise<ListingSummary> {
+    return request("/api/listings/resolve", { method: "POST", headers: { "Content-Type": "application/json", ...searchHeaders(searchRunId) }, body: JSON.stringify({ input }), signal });
 }
 
 export async function fetchShortlist(): Promise<ShortlistEntry[]> { return (await request<{ entries: ShortlistEntry[] }>("/api/shortlist")).entries; }
@@ -142,8 +145,8 @@ export function updateSavedListing(id: string, notes: string, ceiling: number | 
     return request(`/api/shortlist/${encodeURIComponent(id)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ notes, ceiling }) });
 }
 export function removeSavedListing(id: string): Promise<{ removed: string }> { return request(`/api/shortlist/${encodeURIComponent(id)}`, { method: "DELETE" }); }
-export function refreshSavedListings(ids: string[]): Promise<RefreshResult> {
-    return request("/api/shortlist/refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) });
+export function refreshSavedListings(ids: string[], searchRunId?: string): Promise<RefreshResult> {
+    return request("/api/shortlist/refresh", { method: "POST", headers: { "Content-Type": "application/json", ...searchHeaders(searchRunId) }, body: JSON.stringify({ ids }) });
 }
 
 export type DigMessage =
@@ -153,9 +156,9 @@ export type DigMessage =
     | { type: "error"; error: string };
 
 // Dig deeper: misspelled, vague, wrong-category, and lot listings, checked by photo.
-export function streamDig(query: string, minPrice: number, onMessage: (message: DigMessage) => void, targets?: Targets, includeOffers = false): Promise<void> {
+export function streamDig(query: string, minPrice: number, onMessage: (message: DigMessage) => void, targets?: Targets, includeOffers = false, searchRunId?: string): Promise<void> {
     const criteria = targets ? `&profit=${targets.minProfit}&roi=${targets.minRoi}` : "";
-    return streamLines(`/api/dig?q=${encodeURIComponent(query)}&min=${minPrice}${criteria}&offers=${includeOffers ? 1 : 0}`, onMessage);
+    return streamLines(`/api/dig?q=${encodeURIComponent(query)}&min=${minPrice}${criteria}&offers=${includeOffers ? 1 : 0}`, onMessage, undefined, { headers: searchHeaders(searchRunId) });
 }
 
 // A friendly note to send with a Best Offer, written fresh each time.
@@ -170,22 +173,22 @@ export async function writeOfferNote(title: string): Promise<string> {
 }
 
 // How much of today's eBay allowance is left, or null if eBay won't say.
-export function fetchEbayUsage(): Promise<EbayUsage | null> {
-    return request("/api/ebay-usage");
+export function fetchEbayUsage(searchRunId?: string): Promise<EbayUsage | null> {
+    return request("/api/ebay-usage", searchRunId ? { headers: searchHeaders(searchRunId) } : undefined);
 }
 
 // Paid the first time for a listing; the server reuses saved answers
 // after that. fresh asks the model again.
 // The listing's current price, bid, and end time go along, so the server
 // can use its saved details instead of asking eBay again.
-export async function evaluateListing(listing: ListingSummary, { fresh = false, signal, searchRunId, automatic = false }: { fresh?: boolean; signal?: AbortSignal; searchRunId?: string; automatic?: boolean } = {}): Promise<Evaluation> {
+export async function evaluateListing(listing: ListingSummary, { fresh = false, signal, searchRunId = crypto.randomUUID(), automatic = false }: { fresh?: boolean; signal?: AbortSignal; searchRunId?: string; automatic?: boolean } = {}): Promise<Evaluation> {
     for (let attempt = 0; ; attempt++) {
         signal?.throwIfAborted();
         const refreshQuery = fresh ? attempt === 0 ? "?fresh=1" : "?refreshTerms=1" : "";
         const query = automatic ? `${refreshQuery}${refreshQuery ? "&" : "?"}auto=1` : refreshQuery;
         try { return await request(`/api/listings/${encodeURIComponent(listing.id)}/evaluate${query}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...(searchRunId ? { "X-Pokemon-Flipper-Search-Id": searchRunId } : {}) },
+        headers: { "Content-Type": "application/json", ...searchHeaders(searchRunId) },
         signal,
         body: JSON.stringify({
             title: listing.title,
@@ -207,8 +210,8 @@ export function fetchSetYears(): Promise<Record<string, number>> {
     return request("/api/set-years");
 }
 
-export function reviewListingPhotos(itemId: string, key: string): Promise<DeeperPhotoReview> {
+export function reviewListingPhotos(itemId: string, key: string, searchRunId?: string): Promise<DeeperPhotoReview> {
     return request(`/api/listings/${encodeURIComponent(itemId)}/photo-review`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key }),
+        method: "POST", headers: { "Content-Type": "application/json", ...searchHeaders(searchRunId) }, body: JSON.stringify({ key }),
     });
 }

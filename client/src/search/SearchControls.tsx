@@ -3,6 +3,7 @@ import type { EbayUsage, Targets } from "../types";
 import type { AiUsageDay } from "../../../shared/ai-usage.ts";
 import type { ResultGroups, View, SortKey, SearchFilters, TypeFilter, KindFilter } from "./results";
 import { ALL, AUTO_OPTIONS, RESULT_OPTIONS } from "./settings";
+import { DEVELOPMENT_SEARCH_LIMIT } from "../../../shared/research-policy.ts";
 import { describeUsage } from "./presentation";
 import { withViewTransition } from "../motion";
 import { Drawer } from "../components/Drawer";
@@ -178,7 +179,7 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
         <>
             {showSearchOptions && <div className={styles.searchOptions} role="group" aria-label="Search options">
                 {purchaseFields}
-                <p className={styles.preferenceNote}>English cards only. Unconfirmed language stays preliminary until identified. Development scans admit up to 3 candidates, using saved metadata or local screening. New AI work shares a 2¢ search cap; broad discovery is off. All prices by default; the minimum applies to Buy It Now and the maximum to both formats.</p>
+                <p className={styles.preferenceNote}>English cards only. Up to {DEVELOPMENT_SEARCH_LIMIT} matching listings per scan. Recent sold evidence informs priority before automatic AI, within a separate 2¢ budget. Identity and condition remain preliminary until photo assessment. All prices by default; the minimum applies to Buy It Now and the maximum to both formats.</p>
             </div>}
             <div className={styles.controlPanel} hidden={hidden} data-idle={idle || undefined}>
                 <div className={styles.controlRow}>
@@ -329,7 +330,7 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
                         <input type="checkbox" role="switch" checked={includeOffers} onChange={(event) => changeIncludeOffers(event.target.checked)} />
                     </label>
                     <label className={styles.field}>
-                        <span>Results per search</span>
+                        <span>Matching listings per search</span>
                         <select value={resultsSetting} onChange={(event) => changeResultsSetting(Number(event.target.value))}>
                             {RESULT_OPTIONS.map((option) => (
                                 <option key={option} value={option}>
@@ -339,11 +340,11 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
                         </select>
                     </label>
                     <label className={styles.field}>
-                        <span>AI assessments per search</span>
+                        <span>AI photo assessments</span>
                         <select value={autoSetting} onChange={(event) => changeAutoSetting(Number(event.target.value))}>
                             {AUTO_OPTIONS.map((option) => (
                                 <option key={option} value={option}>
-                                    {option === ALL ? "All matching" : option === 0 ? "Off" : `Top ${option}`}
+                                    {option === ALL ? "Automatic · within 2¢" : option === 0 ? "Off · manual only" : `Top ${option}`}
                                 </option>
                             ))}
                         </select>

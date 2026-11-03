@@ -42,6 +42,8 @@ export function photoEvidence(evaluation: Evaluation, requestedGrade = 0) {
           : optimistic
             ? `${requestedGrade} is an upper-end possibility in the ${range.low}–${range.high} range${range.likely !== null ? `; ${range.likely} is the likely estimate` : "; no likely grade is supported"}.`
             : `${requestedGrade} is within the estimated ${range.low}–${range.high} range.`
-        : "The grade range is a photo estimate, not a guaranteed grading result.";
+        : evaluation.condition && !range
+          ? requestedGrade > 0 ? `No numeric grade estimate supports your potential ${requestedGrade} target.` : "The photos do not support a numeric grade estimate."
+          : "The grade range is a photo estimate, not a guaranteed grading result.";
     return { confidence, coverage, issues, target, optimistic };
 }

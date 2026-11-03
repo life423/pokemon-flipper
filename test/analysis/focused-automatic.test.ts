@@ -1,6 +1,6 @@
 import "../fixtures/mock-ai-spending.ts";
 import "../fixtures/isolated-data.ts";
-import { test } from "node:test";
+import { test } from "../fixtures/search-context.ts";
 import assert from "node:assert/strict";
 import { offlineEbayCredentials } from "../fixtures/ebay-credentials.ts";
 import { cardEvaluation } from "../fixtures/card-evaluation.ts";
@@ -66,7 +66,7 @@ test("focused automatic cheap first-edition research avoids historical fanout an
             if (url.searchParams.get("graded") === "false") return Response.json({ data: [], pagination: { has_more: false } });
             const grader = url.searchParams.get("grader")!, grade = url.searchParams.get("grade")!;
             return Response.json({ data: [190, 200, 210].map((price, index) => ({ id: `${grader}-${grade}-${index}`, title: `${title} ${grader} ${grade}`,
-                price, currency: "USD", grader, grade, variant: "1st Edition Normal", attribution: "exact", sold_at: new Date().toISOString() })), pagination: { has_more: false } });
+                price, currency: "USD", grader, grade, variant: "1st Edition Normal", attribution: "exact", sale_type: "fixed_price", sold_at: new Date().toISOString() })), pagination: { has_more: false } });
         }
         if (url.hostname !== "api.openai.com") { unexpected.push(String(url)); throw new Error("Unexpected offline provider"); }
         const body = JSON.parse(String(init?.body));

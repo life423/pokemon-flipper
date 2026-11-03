@@ -44,8 +44,11 @@ function readCollapsed(): boolean {
 // to one line to leave room for results.
 export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal, checked, total, ai, pricing, stats, usage, onStop, actions, details }: Props) {
     const [collapsed, setCollapsed] = useState(readCollapsed);
+    const listingWork = requestedPhase === "finding" || requestedPhase === "filtering" || requestedPhase === "discovering" || requestedPhase === "pricing";
+    // A paid-AI pause does not stop the independently bounded metadata stream.
+    // Keep its progress and Stop action, while the AI strip reports the pause.
     const phase = requestedPhase === "stopped" || requestedPhase === "error" ? requestedPhase
-        : requestedPhase === "paused" || ai.paused ? "paused" : requestedPhase;
+        : requestedPhase === "paused" || ai.paused && !listingWork ? "paused" : requestedPhase;
 
     const toggle = () => {
         setCollapsed((now) => {
@@ -61,12 +64,15 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
     const running = phase === "finding" || phase === "filtering" || phase === "discovering" || phase === "pricing" || phase === "ai";
     const halted = phase === "paused" || phase === "stopped" || phase === "error";
     const step = STEP_OF[phase];
-    const aiState = phase === "stopped" ? "stopped" : phase === "paused" ? "paused" : phase === "error" ? "idle" : ai.analyzing > 0 ? "working" : "idle";
+    const aiState = phase === "stopped" ? "stopped" : phase === "error" ? "idle" : phase === "paused" || ai.paused ? "paused" : ai.analyzing > 0 ? "working" : "idle";
     const completed = Math.max(0, ai.done - ai.failed);
     const aiStatus = aiState === "stopped" ? "AI analysis stopped"
         : aiState === "paused" ? "AI analysis paused"
         : aiState === "working" ? `AI assessing ${ai.analyzing.toLocaleString()} ${ai.analyzing === 1 ? "card" : "cards"}`
         : "No full card assessments running";
+    const awaiting = ai.waiting > 0
+        ? `${ai.waiting.toLocaleString()} ${ai.waiting === 1 ? "listing awaits" : "listings await"} AI assessment.`
+        : "";
 
     // How far along: the free check while it runs, then the AI.
     const percent =
@@ -85,7 +91,7 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
 
     const title = {
         finding: "Searching eBay",
-        filtering: "Searching eBay",
+        filtering: "Checking listings and sold prices",
         discovering: "Looking for overlooked listings",
         pricing: "Recovering temporary price lookups",
         ai: "AI analysis",
@@ -123,8 +129,9 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
     // What's happening right now, in a few words.
     const activity =
             phase === "stopped" ? "New checks are stopped. Already accepted AI answers can still finish and save."
-            : phase === "paused" ? "No new analysis is running. Completed assessments and search results stay below."
+            : phase === "paused" ? `New AI assessments are paused. ${awaiting ? `${awaiting} These listings have not failed verification. ` : ""}Completed assessments and search results stay below.`
             : phase === "error" ? "The search could not finish. Any results checked so far are kept."
+            : ai.paused && listingWork ? "Listing checks are still running. New AI assessments are paused; unassessed listings remain preliminary."
             : ai.analyzing > 0 ? `${aiStatus}. Results appear as each assessment finishes.`
             : phase === "pricing" ? "Temporary failures retry automatically after the provider cooldown. Results remain available below."
             : phase === "discovering"
@@ -132,9 +139,9 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
             : phase === "finding"
             ? "Searching eBay..."
             : phase === "filtering"
-                ? "Reading titles, checking photos and prices..."
+                ? "Checking listing matches and recent sold evidence before full AI assessment..."
                 : ai.waiting > 0
-                  ? `${ai.waiting} ${ai.waiting === 1 ? "candidate is" : "candidates are"} waiting for the AI.`
+                  ? awaiting
                   : ai.failed > 0
                       ? `${ai.failed} AI ${ai.failed === 1 ? "analysis failed" : "analyses failed"}; see Review.`
                       : "Automatic analysis finished. Screened-only listings have not had full photo analysis.";
@@ -207,6 +214,8 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
                     {aiStatus}
                 </span>
                 <span className={styles.aiStatusCount}>{completed.toLocaleString()} completed</span>
+                {ai.waiting > 0 && <span className={styles.aiStatusCount}>{ai.waiting.toLocaleString()} awaiting analysis</span>}
+                {(halted || ai.paused) && ai.analyzing > 0 && <span className={styles.aiStatusCount}>{ai.analyzing.toLocaleString()} in progress</span>}
                 {ai.failed > 0 && <span className={styles.aiStatusCount}>{ai.failed.toLocaleString()} failed</span>}
             </div>
 
@@ -256,7 +265,7 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
                                 </dd>
                             </div>
                             <div>
-                                <dt>Couldn't verify</dt>
+                                <dt title="Preliminary checks have not finished. This is not a count of failed AI assessments.">Screening incomplete</dt>
                                 <dd>
                                     <Tween value={stats.unchecked} format={wholeNumber} />
                                 </dd>

@@ -1,5 +1,5 @@
-import type { Evaluation, ListingSummary, RatingLevel, SearchIntent, Targets } from "../types";
-import type { AnalysisState } from "../analysis-state";
+import type { Evaluation, ListingSummary, RatingLevel, SearchIntent, Targets } from "../types.ts";
+import type { AnalysisState } from "../analysis-state.ts";
 import { canAutoAnalyze, meetsMinimumGrade, resultGroup, type ResultGroup } from "../../../shared/analysis.ts";
 import { compareAnalysisPriority } from "../../../shared/analysis-priority.ts";
 import { evaluatedCriteriaMismatch } from "../../../shared/search-criteria.ts";
@@ -72,8 +72,7 @@ export function groupSearchResults(filtered: ListingSummary[], analyses: Record<
     for (const listing of filtered) {
         const evaluation = evaluationOf(analyses[listing.id]);
         const group = resultGroup(listing, evaluation, includeOffers, analyses[listing.id]?.status === "error");
-        if (group === "deals" || group === "offers" || group === "review") grouped[group].push(listing);
-        else grouped.candidates.push(listing);
+        if (group) grouped[group].push(listing);
     }
 
     // Compatibility keys remain empty; discovery uses the ordinary outcome groups.
@@ -123,7 +122,7 @@ export function countSearchResults({ listings, analyses, newMode, newIds, page, 
     return {
         candidates: listings.filter((listing) => eligibleEvidence(listing) && (!newMode || newIds.has(listing.id)) && canAutoAnalyze(listing)).length,
         dropped: count("DROPPED"),
-        unchecked: listings.filter((listing) => eligibleEvidence(listing) && listing.screen?.status === "UNSCREENED" && !listing.match &&
+        unchecked: listings.filter((listing) => !evaluationOf(analyses[listing.id]) && eligibleEvidence(listing) && listing.screen?.status === "UNSCREENED" && !listing.match &&
             !(listing.screen.priceAnomaly && !listing.screen.priceAnomaly.photoChecked)).length,
         mismatched: listings.filter(
             (listing) =>

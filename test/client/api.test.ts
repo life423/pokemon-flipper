@@ -135,3 +135,70 @@ test("focused photo review uses only its explicit endpoint and saved-assessment 
     await reviewListingPhotos("v1|123|0", "saved-key");
     assert.equal(calls, 1);
 });
+
+test("listing resolution, deeper review, price retries and usage keep one explicit search scope", async t => {
+    const { resolveListingLink, reviewListingPhotos, retryPricingBatch, fetchEbayUsage, refreshSavedListings } = await import("../../client/src/api.ts");
+    const scopes: string[] = [];
+    t.mock.method(globalThis, "fetch", async (_url: unknown, init?: RequestInit) => {
+        scopes.push(new Headers(init?.headers).get("X-Pokemon-Flipper-Search-Id") ?? "missing");
+        return Response.json({});
+    });
+    const scope = "same-search-across-stages";
+    await resolveListingLink("https://www.ebay.com/itm/123", undefined, scope);
+    await evaluateListing({ id: "123" } as never, { searchRunId: scope });
+    await reviewListingPhotos("123", "saved", scope);
+    await retryPricingBatch(["ticket"], { minProfit: 0, minRoi: 0 }, false, new AbortController().signal, scope);
+    await fetchEbayUsage(scope);
+    await refreshSavedListings(["123"], scope);
+    assert.deepEqual(scopes, Array(6).fill(scope));
+});
+
+test("an automatic connection retry retains a generated scope instead of gaining another allowance", async t => {
+    const scopes: (string | null)[] = [];
+    t.mock.method(globalThis, "fetch", async (_url: unknown, init?: RequestInit) => {
+        scopes.push(new Headers(init?.headers).get("X-Pokemon-Flipper-Search-Id"));
+        if (scopes.length === 1) throw new TypeError("connection interrupted");
+        return Response.json({});
+    });
+    await evaluateListing({ id: "scope-retry" } as never);
+    assert.equal(scopes.length, 2);
+    assert.ok(scopes[0]);
+    assert.equal(scopes[0], scopes[1]);
+});
+
+test("quota copy distinguishes a per-search cap from the account's daily allowance", async () => {
+    const { describeUsage } = await import("../../client/src/search/presentation.ts");
+    const copy = describeUsage({ used: 100, limit: 5000, remaining: 4900, resetsAt: null, braking: false,
+        searchBudget: { searchId: "same-search", limit: 25, used: 7, remaining: 18 } });
+    assert.match(copy, /eBay today: 4,900 of 5,000/);
+    assert.match(copy, /This search: 18 of 25/);
+    assert.doesNotMatch(copy, /renew|expir|Development allowance/);
+});
+
+test("an AI budget stop preserves all50 free metadata rows still arriving in the search stream", async t => {
+    const { analysisBlockPolicy } = await import("../../client/src/search/presentation.ts");
+    const signal = new AbortController();
+    t.mock.method(globalThis, "fetch", async (_url: unknown, init?: RequestInit) => {
+        let row = 0;
+        return new Response(new ReadableStream({
+            start(controller) {
+                init?.signal?.addEventListener("abort", () => controller.error(init.signal?.reason), { once: true });
+            },
+            pull(controller) {
+                const done = row >= 50;
+                controller.enqueue(new TextEncoder().encode(JSON.stringify(done ? { type: "done" } : { type: "listing", listing: { id: String(row++) } }) + "\n"));
+                if (done) controller.close();
+            },
+        }));
+    });
+    const rows: string[] = [];
+    await streamDeals("charizard", { maxResults: 50, minPrice: 0, signal: signal.signal, searchRunId: "metadata-during-budget-stop" }, message => {
+        if (message.type !== "listing") return;
+        rows.push(message.listing.id);
+        if (rows.length === 1 && analysisBlockPolicy("AI_BUDGET").stopListingStream) signal.abort();
+    });
+    assert.equal(rows.length, 50);
+    assert.equal(signal.signal.aborted, false);
+    assert.equal(analysisBlockPolicy("AI_PAUSED").stopListingStream, false);
+    assert.equal(analysisBlockPolicy("STORAGE_UNAVAILABLE").stopListingStream, true, "storage failures must still stop unsafe reads");
+});

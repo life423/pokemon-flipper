@@ -8,7 +8,7 @@ import { CLIENT_ROOT } from "./lib/paths.ts";
 import { DEVELOPMENT_SEARCH_LIMIT, searchWithDiscovery } from "./deals/search.ts";
 import { evaluateBoundedListing } from "./analysis/bounded-evaluate.ts";
 import { EbayError } from "./ebay/api.ts";
-import { ebayUsage } from "./ebay/usage.ts";
+import { ebayUsage, EbayBudgetError } from "./ebay/usage.ts";
 import { writeOfferNote } from "./ai/offer-note.ts";
 import type { CurrentState } from "./analysis/evaluate.ts";
 import { MONEY_CONFIG } from "../shared/money/config.ts";
@@ -107,9 +107,10 @@ app.post("/api/listings/resolve", async (req, res) => {
     try { res.json(await resolveListingLink(req.body?.input)); }
     catch (error) {
         const missing = error instanceof EbayError && [404, 410].includes(error.status);
-        res.status(error instanceof ListingLinkError ? error.status : missing ? 404 : error instanceof ProviderError ? 503 : 502).json({
-            error: error instanceof ListingLinkError || error instanceof ProviderError ? error.message
-                : missing ? "Listing not found or no longer available. No AI analysis was started." : "Could not load this listing from eBay. Please try again." });
+        res.status(error instanceof ListingLinkError ? error.status : missing ? 404 : error instanceof ProviderError || error instanceof EbayBudgetError ? 503 : 502).json({
+            error: error instanceof ListingLinkError || error instanceof ProviderError || error instanceof EbayBudgetError ? error.message
+                : missing ? "Listing not found or no longer available. No AI analysis was started." : "Could not load this listing from eBay. Please try again.",
+            ...(error instanceof EbayBudgetError ? { retryable: false, code: "EBAY_BUDGET" } : {}) });
     }
 });
 

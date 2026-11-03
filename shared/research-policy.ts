@@ -2,5 +2,11 @@
 // evaluator's verified post-photo identity. Explicit manual research is separate.
 export const MIN_AUTOMATIC_RAW_RESALE = 60;
 export const CHEAP_FIRST_EDITION_BASE_SET_LIMIT = 10;
-// Current local development scope, shared by HTTP orchestration and the UI.
-export const DEVELOPMENT_SEARCH_LIMIT = 3;
+// Matching metadata rows admitted from one source page. This is independent
+// of the 25 Browse-request cap and the two-cent paid-AI spending cap.
+export const DEVELOPMENT_SEARCH_LIMIT = 50;
+// Bound in-flight detail/photo work independently of how many rows are shown.
+// More candidates can finish through saved evidence or remaining AI budget.
+export const BOUNDED_AUTO_CONCURRENCY = 2;
+// Maximum supplied photos accepted by the bounded assessment response schema.
+export const BOUNDED_PHOTO_LIMIT = 6;

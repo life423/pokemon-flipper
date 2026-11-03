@@ -6,9 +6,11 @@ import path from "node:path";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { ReviewBudget, REVIEW_LIMITS, type ReviewService } from "./review/request-budget.ts";
 import type { Evaluation, ListingSummary } from "../shared/types.ts";
+import { createCliResearchScope } from "./review/research-scope.ts";
 
 if (!process.argv.includes("--live")) throw new Error("Pass --live explicitly to allow bounded paid provider calls.");
 const finishPrimary = process.argv.includes("--finish-primary");
+const research = createCliResearchScope();
 const queries = ["1999 base set holo", "neo genesis lugia", "pikachu 151 illustration rare", "umbreon vmax 215/203", "charizard ex obsidian flames", "team rocket dark blastoise", "gengar fossil psa 8", "crown zenith mewtwo vstar", "pokemon promo swsh050", "vintage pokemon holo raw"];
 const directory = path.resolve("data/reviews/2026-10-26");
 await fs.mkdir(directory, { recursive: true });
@@ -88,7 +90,7 @@ const pendingQueries = finishPrimary ? queries.slice(8) : queries;
 if (finishPrimary) {
     const { searchListings } = await import("../server/ebay/listings.ts");
     for (const query of pendingQueries) {
-        await context.run({ query, signal: AbortSignal.timeout(30000) }, () => searchListings(query, { maxResults: 200 }));
+        await research(() => context.run({ query, signal: AbortSignal.timeout(30000) }, () => searchListings(query, { maxResults: 200 })));
     }
 }
 for (const [index, query] of pendingQueries.entries()) {
@@ -106,14 +108,14 @@ for (const [index, query] of pendingQueries.entries()) {
     const timer = setTimeout(() => stopped.abort(new Error("Review search deadline reached")), 180_000);
     process.stdout.write(`Starting ${index + 1}/10: ${query}\n`);
     try {
-        await context.run({ query, signal: stopped.signal }, () => searchWithDiscovery(query, {
+        await research(() => context.run({ query, signal: stopped.signal }, () => searchWithDiscovery(query, {
             maxResults: 200, minPrice: 0, targets, includeOffers: false, signal: stopped.signal,
             onStart: (summary) => { row.summary = summary; row.startSeconds = elapsed(); },
             onListing: (listing) => {
                 row.firstListingSeconds ??= elapsed(); listings.set(listing.id, listing);
             },
             onDiscovery: (progress) => { row.primarySeconds ??= elapsed(); row.discovery.push({ ...progress, seconds: elapsed() }); },
-        }));
+        })));
         row.completed = !stopped.signal.aborted;
     } catch (error) { row.errors.push((error as Error).message); }
     finally { clearTimeout(timer); stopped.abort(); }
@@ -136,7 +138,7 @@ for (const [index, query] of pendingQueries.entries()) {
         const analysisTimer = setTimeout(() => analysisStopped.abort(new Error("Review analysis deadline reached")), 150_000);
         const analysisStart = performance.now();
         try {
-            const evaluation = retargetEvaluation(await context.run({ query, signal: analysisStopped.signal }, () => evaluateListing(listing.id, { current: { price: listing.currentPrice, shipping: listing.shipping, bids: listing.bids, endTime: listing.endTime } })), targets, listing);
+            const evaluation = retargetEvaluation(await research(() => context.run({ query, signal: analysisStopped.signal }, () => evaluateListing(listing.id, { current: { price: listing.currentPrice, shipping: listing.shipping, bids: listing.bids, endTime: listing.endTime } }))), targets, listing);
             snapshot.evaluations[listing.id] = evaluation;
             row.fullAnalyses.push({ title: listing.title, seconds: Math.round((performance.now() - analysisStart) / 10) / 100, group: resultGroup(listing, evaluation), verdict: evaluation.underwriting?.verdict, route: evaluation.underwriting?.best?.label, profit: evaluation.underwriting?.best?.profit, downside: evaluation.underwriting?.best?.downside, maxBid: evaluation.underwriting?.best?.maxBid, condition: evaluation.condition?.rawCondition, range: evaluation.condition?.gradeRange, confidence: evaluation.condition?.confidence, reasons: evaluation.underwriting?.reasons, rating: evaluation.rating, usage: evaluation.usage, reusedSteps: evaluation.reusedSteps });
         } catch (error) { row.fullAnalyses.push({ title: listing.title, error: (error as Error).message }); }

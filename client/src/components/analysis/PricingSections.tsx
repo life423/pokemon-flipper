@@ -4,7 +4,7 @@ import { RAW_CONDITIONS, CONDITION_NAMES } from "../../../../shared/conditions.t
 import { Pairs, Section } from "./primitives";
 import styles from "../DetailPanel.module.css";
 
-export function CompsRow({ summary }: { summary: CompSummary }) {
+export function CompsRow({ summary, sampleLimit = 40, screening = false }: { summary: CompSummary; sampleLimit?: number; screening?: boolean }) {
     const dropped = Object.entries(summary.dropped);
 
     return (
@@ -22,7 +22,7 @@ export function CompsRow({ summary }: { summary: CompSummary }) {
 
             {summary.count > 0 && (
                 <p className={styles.small}>
-                    {summary.mean != null ? `Average ${dollars(summary.mean)}. ` : ""}Range {dollars(summary.low)} to {dollars(summary.high)}. Newest sale {summary.newestSale}.{summary.windowDays ? ` Up to ${summary.windowDays} days of recent sales; at most 40 returned rows per lookup are sampled. The median drives the estimate.` : ""}
+                    {summary.mean != null ? `Average ${dollars(summary.mean)}. ` : ""}Range {dollars(summary.low)} to {dollars(summary.high)}. Newest sale {summary.newestSale}.{summary.windowDays ? ` Up to ${summary.windowDays} days of recent sales; at most ${sampleLimit} returned rows per lookup are sampled. ${screening ? "This is preliminary market evidence, not a verified valuation." : "The median drives the estimate."}` : ""}
                 </p>
             )}
 

@@ -1,5 +1,5 @@
 import "../fixtures/mock-ai-spending.ts";
-import { test } from "node:test";
+import { test } from "../fixtures/search-context.ts";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { offlineEbayCredentials } from "../fixtures/ebay-credentials.ts";

@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test } from "../fixtures/search-context.ts";
 import assert from "node:assert/strict";
 import { getListingDetails, type ListingDetails } from "../../server/ebay/listings.ts";
 import { evaluateListing } from "../../server/analysis/evaluate.ts";

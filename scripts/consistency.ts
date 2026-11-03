@@ -8,6 +8,7 @@ import { evaluateListing } from "../server/analysis/evaluate.ts";
 import { toItemId } from "./item-id.ts";
 import { CONDITION_AREAS as AREAS } from "../shared/conditions.ts";
 import type { Evaluation } from "../shared/types.ts";
+import { createCliResearchScope } from "./review/research-scope.ts";
 
 const itemId = toItemId(process.argv[2]);
 const runs = Number(process.argv[3] ?? 5);
@@ -20,13 +21,14 @@ if (!itemId || !Number.isInteger(runs) || runs < 2 || runs > 10) {
 console.log(`Grading ${itemId} ${runs} times independently. Paid photo, condition and optional resolution requests apply to each run.`);
 
 const started = Date.now();
+const research = createCliResearchScope();
 
-const results = await Promise.allSettled(
+const results = await research(() => Promise.allSettled(
     // Always fresh and never saved: the point is to see the spread.
     Array.from({ length: runs }, () =>
         evaluateListing(itemId, { fresh: true, remember: false })
     )
-);
+));
 
 // One comparable line per run: the fields a verdict depends on.
 function summarize(evaluation: Evaluation): Record<string, string> {
@@ -57,9 +59,9 @@ function summarize(evaluation: Evaluation): Record<string, string> {
         ...areas,
         raw: condition?.rawCondition ?? "-",
         range: condition
-            ? `${condition.gradeRange.low}-${condition.gradeRange.high}`
+            ? condition.gradeRange ? `${condition.gradeRange.low}-${condition.gradeRange.high}` : "unsupported"
             : "-",
-        likely: condition ? String(condition.gradeRange.likely ?? "none") : "-",
+        likely: condition ? String(condition.gradeRange?.likely ?? "none") : "-",
         confidence: condition?.confidence ?? "-",
         authenticity: condition?.authenticity.concern ?? "-",
     };

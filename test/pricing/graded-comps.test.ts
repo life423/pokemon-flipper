@@ -15,6 +15,9 @@ const comp = (price, soldAt, variant, title, overrides = {}) => ({
     grade: "9",
     grade_qualifier: null,
     attribution: "exact",
+    // These matching-rule fixtures explicitly model confirmed transactions.
+    // Legacy records without a known sale type are covered by the evidence audit.
+    sale_type: "fixed_price",
     listing_url: null,
     ...overrides,
 });

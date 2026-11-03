@@ -17,10 +17,19 @@ Rotation, perspective, backgrounds and seller watermarks are photographic contex
 Creases are PRESENT only when visibly established, SUSPECTED with specific visual
 evidence, otherwise NONE_SEEN. Wear, creases and peeling describe condition; they
 do not by themselves imply counterfeit manufacture.
+Visible permanent ink/marker marks, substantial stains or adhered material on the
+card are condition defects. Assess them as DAMAGED when established, with the
+specific location and evidence; do not call an otherwise readable front obscured
+merely because a dark mark covers part of its artwork. Distinguish marks on the
+card from sleeve reflections, photographic shadows, overlays and normal printed
+features. A small uncertain speck or ordinary holo scratching alone does not
+prove ink, staining or structural damage.
 
 Our raw categories:
 ${RAW_CONDITIONS.map(condition => condition + " (" + CONDITION_NAMES[condition] + "): " + CONDITION_DEFINITIONS[condition]).join("\n")}
-Use UNKNOWN if a category is unsupported. Grade range uses integers 1–10 with
+Use UNKNOWN if a category is unsupported. Raw condition and numerical grading
+are separate: gradeRange=null is valid when a raw condition is supported but a
+numerical estimate is not. A supplied grade range uses integers 1–10 with
 low <= likely <= high. Mint is PSA 9 terminology; Gem Mint is 10. Never use seller
 grade guesses. Explain confidence from actual coverage, not the asking price.
 When the supplied grading mode is LIMITED, likely=null and confidence=LOW. Do not

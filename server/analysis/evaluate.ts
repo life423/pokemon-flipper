@@ -68,7 +68,7 @@ const rawSalesPrices = createSharedRawSalesPricer({ fetchRawComps, checkComps, a
 async function gradedPricesByGrader(
     card: PricedCard,
     identity: Identity,
-    gradeRange: GradeRange,
+    gradeRange: GradeRange | null,
     signal?: AbortSignal
 ): Promise<Partial<Record<Grader, GradedPricing>>> {
     const byGrader: Partial<Record<Grader, GradedPricing>> = {};
@@ -453,11 +453,11 @@ async function evaluateOnce(
             record.assessment = null;
             evaluation.gradeStatus = "REJECTED_INVALID_RANGE";
         } else {
-            evaluation.gradeStatus = "ESTIMATED";
+            evaluation.gradeStatus = condition.gradeRange ? "ESTIMATED" : "RAW_CONDITION_ONLY";
             evaluation.condition = condition;
             evaluation.setAside = (record.assessment?.setAside ?? []).map(summarizeAnswer);
 
-            if (identifiedCard && evaluation.identity && !lowValueReview) {
+            if (identifiedCard && evaluation.identity && !lowValueReview && condition.gradeRange) {
                 evaluation.gradedPricing = await gradedPricesByGrader(
                     identifiedCard,
                     evaluation.identity,

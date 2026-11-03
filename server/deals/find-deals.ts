@@ -11,17 +11,15 @@ import { AUTOMATIC_AUCTION_WINDOW_HOURS, worthScreening, type ListingFilters } f
 import { cardLanguageStatus, EnglishOnlyError } from "../../shared/card-language.ts";
 import { sameCardNumber } from "../identity/card-identity.ts";
 import { DEVELOPMENT_SEARCH_LIMIT } from "../../shared/research-policy.ts";
+import { priceFirstListings, type SoldScreeningFactory } from "./price-first.ts";
 
 // Preserve the existing public screening imports for scripts and tests.
 export { screeningSteps, screenListing, shippingCouldChange, REAL_STEPS } from "./screen-listing.ts";
 export type { ScreenSteps } from "./screen-listing.ts";
 
-// A search, the way eBay matches it, narrowed to the card searched for,
-// with every listing screened using cached rules, prices and AI title reads. eBay limits listing-detail
-// requests per day, so the first check runs on the search result alone,
-// with its title read by the AI. Only listings that pass, or whose title
-// left something out, get their full eBay details and a second check.
-// Preliminary estimates rank full AI work rather than prohibit it.
+// The current bounded search filters metadata locally, completes reusable
+// sold-market research, then emits ranked candidates for budgeted photo work.
+// The legacy diagnostic path below still supports AI title/detail screening.
 
 // eBay returns 200 a page in best-match order; later pages are mostly loose
 // matches, so 400 by default, and up to 1,000 when asked.
@@ -42,6 +40,7 @@ interface FindSteps {
     screening: typeof screeningSteps;
     readIntentWithoutAi?: typeof readSearchWithoutAi;
     readTitleWithoutAi?: typeof readTitleWithoutAi;
+    soldScreening?: SoldScreeningFactory;
 }
 
 export interface SearchSummary {
@@ -87,7 +86,7 @@ export async function findDeals(
         // Explicit development scope: cap work before title/photo screening.
         screenLimit?: number;
         asOf?: number;
-        // Small server-selected workflow; preliminary work cannot buy AI stages.
+        // Server-selected workflow; preliminary sold research cannot buy AI stages.
         bounded?: boolean;
         // A stopped search: the listings not yet checked are skipped, so no
         // more eBay requests or AI calls go out.
@@ -123,15 +122,43 @@ export async function findDeals(
             (!bounded || literalTitleFits(listing, intent))
     );
 
-    const selected = newOnly ? eligible.slice(0, newOnly.limit) : eligible;
-    const matching = limited === undefined ? selected : selected.slice(0, limited);
+    const selected = newOnly && !bounded ? eligible.slice(0, newOnly.limit) : eligible;
+    let metadataExcluded = 0;
+    let matching = limited === undefined ? selected : selected.slice(0, limited);
+    if (bounded) {
+        // A saved title reading can identify junk or a known mismatch that the
+        // literal title could not settle. Exclude it before filling the result
+        // batch, then continue within this same source page. These reads cannot
+        // buy title/photo AI, price lookups or listing-detail requests.
+        const candidateLimit = Math.min(limited!, newOnly?.limit ?? Infinity);
+        matching = [];
+        for (const listing of selected) {
+            if (matching.length >= candidateLimit) break;
+            if (signal?.aborted) return [];
+            let screened: ListingSummary;
+            try { screened = await screenListingWithoutAi(listing, intent, signal, dependencies.readTitleWithoutAi ?? readTitleWithoutAi); }
+            catch (error) { if (signal?.aborted) return []; throw error; }
+            if (signal?.aborted) return [];
+            const mismatch = screened.match ?? cardMismatch(screened.screen, intent);
+            if ((mismatch && mismatch !== "UNCONFIRMED_CRITERIA") || !worthScreening(screened, listingFilters, asOf)) {
+                metadataExcluded++;
+                continue;
+            }
+            matching.push(mismatch ? { ...screened, match: mismatch } : screened);
+        }
+    }
     onStart({ total, found: live.length, count: matching.length, skipped, intent,
-        ...(newOnly || limited !== undefined ? { mode: limited === undefined ? "new" : "development", deferred: Math.max(0, eligible.length - matching.length),
+        ...(newOnly || limited !== undefined ? { mode: limited === undefined ? "new" : "development", deferred: Math.max(0, eligible.length - matching.length - metadataExcluded),
             ...(newOnly ? { previouslySeen: live.length - unseen.length } : {}) } : {}) });
 
     // Legacy screening batches title reads. Bounded admission cannot enqueue
     // that paid work, even when the caller asks for a larger result count.
     if (signal?.aborted) return [];
+    if (bounded) {
+        try { matching = await priceFirstListings(matching, intent, { signal, targets, includeOffers, now: asOf }, dependencies.soldScreening); }
+        catch (error) { if (signal?.aborted) return []; throw error; }
+        if (signal?.aborted) return [];
+    }
     if (!bounded) for (const listing of matching) if (worthScreening(listing, listingFilters, asOf)) void dependencies.readTitle(listing.title, signal);
 
     const steps = bounded ? null : dependencies.screening(targets, includeOffers, signal);
@@ -141,7 +168,7 @@ export async function findDeals(
 
         let screened: ListingSummary;
         try {
-            screened = bounded ? await screenListingWithoutAi(listing, intent, signal, dependencies.readTitleWithoutAi ?? readTitleWithoutAi)
+            screened = bounded ? listing
                 : await screenListing(listing, steps!, intent, signal);
         } catch (error) {
             if (signal?.aborted) return null;

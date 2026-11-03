@@ -27,6 +27,12 @@ test("detail view leads with eBay access and an open original-photo viewer befor
     assert.match(markup, /aria-label="Photo zoom"/);
     assert.match(markup, /max="16"/);
     assert.match(markup, /aria-label="Previous photo"/); assert.match(markup, /aria-label="Next photo"/);
+    assert.ok(markup.indexOf('aria-label="Next photo"') < markup.indexOf('aria-label="Zoomable listing photo"'), "navigation stays above the large image");
+    assert.ok(markup.indexOf('aria-label="Choose a listing photo"') < markup.indexOf('aria-label="Zoomable listing photo"'), "thumbnails are already visible above the large image");
+    assert.match(markup, /aria-label="Show photo 1" aria-pressed="true"/);
+    assert.match(markup, /aria-label="Show photo 2" aria-pressed="false"/);
+    assert.doesNotMatch(markup, /<summary>Choose a photo/);
+    assert.match(markup, /Loading photo 1/);
     assert.match(markup, /Reset view/); assert.match(markup, /cannot recover missing detail/);
     assert.ok(markup.indexOf('aria-label="Zoomable listing photo"') < markup.indexOf("<details"), "the main photo is visible without opening a disclosure");
     const empty = renderToStaticMarkup(createElement(PhotoGallery, { images: [] }));

@@ -37,6 +37,13 @@ test("no offer when nothing clears at any price", () => {
     assert.equal(offerPlan(100, 0), null);
 });
 
+test("invalid asking prices and purchase limits cannot produce an offer", () => {
+    for (const value of [NaN, Infinity, -Infinity]) {
+        assert.equal(offerPlan(value, 100), null);
+        assert.equal(offerPlan(100, value), null);
+    }
+});
+
 
 test("the 10% offer cutoff survives rounding and rejects the screenshot examples", () => {
     assert.equal(offerPlan(125, 76).requiresPriceDrop, true);

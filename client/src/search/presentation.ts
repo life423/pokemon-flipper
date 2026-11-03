@@ -6,13 +6,13 @@ export type AnalysisBlockCode = "AI_CREDITS" | "AI_PAUSED" | "AI_BUDGET" | "STOR
 export function analysisBlockPolicy(code: AnalysisBlockCode | null) {
     switch (code) {
         case "AI_CREDITS": return { title: "AI credits unavailable", retryLabel: "Retry after adding credits",
-            detail: "New analysis is stopped. Retry the remaining saved candidates after credits are available." };
+            stopListingStream: true, detail: "New analysis is stopped. Retry the remaining saved candidates after credits are available." };
         case "STORAGE_UNAVAILABLE": return { title: "Saved evidence unavailable", retryLabel: "Retry when storage is available",
-            detail: "New analysis is stopped to avoid buying replacement evidence. Saved results stay visible." };
+            stopListingStream: true, detail: "New analysis is stopped to avoid buying replacement evidence. Saved results stay visible." };
         case "AI_BUDGET": return { title: "AI spending guard blocked this search", retryLabel: null,
-            detail: "New analysis is stopped. Retrying here cannot increase this search's allowance; completed results stay visible." };
+            stopListingStream: false, detail: "New analysis is stopped. Matching listings can still finish loading; retrying cannot increase this search's AI allowance." };
         default: return { title: "Paid AI unavailable", retryLabel: null,
-            detail: "New analysis is stopped. The server's spending configuration must be ready before paid work can resume; saved results stay visible." };
+            stopListingStream: false, detail: "New analysis is stopped. Matching listings can still load; the server's spending configuration must be ready before paid work can resume." };
     }
 }
 
@@ -32,8 +32,8 @@ export function describeIntent(intent: SearchIntent): string {
 
 export function describeUsage(usage: EbayUsage): string {
     const left = `eBay today: ${usage.remaining.toLocaleString()} of ${usage.limit.toLocaleString()} requests left`;
-    const development = usage.devLimit === undefined ? "" : ` Development allowance: ${usage.devRemaining ?? 0} of ${usage.devLimit} additional requests left.`;
+    const search = usage.searchBudget ? ` This search: ${usage.searchBudget.remaining} of ${usage.searchBudget.limit} requests left.` : "";
     return usage.braking
-        ? `${left}. New optional lookups are paused to preserve the daily reserve.${development}`
-        : `${left}.${development}`;
+        ? `${left}. New optional lookups are paused to preserve the daily reserve.${search}`
+        : `${left}.${search}`;
 }

@@ -55,7 +55,8 @@ export function gradingRoutes(evaluation: Evaluation) {
         const path = evaluation.underwriting?.paths.find((entry) => entry.path === "GRADE" && entry.grader === grader);
         return { grader, range: evaluation.condition?.gradeRange ?? null,
             priced: path?.status === "PRICED" ? path : null,
-            reason: path?.status === "UNAVAILABLE" ? path.reason : "Awaiting photo assessment and verified prices.",
+            reason: path?.status === "UNAVAILABLE" ? path.reason : evaluation.condition && !evaluation.condition.gradeRange
+                ? "The photos do not support a numeric grade estimate." : "Awaiting photo assessment and verified prices.",
         };
     });
 }

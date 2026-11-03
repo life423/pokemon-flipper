@@ -1,7 +1,207 @@
 # Project memory and user preferences
 
-Updated November 2, 2026. This file records the user's agreed requirements so
+Updated November 3, 2026. This file records the user's agreed requirements so
 future work can continue without losing the conversation context.
+
+## Product outcome and language
+
+The user's success criterion is real, evidence-supported profitable cards
+reaching Deals. Loaded rows, completed assessments and lower spending alone do
+not establish product success. Judge candidate selection and workflow changes
+by useful verified purchase opportunities after costs, while retaining honest
+uncertainty and the spending/quota guards. Do not manufacture Deals or promote
+unverified inventory to satisfy a count.
+
+Keep the interface outcome-focused. Do not use "AI" as a buzzword or prominent
+decorative branding. Prefer plain labels for deals, photo review, pricing and
+progress; name AI only when relevant to an informed choice, cost or evidence
+limitation. Preserve transparent provider usage where the user needs it.
+
+Retain distinct raw resale, raw-to-CGC and raw-to-PSA opportunities. Grading
+can tie up capital for 90 days or more; that is not a reason to discard every
+grading play. Compare supported profit after each grader's costs with its
+grading/sale holding period and the user's capital/time preference. Do not
+assume a universal turnaround or remove PSA because CGC may suit a specific
+play. Raw candidate priority must preserve possible grading upside rather than
+hard-rejecting solely against an unspecified raw-sale median.
+
+## November 3 controlled search benchmark checkpoint
+
+Current work on `audit/financial-calculations`; no commit/merge/push requested.
+See docs/search-cost-benchmark-2026-11-03.md. Exact Venusaur15/102Unlimitedholo
+BIN/both/AnyAny/offersoff scan loaded50metadata (39raw11graded),35soldAVAILABLE,
+15DEFERRED by8screening allowance;2slabs prelimDROPPED,33autoeligible. Three
+raw assessments returned(1PASS,2printingNEEDS_REVIEW), fourth generation denied
+by existing2centreservationguard;29eligible notadmitted.58.271sec,$0.0140084
+=1.40084c,3settled/0holds,0.59916cremaining.5Browse,9PKMNrequests(8screen+1final),
+76reportedcredits,4preflight/3generation.0Deals; no cost/usefulDeal established.
+OnepricedrawPASSusedlabeledTCGfallback,notverifiedphoto-conditionedeBaysales.
+SameUUID cache-onlyreplayof3completedcases reusedall3 withzeroadditionalAI,
+preflight/Browse/PKMN/images/reservations. It is notafreshavailabilitycheck.
+Diagnostictool scripts/bounded-search-benchmark.ts usesproductionfunctions;
+reviewhelpers separatequeue/results/transport, extra16PKMNceilingdiagnosticonly.
+No model/cap/productionworkflowchanges; only3clienttype-only import suffixes
+to reuse actualUIgrouping.837offline tests,types,build pass. Unifiedall-stage
+pricebudget/credittelemetrygap saved as futurework inignoredLOCAL_PLAN/TODO.
+Keep earlierphoto/early-stop examples deferred; preserveprivateplans/evidence,
+realspending/quotaledgers,andunrelated.env.example deletion.
+
+## November 3 graded/raw task split checkpoint
+
+Newest checkpoint on `audit/financial-calculations`; no delivery commit, merge
+or push requested. Step2 now has separate bounded requests: RAW retains the
+identical combined schema/prompt/key, up to6photos/2200output; SLAB_LABEL uses
+first2unique photos/1600output, actual label/identity/case and condition=null.
+Observed holder/label decides valuation. A disproved seller slab claim never
+silently buys a second raw assessment. Model and2cent/25Browse/daily guards
+unchanged. See `docs/graded-raw-assessment-paths-2026-11-03.md`.
+
+Plan/keys/photos live in server/analysis/bounded-plan.ts; structured request
+schemas/prompts in server/ai/bounded-assessment.ts; bounded-evaluate.ts owns
+cache reuse, validation and pricing orchestration. Existing compatibility
+exports remain. Both shared keys are checked with original selectors/versions;
+newest applicable corrections win, full legacy evidence retains priority and
+corrupt cache records fail closed. A cached verified slab survives advisory
+seller-category changes; a compact raw/unknown answer is not a raw condition.
+No blanket cache invalidation or paid reassessment occurred.
+
+820offline tests, both typechecks, build and whitespace pass. One actual compact
+PSA5DarkBlastoise test correctly read identity/label from2photos:7232input and
+575outputtokens, recorded$0.0021364=0.21364c,1settledgeneration/0holds. Two already
+assessed candidates were skipped before choosing it. Zero Browse or newPKMN
+requests. Actual sharedSQL replay used0additionalAI/providers, retained2photo
+mapping/validPSA5; missing cached sales remained unavailable in that forced
+cache-only replay. SQLready onlocalhost3017. This is not a full-search benchmark.
+
+The full private roadmap is indexed at top of LOCAL_PLAN.md/LOCAL_TODO.md.
+The user explicitly deferred the screenshot with0.293c spent/1.707c available,
+50checks/1assessment/49incomplete: save stopping/eligibility/progress issue, do
+not repair it while finishing this task. Additional model-routing and strategy
+brainstorming is kept in ignored notes. The2cent guard is temporary cost protection, not the
+objective cost; do not raise it based on brainstorming. Next controlled search
+benchmark remains pending. Preserveprivateplans/data/unrelated.env.example.
+
+## November 3 sold-price-first checkpoint
+
+Newest checkpoint on `audit/financial-calculations`; no commit/merge/push has
+been requested. The current step1 is complete: normal bounded searches and
+Find new listings research cached/bounded PKMNPrices sold evidence before
+emitting ranked candidates for automatic photo work. See
+`docs/price-first-screening-2026-11-03.md`, README and architecture map.
+
+One session shares catalog/market work across fifty rows, four candidates at
+once, at most eight uncached price-service transports including catalog, one
+twenty-sale page per source market, no automatic retry. This allowance is not
+a monetary cap or a replacement for persistent2centAI/25Browse-per-search/daily
+quota protections. Cached responses preserve timestamps. Stop/storage failures
+abort queued/sibling work; already accepted responses can still save.
+
+Slab exact grader/grade/printing/finish scopes stay separate. Medians rank; only
+one explicit complete scope with>=3recent90day sales can exclude a slab using
+the upper observed sold amount after costs/targets. Partial references cannot
+exclude. Raw buckets/unspecified context do not assign a condition or grade or
+reject unknown grading upside. Missing/deferred evidence stays Sorting without
+automatic paid work except the cheap<=10FirstEditionBaseSet investigation lead.
+Target changes reuse retained facts. Explicit foreign sold titles and conflicting
+sold-title graders/grades are excluded from these preliminary references.
+
+801offline tests, both typechecks, build and whitespace pass. Readonly realSQL
+replay with provider transports prohibited loaded saved raw references and left
+missingPSA5 evidence deferred. Zero newAI/Browse/PKMN requests in this step.
+localhost3017 storage reportsSQLready. The stage is not a complete live-search
+benchmark. Full raw/slab assessment-path optimization is next; long-term sold
+observations/migration, deferred false English/front-obscuration reports and
+positive deal227548256279 are not implemented/tested here. Preserve paid evidence,
+private ignored plans/data and unrelated.env.example deletion.
+
+## November 3 live-search follow-up
+
+This is the newest checkpoint on `audit/financial-calculations`; no delivery
+commit/merge/push has been requested. Earlier three-candidate checkpoints below
+are historical. Current scans admit up to 50 matching metadata rows from one
+newest-result page, after known exclusions. Keep this independent of 25 actual
+Browse requests per search, the provider daily quota and the persistent $0.02
+AI cap. Automatic work considers loaded candidates with two assessments in
+flight. An AI budget pause does not stop the independent metadata stream or its
+Stop search action. Awaiting work is not a failed verification.
+
+Raw condition may be supported without numeric grading: gradeRange can be
+explicitly null, grading routes remain unavailable, and actual raw condition can
+still produce a priced raw resale or terminal rejection. Structural and identity
+blockers remain. Priced PASS leaves Sorting/attention and remains All matching.
+Known raw resale/rejections keep coverage limitations as notes; real identity,
+authenticity, label and unsupported-condition concerns remain unresolved.
+
+A newer validated shared bounded reading supersedes an older private valuation
+without another paid assessment; it is pinned for that evaluation. Older/equal
+evidence keeps private reuse, and stronger legacy full assessments retain
+priority. Invalid shared evidence fails closed. No usable raw condition/range
+means no price-provider calls; a grading-only route skips raw sold-price work.
+
+The gallery exposes thumbnails/navigation before the main image and preserves
+zoom/aspect ratio/accessibility, with a brief reduced-motion-aware opacity
+transition. Six-photo sampling covers the first two views and four intervals
+through the remaining gallery. Missing/obscured-side messages describe reviewed
+photos and disclose unchecked counts; sampling never proves a view is absent
+from the full listing. Edition instructions explicitly locate the circled-1
+EDITION mark separately from the right-hand set symbol.
+
+The $900 Dark Blastoise case had a visible stamp in photo 1 and a whole back in
+photo 7, omitted by the old sampler. One controlled same-model GPT-5.6 Luna
+verification recognized both: 15,924 input/1,070 output tokens, $0.0044688
+reported token cost, zero Browse or PKMNPrices calls. Its actual accepted answer
+is retained in shared SQL and ignored local audit data; original evidence is
+preserved. It still reports UNKNOWN raw condition. Do not claim full quality is
+fixed, that every saved misreading changed, or that all 50 rows received paid
+assessment. No model or cap changed; the user asked to leave the model unchanged.
+The corrected reading and saved catalog updated its current private evaluation
+with zero additional AI/price requests; the original private snapshot is retained
+in ignored audit files. Listing terms were not falsely refreshed as live.
+
+Final verification: 736 offline tests, both typechecks, production build and
+whitespace checks pass. Offline responsive gallery/progress checks passed;
+localhost3017 reports Azure SQL ready. This follow-up made one controlled AI
+generation above, no Browse calls and no new PKMNPrices requests. No commit yet.
+
+See `docs/search-photo-workflow-review-2026-11-03.md` and the ignored local plan
+and TODO. Improve inexpensive admission using exact recent sold evidence and
+separate graded label work from raw condition work before buying more full
+reviews. Prompt edits alone do not update unchanged cached answers; do not clear
+all paid evidence or silently purchase blanket rereviews. User examples must
+produce generalized corrections and counterexample regressions.
+
+## November 3 financial audit checkpoint
+
+Current work is on `audit/financial-calculations`, from freshly fetched main
+536e4d2. No commit, merge or push has been requested for this work. Preserve the
+unrelated unstaged `.env.example` deletion and ignored local plans/data.
+
+The user clarified the eBay limit: **25 actual Browse requests per search**, not
+25 per day or one expiring shared development allowance. Current transport
+requires a stable search ID and persists its count across retries, nested work,
+processes and restarts. A new search gets a separate 25 while sharing eBay's
+account-wide daily protection. The old development ledger is preserved as
+history and is no longer used; its obsolete module/tests are removed. CLI
+commands establish one research scope too. Keep this separate from the hard
+$0.02 AI cap, which remains unchanged. Cached reads, OAuth and Analytics do not
+consume the per-search Browse allowance.
+
+Financial corrections cover decimal tax/fee rounding, cent-accurate ceilings
+verified against actual rounded costs and both targets, unrounded ROI ratios,
+canonical weighted proceeds, promotion fees on the tax-inclusive base, invalid
+offer/slab inputs and exact slab grader/grade matching. Unconfirmed historical
+sale amounts cannot set sold-price summaries. Pricing revision is ebay-resale-10;
+paid photo revisions and evidence remain reusable. Raw, existing slab and
+raw-to-grade routes remain separate. Grading shipping allocation, service tax,
+outcome weights, turnaround and no-grade risks remain documented assumptions.
+
+See `docs/financial-calculation-audit-2026-11-03.md` and its fee-source companion.
+Two bounded PKMNPrices pages provided ten sales for ten header-reported data
+credits; this audit made no AI generations or eBay Browse requests. Validation:
+702 offline tests, both typechecks, production build and whitespace checks pass.
+Normal local3017 is the user's tsx-watch server: source edits restart it and
+can interrupt a live search. A complete useful-search cost benchmark, price-first
+admission, equivalent-slab Buy It Now ceilings and later UI work remain pending.
 
 ## Current audit checkpoint and local planning
 

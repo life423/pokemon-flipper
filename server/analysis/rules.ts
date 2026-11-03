@@ -25,17 +25,22 @@ function riskOf(order: readonly string[], value: string): number {
 // either one wins first (authenticity, then creases), then the lower
 // grade range, then the worse raw condition. Ties keep the first.
 export function moreCautious(a: Condition, b: Condition): Condition {
-    const likelyOf = (answer: Condition) => answer.gradeRange.likely ?? 0;
+    const gradeComparisons = a.gradeRange && b.gradeRange ? [
+        a.gradeRange.low - b.gradeRange.low,
+        (a.gradeRange.likely ?? 0) - (b.gradeRange.likely ?? 0),
+        a.gradeRange.high - b.gradeRange.high,
+    ] : [];
 
     const comparisons = [
         riskOf(AUTHENTICITY_RISK, b.authenticity.concern) -
             riskOf(AUTHENTICITY_RISK, a.authenticity.concern),
         riskOf(CREASE_RISK, b.creases) - riskOf(CREASE_RISK, a.creases),
-        a.gradeRange.low - b.gradeRange.low,
-        likelyOf(a) - likelyOf(b),
-        a.gradeRange.high - b.gradeRange.high,
+        ...gradeComparisons,
         riskOf(RAW_CONDITION_RISK, b.rawCondition) -
             riskOf(RAW_CONDITION_RISK, a.rawCondition),
+        // Equal raw assessments do not invent a numeric estimate merely
+        // because the other answer supplied one.
+        Number(a.gradeRange !== null) - Number(b.gradeRange !== null),
     ];
 
     for (const difference of comparisons) {
@@ -111,13 +116,13 @@ export function getGradingMode(photoCheck: PhotoCheck): { mode: GradingMode; rea
         blockedReasons.push("The card is already graded.");
     }
     if (!hasView("FRONT")) {
-        blockedReasons.push("No usable photo shows the front.");
+        blockedReasons.push("No usable reviewed photo shows the front.");
     }
     // The model's overall verdict only counts when it rules the
     // photos out. "Partial" is a borderline call that flips between
     // runs, so full versus limited comes from the concrete facts below.
     if (!["SUFFICIENT", "PARTIAL"].includes(photoCheck.photoSufficiency)) {
-        blockedReasons.push("The photos aren't good enough to judge condition.");
+        blockedReasons.push("The reviewed photos do not support a numeric grade estimate.");
     }
 
     if (blockedReasons.length > 0) {
@@ -127,7 +132,7 @@ export function getGradingMode(photoCheck: PhotoCheck): { mode: GradingMode; rea
     const limitedReasons: string[] = [];
 
     if (!hasView("BACK")) {
-        limitedReasons.push("No usable photo shows the back.");
+        limitedReasons.push("No usable reviewed photo shows the back.");
     }
     if (photoCheck.confidence === "LOW") {
         limitedReasons.push("The photo check has low confidence.");
@@ -138,7 +143,7 @@ export function getGradingMode(photoCheck: PhotoCheck): { mode: GradingMode; rea
     const fronts = clearPhotos.filter((photo) => photo.view === "FRONT" || photo.view === "FRONT_DETAIL");
     const backs = clearPhotos.filter((photo) => photo.view === "BACK" || photo.view === "BACK_DETAIL");
     if ([fronts, backs].some((views) => views.length > 0 && views.every((photo) => photo.obscuresCondition))) {
-        limitedReasons.push("Every usable view of one side has obscured detail, such as glare, exposure, or low background contrast.");
+        limitedReasons.push("Every usable reviewed view of one side has obscured detail, such as glare, exposure, or low background contrast.");
     }
     if (photoCheck.holder !== "NONE") {
         limitedReasons.push("A sleeve or holder may hide edges and surface.");
@@ -189,21 +194,17 @@ export function applyConditionRules(
         }
     }
 
-    const { low, likely, high } = condition.gradeRange;
-
-    const validRange =
-        isGrade(low) &&
-        isGrade(high) &&
-        low <= high &&
-        (likely === null || (isGrade(likely) && low <= likely && likely <= high));
-
-    if (!validRange) {
-        return null;
+    if (condition.gradeRange !== null) {
+        if (!condition.gradeRange || typeof condition.gradeRange !== "object") return null;
+        const { low, likely, high } = condition.gradeRange;
+        const validRange = isGrade(low) && isGrade(high) && low <= high &&
+            (likely === null || (isGrade(likely) && low <= likely && likely <= high));
+        if (!validRange) return null;
     }
 
     // Limited evidence never names a single grade or claims confidence.
     if (gradingMode === "LIMITED") {
-        condition.gradeRange.likely = null;
+        if (condition.gradeRange) condition.gradeRange.likely = null;
         condition.confidence = "LOW";
     }
 

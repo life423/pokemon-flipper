@@ -1,11 +1,12 @@
 import { readCache, writeCache } from "../lib/cache.ts";
-import { sameCardNumber, sameSetFamily, setSearchTerm } from "../identity/card-identity.ts";
+import { sameCardNumber, sameSetFamily, setSearchTerm, normalizeWords } from "../identity/card-identity.ts";
 import { pricingSearchName } from "./search-name.ts";
 import { conditionOf } from "./raw-prices.ts";
 import { cardNumberOf, cardVariants } from "./records.ts";
 import type { CardRecord, Comp, FetchComps, FetchRawComps, LookupCards } from "./types.ts";
 import { createLimiter } from "../lib/concurrency.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
+import { createSharedWork } from "../lib/shared-work.ts";
 import { fetchJson, ProviderError } from "../lib/http.ts";
 import { PricingProviderError, retryAfterMs } from "./errors.ts";
 import type { PricingIssue } from "../../shared/pricing-retries.ts";
@@ -167,9 +168,11 @@ export function toCardRecord(detail: PkmnCard): CardRecord {
 
 // Candidate cards for a listing: every set in the listing's set family,
 // narrowed by name and number before the per-card price lookups.
-export const lookupCards: LookupCards = async ({ set, name, cardNumber }) => {
+async function lookupCardsFrom({ set, name, cardNumber }: Parameters<LookupCards>[0],
+    get: typeof apiGet, cached: typeof readApiCache,
+    screening?: { maxCards: number }): ReturnType<LookupCards> {
 
-    const sets = await apiGet(
+    const sets = await get(
         `/sets?${new URLSearchParams({ name: setSearchTerm(set), language: "English", per_page: "50" })}`,
         DAY * 7
     );
@@ -191,21 +194,25 @@ export const lookupCards: LookupCards = async ({ set, name, cardNumber }) => {
         const numeric = /^#?(\d+)(?:\/\d+)?$/.exec(cardNumber.replace(/\s+/g, ""));
         let list: ApiBody;
         if (numeric) {
-            const previous = await readApiCache(legacyPath, DAY);
+            const previous = await cached(legacyPath, DAY);
             params.set("number", numeric[1]!.replace(/^0+(?=\d)/, ""));
-            list = previous ?? await apiGet(`/cards?${params}`);
-        } else list = await apiGet(legacyPath);
+            list = previous ?? await get(`/cards?${params}`);
+        } else list = await get(legacyPath);
 
         for (const item of list.data ?? []) {
-            if (!sameCardNumber(cardNumberOf(item), cardNumber)) continue;
+            if (cardNumber ? !sameCardNumber(cardNumberOf(item), cardNumber) : !screening) continue;
+            if (screening && normalizeWords(item.name) !== normalizeWords(name)) continue;
 
-            const detail = await apiGet(`/cards/${item.id}?currency=usd`);
+            const detail = await get(`/cards/${item.id}?currency=usd`);
             cards.push(toCardRecord(detail));
+            if (screening && cards.length >= screening.maxCards) return cards;
         }
     }
 
     return cards;
-};
+}
+
+export const lookupCards: LookupCards = query => lookupCardsFrom(query, apiGet, readApiCache);
 
 // One page of recent graded eBay sales for a card record and printing.
 export const fetchComps: FetchComps = async (recordId, { grader, grade, variant }) => {
@@ -243,6 +250,110 @@ export const fetchRawComps: FetchRawComps = async (recordId, variant) => {
     }
     return sales;
 };
+
+export class ScreeningPriceBudgetError extends Error {
+    constructor() { super("The search's price-screening request allowance is exhausted. Saved price evidence remains available."); }
+}
+
+interface ScreeningSponsor {
+    available(): boolean;
+    dispatch(): void;
+}
+
+// Shared URL jobs retain independent consumers. If one search stops while
+// another still needs the page, a live search with allowance sponsors dispatch.
+// Accepted responses save even when all consumers stop after dispatch.
+const shareScreening = createSharedWork();
+const screeningSponsors = new Map<string, Set<ScreeningSponsor>>();
+
+export function createScreeningPriceSource({ signal, maxRequests = 8 }: { signal?: AbortSignal; maxRequests?: number } = {}) {
+    if (!Number.isSafeInteger(maxRequests) || maxRequests < 0) throw new RangeError("The price-screening request allowance must be a nonnegative integer.");
+    const requestLimit = maxRequests;
+    let requests = 0;
+    const cached: typeof readApiCache = async (path, maxAgeHours) => {
+        signal?.throwIfAborted();
+        const result = await readApiCache(path, maxAgeHours);
+        signal?.throwIfAborted();
+        return result;
+    };
+    const get: typeof apiGet = async (path, maxAgeHours = DAY) => {
+        const saved = await cached(path, maxAgeHours);
+        if (saved) return saved;
+        const key = `${path}:${maxAgeHours}`;
+        const sponsors = screeningSponsors.get(key) ?? new Set<ScreeningSponsor>();
+        const sponsor: ScreeningSponsor = {
+            available: () => !signal?.aborted && requests < requestLimit,
+            dispatch: () => { requests += 1; },
+        };
+        sponsors.add(sponsor); screeningSponsors.set(key, sponsors);
+        try {
+            return await shareScreening(key, async workSignal => {
+                workSignal.throwIfAborted();
+                const stored = await readApiCache(path, maxAgeHours);
+                workSignal.throwIfAborted();
+                if (stored) return stored;
+                return limit(async () => {
+                    workSignal.throwIfAborted();
+                    if (Date.now() < coolingUntil) throw new PricingProviderError("Price service is cooling down; saved prices remain available.", coolingKind, coolingUntil);
+                    if (![...(screeningSponsors.get(key) ?? [])].some(consumer => consumer.available())) throw new ScreeningPriceBudgetError();
+                    const apiKey = process.env.PKMNPRICES_API_KEY;
+                    if (!apiKey) throw new PricingProviderError("PKMNPRICES_API_KEY is not set", "CONFIG");
+                    const slot = Math.max(Date.now(), lastRequestAt + 1000);
+                    lastRequestAt = slot;
+                    if (slot > Date.now()) await sleep(slot - Date.now());
+                    workSignal.throwIfAborted();
+                    if (Date.now() < coolingUntil) throw new PricingProviderError("Price service is cooling down; saved prices remain available.", coolingKind, coolingUntil);
+                    const { assertSqlStorageReady } = await import("../storage/index.ts");
+                    await assertSqlStorageReady();
+                    workSignal.throwIfAborted();
+                    const payer = [...(screeningSponsors.get(key) ?? [])].find(consumer => consumer.available());
+                    if (!payer) throw new ScreeningPriceBudgetError();
+                    payer.dispatch();
+                    let result: Awaited<ReturnType<typeof fetchJson>>;
+                    try {
+                        // Do not cancel an accepted provider request: its answer
+                        // can still save and prevent replacement research.
+                        result = await fetchJson(`${BASE}${path}`, { headers: { "x-api-key": apiKey } }, { service: "Price screening" });
+                    } catch (error) {
+                        if (error instanceof ProviderError || error instanceof TypeError) {
+                            coolingKind = "TEMPORARY"; coolingUntil = Math.max(coolingUntil, Date.now() + 30_000);
+                            throw new PricingProviderError((error as Error).message, "TEMPORARY", coolingUntil);
+                        }
+                        throw error;
+                    }
+                    const { response, body } = result;
+                    if (response.status === 429) {
+                        const credits = /credit/i.test(`${body.error?.code ?? ""} ${body.error?.message ?? ""}`);
+                        coolingKind = credits ? "CREDITS" : "RATE_LIMIT";
+                        coolingUntil = Math.max(coolingUntil, Date.now() + retryAfterMs(response.headers.get("retry-after"), Date.now(), credits ? 60 * 60_000 : RETRY_WAITS_MS[0]!));
+                        throw new PricingProviderError(credits ? "Price-service credits are unavailable; saved prices remain available." : "Price service is rate limited; screening will not retry this request.", coolingKind, coolingUntil);
+                    }
+                    return finish(path, response, body);
+                });
+            }, signal);
+        } finally {
+            sponsors.delete(sponsor);
+            if (!sponsors.size && screeningSponsors.get(key) === sponsors) screeningSponsors.delete(key);
+        }
+    };
+    const source: { lookupCards: LookupCards; fetchComps: FetchComps; fetchRawComps: FetchRawComps; stats(): { requests: number; limit: number } } = {
+        lookupCards: query => lookupCardsFrom(query, get, cached, { maxCards: 4 }),
+        fetchComps: async (recordId, { grader, grade, variant }) => {
+            const params = new URLSearchParams({ graded: "true", grader, grade: String(grade), limit: "20", sort: "date_desc", period: "180d" });
+            if (variant) params.set("variant", variant);
+            const body = await get(`/cards/${recordId}/listings/ebay?${params}`, 6);
+            const sales: Comp[] = (body.data ?? []).filter((sale: Comp) => sale.currency === "USD");
+            return [...new Map(sales.map(sale => [sale.id ?? sale.listing_url ?? JSON.stringify(sale), sale])).values()];
+        },
+        fetchRawComps: async (recordId, variant) => {
+            const params = new URLSearchParams({ graded: "false", period: "90d", sort: "date_desc", limit: "20", variant });
+            const body = await get(`/cards/${recordId}/listings/ebay?${params}`, 6);
+            return (body.data ?? []).filter((sale: Comp) => sale.currency === "USD");
+        },
+        stats: () => ({ requests, limit: requestLimit }),
+    };
+    return source;
+}
 
 export async function fetchSalesVolume(recordId: CardRecord["id"], variant: string, graded: boolean): Promise<{ data: unknown[]; pagination?: { total_pages?: number } }> {
     const params = new URLSearchParams({ graded: String(graded), period: "30d", currency: "usd", variant, limit: "30" });

@@ -18,6 +18,7 @@ import styles from "./DealCard.module.css";
 import { cardDetails } from "../../../shared/card-details.ts";
 import { claimedCondition, CONDITION_NAMES } from "../../../shared/conditions.ts";
 import { isResearchDeferred } from "../../../shared/photo-review.ts";
+import { SoldPriceScreening } from "./SoldPriceScreening";
 
 interface Props {
     index?: number;
@@ -73,6 +74,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
         : verdict === "NEEDS_REVIEW" ? ["Your review needed", "watch"]
         : verdict === "CANT_PRICE" ? ["Can't price", "watch"]
         : verdict === "PASS" ? ["Pass", "pass"]
+        : !evaluation && screen?.soldEvidence && screen.soldEvidence.status !== "AVAILABLE" ? ["Price unconfirmed", "quiet"]
         : !evaluation && canRetryPricing(listing, now) ? ["Waiting for price", "pending"]
         : pricePending ? ["Verify price", "watch"]
         : mistakes.length ? ["Photo lead", "watch"]
@@ -96,7 +98,8 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
         </header>
         <PhotoReview compact evaluation={evaluation} listing={listing} state={photoReviewState} phase={analysis?.status === "loading" || analysis?.status === "error" ? analysis.status : undefined} />
         {evaluation?.underwriting?.verdict === "CANT_PRICE" && <p className={styles.note}>{evaluation.underwriting.reasons[0]}</p>}
-        {!evaluation && screen?.status === "UNSCREENED" && <p className={styles.note}>{screen.pricingIssue?.kind === "RATE_LIMIT" ? "Pricing paused for provider cooldown." : screen.pricingIssue?.kind === "TEMPORARY" ? "Price lookup temporarily unavailable." : screen.pricingIssue?.kind === "CREDITS" ? "Pricing unavailable. Check provider credits." : screen.pricingIssue?.kind === "CONFIG" ? "Pricing unavailable. Check provider setup." : screen.reason}</p>}
+        {!evaluation && screen?.soldEvidence && <SoldPriceScreening listing={listing} compact />}
+        {!evaluation && !screen?.soldEvidence && screen?.status === "UNSCREENED" && <p className={styles.note}>{screen.pricingIssue?.kind === "RATE_LIMIT" ? "Pricing paused for provider cooldown." : screen.pricingIssue?.kind === "TEMPORARY" ? "Price lookup temporarily unavailable." : screen.pricingIssue?.kind === "CREDITS" ? "Pricing unavailable. Check provider credits." : screen.pricingIssue?.kind === "CONFIG" ? "Pricing unavailable. Check provider setup." : screen.reason}</p>}
         {deferred ? <div className={styles.money}><div><span className={styles.label}>{auction ? "Current bid" : "Asking price"}</span><strong className={styles.price}>{dollars(listing.currentPrice)}</strong></div></div> : auction && evaluation ? <AuctionSummary evaluation={evaluation} targets={targets} now={now} /> : <>
             <div className={styles.money}>
                 <div><span className={styles.label}>{auction ? "Current bid" : "Asking price"}</span><strong className={styles.price}>{dollars(listing.currentPrice)}</strong></div>
@@ -104,7 +107,9 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
             </div>
             {best && <p className={styles.note}>{best.label} · total invested {dollars(best.cost)} · includes tax, shipping{best.path === "GRADE" ? " and grading" : ""}. Sale fees are included in net profit.</p>}
             {ceiling != null && <p className={styles.limit}>{best ? ceilingLabel(listing.buyingOption) : "Unverified screening ceiling"}: {dollars(ceiling)}</p>}
-            <p className={styles.note}>{auction ? `${timeLeft(listing.endTime, now) ?? "End time unavailable"} · ${listing.bids} bids · ` : ""}{listing.shipping === null ? `Shipping not quoted · ${dollars(MONEY_CONFIG.buying.assumedShippingWhenUnknown)} assumed in estimates` : listing.shipping === 0 ? "Free shipping" : `${dollars(listing.shipping)} shipping`}</p>
+            <p className={styles.note}>{auction ? `${timeLeft(listing.endTime, now) ?? "End time unavailable"} · ${listing.bids} bids · ` : ""}{listing.shipping === null ? !evaluation && screen?.soldEvidence
+                ? "Shipping not quoted · preliminary screening excludes shipping; confirm before buying"
+                : `Shipping not quoted · ${dollars(MONEY_CONFIG.buying.assumedShippingWhenUnknown)} assumed in estimates` : listing.shipping === 0 ? "Free shipping" : `${dollars(listing.shipping)} shipping`}</p>
         </>}
         {pricePending && <p className={styles.notice}>Unusually low price. Awaiting photo verification.</p>}
         {offer && offerNumbers && <p className={styles.notice}>Offer {dollars(offer.offer)} · est. profit {signed(offerNumbers.profit)} if accepted. Acceptance is unknown.</p>}

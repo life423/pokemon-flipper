@@ -7,6 +7,7 @@ import { evaluateListing } from "../server/analysis/evaluate.ts";
 import { toItemId } from "./item-id.ts";
 import { CONDITION_AREAS } from "../shared/conditions.ts";
 import { describeRange, dollars, percent } from "../shared/format.ts";
+import { createCliResearchScope } from "./review/research-scope.ts";
 
 const STEP_NAMES: Record<string, string> = { photoCheck: "photo check", condition: "condition report" };
 
@@ -22,10 +23,11 @@ if (!itemId) {
 console.log(`Evaluating ${itemId}${fresh ? ", ignoring any saved answer" : ""}.`);
 
 const started = Date.now();
+const research = createCliResearchScope();
 let evaluation;
 
 try {
-    evaluation = await evaluateListing(itemId, { fresh });
+    evaluation = await research(() => evaluateListing(itemId, { fresh }));
 } catch (error) {
     console.error(`Evaluation failed: ${(error as Error).message}`);
     process.exit(1);

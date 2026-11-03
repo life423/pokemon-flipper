@@ -46,7 +46,7 @@ test("AI cleaning preserves explicit constraints and never requires filler words
     const read = cleanReading({ ...intent(), sets: ["Aquapolis"], minGrade: 1, maxGrade: 1, grader: "CGC", titleWords: ["cards", "holo"], keywords: "Aquapolis holo PSA" }, query);
     assert.deepEqual([read.grader, read.minGrade, read.maxGrade, read.finish], ["PSA", 7, 10, "HOLO"]);
     assert.deepEqual(read.titleWords, []);
-    assert.deepEqual(describeSearchCriteria(read), ["PSA 7+", "Holo"]);
+    assert.deepEqual(describeSearchCriteria(read), ["PSA 7+", "Holo only"]);
     assert.equal(marketplaceQuery(query, read), "aquapolis holo PSA");
 });
 

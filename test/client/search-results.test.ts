@@ -141,7 +141,7 @@ test("the three saved Base Set cases retain both PSA copies and exclude the disp
     const groups = groupSearchResults(visible, analyses, false, new Set());
     assert.deepEqual(ids(groups.all), [first.id, second.id]);
     assert.deepEqual(ids(groups.review), [first.id]);
-    assert.deepEqual(ids(groups.candidates), [second.id]);
+    assert.deepEqual(groups.candidates, [], "the completed PSA loss remains in All matching, not Sorting");
     assert.deepEqual(groups.deals, [], "scope correction cannot promote a priced loss into Deals");
     assert.equal(countSearchResults({ listings: [first, anniversary, second], analyses, page: "search", intent, newMode: false, newIds: new Set() }).mismatched, 1);
 });
@@ -323,7 +323,7 @@ test("photographic discoveries use ordinary deal outcomes", () => {
     assert.equal(value.rating?.level, "GOOD", "classification does not rewrite saved provider evidence");
 });
 
-test("the sorting workbench retains priced passes, deferred copies and unchecked rows while attention stays separate", () => {
+test("completed rejections and intentional deferrals leave Sorting while unresolved attention stays separate", () => {
     const pass = listing("priced-pass"), deferred = listing("deferred-work"), unchecked = listing("unchecked", { screen: screen({ status: "DROPPED" }) });
     const attention = listing("attention");
     const deferredEvaluation = evaluation(deferred, 300); deferredEvaluation.researchMode = "DEFERRED_LOW_RESALE";
@@ -331,9 +331,57 @@ test("the sorting workbench retains priced passes, deferred copies and unchecked
     review.underwriting = underwrite(review, { ...MONEY_CONFIG, targets });
     const analyses = { [pass.id]: done(evaluation(pass, 20)), [deferred.id]: done(deferredEvaluation), [attention.id]: done(review) };
     const groups = groupSearchResults([pass, deferred, unchecked, attention], analyses, false, new Set());
-    assert.deepEqual(ids(groups.candidates), [pass.id, deferred.id, unchecked.id]);
+    assert.deepEqual(groups.candidates, []);
     assert.deepEqual(ids(groups.review), [attention.id]); assert.deepEqual(groups.deals, []);
+    assert.deepEqual(ids(groups.all), [pass.id, deferred.id, unchecked.id, attention.id], "removing queue entries does not delete saved research");
     assert.equal(canAutoAnalyze(unchecked), false, "workbench membership does not authorize paid analysis");
+});
+
+test("the completed Chansey loss leaves Sorting and attention without deleting paid assessment history", t => {
+    t.mock.method(globalThis, "fetch", () => { assert.fail("routing a saved loss must not request providers"); });
+    const chansey = listing("completed-chansey", { title: "Chansey Base Set Holo", currentPrice: 75.46,
+        screen: screen({ status: "UNSCREENED", reason: "The preliminary price was unavailable." }) });
+    const assessed = evaluation(chansey, 15);
+    assessed.identity!.name = "Chansey";
+    assessed.photoCheck!.missingViews = ["BACK"];
+    assessed.underwriting = underwrite(assessed, MONEY_CONFIG);
+    assert.equal(assessed.underwriting?.verdict, "PASS");
+    assert.equal(assessed.underwriting?.best?.profit, -75.29);
+    assert.equal(assessed.underwriting?.best?.maxBid, 0);
+    const analyses = freeze({ [chansey.id]: done(assessed) });
+    const groups = groupSearchResults([chansey], analyses, true, new Set());
+    assert.deepEqual(groups.candidates, []);
+    assert.deepEqual(groups.review, []);
+    assert.deepEqual(groups.deals, []);
+    assert.deepEqual(groups.offers, []);
+    assert.deepEqual(ids(groups.all), [chansey.id]);
+    assert.equal(analyses[chansey.id].evaluation, assessed, "paid evidence remains available unchanged");
+    const counts = countSearchResults({ listings: [chansey], analyses, page: "search", newMode: false, newIds: new Set() });
+    assert.equal(counts.waiting, 0);
+    assert.equal(counts.analyzing, 0);
+    assert.equal(counts.unchecked, 0, "stale preliminary metadata cannot make a completed loss unfinished again");
+});
+
+test("Sorting contains genuinely unfinished candidates while unresolved identity, pricing and errors stay in attention", () => {
+    const waiting = listing("waiting"), loading = listing("loading"), unknown = listing("unknown-printing");
+    const unpriced = listing("no-prices"), failed = listing("analysis-failed"), missingDecision = listing("missing-decision");
+    const uncertain = evaluation(unknown);
+    uncertain.identity!.status = "NEEDS_REVIEW";
+    uncertain.identity!.reasons = ["The photographed printing cannot be identified."];
+    uncertain.underwriting = underwrite(uncertain, { ...MONEY_CONFIG, targets });
+    const noPrices = evaluation(unpriced);
+    noPrices.rawPricing = null;
+    noPrices.underwriting = underwrite(noPrices, { ...MONEY_CONFIG, targets });
+    const unfinishedDecision = evaluation(missingDecision); unfinishedDecision.underwriting = null;
+    const analyses: Record<string, AnalysisState> = {
+        [loading.id]: { status: "loading", evidenceKey: loading.id, startedAt: NOW },
+        [unknown.id]: done(uncertain), [unpriced.id]: done(noPrices), [missingDecision.id]: done(unfinishedDecision),
+        [failed.id]: { status: "error", evidenceKey: failed.id, message: "The assessment could not finish." },
+    };
+    const groups = groupSearchResults([waiting, loading, unknown, unpriced, failed, missingDecision], analyses, false, new Set());
+    assert.deepEqual(ids(groups.candidates), [waiting.id, loading.id]);
+    assert.deepEqual(ids(groups.review), [unknown.id, unpriced.id, failed.id, missingDecision.id]);
+    assert.deepEqual(groups.deals, []);
 });
 
 test("overlooked order prioritizes confirmed deals and real listing evidence over retrieval method", () => {

@@ -18,6 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import type { ListingDetails } from "../../server/ebay/listings.ts";
 import type { CardRecord } from "../../server/pricing/types.ts";
+import type { SavedRecord } from "../../server/analysis/types.ts";
 
 const now = Date.UTC(2026, 10, 2, 12);
 const photo = (index: number, size = 1600) => `https://i.ebayimg.com/images/g/bounded-${index}/s-l${size}.jpg`;
@@ -57,11 +58,27 @@ test("bounded photo selection samples the entire gallery and deduplicates eBay i
     const images = Array.from({ length: 24 }, (_, index) => photo(index));
     const selected = selectBoundedPhotos([images[0], photo(0, 500), ...images.slice(1)]);
     assert.equal(selected.length, 6);
-    assert.deepEqual(selected.map(item => item.number), [1, 3, 10, 17, 24, 25]);
+    assert.deepEqual(selected.map(item => item.number), [1, 3, 9, 14, 20, 25]);
     assert.equal(selected.at(-1)?.url, photo(23));
     const listing = details({ images });
     assert.equal(boundedAssessmentKey(listing), boundedAssessmentKey({ ...listing, id: "another-item", price: 900, shipping: 70, images: images.map(url => url.replace("1600", "500")) }));
     assert.notEqual(boundedAssessmentKey(listing), boundedAssessmentKey({ ...listing, title: listing.title + " Shadowless" }));
+});
+
+test("photo sampling covers the middle without spending more on a larger gallery", () => {
+    for (let count = 7; count <= 40; count++) {
+        const selected = selectBoundedPhotos(Array.from({ length: count }, (_, index) => photo(index)));
+        const numbers = selected.map(item => item.number);
+        assert.equal(selected.length, 6);
+        assert.deepEqual(numbers.slice(0, 2), [1, 2]);
+        assert.equal(numbers.at(-1), count);
+        const gaps = numbers.slice(1).map((number, index) => number - numbers[index]);
+        assert.ok(Math.max(...gaps) <= Math.ceil((count - 2) / 4));
+    }
+    // Full-back photographs often follow a run of front close-ups. The old
+    // sampler skipped the gallery middle and selected both final close-ups.
+    const sample = selectBoundedPhotos(Array.from({ length: 11 }, (_, index) => photo(index)));
+    assert.deepEqual(sample.map(item => item.number), [1, 2, 4, 7, 9, 11]);
 });
 
 test("one bounded raw assessment produces priced outcomes without historical photo requests or later AI stages", async () => {
@@ -79,6 +96,83 @@ test("one bounded raw assessment produces priced outcomes without historical pho
     assert.ok(result.underwriting?.paths.some(path => path.status === "PRICED"));
     assert.equal(result.usage.length, 1);
     assert.equal(result.photoReviewKey, undefined, "a bounded answer cannot authorize the legacy full-record deeper endpoint");
+});
+
+test("insufficient numeric grading detail retains obvious raw damage for a completed priced rejection", async t => {
+    t.mock.method(globalThis, "fetch", () => { assert.fail("bounded raw-condition regression must use mocked providers only"); });
+    for (const range of [null, { low: 1, likely: 2, high: 3 }]) {
+        const report = reading();
+        report.photoCheck.photoSufficiency = "INSUFFICIENT";
+        report.condition!.rawCondition = "DAMAGED";
+        report.condition!.creases = "PRESENT";
+        report.condition!.gradeRange = range;
+        const { evaluate, calls, cache } = harness({
+            details: async id => details({ id, price: 75.46, shipping: 0 }),
+            assess: async () => { calls.assessed++; return { result: report, usage: { inputTokens: 700, outputTokens: 450 } }; },
+            lookup: async () => [{ ...card, variants: [{ ...card.variants[0], prices: [{ condition: "DAMAGED", price: 15, updatedAt: new Date(now).toISOString() }] }] }],
+        });
+        const result = await evaluate("v1|damaged-raw-only|0");
+        assert.equal(result.gradingMode, "BLOCKED", "numeric grading remains blocked");
+        assert.equal(result.gradeStatus, "RAW_CONDITION_ONLY");
+        assert.equal(result.condition?.rawCondition, "DAMAGED");
+        assert.equal(result.condition?.gradeRange, null);
+        assert.equal(result.underwriting?.verdict, "PASS");
+        assert.equal(result.underwriting?.best?.path, "RAW");
+        assert.equal(result.underwriting?.best?.profit, -75.29);
+        assert.equal(photoReviewStatus(result).needsYourReview, false);
+        assert.equal(calls.assessed, 1);
+        assert.equal(calls.raw, 1);
+        assert.equal(calls.comps, 0, "absent numeric grades cannot start grading-price research");
+        const saved = [...cache.entries()].find(([key]) => key.startsWith("bounded-assessment:"))![1];
+        assert.deepEqual(saved.condition.gradeRange, range, "the original accepted paid reading is retained unchanged");
+    }
+});
+
+test("a supported near-mint raw resale can proceed without numeric grading detail", async () => {
+    const report = reading(); report.photoCheck.photoSufficiency = "INSUFFICIENT";
+    report.condition!.rawCondition = "NEAR_MINT";
+    report.condition!.gradeRange = null;
+    const { evaluate, calls } = harness({ assess: async () => ({ result: report, usage: { inputTokens: 700, outputTokens: 450 } }) });
+    const result = await evaluate("v1|near-mint-raw-only|0");
+    assert.equal(result.condition?.rawCondition, "NEAR_MINT");
+    assert.equal(result.condition?.gradeRange, null);
+    assert.equal(result.gradeStatus, "RAW_CONDITION_ONLY");
+    assert.equal(result.underwriting?.verdict, "BUY_RAW");
+    assert.equal(result.underwriting?.best?.path, "RAW");
+    assert.equal(calls.raw, 1);
+    assert.equal(calls.comps, 0);
+});
+
+test("raw-condition retention cannot bypass missing front, multiple-card or unknown-count blockers", async () => {
+    for (const blocker of ["FRONT", "MULTIPLE", "UNKNOWN"] as const) {
+        const report = reading(); report.photoCheck.photoSufficiency = "INSUFFICIENT";
+        report.condition!.rawCondition = "DAMAGED"; report.condition!.gradeRange = null;
+        if (blocker === "FRONT") report.photoCheck.images.filter(image => image.view === "FRONT").forEach(image => { image.view = "OTHER"; });
+        else report.photoCheck.cardCount = blocker;
+        const { evaluate, calls } = harness({
+            assess: async () => { calls.assessed++; return { result: report, usage: { inputTokens: 700, outputTokens: 450 } }; },
+            lookup: async () => { assert.fail("a structural photo blocker cannot start catalog or price research"); },
+        });
+        const result = await evaluate(`v1|blocked-${blocker}|0`);
+        assert.equal(result.condition, null);
+        assert.equal(result.identity, null);
+        assert.equal(calls.raw, 0);
+        assert.equal(calls.comps, 0);
+        assert.ok(!result.underwriting?.verdict.startsWith("BUY"));
+    }
+});
+
+test("known raw damage cannot bypass unresolved physical card identity", async () => {
+    const report = reading(); report.photoCheck.photoSufficiency = "INSUFFICIENT";
+    report.condition!.rawCondition = "DAMAGED"; report.condition!.gradeRange = null;
+    report.photoCheck.cardIdentity!.confidence = "LOW";
+    const { evaluate, calls } = harness({ assess: async () => ({ result: report, usage: { inputTokens: 700, outputTokens: 450 } }) });
+    const result = await evaluate("v1|uncertain-damaged-identity|0");
+    assert.equal(result.condition?.rawCondition, "DAMAGED", "condition evidence remains available without authorizing a purchase");
+    assert.equal(result.identity?.status, "NEEDS_REVIEW");
+    assert.equal(result.underwriting?.verdict, "NEEDS_REVIEW");
+    assert.equal(calls.raw, 0);
+    assert.equal(calls.comps, 0);
 });
 
 test("unchanged public evidence reuses its assessment across listing IDs and purchase prices", async () => {
@@ -116,7 +210,9 @@ test("saved legacy full evidence is preferred without overwriting or repurchasin
 });
 
 test("an existing slab verifies and prices its exact grade without estimating raw condition", async () => {
-    const full = reading(); full.condition = null;
+    const full = reading();
+    full.condition!.rawCondition = "DAMAGED";
+    full.condition!.gradeRange = null;
     full.photoCheck.holder = "GRADED_SLAB";
     full.photoCheck.slab = { present: true, grader: "PSA", grade: "7", gradeQualifier: null, certNumber: "12345678", labelText: "1999 POKEMON GAME VENUSAUR HOLO #15 EX MT 7", caseCondition: "INTACT", authenticity: "NONE_SEEN", authenticityEvidence: [], concerns: [] };
     const { evaluate, calls } = harness({ assess: async () => { calls.assessed++; return { result: full, usage: { inputTokens: 700, outputTokens: 450 } }; } });
@@ -170,16 +266,18 @@ test("budget and storage stops propagate instead of launching remaining research
     }
 });
 
-test("a fresh complete legacy evaluation recalculates purchase money without new catalog or price requests", async () => {
+test("a fresh complete legacy evaluation retains preference over a newer bounded reading without new lookups", async () => {
     const listing = details(), full = reading(), oldEvaluation = cardEvaluation();
     oldEvaluation.assessmentVersion = ANALYSIS_VERSION; oldEvaluation.conditionVersion = CONDITION_VERSION;
     oldEvaluation.pricingVersion = PRICING_VERSION; oldEvaluation.pricesCheckedAt = new Date(now - 60000).toISOString();
     oldEvaluation.listing.photos = listing.images;
-    const { evaluate, calls } = harness({ lookup: async () => { throw new Error("Fresh saved prices must be reused"); }, saved: async id => ({
+    const { evaluate, calls, cache } = harness({ lookup: async () => { throw new Error("Fresh saved prices must be reused"); }, saved: async id => ({
         itemId: id, version: ANALYSIS_VERSION, photoFingerprint: photoFingerprint(listing.images), answeredAt: new Date(now - 86400000).toISOString(),
         photoCheck: { result: full.photoCheck, usage: { inputTokens: 3000, outputTokens: 1000 } }, assessment: null,
         reviewContext: { title: listing.title, photos: listing.images }, latestEvaluation: { evidenceKey: listingEvidenceKey({ title: listing.title, images: listing.images }), evaluation: oldEvaluation },
     }) });
+    const bounded = reading(); bounded.condition!.rawCondition = "UNKNOWN"; bounded.condition!.gradeRange = null;
+    cache.set(boundedAssessmentKey(listing), { ...bounded, version: BOUNDED_ASSESSMENT_VERSION, answeredAt: new Date(now).toISOString() });
     const result = await evaluate(listing.id);
     assert.equal(calls.assessed, 0); assert.equal(calls.comps, 0); assert.equal(calls.raw, 0);
     assert.equal(result.listing.price, listing.price);
@@ -314,6 +412,111 @@ test("changed seller label facts invalidate private financial reuse and the old 
     assert.equal(next.reusedSteps.includes("savedEvaluation"), false);
     assert.equal(calls.assessed, 2, "changed claims are new model inputs, unlike changed purchase prices");
     assert.ok(calls.comps + calls.raw > marketCalls);
+});
+
+test("a newer shared bounded correction supersedes fresh private financial evidence without another assessment", async () => {
+    let clock = now;
+    const { evaluate, calls, cache } = harness({ now: () => clock });
+    const first = await evaluate("v1|new-shared-correction|0");
+    const original = structuredClone(first);
+    const marketCalls = calls.raw + calls.comps;
+    const correction = reading();
+    correction.photoCheck.printingMarks!.firstEditionStamp = "VISIBLE";
+    correction.photoCheck.printingMarks!.evidence = ["The edition stamp is visible in the corrected reading."];
+    correction.condition!.rawCondition = "UNKNOWN";
+    correction.condition!.gradeRange = null;
+    const saved = { ...correction, version: BOUNDED_ASSESSMENT_VERSION, answeredAt: new Date(now + 1000).toISOString(), usage: { inputTokens: 700, outputTokens: 450 } };
+    const key = boundedAssessmentKey(details());
+    cache.set(key, structuredClone(saved));
+    clock = now + 2000;
+    const updated = await evaluate(first.listing.id);
+    assert.equal(calls.assessed, 1, "the new shared reading must not trigger replacement paid work");
+    assert.ok(updated.reusedSteps.includes("boundedPhotoAssessment"));
+    assert.equal(updated.reusedSteps.includes("savedEvaluation"), false);
+    assert.equal(updated.photoCheck?.printingMarks?.firstEditionStamp, "VISIBLE");
+    assert.equal(updated.condition?.rawCondition, "UNKNOWN");
+    assert.equal(updated.condition?.gradeRange, null);
+    assert.equal(updated.answeredAt, saved.answeredAt);
+    assert.equal(updated.usage.length, 0);
+    assert.ok(!updated.underwriting?.verdict.startsWith("BUY"));
+    assert.equal(calls.raw + calls.comps, marketCalls, "unknown raw condition and grade cannot justify price-provider work");
+    assert.deepEqual(cache.get(key), saved, "financial refresh does not rewrite the accepted shared photo record");
+    assert.deepEqual(first, original, "the previously returned paid evidence is not mutated");
+});
+
+test("a newer bounded correction also supersedes a bounded evaluation stored in the legacy latest checkpoint", async () => {
+    let clock = now;
+    let checkpoint: SavedRecord | null = null;
+    const { evaluate, calls, cache } = harness({ now: () => clock, saved: async () => checkpoint });
+    const first = await evaluate("v1|bounded-in-legacy-latest|0");
+    const listing = details({ id: first.listing.id });
+    checkpoint = {
+        itemId: first.listing.id, version: ANALYSIS_VERSION, photoFingerprint: photoFingerprint(listing.images), answeredAt: first.answeredAt,
+        photoCheck: { result: reading().photoCheck, usage: { inputTokens: 700, outputTokens: 450 } }, assessment: null,
+        reviewContext: { title: listing.title, photos: listing.images },
+        latestEvaluation: { evidenceKey: listingEvidenceKey({ title: listing.title, images: listing.images }), evaluation: first },
+    };
+    const correction = reading(); correction.condition!.rawCondition = "UNKNOWN"; correction.condition!.gradeRange = null;
+    cache.set(boundedAssessmentKey(listing), { ...correction, version: BOUNDED_ASSESSMENT_VERSION, answeredAt: new Date(now + 1000).toISOString() });
+    const marketCalls = calls.raw + calls.comps;
+    clock = now + 2000;
+    const next = await evaluate(first.listing.id);
+    assert.equal(next.reusedSteps.includes("savedEvaluation"), false);
+    assert.ok(next.reusedSteps.includes("boundedPhotoAssessment"));
+    assert.equal(next.condition?.rawCondition, "UNKNOWN");
+    assert.equal(calls.assessed, 1);
+    assert.equal(calls.raw + calls.comps, marketCalls);
+});
+
+test("an older or equivalent shared reading preserves the fresh private-price fast path", async () => {
+    for (const answeredAt of [now - 1000, now]) {
+        const { evaluate, calls, cache } = harness();
+        const first = await evaluate("v1|equal-or-older-shared|0");
+        const marketCalls = calls.raw + calls.comps;
+        const key = boundedAssessmentKey(details());
+        const saved = cache.get(key);
+        saved.answeredAt = new Date(answeredAt).toISOString();
+        const next = await evaluate(first.listing.id);
+        assert.ok(next.reusedSteps.includes("savedEvaluation"));
+        assert.equal(calls.assessed, 1);
+        assert.equal(calls.raw + calls.comps, marketCalls);
+    }
+});
+
+test("corrupt shared evidence cannot be hidden by fresh private evidence or turn into replacement AI", async () => {
+    for (const corrupt of [{ answeredAt: null }, { answeredAt: "invalid" }, { photoCheck: null }]) {
+        const { evaluate, calls, cache } = harness();
+        const first = await evaluate("v1|corrupt-shared-private|0");
+        const marketCalls = calls.raw + calls.comps;
+        const key = boundedAssessmentKey(details());
+        cache.set(key, { ...cache.get(key), ...corrupt });
+        await assert.rejects(evaluate(first.listing.id), StorageUnavailableError);
+        assert.equal(calls.assessed, 1);
+        assert.equal(calls.raw + calls.comps, marketCalls);
+        assert.deepEqual(Object.fromEntries(Object.entries(cache.get(key)).filter(([field]) => field in corrupt)), corrupt);
+    }
+});
+
+test("a known card without a usable raw condition or numeric grade starts no price research", async () => {
+    const unknown = reading(); unknown.condition!.rawCondition = "UNKNOWN"; unknown.condition!.gradeRange = null;
+    const { evaluate, calls } = harness({ assess: async () => ({ result: unknown, usage: { inputTokens: 700, outputTokens: 450 } }) });
+    const result = await evaluate("v1|unknown-condition-no-prices|0");
+    assert.equal(result.identity?.status, "IDENTIFIED");
+    assert.equal(result.condition?.rawCondition, "UNKNOWN");
+    assert.equal(result.underwriting?.verdict, "CANT_PRICE");
+    assert.equal(calls.raw, 0);
+    assert.equal(calls.comps, 0);
+});
+
+test("an applicable numeric grading range can still be priced when the raw category is unknown", async () => {
+    const unknown = reading(); unknown.condition!.rawCondition = "UNKNOWN";
+    const { evaluate, calls } = harness({ assess: async () => ({ result: unknown, usage: { inputTokens: 700, outputTokens: 450 } }) });
+    const result = await evaluate("v1|grade-only-condition|0");
+    assert.equal(result.condition?.rawCondition, "UNKNOWN");
+    assert.equal(result.rawPricing, null);
+    assert.equal(calls.raw, 0);
+    assert.ok(calls.comps > 0);
+    assert.ok(result.underwriting?.paths.some(path => path.path === "GRADE" && path.status === "PRICED"));
 });
 
 test("expired private prices refresh market evidence while retaining the paid photo assessment", async () => {

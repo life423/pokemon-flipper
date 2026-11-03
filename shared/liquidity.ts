@@ -13,7 +13,7 @@ export function matchedSoldActivity(evaluation: Evaluation | null, now = Date.no
     const best = evaluation?.underwriting?.best;
     if (evaluation?.slab || best?.path === "GRADED_RESALE") summary = evaluation?.slabPricing?.summary;
     else if (best?.path === "GRADE" && best.grader) {
-        const grade = evaluation?.condition?.gradeRange.likely ?? evaluation?.condition?.gradeRange.low;
+        const grade = evaluation?.condition?.gradeRange?.likely ?? evaluation?.condition?.gradeRange?.low;
         summary = evaluation?.gradedPricing?.[best.grader]?.byGrade?.find(entry => Number(entry.grade) === grade);
     } else if (evaluation?.condition) {
         summary = evaluation.rawPricing?.ebayComps?.find(entry => entry.grade === evaluation.condition?.rawCondition)
@@ -53,7 +53,7 @@ export function resaleActivity(evaluation: Evaluation | null, now = Date.now()):
     if (best?.path === "RAW") summary = evaluation?.rawPricing?.prices?.find(price => price.condition === evaluation?.condition?.rawCondition)?.comps;
     if (best?.path === "GRADED_RESALE") summary = evaluation?.slabPricing?.summary;
     if (best?.path === "GRADE" && best.grader) {
-        const grade = evaluation?.condition?.gradeRange.likely ?? evaluation?.condition?.gradeRange.low;
+        const grade = evaluation?.condition?.gradeRange?.likely ?? evaluation?.condition?.gradeRange?.low;
         const outcome = best.outlook?.find((entry) => entry.grade === grade);
         const pricedGrade = outcome?.filledFrom ?? grade;
         summary = evaluation?.gradedPricing?.[best.grader]?.byGrade?.find((entry) => Number(entry.grade) === pricedGrade);

@@ -26,7 +26,7 @@ async function recovery({ inspection = photo, verdict = "MATCH", abortPhoto = fa
         loadDetails: async () => { counts.details += 1; return { title: listing().title, aspects, images: ["front", "back"], shipping: 0, cardCondition: "Heavily played (Poor)", conditionNotes: [] }; },
         check: (input) => prescreen(input, { lookupCards: async () => [card], now: Date.parse("2026-10-25T12:00:00Z"), fetchComps: async () => {
             counts.comps += 1;
-            return graded ? [190, 200, 210].map((price) => ({ price, sold_at: "2026-10-20", title: "Pokemon Mewtwo Base Set 10/102 Unlimited Holo PSA 9", variant: "Unlimited Holofoil", grader: "PSA", grade: "9", grade_qualifier: null, attribution: "exact" })) : [];
+            return graded ? [190, 200, 210].map((price) => ({ price, sold_at: "2026-10-20", sale_type: "fixed_price", title: "Pokemon Mewtwo Base Set 10/102 Unlimited Holo PSA 9", variant: "Unlimited Holofoil", grader: "PSA", grade: "9", grade_qualifier: null, attribution: "exact" })) : [];
         } }),
         matchPhoto: async () => { counts.mismatchCheck += 1; return verdict === null ? null : { verdict, problems: verdict === "MISMATCH" ? ["anniversary reprint"] : [], firstEditionStamp: "NOT_PRESENT", artBoxShadow: "PRESENT" }; },
     };

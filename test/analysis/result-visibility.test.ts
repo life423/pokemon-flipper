@@ -22,3 +22,12 @@ test("incomplete screening and failed analyses stay visible in Review without be
     evaluation.underwriting.verdict = "PASS";
     assert.equal(resultGroup(candidate, evaluation, false, true), null, "a completed assessment supersedes an earlier failed attempt");
 });
+
+test("a completed financial rejection remains terminal even when a deferred photo snapshot has review notes", () => {
+    const value = cardEvaluation();
+    const listing = { ...value.listing, currentPrice: value.listing.price, images: [], isGraded: false, bestOffer: true };
+    value.researchMode = "DEFERRED_LOW_RESALE";
+    value.photoCheck!.missingViews = ["BACK"];
+    value.underwriting = { verdict: "PASS", reasons: ["Resale loses money at asking."], best: null, paths: [], assumptions: [] };
+    assert.equal(resultGroup(listing, value, true), null);
+});

@@ -4,6 +4,7 @@ import { rateDeal } from "./rating.ts";
 import { offerPlan, offerWorthMaking } from "./offer.ts";
 import type { Evaluation, ListingSummary, Screen, Targets } from "../types.ts";
 import { withFreshListing } from "../fresh-listing.ts";
+import { applySoldPriceScreen } from "./sold-screen.ts";
 
 // Your profit and return targets change by card, so the page re-prices
 // everything for the targets you set. The same money math runs on the
@@ -49,6 +50,19 @@ export function retargetScreen(
     config: MoneyConfig = MONEY_CONFIG,
     includeOffers = false
 ): Screen {
+    if (screen.soldEvidence) {
+        if (screen.soldEvidence.status !== "AVAILABLE" || !screen.money || price === null) return screen;
+        // Median-price paths rank the queue; the retained sold sample decides
+        // whether a slab's upper recent outcome can still meet these targets.
+        // Raw-only paths never establish that grading cannot be worthwhile.
+        const updated = applySoldPriceScreen({ currentPrice: price, shipping: screen.money.shipping,
+            isGraded: screen.money.paths.some(path => path.path === "GRADED_RESALE"),
+            buyingOption: screen.money.auction ? "AUCTION" : "FIXED_PRICE", bestOffer: screen.money.bestOffer, screen },
+        screen.soldEvidence, { targets, config, includeOffers }).screen;
+        // The original note also records whether preliminary shipping was an
+        // unquoted zero-dollar screening assumption, rather than a real quote.
+        return screen.assumed ? { ...updated, assumed: screen.assumed } : updated;
+    }
     if (!screen.money || price === null || screen.status === "UNSCREENED" && !screen.conditionUpside) return screen;
 
     const repriced = withTargets(targets, config);

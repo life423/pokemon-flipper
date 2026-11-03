@@ -31,7 +31,30 @@ export interface Seller {
 }
 
 // Preliminary screening: seller-based estimates before full photo assessment.
+// Sold references are public market facts, separate from a user's purchase
+// costs. Raw condition labels here come from sold titles, not photo grading.
+export interface ScreeningSoldReference {
+    recordId: string | number;
+    name: string;
+    set: string;
+    cardNumber: string;
+    printing: Printing;
+    finish: "HOLO" | "NON_HOLO" | "REVERSE_HOLO";
+    grader: string | null;
+    grade: string | null;
+    condition: RawCondition | null;
+    summary: CompSummary;
+}
+export interface ScreeningSoldEvidence {
+    status: "AVAILABLE" | "UNAVAILABLE" | "DEFERRED";
+    // Explicit listing claims or a sole catalog printing/finish; never photo
+    // confirmation. Unstated premium printings remain possible.
+    exactScope: boolean;
+    references: ScreeningSoldReference[];
+    note: string;
+}
 export interface Screen {
+    soldEvidence?: ScreeningSoldEvidence;
     needsAnalysis?: "IDENTITY" | "FINISH" | "SLAB_LABEL" | "PRICE_EVIDENCE";
     status: "CANDIDATE" | "DROPPED" | "UNSCREENED";
     reason: string | null;
@@ -75,11 +98,14 @@ export interface Screen {
 }
 
 // Today's eBay Browse allowance, from eBay's own count.
+export interface EbaySearchAllowance {
+    searchId: string;
+    limit: number;
+    used: number;
+    remaining: number;
+}
 export interface EbayUsage {
-    devRemaining?: number;
-    devLimit?: number;
-    devExpiresAt?: string;
-    devRenewalRequired?: boolean;
+    searchBudget?: EbaySearchAllowance;
     used: number;
     limit: number;
     remaining: number;
@@ -238,7 +264,7 @@ export interface Condition {
     surface: AreaFinding;
     creases: string;
     rawCondition: RawCondition | "UNKNOWN";
-    gradeRange: GradeRange;
+    gradeRange: GradeRange | null;
     authenticity: Authenticity;
     confidence: string;
     limitations: string[];
@@ -246,7 +272,7 @@ export interface Condition {
 }
 
 export interface SetAsideAnswer {
-    gradeRange: GradeRange;
+    gradeRange: GradeRange | null;
     rawCondition: string;
     authenticity: string;
 }

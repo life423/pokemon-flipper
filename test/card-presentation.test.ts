@@ -5,6 +5,7 @@ import { cardEvaluation, salesSummary } from "./fixtures/card-evaluation.ts";
 import { pathNumbers } from "../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../shared/money/config.ts";
 import { mixedCoverageEvaluation } from "./fixtures/photo-coverage.ts";
+import { photoReviewStatus } from "../shared/photo-review.ts";
 
 const any = { minProfit: 0, minRoi: 0 };
 test("auction profit, total investment and ROI all use the displayed winning price", () => {
@@ -109,7 +110,9 @@ test("raw resale does not demand a PSA grade, while global photo and purchase ho
     assert.equal(auctionDecision(e).provisional, true);
     e.condition!.rawCondition = "LIGHTLY_PLAYED";
     e.photoCheck!.images = e.photoCheck!.images.filter(photo => photo.view !== "BACK");
-    assert.equal(auctionDecision(e).provisional, true, "close-ups cannot replace whole-back coverage");
+    e.listing.photosInListing = e.photoCheck!.images.length;
+    assert.equal(auctionDecision(e).provisional, false, "raw resale does not acquire a grading hold solely from coverage metadata");
+    assert.ok(photoReviewStatus(e).photoNotes.includes("No usable photo shows the whole back."));
     const held = mixedCoverageEvaluation();
     held.underwriting!.verdict = "NEEDS_REVIEW"; held.underwriting!.reasons = ["Material label conflict."];
     assert.equal(auctionDecision(held).provisional, true);

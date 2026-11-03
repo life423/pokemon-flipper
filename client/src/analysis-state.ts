@@ -1,4 +1,4 @@
-import type { Evaluation } from "./types";
+import type { Evaluation } from "./types.ts";
 
 export type AnalysisState = (
     | { status: "loading"; startedAt: number }

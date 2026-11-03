@@ -141,5 +141,5 @@ export function describeSearchCriteria(intent: SearchIntent): string[] {
     const grades = intent.minGrade != null || intent.maxGrade != null;
     const range = !grades ? "" : intent.minGrade === intent.maxGrade ? `${intent.minGrade}` : intent.maxGrade === 10 ? `${intent.minGrade ?? 1}+` : `${intent.minGrade ?? 1}–${intent.maxGrade ?? 10}`;
     return [intent.grader ? `${intent.grader}${range ? ` ${range}` : ""}` : grades ? `Grade ${range}` : intent.graded === null ? "" : intent.graded ? "Graded" : "Raw",
-        intent.finish === "HOLO" ? "Holo" : intent.finish === "REVERSE_HOLO" ? "Reverse holo" : intent.finish === "NON_HOLO" ? "Non-holo" : ""].filter(Boolean);
+        intent.finish === "HOLO" ? "Holo only" : intent.finish === "REVERSE_HOLO" ? "Reverse holo only" : intent.finish === "NON_HOLO" ? "Non-holo only" : "Any finish"].filter(Boolean);
 }

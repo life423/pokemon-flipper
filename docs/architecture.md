@@ -1,42 +1,88 @@
 # App workflow and code map
 
-This is a map of the current app after the workflow-organization refactor. The
-refactor moves responsibilities into smaller modules; it does not change search,
-photo assessment, price evidence, purchase rules, or API limits.
+This maps the current bounded HTTP workflow. Searches research recent sold
+prices before admitting automatic photo work, while final advice still requires
+the applicable identity, condition or slab-label evidence. Legacy diagnostic
+entry points remain available; they are not the current browser search path.
 
 ## Follow one listing
 
 ```mermaid
 flowchart TD
-    S[Search or Find new listings] --> F[Fetch, deduplicate and screen listings]
+    S[Search or Find new listings] --> F[One eBay page, deduplicate and apply local filters]
+    F --> P0[Bounded PKMNPrices sold research, cache first]
+    P0 --> G[Rank preliminary rows and gate automatic assessment]
     L[Direct eBay link] --> R[Resolve one listing]
     Q[Shortlist] --> K[Load saved snapshot or refresh selected IDs]
-    F --> A[Client queues full analysis]
+    G --> A[Client queues eligible photo analysis within budget]
     R --> A
     K -->|Explicit analysis when needed| A
-    A --> I[Check photos, identity, printing and condition or slab label]
+    A --> B[Reuse compatible accepted evidence or choose advisory plan]
+    B --> I[RAW identity and condition, or compact SLAB_LABEL]
     I --> P[Raw resale, existing slab resale and raw-to-grade evidence]
     P --> M[Deterministic fees, profit, ROI and purchase limit]
     M --> V[Filter, group and sort results]
     V --> U[Cards and detailed analysis sections]
 ```
 
-1. A normal search streams screened results, recovers eligible pricing failures
-   and runs overlooked-listing discovery. **Find new listings** instead reads
-   one newest-result page and excludes previously seen IDs before screening.
-   The browser queues full assessments according to the user's selected setting;
-   screening is preliminary evidence, not a final buying recommendation.
-2. A direct listing link resolves only that listing. Shortlist load/save uses
-   local snapshots; selected refresh checks current eBay terms without starting
+1. Normal HTTP search and **Find new listings** use the bounded path in
+   `find-deals.ts`: one page of up to 200 eBay results, local/cached metadata
+   exclusions and at most 50 matching metadata rows. New-inventory scans also
+   exclude previously seen IDs. Buy It Now results prefer newly listed inventory;
+   automatic auctions must fall within the fixed search-start 12-hour window.
+2. Before candidates are emitted to the browser, `price-first.ts` runs shared
+   sold research with at most four candidates in flight. Its source permits
+   eight uncached PKMNPrices requests including catalog work, and one page of
+   up to 20 sales per requested market. SQL/file response caches and shared
+   catalog/market work avoid repeated requests. This stage calls neither AI nor
+   eBay Browse. Broad discovery and automatic pricing recovery remain disabled
+   for bounded search.
+3. Exact slab grader, grade, printing and finish scopes stay separate. Medians
+   rank candidates; only three or more matched sales within 90 days in one
+   explicit scope can reject a listing using the upper observed resale value
+   after costs. A 180-day fallback can inform priority but cannot hard-reject.
+   Unknown purchase shipping uses $0 for conservative exclusion and is disclosed;
+   it is not a confirmed free-delivery quote. Changing targets reapplies the same
+   retained references locally rather than fetching sales again.
+   Raw sold-title condition buckets remain separate priority references, without
+   assigning the live card a condition or numeric grade. Unspecified-condition
+   sales are context only. Raw comparisons cannot reject unassessed grading or
+   premium-printing upside.
+4. At least three eligible matched sold observations authorize automatic photo
+   work. Missing/deferred evidence stays in Sorting without an automatic paid
+   request, except the existing focused-review exception for a raw First Edition
+   Base Set lead priced at $10 or less. The browser considers eligible loaded
+   rows with two assessments in flight, reuses saved evidence first and shares
+   the persistent $0.02 AI cap. Fifty metadata rows do not imply fifty paid
+   assessments. All nested Browse work shares the separate 25-request ceiling
+   per search and account-wide daily quota protection.
+5. A direct listing link resolves only that listing. Shortlist load/save uses
+   stored snapshots; selected refresh checks current eBay terms without starting
    new paid photo work. These paths do not silently launch a broad search.
-3. Full analysis loads/reuses photo evidence, identifies the exact card and
-   printing, and resolves supported metadata gaps. Raw cards receive independent
-   condition answers and cautious selection. Slabs use their actual grader and
-   label grade rather than an imagined raw-card grade.
-4. Price evidence is assembled for the applicable resale paths. The money layer
+6. `bounded-plan.ts` uses seller metadata only to choose requested work. RAW
+   preserves the original combined request, six-photo selector and cache key,
+   with a 2,200-token output maximum. SLAB_LABEL checks the first two unique
+   photos using a separate version/schema and a 1,600-token output maximum;
+   condition must be null and no future grade or raw category is requested.
+   Both retain exact-input preflight and the same persistent spending guard.
+7. Before dispatch, the evaluator considers valid compatible combined and
+   compact shared readings, choosing the newest answer with its source selector
+   and original photo indices. Strong full legacy evidence retains priority.
+   Accepted combined/raw evidence remains valid; a compact reading establishing
+   an actual slab can also satisfy work routed as RAW by advisory metadata.
+   Compact raw/unknown-holder evidence cannot substitute for a raw-condition
+   assessment. Corrupt evidence fails closed instead of becoming a paid cache
+   miss, and freshness checks recognize the new compact version.
+8. Physical holder evidence determines the final route. An actual slab uses
+   its photographed grader and certified grade, with no invented raw grading.
+   If a compact check disproves the seller's slab claim, the evaluator retains
+   the truthful result without automatically buying a raw fallback. Raw as-is
+   and supported grading-upside paths retain their existing pricing behavior;
+   a supported raw condition can be priced with a null numeric grade range.
+9. Price evidence is assembled for the applicable resale paths. The money layer
    then calculates expenses, profit, return and the item-price ceiling. The client
    can change profit/ROI targets using those numbers without new provider calls.
-5. Shared result rules and client selectors determine the visible groups. Card
+10. Shared result rules and client selectors determine the visible groups. Card
    and detail components present that result; they do not independently appraise
    cards or invent new buying decisions.
 
@@ -47,13 +93,17 @@ All paths below are relative to the repository root.
 | Responsibility | Main files | Boundary |
 | --- | --- | --- |
 | HTTP routes and stream messages | `server/app.ts`, `client/src/api.ts` | Keep transport validation and cancellation separate from valuation. |
-| Normal search and extra discovery | `server/deals/search.ts`, `find-deals.ts`, `dig.ts` | `find-deals.ts` owns search retrieval/filtering/concurrency; `dig.ts` finds overlooked listings. |
+| Normal search and legacy discovery | `server/deals/search.ts`, `find-deals.ts`, `dig.ts` | Bounded HTTP searches stop before broad discovery/recovery; legacy unbounded callers retain those separate paths. |
 | New-inventory scan and history | `server/deals/new-listings.ts`, `server/search/history.ts` | Deduplicate before provider work; preserve the newest-search cache and reserve. |
 | Query interpretation and criteria | `server/search/intent.ts`, `server/search/relevance.ts`, `shared/search-criteria.ts` | Seller keywords and requested slab grades are not verified photo evidence. |
-| One-listing screening | `server/deals/screen-listing.ts`, `server/deals/prescreen.ts` | Title, main-photo, detail, shipping and preliminary-price checks; compatibility exports remain in `find-deals.ts`. |
+| Local metadata screening | `server/deals/screen-listing.ts` | Bounded searches use saved/local readings without new AI or listing-detail calls. Legacy `prescreen.ts` is not the bounded admission path. |
+| Sold-price-first admission | `server/deals/price-first.ts`, `server/pricing/screening-sales.ts`, `shared/money/sold-screen.ts` | Shared matched sold references precede browser emission; public observations stay separate from private fee/target calculations and verified photo identity. |
+| Screening price transport | `server/pricing/pkmnprices.ts` (`createScreeningPriceSource`) | Cache first, eight uncached requests including catalog work, one 20-sale page per market; no AI/Browse calls or automatic retry loop. |
 | Direct links and shortlist | `server/listings/resolve.ts`, `server/shortlist/service.ts`, `server/shortlist/store.ts` | Isolated listing lookup, durable snapshots and targeted refresh. |
-| Full assessment | `server/analysis/evaluate.ts`, `rules.ts`, `condition-runs.ts`, `resolve-evidence.ts`, `authenticity.ts` | Coordinate and validate evidence; preserve identity/authenticity blockers. |
-| AI calls and identity rules | `server/ai/openai.ts`, `server/ai/policy.ts`, `server/identity/` | Model/task routing and photo schemas are distinct from canonical identification and label checks. |
+| Advisory assessment planning | `server/analysis/bounded-plan.ts` | Stable original RAW selection/key plus compact SLAB_LABEL plan; seller metadata chooses request scope, never the physical holder or final certified grade. |
+| Bounded request/schema | `server/ai/bounded-assessment.ts` | Original RAW body/schema retained; compact label schema forces null condition. Both delegate guarded structured transport to `openai.ts`. |
+| Photo assessment | `server/analysis/bounded-evaluate.ts`, `rules.ts` | Compatible saved-evidence reuse, physical-holder routing and applicable pricing; no automatic paid raw fallback after a disproved slab claim. Legacy `evaluate.ts`, `condition-runs.ts` and `resolve-evidence.ts` retain their separate diagnostic flow. |
+| AI transport and identity rules | `server/ai/openai.ts`, `server/ai/policy.ts`, `server/identity/` | Exact preflight, spending and SDK dispatch remain distinct from canonical identification and label checks. |
 | Raw resale evidence | `server/pricing/raw-comps.ts`, `raw-prices.ts`, `server/ai/sold-condition.ts` | Match condition/printing/finish; keep any market-price fallback labeled. |
 | Existing slabs and grading scenarios | `server/pricing/graded-comps.ts`, `active-comps.ts` | Exact grader/grade sold evidence; current-listing references remain separate from sold prices. |
 | Shared sold-evidence rules | `server/pricing/sold-comps.ts` | Pure comp rejection, median, outlier and summary helpers shared by raw/graded pricing. Provider access stays outside this module. |
@@ -65,42 +115,62 @@ All paths below are relative to the repository root.
 
 ## Invariants to preserve
 
-- **Identity before price:** name, set, collector number, printing, finish and
-  relevant slab label must match the chosen evidence. Reprints, qualifiers,
-  counterfeit indicators and material disagreements retain their safeguards.
+- **Preliminary research is not verified identity:** seller claims can select
+  sold research before paid photos. Name, set, number, printing, finish and the
+  applicable slab label must match the evidence used for final advice. A strong
+  physical reading can resolve wrong seller metadata; genuine ambiguity stays
+  unresolved. Uncertain preliminary scopes cannot exclude premium-printing
+  upside or blend different printings and finishes into one valuation.
 - **Three resale paths stay distinct:** raw resale uses assessed raw condition;
   existing slab resale uses that slab's grader/grade; raw-to-grade scenarios use
   configured submission services and fees. The PSA/CGC submission list does not
   exclude an already-certified BGS or TAG slab from resale analysis.
+- **Claims select work; photos select the route:** a label-only request always
+  returns null condition. Observing an actual slab authorizes exact-grader/grade
+  pricing, never seller metadata alone. Observing a raw card in that request
+  does not authorize another paid assessment automatically or invent condition.
 - **Missing evidence stays visible:** do not turn missing sales into a price,
   treat asking prices as completed sales, or describe a market fallback as a
-  verified sold median. Retain existing evidence thresholds and labeled
-  fallbacks rather than changing their policy during a refactor.
+  verified sold median. Missing/deferred screening evidence does not buy photo
+  work by default. Existing labeled full-pricing fallbacks remain separate from
+  the new sold-only preliminary gate.
 - **Money stays in code:** photos do not set fees, profit or ROI. Grade scenario
   weights are assumptions, not measured odds. An upper grade bound is a
   possibility, not the likely outcome or a certified grade.
 - **Offers remain conditional:** an unaccepted Best Offer is separate from a
   deal at asking price. Preserve the maximum 10% discount and explicit amount.
   The app does not submit bids, offers or seller messages automatically.
-- **Requests stay bounded:** `server/ebay/api.ts` reserves every Browse call
-  through `usage.ts` and `daily-budget.ts`. Optional work preserves the daily
-  reserve; cached reads do not consume Browse calls. Preserve cancellation,
-  shared in-flight work, cooldowns and user-selected AI work limits.
+- **Requests stay bounded:** the sold-screen source's eight-request allowance
+  includes uncached catalog calls; returned rows still determine PKMNPrices
+  credits. It does not replace later pricing rules, the persistent two-cent AI
+  cap or the 25 actual Browse requests per search. `server/ebay/api.ts` reserves
+  Browse calls through `usage.ts` and `daily-budget.ts`; optional work preserves
+  the daily reserve. Cached reads do not consume Browse calls. Cancellation
+  blocks later dispatch while accepted responses finish saving for reuse.
 - **Reuse has an evidence boundary:** `server/analysis/store.ts` checkpoints
   model answers; `shared/listing-evidence.ts` ties them to listing/photo inputs.
   `shared/pricing-freshness.ts` separates pricing, photo and condition revisions.
   Repricing must not discard unchanged paid photo work. Changed photos or stale
   prices must not keep old purchase advice merely because a card ID matches.
-- **Preserve local state:** caches, assessments and the shortlist normally live
-  under ignored `data/`; `POKEMON_FLIPPER_DATA_DIR` can select another directory.
-  Do not clear that folder, `.env`, or the account-wide quota ledger as cleanup.
+  Compact and combined answers preserve their source selectors and original
+  photo indices; compatibility is not permission to relabel unsupplied photos
+  as assessed or to overwrite stronger accepted evidence with a weaker result.
+- **Reuse the selected storage backend:** shared provider responses and photo
+  evidence can use Azure SQL or local files; owner financial evaluations remain
+  separate. This price-first step adds no long-term sold-observation table or
+  migration and does not complete the wider AI research/market-history roadmap.
+  Existing local ledgers and shortlist state under ignored `data/` remain
+  necessary. Do not clear that directory, `.env` or quota accounting as cleanup.
 
 ## Reading order
 
 Start with `client/src/App.tsx` and `server/app.ts` to see which user action sends
 which request. Follow a normal search through `server/deals/search.ts`,
-`find-deals.ts` and `screen-listing.ts`. Then read `server/analysis/evaluate.ts`,
-`server/identity/card-identity.ts` and the applicable pricing module. Finally read
+`find-deals.ts`, `screen-listing.ts`, `price-first.ts` and
+`server/pricing/screening-sales.ts`. Then read
+`server/analysis/bounded-plan.ts`, `server/ai/bounded-assessment.ts`,
+`server/analysis/bounded-evaluate.ts`, `server/identity/card-identity.ts` and the
+applicable pricing module. Finally read
 `shared/money/underwriting.ts`, `shared/analysis.ts`,
 `client/src/search/results.ts` and the relevant card/detail section.
 
@@ -135,3 +205,7 @@ its provider-request counts and limitations.
 
 Recorded sales and activity do **not** establish when this particular copy will
 sell. This architecture does not add or guarantee a 30–60 day resale forecast.
+The compact route also does not establish a full-search cost saving or repair
+every photo/identity judgment. Deferred early-completion, English/visibility
+warning reports, the saved positive-deal example and the controlled useful-search
+benchmark remain separate work.

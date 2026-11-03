@@ -1,5 +1,5 @@
 import "../fixtures/mock-ai-spending.ts";
-import { test } from "node:test";
+import { test } from "../fixtures/search-context.ts";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -41,7 +41,7 @@ test("BGS and TAG flow from screening through AI label checking, sold pricing an
             const grader = url.searchParams.get("grader")!; const grade = url.searchParams.get("grade")!;
             targets.push({ grader, grade });
             return Response.json({ data: [950, 1000, 1050].map((price, i) => ({ id: `${grader}-${i}`, title: `Lugia 9/111 Neo Genesis Unlimited Holo ${grader} 6.5`,
-                price, currency: "USD", grader, grade, grade_qualifier: "EX MT+", variant: "Unlimited Holofoil", attribution: "exact", sold_at: new Date(Date.now() - (i + 1) * 86400000).toISOString() })), pagination: { has_more: false } });
+                price, currency: "USD", grader, grade, grade_qualifier: "EX MT+", variant: "Unlimited Holofoil", attribution: "exact", sale_type: "fixed_price", sold_at: new Date(Date.now() - (i + 1) * 86400000).toISOString() })), pagination: { has_more: false } });
         }
         assert.equal(url.hostname, "api.openai.com", "no unexpected external request is permitted");
         const request = JSON.parse(String(init?.body));

@@ -9,7 +9,7 @@ import { matchesListingFilters } from "../../shared/listing-filters.ts";
 import { englishListingEligible } from "../../shared/card-language.ts";
 import type { ListingFilters } from "../../shared/listing-filters.ts";
 import { compareAnalysisPriority } from "../../shared/analysis-priority.ts";
-import { DEVELOPMENT_SEARCH_LIMIT } from "../../shared/research-policy.ts";
+import { BOUNDED_AUTO_CONCURRENCY, DEVELOPMENT_SEARCH_LIMIT } from "../../shared/research-policy.ts";
 import { withFreshListing } from "../../shared/fresh-listing.ts";
 import { looksLikeListingLink, parseListingLink } from "../../shared/listing-link.ts";
 import { withResolvedCriteria } from "../../shared/search-criteria.ts";
@@ -185,8 +185,8 @@ export function App() {
     const [usage, setUsage] = useState<EbayUsage | null>(null);
     const [aiUsage, setAiUsage] = useState<AiUsageDay | null>(null);
     const refreshUsage = useCallback(() => {
-        fetchEbayUsage().then(setUsage, () => {});
         const id = searchRunId.current;
+        fetchEbayUsage(id).then(value => { if (searchRunId.current === id) setUsage(value); }, () => {});
         fetchAiUsage(id).then(value => { if (searchRunId.current === id) setAiUsage(value); }, () => {});
     }, []);
 
@@ -449,14 +449,18 @@ export function App() {
             }
             if (error instanceof ApiRequestError && ["AI_CREDITS", "AI_PAUSED", "AI_BUDGET", "STORAGE_UNAVAILABLE"].includes(error.code ?? "")) {
                 analysisPaused.current = true;
-                searchAbort.current?.abort();
-                searchId.current += 1;
+                // Paid-AI admission must not truncate the independently bounded
+                // metadata stream. Storage/provider outages still stop it.
+                if (analysisBlockPolicy(error.code as AnalysisBlockCode).stopListingStream) {
+                    searchAbort.current?.abort();
+                    searchId.current += 1;
+                    setSearchStatus("done");
+                }
                 pendingAnalyses.current.clear();
                 // Budget admission can stop a new candidate while another
                 // accepted bounded assessment is finishing. Keep its result.
                 if (error.code !== "AI_BUDGET") for (const other of analysisControllers.current.values()) if (other !== controller) other.abort();
                 pricingAbort.current?.abort();
-                setSearchStatus("done");
                 setAnalysisBlocked(message);
                 setAnalysisBlockCode(error.code as AnalysisBlockCode);
                 setDigStatus(previous => previous === "checking" ? "idle" : previous);
@@ -486,7 +490,8 @@ export function App() {
         activePhotoReviews.current.add(listing.id);
         setPhotoReviews((previous) => ({ ...previous, [listing.id]: { status: "loading", key } }));
         try {
-            const review = await reviewListingPhotos(listing.id, key);
+            searchRunId.current ??= crypto.randomUUID();
+            const review = await reviewListingPhotos(listing.id, key, searchRunId.current);
             setAnalyses((previous) => {
                 const analysis = previous[listing.id];
                 if (analysis?.status !== "done" || analysis.evaluation.photoReviewKey !== key) return previous;
@@ -519,8 +524,10 @@ export function App() {
         if (searchStatus === "checking") stopSearch();
         const controller = new AbortController(); linkRequest.current = controller;
         const revision = ++linkRevision.current; setLinkStatus("loading");
+        const linkSearchId = crypto.randomUUID();
+        searchRunId.current = linkSearchId;
         try {
-            const listing = await resolveListingLink(input, controller.signal);
+            const listing = await resolveListingLink(input, controller.signal, linkSearchId);
             if (controller.signal.aborted || linkRevision.current !== revision) return;
             setQuery((previous) => previous.trim() === input.trim() ? listing.url : previous);
             setDirectListing(listing); latestListings.current.set(listing.id, listing);
@@ -530,7 +537,6 @@ export function App() {
             // the search's automatic-analysis budget. No search/discovery starts.
             if (englishListingEligible(listing, languageEvaluations.current.get(listing.id))) {
                 openPanel(listing.id);
-                searchRunId.current = crypto.randomUUID();
                 void runAnalysis(listing);
             }
         } catch (error) {
@@ -584,7 +590,8 @@ export function App() {
         const revision = ++pricingRevision.current;
         setPricingBusy(true); setPricingNote("");
         try {
-            const response = await retryPricingBatch(tickets.slice(0, PRICING_RETRY_LIMIT), targets, includeOffers, controller.signal);
+            searchRunId.current ??= crypto.randomUUID();
+            const response = await retryPricingBatch(tickets.slice(0, PRICING_RETRY_LIMIT), targets, includeOffers, controller.signal, searchRunId.current);
             if (controller.signal.aborted || pricingRevision.current !== revision) return;
             const results = new Map(response.results.map((result) => [result.id, result]));
             setListings((previous) => previous.map((listing) => {
@@ -614,6 +621,8 @@ export function App() {
 
         const id = ++searchId.current;
         searchRunId.current = crypto.randomUUID();
+        setAiUsage(null);
+        setUsage(previous => previous ? { ...previous, searchBudget: undefined } : previous);
         searchAbort.current?.abort();
         const controller = new AbortController();
         searchAbort.current = controller;
@@ -719,7 +728,7 @@ export function App() {
             .filter((listing) => (!newMode || newIds.has(listing.id)) && canAutoAnalyze(listing) && !analyses[listing.id] &&
                 !activeAnalyses.current.has(listing.id) && !activePhotoReviews.current.has(listing.id))
             .sort((a, b) => compareAnalysisPriority(a, b, targets));
-        let free = analysisConcurrency(waiting.length + running, analysisOutcomes) - running;
+        let free = Math.min(BOUNDED_AUTO_CONCURRENCY, analysisConcurrency(waiting.length + running, analysisOutcomes)) - running;
 
         for (const listing of waiting) {
             if (free <= 0 || remaining <= 0) break;
@@ -832,14 +841,14 @@ export function App() {
     const phase: SearchPhase =
         searchStatus === "error"
             ? "error"
-            : analysisBlocked
-              ? "paused"
             : stopped
               ? "stopped"
               : searchStatus === "checking"
                 ? pricingRecovery?.status === "checking" ? "pricing" : summary
                     ? digStatus === "checking" ? "discovering" : "filtering"
                     : "finding"
+                : analysisBlocked
+                  ? "paused"
                 : aiBusy
                   ? "ai"
                   : "done";
@@ -853,7 +862,7 @@ export function App() {
                 <div className={styles.progressButtons}>
                     {showMoreAi && (
                         <button type="button" className={styles.secondary} onClick={() => setBudget((current) => current + Math.min(DEVELOPMENT_SEARCH_LIMIT, counts.waiting))}>
-                            Analyze {Math.min(DEVELOPMENT_SEARCH_LIMIT, counts.waiting)} remaining (paid)
+                            Analyze remaining · within 2¢
                         </button>
                     )}
                 </div>
@@ -879,7 +888,7 @@ export function App() {
             <p>
                 {counts.candidates} listings are eligible for AI analysis; {counts.mismatched} set aside as other cards, sets, languages or search criteria.
             </p>
-            <p>Development searches inspect up to 3 listings. Photo assessments and prices are reused when their evidence is still valid.</p>
+            <p>Development searches show up to {DEVELOPMENT_SEARCH_LIMIT} matching listings. Automatic photo work uses the remaining 2¢ AI budget; saved assessments and prices are reused.</p>
         </>
     );
 
@@ -1051,7 +1060,7 @@ export function App() {
                     )}
                     {searchStatus !== "idle" && <PricingRetries listings={filtered} reviewCount={groups.review.length} searching={searchStatus === "checking"} recovery={pricingRecovery} analyzed={new Set(Object.entries(analyses).filter(([, analysis]) => analysis.status === "done" || analysis.status === "loading").map(([id]) => id))}
                         busy={pricingBusy} note={pricingNote} onRetry={(tickets) => void retryPrices(tickets)} onCancel={cancelPricing} />}
-                    {newMode && <p className={styles.discoveryNote}>Loaded one window of up to 200 newest listings and admitted at most 3 unseen candidates for screening. Earlier results stay in All matching; this is a limited development batch.</p>}
+                    {newMode && <p className={styles.discoveryNote}>Loaded one window of up to 200 newest listings and admitted at most {DEVELOPMENT_SEARCH_LIMIT} unseen candidates for screening. Earlier results stay in All matching; this is a limited development batch.</p>}
 
                     {needsWiderSearch && <div className={styles.searchUpdate} role="status">
                         <p>Search filters changed. Run the search again to fetch matching listings. Paid work from the previous filter selection has stopped.</p>
@@ -1112,7 +1121,7 @@ export function App() {
                         ))}
 
                     {view === "all" && visible.length > 0 && <p className={styles.discoveryNote}>
-                        {visible.length} matching {visible.length === 1 ? "listing" : "listings"} in the loaded results, including passes and unfinished assessments. Known wrong cards and junk are excluded. {filtered.filter((listing) => evaluationOf(analyses[listing.id])?.photoCheck).length} AI photo reviews complete; other cards remain preliminary. Each development scan admits at most 3 candidates and does not cover all eBay inventory.
+                        {visible.length} matching {visible.length === 1 ? "listing" : "listings"} in the loaded results, including passes and unfinished assessments. Known wrong cards and junk are excluded. {filtered.filter((listing) => evaluationOf(analyses[listing.id])?.photoCheck).length} AI photo reviews complete; other cards remain preliminary. Each development scan admits at most {DEVELOPMENT_SEARCH_LIMIT} matching listings; the number fully assessed depends on saved evidence and the separate 2¢ AI budget.
                     </p>}
                     <div className={styles.results}>
                         {/* Before the first results: placeholders in the shape of cards. */}

@@ -24,7 +24,9 @@ export function percent(value: number | null | undefined): string {
 }
 
 // "6 to 8, likely 7", or "6 to 8" when no grade is likely.
-export function describeRange({ low, likely, high }: GradeRange): string {
+export function describeRange(range: GradeRange | null): string {
+    if (!range) return "No numeric grade estimate";
+    const { low, likely, high } = range;
     return likely === null ? `${low} to ${high}` : `${low} to ${high}, likely ${likely}`;
 }
 

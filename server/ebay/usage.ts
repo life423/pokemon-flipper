@@ -2,7 +2,7 @@ import { ebayGet } from "./api.ts";
 import type { EbayUsage } from "../../shared/types.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
 import { reserveDailyBrowseCall } from "./daily-budget.ts";
-import { developmentBrowseAllowance } from "./development-budget.ts";
+import { browseSearchAllowance } from "./search-budget.ts";
 export { EbayBudgetError } from "./daily-budget.ts";
 const share = createSingleFlight();
 
@@ -24,15 +24,14 @@ interface RateLimits {
 
 let saved: { usage: EbayUsage; at: number } | null = null;
 
-async function withDevelopmentAllowance(usage: EbayUsage | null): Promise<EbayUsage | null> {
-    const development = await developmentBrowseAllowance();
-    return usage && development ? { ...usage, devRemaining: development.remaining, devLimit: development.limit, devExpiresAt: development.expiresAt,
-        ...(development.renewalRequired ? { devRenewalRequired: true } : {}) } : usage;
+async function withSearchAllowance(usage: EbayUsage | null): Promise<EbayUsage | null> {
+    const searchBudget = await browseSearchAllowance();
+    return usage && searchBudget ? { ...usage, searchBudget } : usage;
 }
 
 export async function ebayUsage({ fresh = false }: { fresh?: boolean } = {}): Promise<EbayUsage | null> {
     if (saved?.usage.resetsAt && Date.parse(saved.usage.resetsAt) <= Date.now()) saved = null;
-    if (!fresh && saved && Date.now() - saved.at < MAX_AGE_MS) return withDevelopmentAllowance(saved.usage);
+    if (!fresh && saved && Date.now() - saved.at < MAX_AGE_MS) return withSearchAllowance(saved.usage);
     const usage = await share("usage", async () => {
     try {
         const data = await ebayGet<RateLimits>("/developer/analytics/v1_beta/rate_limit/?api_name=Browse&api_context=buy");
@@ -62,7 +61,7 @@ export async function ebayUsage({ fresh = false }: { fresh?: boolean } = {}): Pr
         return saved?.usage ?? null;
     }
     });
-    return withDevelopmentAllowance(usage);
+    return withSearchAllowance(usage);
 }
 
 // Called at the actual Browse transport boundary, including nested historical

@@ -32,7 +32,7 @@ export function roundOffer(amount: number): number {
 }
 
 export function offerPlan(asking: number, maxPrice: number): OfferPlan | null {
-    if (maxPrice <= 0 || asking <= 0) return null;
+    if (!Number.isFinite(asking) || !Number.isFinite(maxPrice) || maxPrice <= 0 || asking <= 0) return null;
 
     const clearsAtAsking = asking <= maxPrice;
     const minimumOffer = Math.ceil((asking * (1 - MAX_OFFER_DISCOUNT) - 1e-9) * 100) / 100;

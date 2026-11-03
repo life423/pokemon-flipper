@@ -2,6 +2,7 @@ import { readyForPricing } from "../identity.ts";
 import { MONEY_CONFIG, type BuyingConfig, type GradingConfig, type MoneyConfig, type SellingConfig } from "./config.ts";
 import { RAW_CONDITIONS, isRawCondition } from "../conditions.ts";
 import { dollars, round2 } from "../format.ts";
+import { cents, meetsMoneyTargets, money, sellingFeeCents, taxedCents } from "./cents.ts";
 import type {
     CompSummary,
     Condition,
@@ -51,27 +52,18 @@ type PricedListing = { price: number; shipping: number | null };
 // (their sales tax included), tiered above the limit, plus the per-order
 // fee and any Promoted Listings rate.
 export function ebaySellingFees(salePrice: number, selling: SellingConfig): number {
-    const base = salePrice * (1 + selling.typicalBuyerTaxRate);
-    const upToLimit = Math.min(base, selling.finalValueTierLimit);
-    const aboveLimit = Math.max(0, base - selling.finalValueTierLimit);
-    const perOrder = base <= selling.smallOrderLimit ? selling.perOrderFeeSmall : selling.perOrderFee;
-
-    return round2(
-        upToLimit * selling.finalValueRate +
-            aboveLimit * selling.finalValueRateAboveLimit +
-            perOrder +
-            salePrice * selling.promotedRate
-    );
+    return sellingFeeCents(salePrice, selling) / 100;
 }
 
 // What you keep from a sale after eBay's fees and shipping it out.
 export function netFromSale(salePrice: number, kind: "raw" | "graded", selling: SellingConfig): number {
-    return round2(salePrice - ebaySellingFees(salePrice, selling) - selling.shipping[kind]);
+    return (cents(salePrice) - cents(ebaySellingFees(salePrice, selling)) - cents(selling.shipping[kind])) / 100;
 }
 
 // What a purchase costs: price plus shipping, plus sales tax on both.
 export function acquisitionCost(price: number, shipping: number, buying: BuyingConfig): number {
-    return round2((price + shipping) * (1 + buying.salesTaxRate));
+    if (price < 0 || shipping < 0) return NaN;
+    return taxedCents(cents(price) + cents(shipping), buying.salesTaxRate) / 100;
 }
 
 // The cheapest service level whose cap covers the card's value.
@@ -151,10 +143,28 @@ export function maxBid(
     config: MoneyConfig
 ): number {
     const { minProfit, minRoi } = config.targets;
-    const costCap = Math.min(expectedNet - minProfit, expectedNet / (1 + minRoi));
-    const bid = (costCap - fixedCosts) / (1 + config.buying.salesTaxRate) - shipping;
+    const net = cents(expectedNet);
+    const fixed = cents(fixedCosts);
+    const delivery = cents(shipping);
+    const tax = config.buying.salesTaxRate;
+    if (![net, fixed, delivery, minProfit, minRoi, tax].every(Number.isFinite) ||
+        net <= 0 || fixed < 0 || delivery < 0 || minProfit < 0 || minRoi < 0 || tax < 0) return 0;
 
-    return bid > 0 ? Math.floor(bid) : 0;
+    // A valid purchase cannot cost more than the proceeds. Search integer cents
+    // against actual rounded cash costs rather than inverting an unrounded tax
+    // formula and treating a whole-dollar approximation as the buying rule.
+    let low = 0;
+    let high = net;
+    let best = 0;
+    while (low <= high) {
+        const candidate = low + Math.floor((high - low) / 2);
+        const cost = taxedCents(candidate + delivery, tax) + fixed;
+        if (meetsMoneyTargets(net, cost, minProfit, minRoi)) {
+            best = candidate;
+            low = candidate + 1;
+        } else high = candidate - 1;
+    }
+    return best / 100;
 }
 
 function unavailablePath(path: PathKind, label: string, reason: string, grader?: Grader): UnavailablePath {
@@ -184,7 +194,10 @@ export function pathNumbers(
     }: { expectedNet: number; downsideNet?: number; fixedCosts: number; shipping: number; price: number },
     config: MoneyConfig
 ) {
-    const totalCost = (amount: number) => round2(acquisitionCost(amount, shipping, config.buying) + fixedCosts);
+    expectedNet = money(expectedNet);
+    downsideNet = money(downsideNet);
+    fixedCosts = money(fixedCosts);
+    const totalCost = (amount: number) => (cents(acquisitionCost(amount, shipping, config.buying)) + cents(fixedCosts)) / 100;
     const cost = totalCost(price);
     const profit = round2(expectedNet - cost);
     const limit = maxBid({ expectedNet, fixedCosts, shipping }, config);
@@ -194,12 +207,14 @@ export function pathNumbers(
     return {
         cost,
         profit,
-        roi: cost > 0 ? round2(profit / cost) : null,
+        roi: cost > 0 ? cents(profit) / cents(cost) : null,
         downside: round2(downsideNet - cost),
         maxBid: limit,
-        clears: limit > 0 && price <= limit,
+        clears: [price, cost, profit, config.targets.minProfit, config.targets.minRoi].every(Number.isFinite) &&
+            price >= 0 && fixedCosts >= 0 && config.targets.minProfit >= 0 && config.targets.minRoi >= 0 &&
+            meetsMoneyTargets(cents(expectedNet), cents(cost), config.targets.minProfit, config.targets.minRoi),
         profitAtMaxBid,
-        roiAtMaxBid: costAtLimit && profitAtMaxBid !== null ? round2(profitAtMaxBid / costAtLimit) : null,
+        roiAtMaxBid: costAtLimit && profitAtMaxBid !== null ? cents(profitAtMaxBid) / cents(costAtLimit) : null,
         costAtMaxBid: costAtLimit,
         downsideAtMaxBid: costAtLimit === null ? null : round2(downsideNet - costAtLimit),
     };
@@ -225,8 +240,8 @@ function pricedPath(
         path,
         label,
         status: "PRICED",
-        expectedNet: round2(expectedNet),
-        fixedCosts: round2(fixedCosts),
+        expectedNet: money(expectedNet),
+        fixedCosts: money(fixedCosts),
         shipping,
         ...pathNumbers({ expectedNet, downsideNet, fixedCosts, shipping, price: listing.price }, config),
         ...extra,
@@ -274,9 +289,11 @@ export function rawPath(input: UnderwritingInput, listing: PricedListing, shippi
         const reference = GRADERS.flatMap(grader => {
             const prices = input.gradedPricing?.[grader];
             if (prices?.status !== "PRICED" || prices.printing !== input.identity?.printing || prices.variant !== rawPricing.variant) return [];
+            const gradeRange = condition.gradeRange;
+            if (!gradeRange) return [];
             return (prices.byGrade ?? []).filter(summary => {
                 const age = Date.parse(input.pricesCheckedAt ?? summary.newestSale ?? "") - Date.parse(summary.newestSale ?? "");
-                return Number(summary.grade) >= condition.gradeRange.low && Number(summary.grade) <= condition.gradeRange.high &&
+                return Number(summary.grade) >= gradeRange.low && Number(summary.grade) <= gradeRange.high &&
                     summary.count >= 2 && summary.median !== null && Number.isFinite(summary.median) && summary.median > 0 && age >= 0 && age <= 180 * 86400000;
             }).map(summary => ({ grader, summary }));
         }).sort((a, b) => a.summary.median! - b.summary.median!)[0];
@@ -304,12 +321,13 @@ export function gradePath(
 ): MoneyPath {
     const label = `Grade with ${grader}`;
     const graded = input.gradedPricing?.[grader];
+    const gradeRange = input.condition?.gradeRange;
+    if (input.condition && !gradeRange) return unavailablePath("GRADE", label, "The photos support a raw-condition assessment, but not a numeric grade estimate.", grader);
 
-    if (graded?.status !== "PRICED" || !input.condition) {
+    if (graded?.status !== "PRICED" || !gradeRange) {
         return unavailablePath("GRADE", label, graded?.reason ?? `There are no ${grader} sales to price with.`, grader);
     }
 
-    const { gradeRange } = input.condition;
     const byGrade = pricesByGrade(graded.byGrade ?? [], gradeRange);
 
     if (!byGrade.ok) {
@@ -366,7 +384,8 @@ export function gradedResalePath(
 ): MoneyPath {
     const label = `Resell as ${comps.grader} ${comps.grade}`;
 
-    if (!(comps.count > 0) || comps.median === null || comps.low === null) {
+    if (!Number.isFinite(comps.count) || !(comps.count > 0) || comps.median === null || comps.low === null ||
+        !Number.isFinite(comps.median) || !Number.isFinite(comps.low) || comps.median <= 0 || comps.low <= 0 || comps.low > comps.median) {
         return unavailablePath("GRADED_RESALE", label, `No verified ${comps.grader} ${comps.grade} sales.`);
     }
 
@@ -417,7 +436,16 @@ function underwriteSlab(
         );
     }
 
-    const path = slabPricing.summary && slabPricing.summary.count > 0 ? gradedResalePath(listing, slabPricing.summary, shipping, config)
+    const summary = slabPricing.summary;
+    const matchesSlab = summary && typeof summary.grader === "string" && typeof slab.grader === "string" &&
+        typeof slab.grade === "string" && slab.grade.trim().length > 0 &&
+        summary.grader.trim().length > 0 && summary.grader.trim().toUpperCase() === slab.grader.trim().toUpperCase() &&
+        (String(summary.grade).trim().toUpperCase() === String(slab.grade).trim().toUpperCase() ||
+            Number.isFinite(Number(summary.grade)) && Number.isFinite(Number(slab.grade)) && Number(summary.grade) === Number(slab.grade));
+    if (summary && summary.count > 0 && !matchesSlab) {
+        return verdict("CANT_PRICE", ["The sold-price evidence does not match the photographed slab's grader and grade."], assumptions);
+    }
+    const path = summary && summary.count > 0 ? gradedResalePath(listing, summary, shipping, config)
         : active && active.grader === slab.grader && active.grade === slab.grade && active.listings.length > 0 &&
             Number.isFinite(active.resalePrice) && active.resalePrice > 0 && active.resalePrice <= active.lowestTotal ? pricedPath({
             path: "GRADED_RESALE", label: `Resell as ${slab.grader} ${slab.grade}`, expectedNet: netFromSale(active.resalePrice, "graded", config.selling),
@@ -514,6 +542,10 @@ function underwriteBase(input: UnderwritingInput, config: MoneyConfig): Underwri
         rawPath(input, listing, shipping, config),
         ...GRADERS.map((grader) => gradePath(input, grader, listing, shipping, config)),
     ];
+    if (paths.some((path) => path.path === "GRADE" && isPriced(path))) {
+        assumptions.push(`Grading shipping assumes ${dollars(config.grading.shippingPerCard)} per card shared across a submission batch; a single-card shipment may cost more. Grading-service taxes are not included.`);
+        assumptions.push("Grade-outcome percentages are modeling assumptions, not calibrated probabilities. The estimate includes grading fees and shipping but does not predict grading turnaround or resale time.");
+    }
     const best = bestPath(paths.filter(isPriced));
 
     if (best?.clears) {

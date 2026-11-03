@@ -43,6 +43,7 @@ const DAY_MS = 86400000;
 // A sale this far from the others' median is more likely a mislabeled
 // printing or a special copy than a price. Needs 3 or more sales.
 const OUTLIER_FACTOR = 2.5;
+const CONFIRMED_SALE_TYPES = ["auction", "fixed_price", "best_offer_accepted"];
 
 // PSA qualifiers (off-center, miscut, stain...) sell below a plain grade.
 const PSA_QUALIFIER = /\((oc|mk|mc|st|pd|of)\)/i;
@@ -92,7 +93,11 @@ export function compProblem(comp: Comp, { printing, setName, grader, grade, now,
     if (noveltyIn(comp.title)) return "metal or novelty card";
     if (comp.grader !== grader || comp.grade !== String(grade)) return "different grade";
     if (gradeQualifier(comp.grade_qualifier, comp.grader, comp.grade) || PSA_QUALIFIER.test(comp.title ?? "")) return "qualified or special grade";
-    if (!(typeof comp.price === "number" && comp.price > 0)) return "no sale price";
+    // Older provider rows can retain an asking price when the final sale type
+    // is unknown. Only confirmed transaction amounts may form resale prices;
+    // a real accepted-offer amount is still usable when explicitly identified.
+    if (!CONFIRMED_SALE_TYPES.includes(comp.sale_type ?? "")) return "sale amount not confirmed";
+    if (!(typeof comp.price === "number" && Number.isFinite(comp.price) && comp.price > 0)) return "no sale price";
 
     const ageDays = (now - Date.parse(comp.sold_at)) / DAY_MS;
 

@@ -16,6 +16,7 @@ const row = (id: string, title = "Charizard Base Set 4/102 Holo English", extra:
 });
 function noPaidSteps(search: (query: string, options: any) => Promise<any>) {
     return { search,
+        soldScreening: () => async () => ({ status: "UNAVAILABLE" as const, exactScope: false, references: [], note: "No saved sold-price evidence in this metadata fixture." }),
         readIntent: async () => { assert.fail("bounded searches cannot buy query interpretation"); },
         readTitle: async () => { assert.fail("bounded searches cannot enqueue a title batch"); },
         screening: () => { assert.fail("bounded searches cannot start prescreen prices, main-photo AI or eBay detail checks"); },
@@ -38,7 +39,7 @@ test("local bounded metadata transcribes explicit names and numbers without inve
     assert.deepEqual(readSearchLocally("1999 base set holo").sets, ["Base Set"]);
 });
 
-test("bounded search reads one newest BIN page and admits only three candidates without any paid preliminary work", async t => {
+test("bounded search admits50 matching metadata rows from one newest BIN page without paid preliminary work", async t => {
     const fetch = t.mock.method(globalThis, "fetch", async () => { assert.fail("only the injected source may run; AI and price providers cannot dispatch"); });
     let sources = 0;
     let summary: SearchSummary | undefined;
@@ -54,12 +55,16 @@ test("bounded search reads one newest BIN page and admits only three candidates 
         }));
     assert.equal(sources, 1);
     assert.equal(fetch.mock.callCount(), 0);
-    assert.deepEqual(result, emitted);
-    assert.equal(result.length, 3);
+    // Results retain source order; concurrent cache reads can emit in any
+    // completion order. Verify identical records without assuming timing.
+    assert.deepEqual(result.map(listing => listing.id), Array.from({ length: 50 }, (_, index) => String(index)));
+    assert.deepEqual(new Set(result.map(listing => listing.id)), new Set(emitted.map(listing => listing.id)));
+    assert.equal(result.length, 50);
     assert.equal(summary?.mode, "development");
-    assert.equal(summary?.count, 3);
-    assert.equal(summary?.deferred, 197);
-    assert.ok(result.every(listing => canAutoAnalyze(listing)));
+    assert.equal(summary?.count, 50);
+    assert.equal(summary?.deferred, 150);
+    assert.ok(result.every(listing => !canAutoAnalyze(listing)), "missing sold prices cannot authorize paid photos");
+    assert.ok(result.every(listing => listing.screen?.soldEvidence?.status === "UNAVAILABLE"));
     assert.ok(result.every(listing => listing.screen?.status === "UNSCREENED" && listing.screen.bestCase === null));
 });
 
@@ -72,6 +77,26 @@ test("wrong cards, sets, numbers, foreign titles, junk, budget exclusions and fa
     const result = await findDeals("Charizard Base Set 4/102 holo", { bounded: true, filters: { maxPrice: 200 }, newOnly: { excludeIds: ["known"], limit: 200 } },
         noPaidSteps(async () => ({ listings: page, total: page.length, skipped: 0 })));
     assert.deepEqual(result.map(listing => listing.id), ["one", "two", "three"]);
+});
+
+test("known cached mismatches are excluded before filling50 slots, including newest scans", async t => {
+    const fetch = t.mock.method(globalThis, "fetch", async () => assert.fail("metadata admission cannot call a provider"));
+    const page = Array.from({ length: 100 }, (_, index) => row(String(index)));
+    const emitted: ListingSummary[] = [];
+    let reads = 0;
+    const dependencies = { ...noPaidSteps(async () => ({ listings: page, total: 100, skipped: 0 })),
+        readTitleWithoutAi: async (title: string) => {
+            const reading = readTitleByRules(title);
+            return { ...reading, set: reads++ < 6 ? "Jungle" : reading.set };
+        } };
+    const result = await findDeals("Charizard Base Set 4/102 holo", { bounded: true,
+        newOnly: { excludeIds: [], limit: 50 }, onListing: listing => emitted.push(listing) }, dependencies);
+    assert.equal(result.length, 50);
+    assert.deepEqual(result.map(listing => listing.id), Array.from({ length: 50 }, (_, index) => String(index + 6)));
+    assert.equal(emitted.length, 50);
+    assert.ok(emitted.every(listing => !listing.match));
+    assert.equal(reads, 56, "only enough free metadata is read to fill the matching batch; rows are not checked twice");
+    assert.equal(fetch.mock.callCount(), 0);
 });
 
 test("number-only bounded searches do not invent a Pokemon or reject a matching card", async () => {

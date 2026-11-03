@@ -143,7 +143,7 @@ export function ConditionSection({ evaluation, condition }: { evaluation: Evalua
             <details className={styles.details}><summary>Our six condition definitions</summary><dl>{RAW_CONDITIONS.map(key => <div key={key}><dt><strong>{CONDITION_NAMES[key]}</strong></dt><dd>{CONDITION_DEFINITIONS[key]}</dd></div>)}</dl></details>
             <Pairs
                 rows={[
-                    ["Grade range", `${describeRange(condition.gradeRange)} (${name(condition.confidence)} confidence)`],
+                    ["Grade range", condition.gradeRange ? `${describeRange(condition.gradeRange)} (${name(condition.confidence)} confidence)` : "Not supported by the photos"],
                     ["Raw condition", name(condition.rawCondition)],
                     ["Seller says", evaluation.listing.cardCondition ?? "Not stated"],
                     ["Creases", name(condition.creases)],

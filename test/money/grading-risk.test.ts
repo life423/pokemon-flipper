@@ -95,7 +95,7 @@ test("a missing grade never inherits an observed lower-grade premium to create a
     const supported = retargetEvaluation(evaluation, any);
     assert.equal(supported.underwriting?.verdict, "PASS");
     assert.equal(supported.underwriting?.best?.profit, -238.5);
-    assert.equal(supported.underwriting?.best?.maxBid, 779);
+    assert.equal(supported.underwriting?.best?.maxBid, 779.68);
     assert.ok(priced(supported).outlook?.every((entry) => entry.filledFrom === null));
     evaluation.rawPricing = { status: "PRICED", prices: [{ condition: "LIGHTLY_PLAYED", price: 2000, updatedAt: null }] };
     evaluation.gradedPricing.PSA!.byGrade = evaluation.gradedPricing.PSA!.byGrade!.filter((entry) => entry.grade !== 7);

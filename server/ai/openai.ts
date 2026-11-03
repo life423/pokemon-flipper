@@ -371,6 +371,7 @@ The photos follow, numbered in order. Report every photo exactly once, by number
 - isStockImage: true for a generic card back, an official product image, or any picture that is not a photo of this specific copy.
 - issues: blur, glare, low resolution, cropping, a sleeve or holder in the way, and similar problems.
 - obscuresCondition: true when lighting, exposure, glare, cropping, a holder, or low contrast between the card and background actually hides edge or surface detail. Explain exactly what is obscured in issues. A white or light background can blend with whitening or overexposed edges; flag this only when visibility is affected. Background color alone is not evidence of damage or dishonest selling.
+- Visible scratches, ink/marker marks, stains and material damage on the card are condition findings, not photographic obstruction. A local dark mark does not make the rest of a readable front obscured. Distinguish actual card marks from reflections, shadows, overlays and printed artwork; describe both damage and any real visibility limitation separately.
 
 Also report:
 - cardCount: ONE only if the listing shows a single card.
@@ -379,7 +380,7 @@ Also report:
 - missingViews: views a grader would need that no usable photo shows.
 
 Printing marks and card text, from clear photos of the front only. Never use the title for these:
-- firstEditionStamp: VISIBLE if the "1st Edition" stamp is printed on the card. NOT_PRESENT only if the area just below the artwork, where the stamp would be printed, is clearly visible and empty. Otherwise CANT_TELL.
+- firstEditionStamp: inspect immediately below the LEFT edge of the artwork, separately from any set symbol on the right. VISIBLE if an EDITION/circled-1 stamp is printed there; it need not literally spell "1st". NOT_PRESENT only if that precise area is clearly visible and empty. Otherwise CANT_TELL. Cite the photo number and actual printed marks or empty area; a copyright year does not establish stamp absence.
 - artBoxShadow: PRESENT if the artwork frame has a dark drop shadow along its right edge, ABSENT if it has none, otherwise CANT_TELL.
 - reprintMark: a mark that makes the card a reprint or a special printing. CELEBRATIONS_25TH: a small Pikachu logo with "25" on the artwork (the 2021 Celebrations reprints). ANNIVERSARY_30TH: a 30th anniversary logo. BASE_SET_2: Base Set 2's set symbol, a Poke Ball with a "2", at the artwork's lower right. WORLD_CHAMPIONSHIPS: a gold border or a printed player signature (World Championship decks). OTHER_STAMP: any other stamp on the artwork, such as Prerelease, Staff, or a store logo. NONE_SEEN only if the artwork is clearly visible and has none of these; otherwise CANT_TELL.
 - evidence: what you saw that supports each of those answers.
@@ -389,6 +390,7 @@ Printing marks and card text, from clear photos of the front only. Never use the
 Whether the photographed card is the card the title and item details claim, from everything visible on the card itself, front and back:
 - cardMatch.verdict: MISMATCH if anything you can see shows another card: another name, number, or set total; another set's symbol; a copyright line or year from another release; different artwork, borders, layout, or fonts; another language; an anniversary logo or a stamp; a back that isn't the standard Pokemon back; or signs of a fake or proxy (off colors, blurry print, wrong fonts). MATCH if everything visible fits the claimed card. CANT_TELL if the photos don't show enough. Don't judge the printing (the 1st Edition stamp or the artwork's shadow) or the condition here.
 - cardMatch.problems: each difference you can see, plainly; empty for MATCH.
+Collector numbers with leading zeros or a # prefix are equivalent within the same set: 003/102 equals 3/102. Different totals or letter prefixes remain distinct. An unstated seller printing is not a contradictory claim; the printing-mark fields decide the actual printing separately.
 
 If the card is sealed in a grading company's case (a slab), read the label exactly as printed:
 - slab.present: true only for a grading company's sealed case.
@@ -475,6 +477,7 @@ const CONDITION_SCHEMA = {
             ],
         },
         gradeRange: {
+            anyOf: [{
             type: "object",
             properties: {
                 low: { type: "integer" },
@@ -483,6 +486,7 @@ const CONDITION_SCHEMA = {
             },
             required: ["low", "likely", "high"],
             additionalProperties: false,
+            }, { type: "null" }],
         },
         authenticity: {
             type: "object",

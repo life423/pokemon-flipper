@@ -1,5 +1,6 @@
 import type { Evaluation, ListingSummary, PhotoCheck } from "./types.ts";
 import { photoAssessmentConfidence, photoCoverage, photoIssueNotes } from "./photo-evidence.ts";
+import { isRawCondition } from "./conditions.ts";
 
 export const DEEP_PHOTO_LIMIT = 24;
 export function planDeeperPhotos(check: PhotoCheck | null, photos: string[]) {
@@ -27,6 +28,18 @@ export function deeperPhotoConcerns(evaluation: Pick<Evaluation, "deeperPhotoRev
     return evaluation.deeperPhotoReview?.findings.filter((finding) => finding.impact === "NEW_CONCERN").map((finding) => finding.observation) ?? [];
 }
 
+function wholeSideCoverageNote(side: "front" | "back", obscured: boolean, reviewed: number, total: number): string {
+    const unreviewed = Math.max(0, total - reviewed);
+    if (!unreviewed) return obscured
+        ? `Every usable whole-${side} photo has obscured detail.`
+        : `No usable photo shows the whole ${side}.`;
+    const scope = `among the ${reviewed} reviewed ${reviewed === 1 ? "photo" : "photos"}`;
+    const remaining = `${unreviewed} listing ${unreviewed === 1 ? "photo was" : "photos were"} not reviewed.`;
+    return obscured
+        ? `Every usable whole-${side} view ${scope} has obscured detail; ${remaining}`
+        : `No usable whole-${side} view ${scope}; ${remaining}`;
+}
+
 export function photoReviewStatus(evaluation: Evaluation | null, listing?: ListingSummary) {
     if (!evaluation?.photoCheck) return {
         title: listing?.screen?.evidence?.mainPhoto === "MATCH" || listing?.mistakes?.length ? "AI preliminary photo check only" : "AI photo review not completed",
@@ -47,17 +60,30 @@ export function photoReviewStatus(evaluation: Evaluation | null, listing?: Listi
     if (evaluation.underwriting?.verdict === "NEEDS_REVIEW" && (!deferred || evaluation.condition)) reasons.push(...(evaluation.underwriting.reasons.length ? evaluation.underwriting.reasons : ["The purchase recommendation needs review."]));
     if (!evaluation.slab) {
         const coverage = photoCoverage(check);
-        const coverageNotes = deferred ? photoNotes : reasons;
-        if (!coverage.fronts) coverageNotes.push("No usable photo shows the whole front.");
-        else if (!coverage.clearFronts) coverageNotes.push("Every usable whole-front photo has obscured detail.");
-        if (!coverage.backs) coverageNotes.push("No usable photo shows the whole back.");
-        else if (!coverage.clearBacks) coverageNotes.push("Every usable whole-back photo has obscured detail.");
+        const best = evaluation.underwriting?.best;
+        const knownRawCondition = evaluation.condition && isRawCondition(evaluation.condition.rawCondition);
+        const completedPricePass = evaluation.underwriting?.verdict === "PASS" && best?.status === "PRICED";
+        // A useful raw-condition assessment can support as-is resale without
+        // proving every grading detail. Keep the exact coverage limitations
+        // visible, without making them a grading hold on a raw resale or an
+        // already rejected purchase. Genuine uncertainty below remains review.
+        const coverageNotes = deferred || knownRawCondition && (best?.path === "RAW" || completedPricePass) ? photoNotes : reasons;
+        // A sampled gallery can establish a limitation of the reviewed photos,
+        // but cannot establish that the seller omitted that view altogether.
+        const reviewed = check.images.length;
+        const total = evaluation.listing.photosInListing;
+        if (!coverage.fronts) coverageNotes.push(wholeSideCoverageNote("front", false, reviewed, total));
+        else if (!coverage.clearFronts) coverageNotes.push(wholeSideCoverageNote("front", true, reviewed, total));
+        if (!coverage.backs) coverageNotes.push(wholeSideCoverageNote("back", false, reviewed, total));
+        else if (!coverage.clearBacks) coverageNotes.push(wholeSideCoverageNote("back", true, reviewed, total));
         if (!evaluation.condition && !deferred) reasons.push("AI could not support a raw-condition or grade estimate.");
         else if (evaluation.condition?.rawCondition === "UNKNOWN") reasons.push("AI could not support a raw-condition estimate.");
         const authenticity = evaluation.condition?.authenticity;
         if (authenticity && authenticity.concern !== "NONE_SEEN") reasons.push(...(authenticity.reasons.length ? authenticity.reasons : ["The photos raise an authenticity question."]));
         const grading = evaluation.underwriting?.best?.path === "GRADE";
-        if (evaluation.condition?.gradeRange.likely === null) {
+        if (evaluation.condition && !evaluation.condition.gradeRange) {
+            (grading ? reasons : photoNotes).push("The photos do not support a numeric grade estimate.");
+        } else if (evaluation.condition?.gradeRange?.likely === null) {
             (grading ? reasons : photoNotes).push("The photos do not support a single likely grade.");
         }
         if (confidence === "LOW") (grading ? reasons : photoNotes).push("Photo assessment confidence is low.");

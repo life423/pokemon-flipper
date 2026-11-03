@@ -35,7 +35,9 @@ export async function searchWithDiscovery(
     for (const listing of listings) if (!snapshots.has(listing.id)) snapshots.set(listing.id, listing);
     if (options.signal?.aborted) return;
     if (options.developmentLimit !== undefined || options.bounded) {
-        options.onDiscovery?.({ status: "done", checked: 0, total: 0, note: "Development mode checks a few cards without broad discovery or automatic pricing retries." });
+        options.onDiscovery?.({ status: "done", checked: 0, total: 0, note: options.bounded
+            ? "Matching listings use saved or bounded recent sold evidence before automatic AI. Broad discovery and automatic pricing retries remain off."
+            : "Matching listings use saved metadata or local checks. Broad discovery and automatic pricing retries remain off." });
         return;
     }
     const recover = (rows: ListingSummary[]) => steps.recover?.(rows, {

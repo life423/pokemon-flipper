@@ -127,21 +127,64 @@ test("a cropped back close-up stays a numbered photo note when the full back is 
     assert.deepEqual(evaluation, before, "displaying photo scope must not change saved grades, confidence, prices or advice");
 });
 
-test("missing or obscured whole-side coverage still needs review despite usable close-ups", () => {
+test("missing or obscured whole-side coverage still needs review for actionable grading despite usable close-ups", () => {
+    const gradingAdvice = () => retargetEvaluation(mixedCoverageEvaluation(), any);
+    assert.equal(gradingAdvice().underwriting?.best?.path, "GRADE");
     for (const side of ["FRONT", "BACK"]) {
-        const missing = mixedCoverageEvaluation();
+        const missing = gradingAdvice();
         missing.photoCheck!.images = missing.photoCheck!.images.filter(photo => photo.view !== side);
+        missing.listing.photosInListing = missing.photoCheck!.images.length;
         missing.photoCheck!.missingViews = [];
         const status = photoReviewStatus(missing);
         assert.equal(status.needsYourReview, true);
         assert.ok(status.reasons.includes(`No usable photo shows the whole ${side.toLowerCase()}.`));
-        const obscured = mixedCoverageEvaluation();
+        const obscured = gradingAdvice();
         obscured.photoCheck!.images.filter(photo => photo.view === side).forEach(photo => { photo.obscuresCondition = true; });
         assert.ok(photoReviewStatus(obscured).reasons.includes(`Every usable whole-${side.toLowerCase()} photo has obscured detail.`));
     }
-    const stockBack = mixedCoverageEvaluation();
+    const stockBack = gradingAdvice();
     stockBack.photoCheck!.images.filter(photo => photo.view === "BACK").forEach(photo => { photo.isStockImage = true; });
     assert.equal(photoReviewStatus(stockBack).needsYourReview, true);
+});
+
+test("partial-gallery missing or obscured views describe only reviewed photos and retain grading holds", () => {
+    for (const side of ["FRONT", "BACK"] as const) {
+        for (const obscured of [false, true]) {
+            const evaluation = retargetEvaluation(mixedCoverageEvaluation(), any);
+            assert.equal(evaluation.underwriting?.best?.path, "GRADE");
+            evaluation.photoCheck!.images = evaluation.photoCheck!.images.slice(0, 6);
+            evaluation.photoCheck!.images.forEach(photo => {
+                if (photo.view === side) {
+                    if (obscured) photo.obscuresCondition = true;
+                    else photo.view = side === "FRONT" ? "FRONT_DETAIL" : "BACK_DETAIL";
+                }
+            });
+            evaluation.listing.photosInListing = 11;
+            evaluation.listing.photosAnalyzed = 6;
+            const before = structuredClone(evaluation);
+            const status = photoReviewStatus(evaluation);
+            const warning = obscured
+                ? `Every usable whole-${side.toLowerCase()} view among the 6 reviewed photos has obscured detail; 5 listing photos were not reviewed.`
+                : `No usable whole-${side.toLowerCase()} view among the 6 reviewed photos; 5 listing photos were not reviewed.`;
+            assert.ok(status.reasons.includes(warning));
+            assert.equal(status.needsYourReview, true, "incomplete grading evidence still needs review");
+            assert.equal(status.checked, 6);
+            assert.equal(status.total, 11);
+            assert.deepEqual(evaluation, before, "presentation never changes grades, advice or saved evidence");
+        }
+    }
+});
+
+test("partial raw-resale coverage remains an accurately scoped note rather than a new manual task", () => {
+    const evaluation = mixedCoverageEvaluation();
+    evaluation.underwriting!.best!.path = "RAW";
+    evaluation.photoCheck!.images = [evaluation.photoCheck!.images.find(photo => photo.view === "FRONT")!];
+    evaluation.listing.photosInListing = 2;
+    evaluation.listing.photosAnalyzed = 1;
+    const status = photoReviewStatus(evaluation);
+    assert.equal(status.needsYourReview, false);
+    assert.ok(status.photoNotes.includes("No usable whole-back view among the 1 reviewed photo; 1 listing photo was not reviewed."));
+    assert.ok(!status.photoNotes.includes("No usable photo shows the whole back."));
 });
 
 test("overall identity, authenticity and purchase holds still require review with clear full-card coverage", () => {

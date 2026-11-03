@@ -27,6 +27,7 @@ const LUGIA = toCardRecord({
 const sale = (price, soldAt, title) => ({
     price,
     sold_at: soldAt,
+    sale_type: "fixed_price", // This controlled fixture models a confirmed transaction.
     variant: "Unlimited Holofoil",
     title,
     grader: "PSA",
@@ -36,7 +37,7 @@ const sale = (price, soldAt, title) => ({
     listing_url: null,
 });
 
-// Real Unlimited PSA 9 sales; median $2,600.
+// Historical price examples with simulated confirmed transaction metadata; median $2,600.
 const PSA9 = [
     sale(2325, "2026-07-26", "2000 POKEMON NEO GENESIS #9 LUGIA-HOLO PSA 9 #9 [eBay]"),
     sale(2600, "2026-07-17", "Pokemon 2000 Lugia 9/111 Holo Neo Genesis PSA 9 9/111 [eBay]"),
@@ -117,7 +118,7 @@ test("the seller's condition caps its displayed best case while a priced conditi
 
     assert.equal(result.status, "UNSCREENED");
     assert.equal(result.bestCase.label, "Sell raw");
-    assert.equal(result.bestCase.maxBid, 271);
+    assert.equal(result.bestCase.maxBid, 271.62);
     assert.deepEqual(result.conditionUpside, { sellerCondition: "LIGHTLY_PLAYED", targetCondition: "NEAR_MINT", rawMarketPrice: 531.39 });
 });
 

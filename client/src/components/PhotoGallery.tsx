@@ -7,11 +7,13 @@ export function PhotoGallery({ images }: { images: string[] }) {
     const photos = [...new Set(images)];
     const [selected, setSelected] = useState(0);
     const [view, setView] = useState(initialPhotoView);
-    const [failed, setFailed] = useState(false);
+    const [loadedSource, setLoadedSource] = useState<string | null>(null);
+    const [failedSource, setFailedSource] = useState<string | null>(null);
     const [fullscreenAvailable, setFullscreenAvailable] = useState(false);
     const [fullscreen, setFullscreen] = useState(false);
     const gallery = useRef<HTMLElement>(null);
     const viewport = useRef<HTMLDivElement>(null);
+    const thumbnailRail = useRef<HTMLDivElement>(null);
     const image = useRef<HTMLImageElement>(null);
     const currentView = useRef(view);
     const pointers = useRef(new Map<number, PhotoPoint>());
@@ -19,6 +21,8 @@ export function PhotoGallery({ images }: { images: string[] }) {
     useDialog(fullscreen, gallery, () => { void document.exitFullscreen().catch(() => {}); });
     const index = Math.min(selected, Math.max(0, photos.length - 1));
     const source = photos[index]?.replace(/\/s-l\d+\./, "/s-l1600.");
+    const loaded = loadedSource === source;
+    const failed = failedSource === source;
 
     const bounds = (): PhotoBounds => ({ width: viewport.current?.clientWidth || 1, height: viewport.current?.clientHeight || 1,
         imageWidth: image.current?.naturalWidth || 1, imageHeight: image.current?.naturalHeight || 1 });
@@ -28,13 +32,23 @@ export function PhotoGallery({ images }: { images: string[] }) {
         const size = bounds();
         update(zoomPhotoAt(currentView.current, value, point ?? { x: size.width / 2, y: size.height / 2 }, size));
     };
-    const select = (value: number) => { reset(); setFailed(false); setSelected((value + photos.length) % photos.length); };
+    const select = (value: number) => { reset(); setSelected((value + photos.length) % photos.length); };
     const point = (clientX: number, clientY: number): PhotoPoint => {
         const rect = viewport.current!.getBoundingClientRect();
         return { x: clientX - rect.left, y: clientY - rect.top };
     };
 
-    useEffect(() => { reset(); setFailed(false); }, [source]);
+    useEffect(() => {
+        reset();
+        if (image.current?.complete && image.current.naturalWidth > 0) setLoadedSource(source ?? null);
+        // Scroll only the filmstrip, never the surrounding analysis panel.
+        const rail = thumbnailRail.current;
+        const active = rail?.querySelector<HTMLElement>('[aria-pressed="true"]');
+        if (!rail || !active) return;
+        const left = active.offsetLeft, right = left + active.offsetWidth;
+        const destination = left < rail.scrollLeft ? left : right > rail.scrollLeft + rail.clientWidth ? right - rail.clientWidth : null;
+        if (destination !== null) rail.scrollTo({ left: destination, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+    }, [source]);
     useEffect(() => {
         const element = viewport.current;
         if (!element) return;
@@ -59,7 +73,7 @@ export function PhotoGallery({ images }: { images: string[] }) {
     }, [Boolean(photos.length)]);
 
     const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
-        if (event.button !== 0) return;
+        if (event.button !== 0 || (event.target as Element).closest("a, button, input")) return;
         event.preventDefault();
         event.currentTarget.focus({ preventScroll: true });
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -113,20 +127,32 @@ export function PhotoGallery({ images }: { images: string[] }) {
                 else void gallery.current?.requestFullscreen().catch(() => {});
             }}>{fullscreen ? "Exit full screen" : "Expand viewer"}</button>}
         </div>
+        <div className={styles.galleryNav}>
+            <button type="button" onClick={() => select(index - 1)} disabled={photos.length < 2} aria-label="Previous photo">←</button>
+            <span aria-live="polite" aria-atomic="true"><strong>Photo {index + 1} of {photos.length}</strong></span>
+            <button type="button" onClick={() => select(index + 1)} disabled={photos.length < 2} aria-label="Next photo">→</button>
+        </div>
+        {photos.length > 1 && <div className={styles.photoChoices}>
+            <p className={styles.photoChoicesLabel}>Choose a photo</p>
+            <div ref={thumbnailRail} className={styles.thumbnails} role="group" aria-label="Choose a listing photo">{photos.map((src, i) => <button type="button" key={src}
+                aria-label={`Show photo ${i + 1}`} aria-pressed={i === index} onClick={() => select(i)}>
+                <img src={src} alt="" loading="lazy" />
+                <span className={styles.thumbnailNumber}>{i + 1}</span>
+                {i === index && <span className={styles.thumbnailSelected} aria-hidden="true">✓</span>}
+            </button>)}</div>
+        </div>}
         <div ref={viewport} className={styles.photoViewport} tabIndex={0} role="group" aria-label="Zoomable listing photo" aria-describedby={instructions}
-            data-zoomed={view.zoom > 1} onPointerDown={onPointerDown} onPointerMove={onPointerMove}
+            aria-busy={!loaded && !failed} data-zoomed={view.zoom > 1} onPointerDown={onPointerDown} onPointerMove={onPointerMove}
             onPointerUp={event => pointers.current.delete(event.pointerId)} onPointerCancel={event => pointers.current.delete(event.pointerId)}
             onLostPointerCapture={event => pointers.current.delete(event.pointerId)} onKeyDown={onKeyDown}
             onDoubleClick={event => zoom(currentView.current.zoom === 1 ? 3 : 1, point(event.clientX, event.clientY))}>
-            <img ref={image} className={styles.heroPhoto} src={source} alt={`Listing photo ${index + 1} of ${photos.length}`} draggable={false} decoding="async"
+            <img key={source} ref={image} className={`${styles.heroPhoto} ${loaded ? styles.photoLoaded : ""}`} src={source} alt={`Listing photo ${index + 1} of ${photos.length}`} draggable={false} decoding="async"
                 style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})` }}
-                onLoad={() => update(constrainPhotoView(currentView.current, bounds()))} onError={() => setFailed(true)} />
-            {failed && <p className={styles.photoError} role="status">This photo could not load. Try opening the original below.</p>}
-        </div>
-        <div className={styles.galleryNav}>
-            <button type="button" onClick={() => select(index - 1)} disabled={photos.length < 2} aria-label="Previous photo">←</button>
-            <span aria-live="polite" aria-atomic="true">Photo {index + 1} of {photos.length}</span>
-            <button type="button" onClick={() => select(index + 1)} disabled={photos.length < 2} aria-label="Next photo">→</button>
+                onLoad={event => { if (event.currentTarget !== image.current) return; setLoadedSource(source ?? null); update(constrainPhotoView(currentView.current, bounds())); }}
+                onError={event => { if (event.currentTarget === image.current) setFailedSource(source ?? null); }} />
+            {loaded && <span className={styles.photoPosition} aria-hidden="true">Photo {index + 1} / {photos.length}</span>}
+            {!loaded && !failed && <p className={styles.photoLoading} role="status"><span aria-hidden="true" />Loading photo {index + 1}…</p>}
+            {failed && <p className={styles.photoError} role="status">Photo {index + 1} could not load. <a href={source} target="_blank" rel="noopener noreferrer">Open original photo ↗</a></p>}
         </div>
         <div className={styles.zoomControls} role="group" aria-label="Photo zoom controls">
             <button type="button" onClick={() => zoom(currentView.current.zoom / 1.5)} disabled={view.zoom <= 1} aria-label="Zoom out">−</button>
@@ -138,8 +164,5 @@ export function PhotoGallery({ images }: { images: string[] }) {
         </div>
         <p id={instructions} className={styles.small}>Pinch or scroll to zoom; drag to move. Keyboard: +/− to zoom, arrows to move, 0 to reset. At 1×, left/right change photos.</p>
         <p className={styles.small}>Zoom enlarges the original image; it cannot recover missing detail. <a className={styles.originalPhoto} href={source} target="_blank" rel="noopener noreferrer">Open original photo ↗</a></p>
-        {photos.length > 1 && <details className={styles.photoChoices}><summary>Choose a photo ({photos.length})</summary>
-            <div className={styles.thumbnails}>{photos.map((src, i) => <button type="button" key={src} aria-label={`Show photo ${i + 1}`} aria-pressed={i === index} onClick={() => select(i)}><img src={src} alt="" loading="lazy" /></button>)}</div>
-        </details>}
     </section>;
 }

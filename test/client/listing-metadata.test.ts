@@ -63,7 +63,7 @@ test("cards show real listed dates, distinguish creation, and keep the card-type
         assert.match(html, />Both<\/option>/); assert.match(html, />Raw cards<\/option>/); assert.match(html, />Graded cards<\/option>/);
         const beforeResults = html.slice(0, html.indexOf('hidden=""'));
         assert.match(beforeResults, /English cards only/);
-        assert.match(beforeResults, /Unconfirmed language stays preliminary until identified/);
+        assert.match(beforeResults, /Identity and condition remain preliminary until photo assessment/);
         assert.match(beforeResults, /Minimum Buy It Now price/); assert.match(beforeResults, /Maximum purchase price/);
         assert.match(beforeResults, /All prices by default/);
         assert.equal((beforeResults.match(/type="number"/g) ?? []).length, 2);

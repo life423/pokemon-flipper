@@ -136,7 +136,7 @@ test("a grade with no sales takes the next lower grade's price, and with nothing
 });
 
 test("the max bid clears both the minimum profit and the minimum return", () => {
-    assert.equal(maxBid({ expectedNet: 1000, fixedCosts: 100, shipping: 5 }, CONFIG), 641);
+    assert.equal(maxBid({ expectedNet: 1000, fixedCosts: 100, shipping: 5 }, CONFIG), 641.65);
 });
 
 // Verdicts
@@ -152,12 +152,12 @@ test("Lugia at $300: grading with PSA clears the targets, reselling raw doesn't"
     assert.equal(raw.salePrice, 446.25);
     assert.equal(raw.profit, 46.83);
     assert.equal(raw.clears, false);
-    assert.equal(raw.maxBid, 273);
+    assert.equal(raw.maxBid, 273.60);
 
     assert.equal(psa.tier, "Regular");
     assert.equal(psa.expectedNet, 724.39);
     assert.equal(psa.profit, 299.24);
-    assert.equal(psa.maxBid, 442);
+    assert.equal(psa.maxBid, 442.59);
 
     assert.equal(pathOf(result, "Grade with CGC").status, "UNAVAILABLE");
 });
@@ -166,8 +166,8 @@ test("when no path clears, it's a pass that still names the best max bid", () =>
     const result = underwrite(lugiaEvaluation({ listing: { price: 700, shipping: 5 } }), CONFIG);
 
     assert.equal(result.verdict, "PASS");
-    assert.equal(result.best.maxBid, 442);
-    assert.match(result.reasons[0], /most it.s worth paying is \$442\.00/);
+    assert.equal(result.best.maxBid, 442.59);
+    assert.match(result.reasons[0], /most it.s worth paying is \$442\.59/);
 });
 
 test("raw prices fall back to a worse condition, never a better one", () => {
@@ -230,7 +230,7 @@ test("unquoted shipping is assumed and said so; unchecked fees are flagged", () 
         { ...CONFIG, verified: { selling: true, buying: true, grading: { PSA: false, CGC: false } } }
     );
 
-    assert.equal(result.assumptions.length, 2);
+    assert.equal(result.assumptions.length, 4);
     assert.match(result.assumptions[0], /\$10\.00 is assumed/);
     assert.equal(result.assumptions[1], "Not yet checked against your accounts: PSA and CGC prices.");
 });
@@ -263,14 +263,14 @@ test("a PSA 9 Lugia at $1,500 clears as a buy to resell graded", () => {
     assert.equal(result.verdict, "BUY_GRADED");
     assert.equal(result.best.label, "Resell as PSA 9");
     assert.equal(result.best.profit, 582.96);
-    assert.equal(result.best.maxBid, 1628);
+    assert.equal(result.best.maxBid, 1628.83);
 });
 
 test("the same slab at $2,000 is a pass that names the max bid", () => {
     const result = underwrite(slabEvaluation({ listing: { price: 2000, shipping: 10 } }), CONFIG);
 
     assert.equal(result.verdict, "PASS");
-    assert.match(result.reasons[0], /most it's worth paying is \$1,628\.00/);
+    assert.match(result.reasons[0], /most it's worth paying is \$1,628\.83/);
 });
 
 test("a slab that needs review, or looks fake, isn't priced", () => {
