@@ -48,3 +48,40 @@ test("name-only cleaning cannot hide junk or change explicit seller grading and 
     const release = readTitleByRules("Charizard Celebrations 4/102 CGC 9 with Guard");
     assert.equal(release.set, "Celebrations"); assert.equal(release.grader, "CGC"); assert.equal(release.grade, "9");
 });
+
+test("explicit art descriptors and matched Sword and Shield publisher metadata retain literal modern card names", () => {
+    for (const [title, name, set, number] of [
+        ["PSA 9 Pokemon 2021 Rayquaza V 194/203 Full Art Ultra Rare Evolving Skies", "rayquaza v", "Evolving Skies", "194/203"],
+        ["2021 Pokemon SWSH Evolving Skies Rayquaza V #194/203 Full Art Ultra Rare PSA 9", "rayquaza v", "Evolving Skies", "194/203"],
+        ["Pokemon Rayquaza V (Alternate Full Art) 194/203 SWSH07:Evolving Skies Holo PSA 9", "rayquaza v", "Evolving Skies", "194/203"],
+        ["Rayquaza V Alt/Full Art Holo 194/203 Evolving Skies PSA 9", "rayquaza v", "Evolving Skies", "194/203"],
+        ["Pokemon Sword & Shield Giratina V 186/196 Lost Origin Alternate Full Art PSA 9", "giratina v", "Lost Origin", "186/196"],
+        ["Giratina V SWSH11 Lost Origin 186/196 Alt Full Art Holo PSA 9", "giratina v", "Lost Origin", "186/196"],
+        ["Leafeon V Evolving Skies 167/203 SWSH07 Full Art Holo PSA 9", "leafeon v", "Evolving Skies", "167/203"],
+    ]) {
+        const reading = readTitleByRules(title);
+        assert.deepEqual([reading.cardName, reading.set, reading.cardNumber, reading.grader, reading.grade], [name, set, number, "PSA", "9"], title);
+    }
+});
+
+test("art cleanup preserves printed forms, owners, unknown words and incompatible release codes", () => {
+    for (const name of ["Dark Charizard", "Mega Charizard X", "M Charizard EX", "Alolan Ninetales GX", "Galarian Sirfetch'd V",
+        "Blaine's Arcanine", "Misty's Gyarados", "Charizard ex", "Rayquaza VMAX", "Rayquaza VSTAR", "Unown R"]) {
+        assert.equal(readTitleByRules(`${name} Evolving Skies 194/203 Alternate Full Art Holo PSA 9`).cardName, name.toLowerCase(), name);
+    }
+    for (const title of [
+        "Rayquaza V Evolving Skies 194/203 Curious Art Holo PSA 9",
+        "Rayquaza V Evolving Skies 194/203 SWSH11 Holo PSA 9",
+        "Rayquaza V Evolving Skies 194/203 SWSH007 Holo PSA 9",
+        "Rayquaza V 194/203 SWSH07 Holo PSA 9",
+        "SWSH's Rayquaza V Evolving Skies 194/203 Holo PSA 9",
+    ]) assert.notEqual(readTitleByRules(title).cardName, "rayquaza v", title);
+    assert.equal(readTitleByRules("Rayquaza V Evolving Skies SWSH194 Holo PSA 9").cardNumber, "SWSH194", "a promo number is transcribed, never erased as a release code");
+    assert.equal(readTitleByRules("Rayquaza V Evolving Skies SWSH07 Holo PSA 9").cardNumber, "SWSH07", "without a separate collector fraction the code remains the literal number");
+    const raw = readTitleByRules("Rayquaza V Evolving Skies 194/203 Alt Full Art Holo HP");
+    assert.equal(raw.cardName, "rayquaza v"); assert.equal(raw.condition, "Heavily Played");
+    assert.equal(raw.grader, null); assert.equal(raw.grade, null);
+    const qualifier = readTitleByRules("Giratina V Lost Origin 186/196 Full Art Holo PSA 9 (OC)");
+    assert.notEqual(qualifier.cardName, "giratina v", "name-only cleaning must not erase the original qualifier");
+    assert.equal(qualifier.grade, "9");
+});

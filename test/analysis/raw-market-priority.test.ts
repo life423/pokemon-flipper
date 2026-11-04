@@ -146,9 +146,9 @@ test("new raw context cannot reorder supported financial bands ahead of their ex
     assert.ok(compareAnalysisPriority(b, a, targets) < 0, "supported expected profit keeps its existing priority within the priced band");
 });
 
-test("bad, sparse, stale or future sold facts stay neutral; a known condition is not an unspecified bucket", () => {
+test("bad, empty, stale or future sold facts stay neutral; a known condition is not an unspecified bucket", () => {
     const changes = [
-        { count: 2 }, { median: 0 }, { median: NaN }, { median: Infinity }, { confidence: "NONE" }, { windowDays: 181 }, { windowDays: NaN },
+        { count: 0 }, { median: 0 }, { median: NaN }, { median: Infinity }, { confidence: "NONE" }, { windowDays: 181 }, { windowDays: NaN },
         { newestSale: new Date(Date.now() - 91 * 86_400_000).toISOString() }, { newestSale: new Date(Date.now() + 86_400_000).toISOString() }, { newestSale: null },
         { grade: "NEAR_MINT" }, { low: 1000 },
     ];

@@ -5,6 +5,7 @@ import { offerPlan, offerWorthMaking } from "./offer.ts";
 import type { Evaluation, ListingSummary, Screen, Targets } from "../types.ts";
 import { withFreshListing } from "../fresh-listing.ts";
 import { applySoldPriceScreen } from "./sold-screen.ts";
+import { deferJungleNoSymbolPricing } from "../jungle-no-symbol.ts";
 
 // Your profit and return targets change by card, so the page re-prices
 // everything for the targets you set. The same money math runs on the
@@ -35,8 +36,9 @@ export function retargetEvaluation(evaluation: Evaluation, targets: Targets, cur
               },
           }
         : evaluation;
-    const underwriting = underwrite(updated, withTargets(targets));
-    const repriced = { ...updated, underwriting };
+    const scoped = deferJungleNoSymbolPricing(updated);
+    const underwriting = underwrite(scoped, withTargets(targets));
+    const repriced = { ...scoped, underwriting };
 
     return { ...repriced, rating: rateDeal(repriced) };
 }

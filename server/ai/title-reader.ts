@@ -4,7 +4,6 @@ import { createBatcher } from "../lib/batcher.ts";
 import { createLimiter } from "../lib/concurrency.ts";
 import { AI_CONCURRENCY } from "../../shared/work-limits.ts";
 import { exclusionReason, normalizeText } from "../ebay/filters.ts";
-import { normalizeSetName } from "../identity/card-identity.ts";
 import { searchAttributes } from "../../shared/search-criteria.ts";
 import { cardLanguageStatus } from "../../shared/card-language.ts";
 import { StorageUnavailableError } from "../storage/index.ts";
@@ -248,61 +247,3 @@ export function createTitleReader({
 }
 
 export const readTitle = createTitleReader();
-
-const FILLABLE: [aspect: string, field: keyof TitleReading][] = [
-    ["Set", "set"],
-    ["Card Number", "cardNumber"],
-    ["Card Name", "cardName"],
-    ["Language", "language"],
-    ["Professional Grader", "grader"],
-    ["Grade", "grade"],
-];
-
-// Item specifics, with the set, number, name, and language read from
-// the title when the seller left them out. The seller's own item
-// specifics always win; the title only fills gaps.
-// A Set item detail that only names a printing ("Unlimited", "1st Edition")
-// or eBay's catch-all isn't a set; the title gets to fill it.
-function isRealSet(value: string | undefined): value is string {
-    const name = normalizeSetName(value);
-    return name !== "" && !/^miscellaneous\b/.test(name);
-}
-
-export async function fillFromTitle(
-    listing: { title: string; aspects: Record<string, string> },
-    read: (title: string) => Promise<TitleReading | null> = readTitle
-): Promise<{
-    aspects: Record<string, string>;
-    filled: string[];
-    condition: string | null;
-    kind: TitleReading["kind"];
-}> {
-    const { aspects } = listing;
-    const hasName = Boolean(aspects["Card Name"] ?? aspects.Character);
-
-    if (isRealSet(aspects.Set) && aspects["Card Number"] && hasName) {
-        return { aspects, filled: [], condition: null, kind: null };
-    }
-
-    const reading = await read(listing.title);
-
-    if (!reading) return { aspects, filled: [], condition: null, kind: null };
-
-    const filled: string[] = [];
-    const result = { ...aspects };
-
-    if (!isRealSet(result.Set)) delete result.Set;
-
-    for (const [aspect, field] of FILLABLE) {
-        if (aspect === "Card Name" && hasName) continue;
-
-        const value = reading[field];
-
-        if (!result[aspect] && value) {
-            result[aspect] = value;
-            filled.push(aspect);
-        }
-    }
-
-    return { aspects: result, filled, condition: reading.condition ?? null, kind: reading.kind ?? null };
-}

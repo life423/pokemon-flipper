@@ -117,3 +117,19 @@ test("exact publisher phrases and graded artist suffixes clean real sold-title r
         ["Dark Dragonite Fossil 4/62 PSA 8 Himeno", "Dark Dragonite"],
     ]) assert.equal(resolveScreeningName({ title, claims: [claim], candidate: "Dragonite" }), claim, title);
 });
+
+test("source-observed art and release descriptors reconcile old saved claims without borrowing an intent species", () => {
+    for (const [title, claims, candidate] of [
+        ["Rayquaza V Evolving Skies 194/203 Full Art Holo PSA 9", ["Rayquaza V", "rayquaza v full art"], "Rayquaza V"],
+        ["Pokemon SWSH Evolving Skies Rayquaza V 194/203 PSA 9", ["Rayquaza V", "swsh rayquaza v"], "Rayquaza V"],
+        ["Giratina V Lost Origin 186/196 SWSH11 Alt Full Art PSA 9", ["Giratina V", "giratina v swsh11 alt full art"], "Giratina V"],
+    ] as const) assert.equal(resolveScreeningName({ title, claims, candidate }), candidate, title);
+    for (const [title, claims, candidate] of [
+        ["Dark Charizard Evolving Skies 194/203 Full Art", ["Dark Charizard"], "Charizard"],
+        ["Rayquaza VMAX Evolving Skies 194/203 Full Art", ["Rayquaza VMAX"], "Rayquaza V"],
+        ["Blaine's Arcanine Evolving Skies 194/203 Alt Art", ["Blaine's Arcanine"], "Arcanine"],
+        ["Rayquaza V Evolving Skies 194/203 SWSH11", ["SWSH11 Rayquaza V"], "Rayquaza V"],
+        ["SWSH Rayquaza V 194/203", ["SWSH Rayquaza V"], "Rayquaza V"],
+        ["Rayquaza V Evolving Skies 194/203 Curious Art", ["Rayquaza V Curious Art"], "Rayquaza V"],
+    ] as const) assert.notEqual(resolveScreeningName({ title, claims, candidate }), candidate, title);
+});

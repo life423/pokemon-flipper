@@ -4,6 +4,7 @@ import { RAW_CONDITIONS, isRawCondition } from "../conditions.ts";
 import { dollars, round2 } from "../format.ts";
 import { cents, meetsMoneyTargets, money, sellingFeeCents, taxedCents } from "./cents.ts";
 import { referencePriceReason } from "./price-evidence.ts";
+import { jungleNoSymbolReason } from "../jungle-no-symbol.ts";
 import type {
     CompSummary,
     Condition,
@@ -39,12 +40,13 @@ export interface UnderwritingInput {
     pricingDeferred?: Evaluation["pricingDeferred"];
     pricesCheckedAt?: string;
     deeperPhotoReview?: DeeperPhotoReview;
-    listing: { price: number | null; shipping: number | null; availability?: string };
+    listing: { price: number | null; shipping: number | null; availability?: string; title?: string };
     identity: Identity | null;
     condition: Pick<Condition, "rawCondition" | "gradeRange" | "authenticity"> | null;
     rawPricing?: RawPricing | null;
     gradedPricing?: Partial<Record<Grader, GradedPricing>> | null;
-    slab?: Pick<Slab, "status" | "grader" | "grade" | "reasons" | "concerns"> | null;
+    slab?: Pick<Slab, "status" | "grader" | "grade" | "reasons" | "concerns"> & Partial<Pick<Slab, "labelText">> | null;
+    photoCheck?: Evaluation["photoCheck"];
     slabPricing?: SlabPricing | null;
     modeReasons?: string[];
 }
@@ -500,6 +502,11 @@ function underwriteBase(input: UnderwritingInput, config: MoneyConfig): Underwri
 
     if (!readyForPricing(identity)) {
         return verdict("NEEDS_REVIEW", identity?.reasons?.length ? identity.reasons : ["The card isn't identified yet."]);
+    }
+
+    const unsupportedVariant = jungleNoSymbolReason(input);
+    if (unsupportedVariant && (input.slab ? input.slab.status === "OK" : condition?.authenticity.concern === "NONE_SEEN")) {
+        return verdict("CANT_PRICE", [unsupportedVariant]);
     }
 
     const listing: PricedListing = { price, shipping: input.listing.shipping };

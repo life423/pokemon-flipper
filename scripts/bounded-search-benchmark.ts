@@ -14,6 +14,7 @@ import { runBenchmarkQueue, type BenchmarkQueueResult } from "./review/benchmark
 import { BENCHMARK_TRANSPORT_LIMITS, createBenchmarkTransport } from "./review/benchmark-transport.ts";
 import { candidateAdmission, summarizeBenchmark } from "./review/benchmark-results.ts";
 import { benchmarkCommand } from "./review/benchmark-command.ts";
+import { drainSharedWork } from "../server/lib/shared-work.ts";
 
 const args = process.argv.slice(2);
 if (args.includes("--help")) {
@@ -48,6 +49,7 @@ const report: {
     method: string; limitations: string[]; settings: object; summary?: SearchSummary;
     listings: ListingSummary[]; queue?: BenchmarkQueueResult; final?: ReturnType<typeof summarizeBenchmark>;
     snapshots: Record<string, unknown>; events: object[]; error?: string; transport?: unknown; costDelta?: object;
+    shutdownDrain?: { complete: boolean; pending: number };
 } = {
     searchId, query, startedAt: new Date().toISOString(),
     ...(command.mode === "resume" ? { resumedFrom: path.resolve(command.file) } : {}),
@@ -59,6 +61,7 @@ const report: {
         "This diagnostic does not automatically retry network failures, force photo refreshes or run deeper reviews.",
         `The diagnostic transport ceiling is ${priceTransportsDiagnosticCap} uncached PKMNPrices requests, alongside the production persistent all-stage allowance. Requests and charged credits are reported separately.`,
         "Token-charge totals use actual returned usage and the existing configured rates; provider credit headers are not a cash invoice.",
+        "Stop drains already-dispatched accepted responses before final usage accounting; retained photo answers may still lack a completed valuation.",
         ...(live ? [] : ["Replayed listing availability is a saved snapshot, not a new eBay live check. Missing AI evidence fails before any reservation/preflight."]),
     ],
     settings: { targets, filters, includeOffers, matchingRows: DEVELOPMENT_SEARCH_LIMIT, aiCapUsd: 0.02, browseCap, priceTransportsDiagnosticCap },
@@ -87,9 +90,9 @@ try {
     const { searchDeals } = await import("../server/deals/search.ts");
     const scope = <T>(phase: string, work: () => T, listingId?: string): T => context.run({ searchId, phase, listingId }, () =>
         withAiUsageContext({ searchId, ...(listingId ? { listingId } : {}) }, work));
-    const snapshots = async (phase: string) => scope(phase, async () => ({
+    const snapshots = async (phase: string, refreshAccount = live) => scope(phase, async () => ({
         ai: await aiUsageToday(searchId), budget: await aiSpending.summary(searchId), browse: await browseSearchAllowance(), pricing: await priceResearchSummary(searchId),
-        ...(live ? { accountEbay: await ebayUsage({ fresh: true }) } : {}),
+        ...(refreshAccount ? { accountEbay: await ebayUsage({ fresh: true }) } : {}),
     }));
     report.snapshots.before = await snapshots("before");
     await checkpoint();
@@ -98,7 +101,7 @@ try {
     const stopped = new AbortController();
     const timer = setTimeout(() => stopped.abort(new Error("Diagnostic ten-minute deadline reached")), 600_000);
     const stop = () => stopped.abort(new Error("Diagnostic stopped"));
-    process.once("SIGINT", stop); process.once("SIGTERM", stop);
+    process.on("SIGINT", stop); process.on("SIGTERM", stop);
     try {
         if (command.mode === "replay") {
             report.summary = previous.summary;
@@ -137,11 +140,25 @@ try {
         report.final = summarizeBenchmark(resolvedListings, report.queue.evaluations as Record<string, Evaluation>, report.queue.errors, intent, targets,
             { filters: { typeFilter: "FIXED_PRICE", kindFilter: "all" }, includeOffers });
     } finally {
-        clearTimeout(timer); process.off("SIGINT", stop); process.off("SIGTERM", stop);
-        report.snapshots.after = await snapshots("after");
+        clearTimeout(timer);
+        const wasStopped = stopped.signal.aborted;
+        // Stop every future stage first, while accepted paid answers keep
+        // their dispatch-only response handling and finish saving below.
+        stopped.abort(new Error("Diagnostic shutdown; no additional provider work is allowed."));
+        try {
+            report.shutdownDrain = await drainSharedWork();
+            report.events.push({ type: "shutdown-drain", elapsedMs: elapsedMs(), ...report.shutdownDrain });
+            if (!report.shutdownDrain.complete) {
+                report.error = "Accepted shared work did not finish within the shutdown bound. This report is incomplete; original spending holds, claims and recovery files were retained.";
+                process.exitCode = 1;
+            }
+            // A stopped run only reads local counters. Fresh Analytics must
+            // not start another provider request while the CLI is shutting down.
+            report.snapshots.after = await snapshots("after", live && !wasStopped);
+        } finally { process.off("SIGINT", stop); process.off("SIGTERM", stop); }
     }
 } catch (error) {
-    report.error = error instanceof Error ? error.message : "Benchmark failed.";
+    report.error ??= error instanceof Error ? error.message : "Benchmark failed.";
     process.exitCode = 1;
 } finally {
     report.completedAt = new Date().toISOString();
@@ -155,7 +172,9 @@ try {
     };
     await checkpoint();
     globalThis.fetch = originalFetch;
-    await closeDatabase?.();
+    // Never interrupt an accepted save merely because its diagnostic drain
+    // timed out. Its outstanding claim/hold remains available for inspection.
+    if (report.shutdownDrain?.complete !== false) await closeDatabase?.();
 }
 process.stdout.write(JSON.stringify({ report: path.join(directory, "report.json"), searchId, error: report.error ?? null, counts: report.final?.counts,
     snapshots: report.snapshots, transport: report.transport }, null, 2) + "\n");

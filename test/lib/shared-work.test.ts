@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createSharedWork } from "../../server/lib/shared-work.ts";
+import { createSharedWork, drainSharedWork } from "../../server/lib/shared-work.ts";
 
 function deferred<T>() {
     let resolve!: (value: T) => void;
@@ -53,4 +53,40 @@ test("all consumers stopping before dispatch prevents work; failures release the
     await assert.rejects(share("same", async () => { throw new Error("offline failure"); }), /offline failure/);
     assert.equal(await share("same", async () => 2), 2);
     assert.equal(calls, 0);
+});
+
+test("shutdown drains detached accepted jobs through their final save before storage can close", async () => {
+    const share = createSharedWork(), stopped = new AbortController();
+    const started = deferred<void>(), response = deferred<number>(), save = deferred<void>();
+    let saved = false, closed = false, dispatched = 0;
+    const work = share("accepted", async () => {
+        dispatched++; started.resolve();
+        const accepted = await response.promise;
+        await save.promise;
+        assert.equal(closed, false, "SQL must remain available while an accepted answer saves");
+        saved = true;
+        return accepted;
+    }, stopped.signal);
+    await started.promise; stopped.abort(); await assert.rejects(work, { name: "AbortError" });
+    let finished = false;
+    const shutdown = drainSharedWork().then(result => { assert.equal(saved, true); closed = true; finished = true; return result; });
+    response.resolve(42);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(finished, false, "consumer cancellation and a returned response are not completion barriers");
+    save.resolve();
+    assert.deepEqual(await shutdown, { complete: true, pending: 0 });
+    assert.equal(dispatched, 1); assert.equal(closed, true);
+});
+
+test("a drain timeout reports incomplete accepted work without cancelling it or authorizing another dispatch", async () => {
+    const share = createSharedWork(), stopped = new AbortController(), started = deferred<AbortSignal>(), response = deferred<number>();
+    let saved = false, dispatched = 0;
+    const work = share("late", async signal => { dispatched++; started.resolve(signal); const value = await response.promise; saved = true; return value; }, stopped.signal);
+    const signal = await started.promise; stopped.abort(); await assert.rejects(work, { name: "AbortError" });
+    assert.equal(signal.aborted, true);
+    assert.deepEqual(await drainSharedWork({ timeoutMs: 0 }), { complete: false, pending: 1 });
+    assert.equal(saved, false); assert.equal(dispatched, 1);
+    response.resolve(7);
+    assert.deepEqual(await drainSharedWork(), { complete: true, pending: 0 });
+    assert.equal(saved, true); assert.equal(dispatched, 1);
 });

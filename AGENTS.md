@@ -57,13 +57,14 @@ Read docs/architecture.md for the source map and reading order.
   server-side filter requires an explicit rerun, never paid work while typing.
 - Sold screening shares catalog/market work across rows: four workers, 64
   uncached PKMNPrices requests including catalog work. Sparse markets may follow
-  up to four 20-sale pages, stopping once three eligible matched sales support a
+  up to four 20-sale pages, stopping once one eligible matched sale supports a
   scope; cached final-valuation pages are reused.
   It makes no AI or eBay-detail requests. Missing/deferred data stays Sorting.
-  Three applicable sales authorize automatic photos, retaining the focused
+  One applicable sale authorizes automatic photos with sparse confidence retained,
+  retaining the focused
   <=$10 raw First Edition Base Set research exception.
 - Exact slab grader/grade/printing/finish scopes stay separate. Only one explicit
-  scope with >=3 eligible sales within 90 days can exclude obvious overpricing
+  scope with >=1 eligible sale within 90 days can exclude obvious overpricing
   using the upper observed resale value after costs. Raw condition buckets and
   unspecified medians order research; they do not assign this copy a condition,
   create a Deal or exclude unassessed grading/premium-printing upside.
@@ -156,6 +157,11 @@ Read docs/architecture.md for the source map and reading order.
   Reject unconfirmed historical amounts. Distinguish asking references, TCGplayer
   fallback, unspecified raw sales and condition-matched sold prices. Do not merge
   printings, finishes, currencies, grades or raw conditions.
+- Prefer the 90-day graded market as soon as one valid current match exists;
+  use the labeled 180-day fallback only if there are no eligible current sales.
+  One or two matched sales retain LOW confidence. Preliminary raw references
+  admit photo research; the separate raw sold-copy condition evidence workflow
+  remains unfinished and was not changed into seller-claim pricing.
 - Corroborated physical identity can correct seller metadata. Readable slab-cert
   typos are informational; actual holder/identity/authenticity conflicts matter.
   Anniversary Pikachu marks, Base Set 2 symbols and copyright clues distinguish

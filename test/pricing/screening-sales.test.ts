@@ -8,6 +8,9 @@ import { StorageUnavailableError } from "../../server/storage/index.ts";
 import type { CardRecord, Comp, FetchSoldPage } from "../../server/pricing/types.ts";
 import type { ListingSummary, SearchIntent } from "../../shared/types.ts";
 import { applySoldPriceScreen } from "../../shared/money/sold-screen.ts";
+import { readTitleByRules } from "../../server/ai/title-reader.ts";
+import { screenListingWithoutAi } from "../../server/deals/screen-listing.ts";
+import { canAutoAnalyze, resultGroup } from "../../shared/analysis.ts";
 
 const NOW = Date.parse("2026-11-03T12:00:00Z"), DAY = 86_400_000;
 const intent: SearchIntent = { cardName: "Charizard", sets: ["Base Set"], cardNumber: "4/102", printing: null, graded: null, titleWords: ["charizard"], source: "rules" };
@@ -27,6 +30,132 @@ function harness(options: { cards?: CardRecord[]; raw?: (record: number | string
     } });
     return { run, calls };
 }
+
+test("explicit Jungle No Symbol claims retain unpriced visibility without borrowing ordinary raw or slab references", async () => {
+    const { run, calls } = harness({ lookup: async () => assert.fail("unsupported No Symbol markets must not buy ordinary price research") });
+    for (const [name, number, spelling] of [["Jolteon", "4/64", "No Symbol"], ["Vaporeon", "12/64", "NO-SYMBOL"], ["Snorlax", "11/64", "NoSymbol"]]) {
+        const wanted: SearchIntent = { ...intent, cardName: name, sets: ["Jungle"], cardNumber: number };
+        for (const isGraded of [false, true]) {
+            const subject = listing({ title: `${name} Jungle ${number} Unlimited Holo ${spelling} ${isGraded ? "PSA 8" : ""}`, isGraded, currentPrice: 5000,
+                screen: { status: "UNSCREENED", card: { name, set: "Jungle", cardNumber: number, printing: "UNLIMITED" } } });
+            const evidence = await run(subject, wanted);
+            assert.equal(evidence.status, "UNAVAILABLE");
+            assert.equal(evidence.exactScope, false);
+            assert.deepEqual(evidence.references, []);
+            const retained = applySoldPriceScreen(subject, evidence);
+            assert.equal(retained.screen.status, "UNSCREENED");
+            assert.equal(resultGroup(retained, null), "candidates");
+            assert.equal(canAutoAnalyze(retained), false);
+        }
+    }
+    assert.equal(calls.lookup, 0); assert.equal(calls.raw.length, 0); assert.equal(calls.graded.length, 0);
+});
+
+test("ordinary Jungle still uses exact sold references and missing edition wording is not treated as No Symbol", async () => {
+    const wanted: SearchIntent = { ...intent, cardName: "Jolteon", sets: ["Jungle"], cardNumber: "4/64" };
+    const { run } = harness({ cards: [card({ name: "Jolteon", setName: "Jungle", cardNumber: "4/64" })],
+        graded: async () => three({ title: "Jolteon Jungle 4/64 Unlimited Holo PSA 8", grader: "PSA", grade: "8" }) });
+    for (const suffix of ["", "No First Edition symbol", "without a 1st Edition stamp"]) {
+        const subject = listing({ title: `Jolteon Jungle 4/64 Unlimited Holo PSA 8 ${suffix}`, isGraded: true, currentPrice: 5000,
+            screen: { status: "UNSCREENED", card: { name: "Jolteon", set: "Jungle", cardNumber: "4/64", printing: "UNLIMITED" } } });
+        const evidence = await run(subject, wanted);
+        if (!suffix) {
+            assert.equal(evidence.exactScope, true);
+            assert.equal(evidence.references[0].summary.count, 3);
+            assert.equal(applySoldPriceScreen(subject, evidence).screen.status, "DROPPED");
+        } else {
+            assert.doesNotMatch(evidence.note, /No Symbol/i, suffix);
+            assert.equal(applySoldPriceScreen(subject, evidence).screen.status, "UNSCREENED", "existing unresolved edition wording remains visible");
+        }
+    }
+});
+
+test("literal modern names reach exact sold-price exclusion before buying labels, while cheap matching copies still need photos", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("modern title regressions must remain offline"));
+    for (const [name, set, number, title] of [
+        ["Rayquaza V", "Evolving Skies", "194/203", "PSA 9 Pokemon 2021 Rayquaza V 194/203 Full Art Ultra Rare Evolving Skies"],
+        ["Rayquaza V", "Evolving Skies", "194/203", "Pokemon 2021 SWSH Evolving Skies Rayquaza V #194/203 PSA 9 MINT"],
+        ["Rayquaza V", "Evolving Skies", "194/203", "Pokemon Rayquaza V (Alternate Full Art) 194/203 SWSH07:Evolving Skies Holo PSA 9"],
+        ["Giratina V", "Lost Origin", "186/196", "Pokemon Sword & Shield Giratina V Lost Origin 186/196 Alt/Full Art Holo PSA 9"],
+    ]) {
+        const wanted: SearchIntent = { ...intent, cardName: name, sets: [set], cardNumber: number, titleWords: [name.split(" ")[0].toLowerCase()] };
+        const { run, calls } = harness({ cards: [card({ name: `${name} (Alternate Full Art)`, setName: set, cardNumber: number })],
+            graded: async () => three({ title: `${name} ${set} ${number} Unlimited Holo PSA 9`, price: 400, grader: "PSA", grade: "9" }) });
+        const subject = await screenListingWithoutAi(listing({ title, isGraded: true, currentPrice: 800, shipping: 0, images: ["front", "back"] }),
+            wanted, undefined, async value => readTitleByRules(value));
+        assert.equal(subject.screen!.card!.name, name.toLowerCase(), title);
+        const evidence = await run(subject, wanted);
+        assert.equal(evidence.exactScope, true, title);
+        assert.equal(evidence.references[0].summary.count, 3);
+        const overpriced = applySoldPriceScreen(subject, evidence);
+        assert.equal(overpriced.screen.status, "DROPPED", title);
+        assert.equal(canAutoAnalyze(overpriced), false, "existing sold evidence excludes the high price without a paid label check");
+        const cheap = applySoldPriceScreen({ ...subject, currentPrice: 200 }, evidence);
+        assert.equal(canAutoAnalyze(cheap), true);
+        assert.equal(resultGroup(cheap, null), "candidates", "metadata never creates a verified Deal");
+        assert.equal(calls.lookup, 1); assert.equal(calls.graded.length, 1);
+    }
+});
+
+test("modern descriptor cleanup cannot manufacture missing identity fields, printing/finish scope or ordinary qualifiers", async () => {
+    const wanted: SearchIntent = { ...intent, cardName: "Rayquaza V", sets: ["Evolving Skies"], cardNumber: "194/203" };
+    const { run } = harness({ cards: [card({ name: "Rayquaza V (Alternate Full Art)", setName: "Evolving Skies", cardNumber: "194/203" })],
+        graded: async () => three({ title: "Rayquaza V Evolving Skies 194/203 Unlimited Holo PSA 9", grader: "PSA", grade: "9" }) });
+    for (const title of [
+        "Pokemon Evolving Skies 194/203 Full Art Holo PSA 9",
+        "Rayquaza V 194/203 Full Art Holo PSA 9",
+        "Rayquaza V Evolving Skies Full Art Holo PSA 9",
+        "Rayquaza V Evolving Skies 194/203 SWSH11 Full Art Holo PSA 9",
+        "Rayquaza V Evolving Skies 194/203 Curious Art Holo PSA 9",
+        "Rayquaza V Evolving Skies 194/203 First Edition Full Art Holo PSA 9",
+        "Rayquaza V Evolving Skies 194/203 Full Art Holo PSA 9 (OC)",
+        "Rayquaza V Evolving Skies 194/203 Full Art Holo PSA 9 Miscut",
+        "Rayquaza V Evolving Skies 194/203 Full Art Holo CGC Pristine 10",
+    ]) {
+        const subject = listing({ title, isGraded: true, currentPrice: 5000 });
+        const evidence = await run(subject, wanted);
+        assert.equal(evidence.exactScope, false, title);
+        if (/\(OC\)|Miscut|Pristine/i.test(title)) assert.deepEqual(evidence.references, [], "special labels do not borrow an ordinary slab sold scope");
+        assert.equal(applySoldPriceScreen(subject, evidence).screen.status, "UNSCREENED", title);
+    }
+    const multiple = harness({ cards: [card({ name: "Rayquaza V", setName: "Evolving Skies", cardNumber: "194/203", variants: [
+        variant(), variant("1st Edition Holofoil", "FIRST_EDITION"), variant("Unlimited Reverse Holofoil", "UNLIMITED", "REVERSE_HOLO"),
+    ] })], graded: async (_id, target) => three({ title: `Rayquaza V Evolving Skies 194/203 ${target.variant.startsWith("1st") ? "1st Edition" : "Unlimited"} ${target.variant.includes("Reverse") ? "Reverse Holo" : "Holo"} PSA 9`,
+        grader: "PSA", grade: "9", variant: target.variant }) });
+    for (const title of [
+        "Rayquaza V Evolving Skies 194/203 Full Art PSA 9",
+        "Rayquaza V Evolving Skies 194/203 Full Art Holo PSA 9",
+    ]) {
+        const subject = listing({ title, isGraded: true, currentPrice: 5000 });
+        const evidence = await multiple.run(subject, wanted);
+        assert.equal(evidence.status, "AVAILABLE", title);
+        assert.equal(evidence.exactScope, false, "remaining printing/finish alternatives are kept separate");
+        assert.equal(applySoldPriceScreen(subject, evidence).screen.status, "UNSCREENED", title);
+    }
+});
+
+test("an explicit miscut or qualified slab stays visible and unpriced even if its saved name is clean or literal name is unresolved", async () => {
+    const { run, calls } = harness({ lookup: async () => assert.fail("a special live slab cannot borrow ordinary sold research") });
+    for (const [name, set, number, qualifier] of [
+        ["Rayquaza V", "Evolving Skies", "194/203", "Miscut"],
+        ["Giratina V", "Lost Origin", "186/196", "Miscut Error Special Alignment"],
+        ["Rayquaza V", "Evolving Skies", "194/203", "(OC)"],
+        ["Giratina V", "Lost Origin", "186/196", "Qualified"],
+    ]) {
+        const wanted: SearchIntent = { ...intent, cardName: name, sets: [set], cardNumber: number };
+        const subject = listing({ title: `${name} ${set} ${number} Full Art Holo PSA 9 ${qualifier}`, isGraded: true,
+            currentPrice: 800, images: ["front", "back"], listedAttributes: { grader: "PSA", grade: 9, finish: "HOLO" },
+            screen: { status: "UNSCREENED", needsAnalysis: "SLAB_LABEL", reason: "Saved title context", bestCase: null, assumed: null,
+                card: { name, set, cardNumber: number, printing: "UNKNOWN", printingLabel: null } } });
+        const evidence = await run(subject, wanted), result = applySoldPriceScreen(subject, evidence);
+        assert.equal(evidence.status, "UNAVAILABLE"); assert.equal(evidence.exactScope, false);
+        assert.deepEqual(evidence.references, []);
+        assert.equal(result.screen.status, "UNSCREENED", "special inventory is not discarded as an ordinary price exclusion");
+        assert.equal(resultGroup(result, null), "candidates");
+        assert.equal(canAutoAnalyze(result), false, "ordinary sold references cannot buy a special-label assessment");
+    }
+    assert.equal(calls.lookup, 0); assert.equal(calls.graded.length, 0);
+});
 
 test("raw sold references keep independent condition buckets and confirmed transaction amounts", async () => {
     const { run, calls } = harness({ raw: async () => [
@@ -401,7 +530,7 @@ test("partial slab references survive budget or provider deferral without becomi
     }
 });
 
-test("a wholly missing or sparse failed market remains deferred or unavailable rather than priced context", async () => {
+test("missing markets stay deferred while a partial matched sale remains usable context", async () => {
     const absent = harness({ lookup: async () => { throw new ScreeningPriceBudgetError(); } });
     assert.equal((await absent.run(listing(), intent)).status, "DEFERRED");
     const failed = harness({ raw: async () => { throw new Error("Provider unavailable"); } });
@@ -411,13 +540,13 @@ test("a wholly missing or sparse failed market remains deferred or unavailable r
         return [sale()];
     } });
     const result = await sparse.run(listing({ title: "Charizard Base Set 4/102 Holo" }), intent);
-    assert.equal(result.status, "DEFERRED"); assert.equal(result.references[0].summary.count, 1);
+    assert.equal(result.status, "AVAILABLE"); assert.equal(result.exactScope, false); assert.equal(result.references[0].summary.count, 1);
 });
 
 test("sparse sales remain observations and graded evidence uses an explicit older fallback window", async () => {
     const sparse = harness({ raw: async () => [sale({ price: 80 }), sale({ price: 100 })] });
     const raw = await sparse.run(listing(), intent);
-    assert.equal(raw.status, "UNAVAILABLE"); assert.equal(raw.references[0].summary.count, 2); assert.equal(raw.references[0].summary.median, 90);
+    assert.equal(raw.status, "AVAILABLE"); assert.equal(raw.references[0].summary.count, 2); assert.equal(raw.references[0].summary.median, 90);
     const slab = harness({ graded: async () => three({ title: "Charizard Base Set 4/102 Unlimited Holo PSA 8", grader: "PSA", grade: "8", sold_at: new Date(NOW - 100 * DAY).toISOString() }) });
     const old = await slab.run(listing({ title: "Charizard Base Set 4/102 Unlimited Holo PSA 8", isGraded: true }), intent);
     assert.equal(old.status, "AVAILABLE"); assert.equal(old.references[0].summary.windowDays, 180);
@@ -428,14 +557,14 @@ test("sparse slab pages recover applicable sales without mixing grade, finish, p
     const first = [slab({ price: 90 }), slab({ price: 100 })];
     const { run, calls } = harness({ page: async (_id, target) => {
         assert.equal(target.grader, "PSA"); assert.equal(target.grade, "8"); assert.equal(target.variant, "Unlimited Holofoil");
-        if (!target.cursor) return { sales: [...first,
+        if (!target.cursor) return { sales: [
             slab({ title: "Charizard Base Set 4/102 1st Edition Holo PSA 8", variant: "1st Edition Holofoil" }),
             slab({ title: "Charizard Base Set 4/102 Unlimited Reverse Holo PSA 8", variant: "Unlimited Reverse Holofoil" }),
             slab({ title: "Charizard Base Set 4/102 Unlimited Holo PSA 9", grade: "9" }),
             slab({ currency: "EUR" }), slab({ sale_type: null }), slab({ attribution: "shared" }),
         ], nextCursor: "second" };
         assert.equal(target.cursor, "second");
-        return { sales: [{ ...first[0], id: String(first[0].id) }, slab({ price: 110 }), slab({ price: 120 })], nextCursor: "third" };
+        return { sales: [...first, { ...first[0], id: String(first[0].id) }, slab({ price: 110 }), slab({ price: 120 })], nextCursor: "third" };
     } });
     const subject = listing({ title: "Charizard Base Set 4/102 Unlimited Holo PSA 8", isGraded: true });
     const result = await run(subject, intent);
@@ -448,60 +577,68 @@ test("sparse slab pages recover applicable sales without mixing grade, finish, p
     assert.equal(calls.raw.length + calls.graded.length, 0);
 });
 
-test("three applicable first-page sales stop further sold-page research", async () => {
+test("one exact recent slab sale stops pagination and admits photo verification without creating a Deal", async () => {
     const { run, calls } = harness({ page: async (_id, target) => {
         assert.equal(target.cursor, undefined, "enough matched sales must not request the next cursor");
-        return { sales: three(), nextCursor: "unused" };
+        return { sales: [sale({ title: "Charizard Base Set 4/102 Unlimited Holo PSA 8", grader: "PSA", grade: "8" })], nextCursor: "unused" };
     } });
-    assert.equal((await run(listing(), intent)).status, "AVAILABLE");
+    const subject = listing({ title: "Charizard Base Set 4/102 Unlimited Holo PSA 8", isGraded: true, currentPrice: 10, images: ["front", "back"] });
+    const evidence = await run(subject, intent);
+    assert.equal(evidence.status, "AVAILABLE"); assert.equal(evidence.references[0].summary.count, 1);
+    assert.equal(evidence.references[0].summary.confidence, "LOW");
+    const screened = applySoldPriceScreen(subject, evidence, { targets: { minProfit: 0, minRoi: 0 } });
+    assert.equal(canAutoAnalyze(screened), true);
+    assert.equal(resultGroup(screened, null), "candidates");
     assert.equal(calls.pages.length, 1);
 });
 
-test("raw pagination waits for three sales in one condition bucket and excludes duplicate transactions", async () => {
+test("one raw sale per condition stays in separate buckets without buying another page", async () => {
     const nearMint = sale(), lightlyPlayed = sale({ title: "Charizard Base Set 4/102 Unlimited Holo LP" });
-    const { run, calls } = harness({ page: async (_id, target) => target.cursor
-        ? { sales: [nearMint, sale(), sale()], nextCursor: "unused" }
-        : { sales: [nearMint, lightlyPlayed, sale({ title: "Charizard Base Set 4/102 Unlimited Holo" })], nextCursor: "next" } });
+    const { run, calls } = harness({ page: async (_id, target) => {
+        assert.equal(target.cursor, undefined);
+        return { sales: [nearMint, lightlyPlayed, sale({ title: "Charizard Base Set 4/102 Unlimited Holo" })], nextCursor: "next" };
+    } });
     const result = await run(listing(), intent);
     assert.equal(result.status, "AVAILABLE");
-    assert.deepEqual(result.references.map(reference => [reference.condition, reference.summary.count]), [["NEAR_MINT", 3], ["LIGHTLY_PLAYED", 1], [null, 1]]);
-    assert.equal(calls.pages.length, 2);
+    assert.deepEqual(result.references.map(reference => [reference.condition, reference.summary.count]), [["NEAR_MINT", 1], ["LIGHTLY_PLAYED", 1], [null, 1]]);
+    assert.equal(calls.pages.length, 1);
 });
 
-test("outlier rejection cannot prematurely stop sparse-page recovery", async () => {
-    const { run, calls } = harness({ page: async (_id, target) => target.cursor
-        ? { sales: [sale({ price: 110 })], nextCursor: "unused" }
-        : { sales: [sale({ price: 90 }), sale({ price: 100 }), sale({ price: 10000 })], nextCursor: "next" } });
+test("outlier rejection still protects sparse-page prices", async () => {
+    const { run, calls } = harness({ page: async (_id, target) => {
+        assert.equal(target.cursor, undefined);
+        return { sales: [sale({ price: 90 }), sale({ price: 100 }), sale({ price: 10000 })], nextCursor: "next" };
+    } });
     const result = await run(listing(), intent);
-    assert.equal(result.status, "AVAILABLE"); assert.equal(result.references[0].summary.count, 3);
-    assert.equal(result.references[0].summary.high, 110); assert.equal(calls.pages.length, 2);
+    assert.equal(result.status, "AVAILABLE"); assert.equal(result.references[0].summary.count, 2);
+    assert.equal(result.references[0].summary.high, 100); assert.equal(calls.pages.length, 1);
 });
 
 test("an exhausted four-page market stays deferred and never repurchases its sparse evidence", async () => {
     let cursor = 0;
-    const observation = sale();
+    const observation = sale({ sale_type: null });
     const { run, calls } = harness({ page: async () => ({ sales: [observation, sale({ sale_type: null })], nextCursor: String(++cursor) }) });
     const result = await run(listing(), intent);
     assert.equal(result.status, "DEFERRED"); assert.equal(result.exactScope, false);
-    assert.equal(result.references[0].summary.count, 1); assert.equal(calls.pages.length, 4);
+    assert.equal(result.references.length, 0); assert.equal(calls.pages.length, 4);
     await run(listing(), intent); assert.equal(calls.pages.length, 4);
 });
 
 test("a repeating provider cursor cannot buy the same page again", async () => {
-    const observation = sale();
+    const observation = sale({ sale_type: null });
     const { run, calls } = harness({ page: async () => ({ sales: [observation], nextCursor: "repeated" }) });
     const result = await run(listing(), intent);
     assert.equal(result.status, "UNAVAILABLE"); assert.equal(result.exactScope, false);
-    assert.equal(result.references[0].summary.count, 1); assert.equal(calls.pages.length, 2);
+    assert.equal(result.references.length, 0); assert.equal(calls.pages.length, 2);
 });
 
 test("a request cap between pages retains sparse observations and prevents another row from retrying", async () => {
     const { run, calls } = harness({ page: async (_id, target) => {
         if (target.cursor) throw new ScreeningPriceBudgetError();
-        return { sales: [sale(), sale()], nextCursor: "deferred" };
+        return { sales: [sale({ sale_type: null })], nextCursor: "deferred" };
     } });
     const result = await run(listing(), intent);
-    assert.equal(result.status, "DEFERRED"); assert.equal(result.references[0].summary.count, 2);
+    assert.equal(result.status, "DEFERRED"); assert.equal(result.references.length, 0);
     await run(listing(), intent); assert.equal(calls.pages.length, 2);
 });
 
@@ -509,7 +646,7 @@ test("cancellation after a recovered page prevents dispatch of another cursor", 
     const controller = new AbortController();
     const { run, calls } = harness({ signal: controller.signal, page: async (_id, target) => {
         if (target.cursor) controller.abort(new Error("stop recovered page"));
-        return { sales: [sale()], nextCursor: target.cursor ? "never" : "second" };
+        return { sales: [sale({ sale_type: null })], nextCursor: target.cursor ? "never" : "second" };
     } });
     await assert.rejects(run(listing(), intent), /stop recovered page/);
     assert.equal(calls.pages.length, 2);

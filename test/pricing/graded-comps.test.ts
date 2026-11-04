@@ -367,19 +367,41 @@ test("ordinary CGC descriptions do not exclude otherwise matching exact-grade co
     assert.equal(summarizeComps([{ ...ordinary, title: `${ordinary.title} (OC)` }], target).count, 0);
 });
 
-test("USD graded prices prefer 90-day evidence when sufficient, including a falling market", async () => {
+test("USD graded prices prefer even one current sale over older prices, including a falling market", async () => {
     const { identity, card } = await identifyCard({ title: "Lugia Neo Genesis 9/111 Holo Unlimited", aspects: { Set: "Neo Genesis", "Card Number": "9/111", "Card Name": "Lugia", Language: "English" } }, photos("Lugia", "9/111"), { lookupCards: async () => [LUGIA] });
-    for (const recent of [1000, 4000]) {
-        const older = [1, 2, 3, 4].map(i => comp(2000, `2026-05-0${i}`, "Unlimited Holofoil", "Lugia Neo Genesis PSA 9"));
-        const current = [1, 2, 3].map(i => comp(recent, `2026-09-0${i}`, "Unlimited Holofoil", "Lugia Neo Genesis PSA 9", { currency: "USD" }));
+    for (const [recent, count, oldPrice, oldCount] of [[100, 1, 1000, 2], [1000, 2, 2000, 4], [4000, 3, 2000, 4]]) {
+        const older = Array.from({ length: oldCount }, (_, i) => comp(oldPrice, `2026-05-0${i + 1}`, "Unlimited Holofoil", "Lugia Neo Genesis PSA 9"));
+        const current = Array.from({ length: count }, (_, i) => comp(recent, `2026-09-0${i + 1}`, "Unlimited Holofoil", "Lugia Neo Genesis PSA 9", { currency: "USD" }));
         const result = await compsForGrade(card, identity, { grader: "PSA", grade: 9, now: NOW, fetchComps: async () => [...older, ...current, comp(1, "2026-09-05", "Unlimited Holofoil", "Lugia Neo Genesis PSA 9", { currency: "EUR" }), comp(900, "2026-09-05", "Unlimited Reverse Holofoil", "Lugia Neo Genesis PSA 9")] });
         assert.equal(result.summary.windowDays, 90);
-        assert.equal(result.summary.count, 3);
+        assert.equal(result.summary.count, count);
         assert.equal(result.summary.median, recent);
+        assert.equal(result.summary.confidence, count < 3 ? "LOW" : "MEDIUM");
+        assert.equal(result.summary.dropped["older than 90 days"], oldCount);
+        assert.equal(result.summary.dropped["price far from the other sales"], undefined, "older prices cannot discard the sole current sale as an outlier");
         assert.equal(result.summary.dropped["not a USD sale"], 1);
         assert.equal(result.summary.dropped["another finish"], 1);
     }
     const sparse = await compsForGrade(card, identity, { grader: "PSA", grade: 9, now: NOW, fetchComps: async () => [comp(2000, "2026-05-01", "Unlimited Holofoil", "Lugia Neo Genesis PSA 9")] });
     assert.equal(sparse.summary.windowDays, 180);
     assert.equal(sparse.summary.median, 2000);
+});
+
+test("wrong-grade, unconfirmed and cached-rejected current sales cannot suppress the labeled older fallback", async () => {
+    const { identity, card } = await identifyCard({ title: "Lugia Neo Genesis 9/111 Holo Unlimited", aspects: { Set: "Neo Genesis", "Card Number": "9/111", "Card Name": "Lugia", Language: "English" } }, photos("Lugia", "9/111"), { lookupCards: async () => [LUGIA] });
+    const title = "Lugia Neo Genesis PSA 9", older = comp(1000, "2026-05-01", "Unlimited Holofoil", title);
+    for (const kind of ["wrong grade", "unconfirmed", "cached rejection"]) {
+        const current = comp(100, "2026-09-01", "Unlimited Holofoil", title,
+            kind === "wrong grade" ? { grade: "8" } : kind === "unconfirmed" ? { sale_type: null } : {});
+        const result = await compsForGrade(card, identity, { grader: "PSA", grade: 9, now: NOW,
+            fetchComps: async () => [older, current],
+            checkComps: async passing => new Map(passing.map(sale => [sale, kind === "cached rejection" && sale === current
+                ? { keep: false, reason: "ANOTHER_CARD", note: "Saved comp verdict rejects this sale." }
+                : { keep: true, reason: null, note: "Saved comp verdict accepts this sale." }])) });
+        assert.equal(result.status, "PRICED", kind);
+        assert.equal(result.summary.windowDays, 180, kind);
+        assert.equal(result.summary.count, 1, kind);
+        assert.equal(result.summary.median, 1000, kind);
+        assert.equal(result.summary.confidence, "LOW", kind);
+    }
 });

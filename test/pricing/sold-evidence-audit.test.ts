@@ -14,6 +14,22 @@ const sale = (price: number, overrides: Partial<Comp> = {}): Comp => ({
     ...overrides,
 });
 
+test("No Symbol Jungle sales cannot inflate an ordinary Jungle market, while ordinary and Base Set sales remain eligible", () => {
+    const jungle = { ...criteria, setName: "Jungle" };
+    for (const text of ["No Symbol", "NO-SYMBOL", "NoSymbol ERROR"]) {
+        const premium = sale(1000, { title: `Jolteon Jungle 4/64 Unlimited Holo PSA 7 ${text}` });
+        assert.equal(compProblem(premium, jungle), "unsupported Jungle No Symbol variant");
+    }
+    const ordinary = sale(100, { title: "Jolteon Jungle 4/64 Unlimited Holo PSA 7" });
+    assert.equal(compProblem({ ...ordinary, variant: "Unlimited Holofoil No Symbol" }, jungle), "unsupported Jungle No Symbol variant", "a provider variant label cannot silently collapse into Unlimited");
+    const missingEdition = sale(110, { title: "Jolteon Jungle 4/64 Unlimited Holo PSA 7 No First Edition symbol" });
+    const premium = sale(1000, { title: "Jolteon Jungle 4/64 Unlimited Holo PSA 7 NO SYMBOL" });
+    const summary = summarizeComps([ordinary, missingEdition, premium], jungle);
+    assert.equal(summary.count, 2); assert.equal(summary.median, 105);
+    assert.equal(summary.dropped["unsupported Jungle No Symbol variant"], 1);
+    assert.equal(compProblem(sale(100, { title: "Venusaur Base Set 15/102 Unlimited Holo PSA 7 no symbol" }), criteria), null);
+});
+
 test("unconfirmed historical amounts cannot set the sold median or displace actual transactions as outliers", () => {
     const confirmed = [sale(100, { sale_type: "auction" }), sale(110), sale(120, { sale_type: "best_offer_accepted" })];
     const unconfirmed = [sale(9000, { sale_type: null }), sale(10000, { sale_type: undefined }), sale(11000, { sale_type: "unknown" as Comp["sale_type"] })];

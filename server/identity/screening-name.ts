@@ -10,6 +10,15 @@ const DESCRIPTION = "(?:near[ -]+mint(?:[ -]+to[ -]+mint)?|gem[ -]+(?:mint|mt)|n
 const GRADE_SPAN = new RegExp(`\\b${GRADER}\\s*(?:${DESCRIPTION}[ -]+)*${GRADE}(?:[ -]+(${DESCRIPTION}))?`, "gi");
 const INCLUDED_HOLDER_SUFFIX = /\s+(?:with|w\s*\/|includes?|including)\s+(?:(?:a|an|the)\s+)?(?:(?:protective|protection|magnetic|acrylic|hard|fitted|display|slab)\s+)*(?:guards?|cases?|holders?|sleeves?|top[ -]?loaders?)\s*[.!]?\s*$/i;
 const GRADED_ARTIST_SUFFIX = /\s+(?:kagemaru\s+)?himeno\s*$/i;
+const ART_DESCRIPTION = /\b(?:(?:alternate|alt)(?:[\s/-]+full)?[\s-]+art|full[\s-]+art)\b(?!['’])/gi;
+// These release codes are publisher metadata only beside the corresponding
+// written release and an explicit collector fraction, never a promo number.
+const SWORD_SHIELD_RELEASES: [RegExp, RegExp][] = [
+    [/\bevolving\s+skies\b/i, /\bswsh07\b(?![\w.'’])/gi],
+    [/\bbrilliant\s+stars\b/i, /\bswsh09\b(?![\w.'’])/gi],
+    [/\blost\s+origin\b/i, /\bswsh11\b(?![\w.'’])/gi],
+    [/\bcrown\s+zenith(?:\s+galarian\s+gallery)?\b/i, /\bswsh12\.5\b(?![\w.'’])/gi],
+];
 
 // normalizeWords normally discards symbols. Gender and these printed forms
 // distinguish cards, so preserve them even when a catalog uses Unicode glyphs.
@@ -38,7 +47,11 @@ function removeObservedSuffix(value: string, suffix: RegExpMatchArray, title: st
 // A holder is metadata only when explicitly accompanying a numerically graded
 // slab; an unanchored Guard/name fragment must never disappear.
 export function stripListingNameBoilerplate(value: string, title = value): string {
-    let cleaned = value.replace(/[‘’]/g, "'").replace(BOILERPLATE, " ");
+    let cleaned = value.replace(/[‘’]/g, "'").replace(BOILERPLATE, " ").replace(ART_DESCRIPTION, " ");
+    if (/\b[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?\b/i.test(title)) {
+        const release = SWORD_SHIELD_RELEASES.find(([set]) => set.test(title));
+        if (release) cleaned = cleaned.replace(/\b(?:sword\s*(?:&|and)\s*shield|swsh)\b(?!['’])/gi, " ").replace(release[1], " ");
+    }
     const graded = new RegExp(GRADE_SPAN.source, "i").test(title);
     const artist = graded ? title.match(GRADED_ARTIST_SUFFIX) : null;
     if (artist) cleaned = removeObservedSuffix(cleaned, artist, title);

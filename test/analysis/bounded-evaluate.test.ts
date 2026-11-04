@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createBoundedEvaluator, selectBoundedPhotos, boundedAssessmentKey, validateBoundedReading, BOUNDED_ASSESSMENT_VERSION, type BoundedReading } from "../../server/analysis/bounded-evaluate.ts";
+import { createBoundedEvaluator, selectBoundedPhotos, boundedAssessmentKey, boundedAssessmentPlan, validateBoundedReading, BOUNDED_ASSESSMENT_VERSION, type BoundedReading } from "../../server/analysis/bounded-evaluate.ts";
 import { ANALYSIS_VERSION, CONDITION_VERSION } from "../../server/analysis/legacy-evidence.ts";
 import { photoFingerprint } from "../../server/analysis/store.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
@@ -13,7 +13,9 @@ import { createPrivateEvaluationStore, PRIVATE_EVALUATION_PREFIX } from "../../s
 import { createShortlistStore } from "../../server/shortlist/store.ts";
 import { createShortlistService } from "../../server/shortlist/service.ts";
 import { photoReviewStatus } from "../../shared/photo-review.ts";
+import { resultGroup } from "../../shared/analysis.ts";
 import { seedRawSoldCopies } from "../fixtures/raw-sold-copies.ts";
+import { drainSharedWork } from "../../server/lib/shared-work.ts";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -54,6 +56,46 @@ function harness(extra: Parameters<typeof createBoundedEvaluator>[0] = {}) {
         compChecks: async () => new Map(), ...extra });
     return { cache, calls, evaluate };
 }
+
+test("accepted Jungle No Symbol labels remain reusable and unpriced without ordinary sold requests or replacement photo analysis", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("No Symbol regression must use saved/mocked evidence only"));
+    for (const source of ["title", "label"] as const) {
+        const listing = details({ id: `v1|jungle-no-symbol-${source}|0`, title: `Jolteon Jungle 4/64 Holo PSA 8${source === "title" ? " No Symbol" : ""}`,
+            condition: "Graded", cardCondition: null, images: [photo(1), photo(2)],
+            aspects: { "Card Name": "Jolteon", Set: "Jungle", "Card Number": "4/64", Language: "English", Finish: "Holo", "Professional Grader": "PSA", Grade: "8" } });
+        const accepted = reading(2); accepted.condition = null; accepted.photoCheck.holder = "GRADED_SLAB";
+        accepted.photoCheck.cardIdentity = { name: "Jolteon", set: "Jungle", cardNumber: "4/64", language: "English", finish: "HOLO", confidence: "HIGH", evidence: ["Name, number and Jungle label are clear."] };
+        accepted.photoCheck.printedName = "Jolteon"; accepted.photoCheck.printedNumber = "4/64";
+        accepted.photoCheck.slab = { present: true, grader: "PSA", grade: "8", gradeQualifier: null, certNumber: "12345678",
+            labelText: `1999 POKEMON JUNGLE JOLTEON-HOLO #4 NM-MT 8${source === "label" ? " NO SYMBOL" : ""}`,
+            caseCondition: "INTACT", authenticity: "NONE_SEEN", authenticityEvidence: [], concerns: [] };
+        if (source === "label") accepted.photoCheck.printingMarks = { firstEditionStamp: "NOT_PRESENT", artBoxShadow: "PRESENT",
+            reprintMark: "Label explicitly reads NO SYMBOL.", evidence: ["The card and label indicate the Jungle no-symbol printing."] };
+        const { evaluate, cache, calls } = harness({ details: async () => listing,
+            assess: async () => assert.fail("accepted compact slab reading must remain reusable"),
+            lookup: async () => [{ ...card, name: "Jolteon", setName: "Jungle", cardNumber: "4/64" }],
+            fetchComps: async () => assert.fail("ordinary Jungle comps must not price the No Symbol variant"),
+            fetchRawComps: async () => assert.fail("No Symbol cannot borrow ordinary raw comps") });
+        const plan = boundedAssessmentPlan(listing), stored = { ...accepted, version: plan.version, answeredAt: new Date(now).toISOString() };
+        cache.set(plan.key, structuredClone(stored));
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const result = await evaluate(listing.id);
+            assert.equal(result.identity?.status, "IDENTIFIED");
+            assert.equal(result.slab?.status, "OK");
+            assert.equal(result.slab?.labelText, accepted.photoCheck.slab.labelText);
+            assert.deepEqual(result.photoCheck?.printingMarks, accepted.photoCheck.printingMarks);
+            assert.equal(result.underwriting?.verdict, "CANT_PRICE");
+            assert.equal(result.slabPricing?.status, "PRICE_UNAVAILABLE");
+            assert.equal(result.slabPricing?.summary, undefined);
+            assert.equal(result.rating, null);
+            assert.equal(photoReviewStatus(result).needsYourReview, false);
+            assert.equal(resultGroup({ ...listing, currentPrice: listing.price, isGraded: true }, result), "candidates");
+            assert.deepEqual(result.usage, []);
+        }
+        assert.deepEqual(cache.get(plan.key), stored, "the accepted paid answer and its key/version remain intact");
+        assert.equal(calls.assessed, 0); assert.equal(calls.comps, 0); assert.equal(calls.raw, 0);
+    }
+});
 
 test("bounded photo selection samples the entire gallery and deduplicates eBay image-size aliases", () => {
     const images = Array.from({ length: 24 }, (_, index) => photo(index));
@@ -346,12 +388,41 @@ test("Stop retains an accepted bounded answer and prevents downstream price work
     const pending = evaluate("v1|bounded|0", { signal: stop.signal });
     await began; stop.abort(); release();
     await assert.rejects(pending, { name: "AbortError" });
-    for (let i = 0; !cache.size && i < 20; i++) await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(await drainSharedWork(), { complete: true, pending: 0 });
     assert.equal(cache.size, 1, "accepted evidence is saved after its browser consumer detaches");
     assert.equal(calls.comps, 0); assert.equal(calls.raw, 0);
     const next = await evaluate("v1|bounded|0");
     assert.equal(calls.assessed, 1);
     assert.ok(next.reusedSteps.includes("boundedPhotoAssessment"));
+});
+
+test("CLI shutdown drains the accepted reading's final cache save after its evaluator consumer stops", async () => {
+    let started!: () => void, respond!: () => void, saving!: () => void, finishSave!: () => void;
+    const began = new Promise<void>(resolve => { started = resolve; });
+    const response = new Promise<void>(resolve => { respond = resolve; });
+    const enteredSave = new Promise<void>(resolve => { saving = resolve; });
+    const storageReady = new Promise<void>(resolve => { finishSave = resolve; });
+    const saved = new Map<string, unknown>();
+    let storageClosed = false;
+    const { evaluate, calls } = harness({ assess: async (_listing, photos) => {
+        calls.assessed++; started(); await response;
+        return { result: reading(photos.length), usage: { inputTokens: 900, outputTokens: 700 } };
+    }, save: async (key, value) => {
+        saving(); await storageReady;
+        assert.equal(storageClosed, false, "a detached accepted answer must retain storage until its final cache write");
+        saved.set(key, structuredClone(value));
+    } });
+    const stop = new AbortController(), consumer = evaluate("v1|bounded|0", { signal: stop.signal });
+    await began; stop.abort(); await assert.rejects(consumer, { name: "AbortError" });
+    let drained = false;
+    const shutdown = drainSharedWork().then(result => { drained = true; storageClosed = true; return result; });
+    respond(); await enteredSave;
+    assert.equal(drained, false); assert.equal(saved.size, 0);
+    assert.deepEqual(await drainSharedWork({ timeoutMs: 0 }), { complete: false, pending: 1 });
+    finishSave();
+    assert.deepEqual(await shutdown, { complete: true, pending: 0 });
+    assert.equal(saved.size, 1); assert.equal(calls.assessed, 1);
+    assert.equal(calls.comps, 0); assert.equal(calls.raw, 0, "Stop must not begin downstream paid pricing while draining accepted photos");
 });
 
 test("concurrent equivalent listings share one photo assessment while retaining separate purchase calculations", async () => {
@@ -568,18 +639,24 @@ test("an applicable numeric grading range can still be priced when the raw categ
     assert.ok(result.underwriting?.paths.some(path => path.path === "GRADE" && path.status === "PRICED"));
 });
 
-test("expired private prices refresh market evidence while retaining the paid photo assessment", async () => {
-    let clock = now;
-    const { evaluate, calls } = harness({ now: () => clock });
-    const first = await evaluate("v1|price-expiry|0");
-    const marketCalls = calls.comps + calls.raw;
-    clock += 6 * 3600000 + 1;
-    const next = await evaluate("v1|price-expiry|0");
-    assert.equal(calls.assessed, 1);
-    assert.ok(next.reusedSteps.includes("boundedPhotoAssessment"));
-    assert.ok(calls.comps + calls.raw > marketCalls);
-    assert.equal(next.answeredAt, first.answeredAt);
-    assert.notEqual(next.pricesCheckedAt, first.pricesCheckedAt);
+test("expired or superseded private prices refresh without repurchasing the photo assessment", async () => {
+    for (const reason of ["age", "pricing policy"]) {
+        let clock = now;
+        const { evaluate, calls, cache } = harness({ now: () => clock });
+        const first = await evaluate("v1|price-expiry|0");
+        const marketCalls = calls.comps + calls.raw;
+        if (reason === "pricing policy") for (const [key, value] of cache) {
+            if (key.startsWith(PRIVATE_EVALUATION_PREFIX)) value.evaluation.pricingVersion = "previous-price-policy";
+        }
+        clock += reason === "age" ? 6 * 3600000 + 1 : 1;
+        const next = await evaluate("v1|price-expiry|0");
+        assert.equal(calls.assessed, 1, reason);
+        assert.ok(next.reusedSteps.includes("boundedPhotoAssessment"));
+        assert.ok(calls.comps + calls.raw > marketCalls);
+        assert.equal(next.pricingVersion, PRICING_VERSION);
+        assert.equal(next.answeredAt, first.answeredAt);
+        assert.notEqual(next.pricesCheckedAt, first.pricesCheckedAt);
+    }
 });
 
 test("readable cached slab labels resolve seller-certificate-only holds without buying another photo assessment", async () => {

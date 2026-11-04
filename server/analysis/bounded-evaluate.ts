@@ -5,6 +5,7 @@ import { compatibleBoundedPlans, type BoundedAssessmentPlan } from "./bounded-pl
 export { assessBoundedListing, BOUNDED_ASSESSMENT_SCHEMA, type BoundedReading } from "../ai/bounded-assessment.ts";
 export { BOUNDED_VISION_MODEL, BOUNDED_ASSESSMENT_VERSION, BOUNDED_CONDITION_VERSION, BOUNDED_SLAB_ASSESSMENT_VERSION, BOUNDED_PHOTO_LIMIT, selectBoundedPhotos, boundedAssessmentKey, boundedAssessmentPlan } from "./bounded-plan.ts";
 import { cachedCompChecks } from "../ai/comp-checker.ts";
+import { deferJungleNoSymbolPricing, jungleNoSymbolReason } from "../../shared/jungle-no-symbol.ts";
 import { acceptedSoldCondition, corroboratedSoldCondition, type SoldConditionReading } from "../ai/sold-condition.ts";
 import { VISION_MODEL } from "../ai/policy.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
@@ -118,6 +119,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             rawPricing: null, gradedPricing: null, slab: null, slabPricing: null, underwriting: null, rating: null, answeredAt: null, reusedSteps: [], usage: [] };
         const privateContext = { evidenceKey: listingEvidenceKey({ title: options.current?.title ?? listing.title, images: options.current?.images ?? listing.images }), contextKey: evaluationContextKey(listing) };
         const finish = async () => {
+            Object.assign(evaluation, deferJungleNoSymbolPricing(evaluation));
             evaluation.underwriting = underwrite(evaluation); evaluation.rating = rateDeal(evaluation);
             if (evaluation.photoCheck) await privateEvaluations.save(evaluation, privateContext);
             return evaluation;
@@ -171,7 +173,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         const revisedLatest = latest ? recheckSavedSlab(latest, listing.aspects) : null;
         if (latest && !latest.pricingDeferred && !revisedLatest!.needsPricing && legacy?.latestEvaluation?.evidenceKey === listingEvidenceKey({ title: listing.title, images: listing.images }) && currentPriceEvidence(latest, deps.now()) && !await hasNewerSharedReading(latest)) {
             if (cardLanguageStatus(listing.title, [latest.identity?.language, latest.photoCheck?.cardIdentity?.language]) === "OTHER") throw new EnglishOnlyError();
-            const reused = revisedLatest!.evaluation;
+            const reused = deferJungleNoSymbolPricing(revisedLatest!.evaluation);
             reused.listing = { ...reused.listing, ...evaluation.listing, photosAnalyzed: latest.listing.photosAnalyzed };
             reused.usage = []; reused.reusedSteps = [...new Set([...reused.reusedSteps, "savedEvaluation"])];
             reused.underwriting = underwrite(reused); reused.rating = rateDeal(reused);
@@ -181,7 +183,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         const revisedRemembered = remembered ? recheckSavedSlab(remembered.evaluation, listing.aspects) : null;
         if (remembered?.contextKey === privateContext.contextKey &&
             !remembered.evaluation.pricingDeferred && !revisedRemembered!.needsPricing && (remembered.evaluation.assessmentVersion === ANALYSIS_VERSION || plans.some(plan => plan.version === remembered.evaluation.assessmentVersion)) && currentPriceEvidence(remembered.evaluation, deps.now()) && !await hasNewerSharedReading(remembered.evaluation)) {
-            const reused = revisedRemembered!.evaluation;
+            const reused = deferJungleNoSymbolPricing(revisedRemembered!.evaluation);
             if (cardLanguageStatus(listing.title, [reused.identity?.language, reused.photoCheck?.cardIdentity?.language]) === "OTHER") throw new EnglishOnlyError();
             reused.listing = { ...reused.listing, ...evaluation.listing, photosAnalyzed: reused.listing.photosAnalyzed };
             reused.usage = []; reused.reusedSteps = [...new Set([...reused.reusedSteps, "savedEvaluation"])];
@@ -326,6 +328,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             evaluation.identity.reasons.push("The bounded photos do not establish the exact English card identity. Seller wording alone cannot confirm it.");
         }
         if (check.cardCount !== "ONE" || !readyForPricing(evaluation.identity)) return finish();
+        if (jungleNoSymbolReason(evaluation)) return finish();
         const identity = evaluation.identity;
         const unavailable = (error: unknown) => {
             const stop = stopFailure(error);

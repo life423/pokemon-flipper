@@ -143,9 +143,9 @@ test("unspecified raw sold conditions are usable context without a raw quote or 
     assert.match(result.reason!, /condition is unspecified/);
 });
 
-test("sparse, invalid, stale or wrong-grade summaries never become zero-valued financial advice", () => {
+test("empty, invalid, stale or wrong-grade summaries never become zero-valued financial advice", () => {
     const original = reference();
-    for (const patch of [{ count: 2 }, { median: 0 }, { median: Infinity }, { low: NaN }, { high: 200 },
+    for (const patch of [{ count: 0 }, { median: 0 }, { median: Infinity }, { low: NaN }, { high: 200 },
         { windowDays: 181 }, { windowDays: undefined }, { grader: "CGC" }, { grade: "9" }]) {
         const source = evidence([reference({ summary: { ...original.summary, ...patch } })]);
         const result = applySoldPriceScreen(listing(), source, { config }).screen;

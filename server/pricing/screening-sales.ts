@@ -11,6 +11,8 @@ import { createScreeningPriceSource, ScreeningPriceBudgetError } from "./pkmnpri
 import { PriceResearchBudgetError } from "./research-budget.ts";
 import { resolveScreeningName } from "../identity/screening-name.ts";
 import { canonicalCatalogName, sameCatalogName } from "./search-name.ts";
+import { jungleNoSymbolReason } from "../../shared/jungle-no-symbol.ts";
+import { usableSoldReference } from "../../shared/sold-evidence.ts";
 
 type Source = { lookupCards: LookupCards; fetchComps: FetchComps; fetchRawComps: FetchRawComps; fetchSoldPage?: FetchSoldPage };
 type Finish = ScreeningSoldReference["finish"];
@@ -19,8 +21,9 @@ interface MarketEvidence { references: ScreeningSoldReference[]; complete: boole
 const FINISHES = ["HOLO", "NON_HOLO", "REVERSE_HOLO"];
 const DAY_MS = 86_400_000;
 const MAX_MARKET_PAGES = 4;
+const hasMatchedSales = (references: ScreeningSoldReference[]) => references.some(reference => usableSoldReference(reference, reference.grader !== null));
 const ordinarySale = (sale: Comp) => !/\blot\b|\bbundle\b|\bset of\b|\b\d+\s*(?:cards|pcs)\b|\bsigned\b|\bautograph(?:ed)?\b|\baltered\b|\bcustom\b|\bproxy\b|\breplica\b|\bmiscut\b|\bcrimp\b|\bholo\s*bleed\b|\bdouble\s*holo\b/i.test(sale.title);
-const specialSlab = (title: string) => /\((?:oc|mk|mc|st|pd|of)\)|\b(?:pristine|black label|perfect|altered|qualified|qualifier|authentic(?:ated)?)\b/i.test(title);
+const specialSlab = (title: string) => /\((?:oc|mk|mc|st|pd|of)\)|\b(?:pristine|black label|perfect|altered|miscut|qualified|qualifier|authentic(?:ated)?)\b/i.test(title);
 const unique = (sales: Comp[]) => [...new Map(sales.map(sale => [sale.id != null ? `id:${sale.id}` : sale.listing_url ? `url:${sale.listing_url}` : `${sale.title}|${sale.sold_at}|${sale.price}`, sale])).values()];
 // Preserve a negative edition claim as metadata rather than leaving "no"
 // attached to the name after the literal reader removes "1st Edition".
@@ -44,7 +47,7 @@ function marketSummaries(sales: Comp[], market: Market, grader: string | null, g
         const ordinary = eligible.filter(sale => !specialSlab(sale.title));
         const criteria: CompCriteria = { printing, setName: record.setName, finish, grader, grade, now: asOf };
         const recent = ordinary.filter(sale => compProblem(sale, criteria) === null && asOf - Date.parse(sale.sold_at) <= 90 * DAY_MS);
-        const summary = summarizeComps(ordinary, { ...criteria, windowDays: recent.length >= 3 ? 90 : 180 });
+        const summary = summarizeComps(ordinary, { ...criteria, windowDays: recent.length ? 90 : 180 });
         return summary.count ? [{ ...base, grader, grade, condition: null, summary }] : [];
     }
     const raw = eligible.filter(sale => !sale.grader && !sale.grade && !/\b(?:psa|cgc|bgs|sgc|tag)\b/i.test(sale.title));
@@ -60,7 +63,7 @@ function marketSummaries(sales: Comp[], market: Market, grader: string | null, g
     return accepted;
 }
 function incompleteEvidence(evidence: ScreeningSoldEvidence, budget: boolean): ScreeningSoldEvidence {
-    const useful = evidence.references.some(reference => reference.summary.count >= 3);
+    const useful = hasMatchedSales(evidence.references);
     return structuredClone({ ...evidence, exactScope: false,
         status: useful ? "AVAILABLE" : budget ? "DEFERRED" : "UNAVAILABLE",
         note: useful
@@ -106,7 +109,7 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
             let pageCount = 0;
             while (pending.length) {
                 const { variant, cursor } = pending.shift()!;
-                if (cursor && accepted.some(reference => reference.summary.count >= 3)) continue;
+                if (cursor && hasMatchedSales(accepted)) continue;
                 if (pageCount >= MAX_MARKET_PAGES) { issue = "BUDGET"; break; }
                 const pageKey = JSON.stringify([record.id, variant, grader, grade, cursor]);
                 if (seen.has(pageKey)) { issue = "UNAVAILABLE"; break; }
@@ -118,7 +121,7 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
                     pageCount++;
                     sales.push(...page.sales);
                     accepted = marketSummaries(sales, market, grader, grade, asOf);
-                    if (page.nextCursor && !accepted.some(reference => reference.summary.count >= 3)) pending.push({ variant, cursor: page.nextCursor });
+                    if (page.nextCursor && !hasMatchedSales(accepted)) pending.push({ variant, cursor: page.nextCursor });
                 } catch (error) {
                     signal?.throwIfAborted();
                     if (error instanceof StorageUnavailableError || error instanceof PriceResearchBudgetError && error.reason !== "LIMIT") throw error;
@@ -146,6 +149,8 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
         const set = claimedSets[0] ?? (intent.sets.length === 1 ? intent.sets[0] : null);
         const number = claimedNumbers[0] ?? intent.cardNumber;
         if (!name || !set) return evidence;
+        const unsupportedVariant = jungleNoSymbolReason({ listing: { title: listing.title }, identity: { set } });
+        if (unsupportedVariant) return { ...evidence, note: unsupportedVariant };
         const intentOnly = !claimedNames.length || !claimedSets.length || !claimedNumbers.length;
         const titlePrinting = printingClaimFromText(listing.title);
         const screenPrinting = card?.printing && isPrinting(card.printing) ? card.printing : null;
@@ -183,11 +188,11 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
                 evidence.references.push(...result.references);
                 if (!result.complete) return incompleteEvidence(evidence, result.issue === "BUDGET");
             }
-            evidence.status = evidence.references.some(reference => reference.summary.count >= 3) ? "AVAILABLE" : "UNAVAILABLE";
+            evidence.status = hasMatchedSales(evidence.references) ? "AVAILABLE" : "UNAVAILABLE";
             evidence.note = evidence.status === "AVAILABLE"
                 ? listing.isGraded ? "Recent matched sold amounts for the listed exact grader and grade; the photographed label is not yet verified."
                     : "Recent matched raw sold amounts stay in separate seller-condition buckets. Unstated-condition sales provide market context only, never a condition-specific resale value or grade. These references do not assess this listing's condition or grading upside."
-                : "Fewer than three matched recent sales support any requested market. Sparse observations remain visible without inventing a price.";
+                : "No usable recent matched sale supports the requested market. Missing evidence remains visible without inventing a price.";
             if (!evidence.exactScope) evidence.note += " Listing claims do not settle one market; possible printings and finishes remain separate.";
             return structuredClone(evidence);
         } catch (error) {

@@ -38,13 +38,13 @@ flowchart TD
    sold research with at most four candidates in flight. Its source permits
    64 uncached PKMNPrices requests including catalog work, and adaptive reads of
    up to four 20-sale pages per requested market when the preceding pages lack
-   three eligible matched sales. It stops once a scope has enough usable
+   one eligible matched sale. It stops once a scope has usable
    observations; cached pages from final valuation can satisfy follow-up reads. SQL/file response caches and shared
    catalog/market work avoid repeated requests. This stage calls neither AI nor
    eBay Browse. The retired broad-discovery and automatic pricing-recovery
    branches are no longer alternative search paths.
 3. Exact slab grader, grade, printing and finish scopes stay separate. Medians
-   rank candidates; only three or more matched sales within 90 days in one
+   rank candidates; one or more matched sales within 90 days in one
    explicit scope can reject a listing using the upper observed resale value
    after costs. A 180-day fallback can inform priority but cannot hard-reject.
    Unknown purchase shipping uses $0 for conservative exclusion and is disclosed;
@@ -54,7 +54,7 @@ flowchart TD
    assigning the live card a condition or numeric grade. Unspecified-condition
    sales are context only. Raw comparisons cannot reject unassessed grading or
    premium-printing upside.
-4. At least three eligible matched sold observations authorize automatic photo
+4. At least one eligible matched sold observation authorizes automatic photo
    work. Missing/deferred evidence stays in Sorting without an automatic paid
    request, except the existing focused-review exception for a raw First Edition
    Base Set lead priced at $10 or less. The browser considers eligible loaded
@@ -88,6 +88,10 @@ flowchart TD
 9. Price evidence is assembled for the applicable resale paths. The money layer
    then calculates expenses, profit, return and the item-price ceiling. The client
    can change profit/ROI targets using those numbers without new provider calls.
+   One or two sold matches retain LOW confidence. Graded estimates prefer the
+   90-day market even when only one valid current sale exists; the labeled
+   180-day fallback applies only when no current match remains. Pricing-policy
+   changes reprice saved evaluations without invalidating paid photo readings.
 10. Shared result rules and client selectors determine the visible groups. Card
    and detail components present that result; they do not independently appraise
    cards or invent new buying decisions.

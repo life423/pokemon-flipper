@@ -8,7 +8,7 @@ const normalize = (value: unknown) => String(value ?? "").trim().toUpperCase();
 // Eligibility of the underlying transactions remains the provider layer's job.
 export function usableSoldReference(reference: ScreeningSoldReference, slab: boolean): boolean {
     const { summary } = reference;
-    if (!summary || !Number.isInteger(summary.count) || summary.count < 3 || !positive(summary.median) ||
+    if (!summary || !Number.isInteger(summary.count) || summary.count < 1 || !positive(summary.median) ||
         !positive(summary.windowDays) || summary.windowDays > 180 ||
         !["HIGH", "MEDIUM", "LOW"].includes(summary.confidence)) return false;
     if (summary.low !== null && (!positive(summary.low) || summary.low > summary.median)) return false;

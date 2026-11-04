@@ -10,6 +10,7 @@ import {
 import { gradeQualifier } from "../../shared/grade-qualifier.ts";
 import type { CompSummary, Confidence } from "../../shared/types.ts";
 import type { Comp, CompDropReason, CompVerdict, PrintingOrUnknown } from "./types.ts";
+import { jungleNoSymbolReason } from "../../shared/jungle-no-symbol.ts";
 
 // Shared evidence rules for raw and graded sold comparables. These functions
 // filter and summarize supplied sales without fetching prices or photos.
@@ -84,6 +85,7 @@ export function printingProblem(comp: Comp, printing: PrintingOrUnknown, setName
 export function compProblem(comp: Comp, { printing, setName, grader, grade, now, windowDays = RECENT_DAYS, finish }: CompCriteria): string | null {
     if (comp.attribution !== "exact") return "shared with another card";
     if (comp.currency && comp.currency !== "USD") return "not a USD sale";
+    if (jungleNoSymbolReason({ listing: { title: `${comp.title} ${comp.variant ?? ""}` }, identity: { set: setName ?? null } })) return "unsupported Jungle No Symbol variant";
 
     const mismatch = printingProblem(comp, printing, setName);
 

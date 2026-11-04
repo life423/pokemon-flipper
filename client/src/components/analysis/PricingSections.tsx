@@ -15,7 +15,7 @@ export function CompsRow({ summary, sampleLimit = 40, screening = false }: { sum
                 </span>
                 <span className={styles.compStats}>
                     {summary.count > 0
-                        ? `${summary.count} sales, median ${dollars(summary.median)}, ${name(summary.confidence)}${summary.checkedByAI ? ", checked by AI" : ""}`
+                        ? `${summary.count} ${summary.count === 1 ? "sale" : "sales"}, median ${dollars(summary.median)}, ${name(summary.confidence)}${summary.checkedByAI ? ", checked by AI" : ""}`
                         : "No verified sales"}
                 </span>
             </summary>

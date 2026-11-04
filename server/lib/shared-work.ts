@@ -2,6 +2,25 @@
 // When nobody needs a pending job, stop its future stages. A later consumer
 // waits for any accepted paid answer to save before resuming from the cache.
 // Already-dispatched provider calls may still finish and save their paid answers.
+const activeJobs = new Set<Promise<unknown>>();
+
+// CLI shutdown must wait for the underlying jobs, not their abortable browser
+// consumers. This includes accepted-response accounting, SQL claims and caches.
+// Waiting never cancels a job, releases a claim or authorizes replacement work.
+export async function drainSharedWork({ timeoutMs = 180_000 }: { timeoutMs?: number } = {}): Promise<{ complete: boolean; pending: number }> {
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0) throw new RangeError("Shared-work drain needs a nonnegative integer timeout.");
+    if (!activeJobs.size) return { complete: true, pending: 0 };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<"timeout">(resolve => { timer = setTimeout(() => resolve("timeout"), timeoutMs); });
+    try {
+        while (activeJobs.size) {
+            const settled = Promise.allSettled([...activeJobs]).then(() => "settled" as const);
+            if (await Promise.race([settled, timeout]) === "timeout") return { complete: activeJobs.size === 0, pending: activeJobs.size };
+        }
+        return { complete: true, pending: 0 };
+    } finally { clearTimeout(timer); }
+}
+
 export function createSharedWork() {
     interface Job {
         controller: AbortController;
@@ -24,8 +43,10 @@ export function createSharedWork() {
                 return run(controller.signal);
             }).finally(() => {
                 created.settled = true;
+                activeJobs.delete(created.promise);
                 if (pending.get(key) === created) pending.delete(key);
             });
+            activeJobs.add(created.promise);
             pending.set(key, created);
             job = created;
         }

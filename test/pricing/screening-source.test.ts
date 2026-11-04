@@ -69,13 +69,13 @@ test("existing catalog and sold pages stay usable with zero new-request allowanc
     assert.deepEqual(source.stats(), { requests: 0, limit: 0 });
 });
 
-test("screening reuses both final-valuation cached pages to recover a sparse exact market for free", async t => {
+test("screening reuses cached final-valuation pages when the first page has no confirmed match", async t => {
     offline(t);
     const id = 82102;
     const sold = (saleId: number): Comp => ({ id: saleId, title: "Dragonite Fossil 4/62 Unlimited Holo PSA 8", price: 100 + saleId,
         sold_at: new Date(clock - 86_400_000).toISOString(), variant: "Unlimited Holofoil", grader: "PSA", grade: "8", currency: "USD",
         sale_type: "fixed_price", grade_qualifier: null, attribution: "exact", listing_url: `https://www.ebay.com/itm/${saleId}` });
-    const first = [sold(1), sold(2)], next = [first[0], sold(3), sold(4)];
+    const first = [{ ...sold(1), sale_type: null }, { ...sold(2), sale_type: null }], next = [first[0], sold(3), sold(4)];
     const paths: string[] = [];
     t.mock.method(globalThis, "fetch", async input => {
         const requested = requestPath(input); paths.push(requested);
@@ -92,7 +92,7 @@ test("screening reuses both final-valuation cached pages to recover a sparse exa
     const intent: SearchIntent = { cardName: "Dragonite", sets: ["Fossil"], cardNumber: "4/62", printing: null, graded: true, titleWords: ["dragonite"], source: "rules" };
     const run = createSoldScreening({ now: () => clock, source: { ...source, lookupCards: async () => [record] } });
     const result = await run(subject, intent);
-    assert.equal(result.status, "AVAILABLE"); assert.equal(result.exactScope, true); assert.equal(result.references[0].summary.count, 4);
+    assert.equal(result.status, "AVAILABLE"); assert.equal(result.exactScope, true); assert.equal(result.references[0].summary.count, 2);
     assert.deepEqual(paths, [gradedPath(id), `${gradedPath(id)}&cursor=saved-second`]);
     assert.deepEqual(source.stats(), { requests: 0, limit: 0 });
 });

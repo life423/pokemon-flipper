@@ -19,11 +19,11 @@ async function checkedSummary(
 ): Promise<CompSummary> {
     const passing = comps.filter((comp) => compProblem(comp, criteria) === null);
     const verdicts = checkComps && passing.length > 0 ? await checkComps(passing, target) : undefined;
-    // Prefer the current market when it has several matches; sparse grades
-    // can still use the explicitly labeled 180-day fallback. Never choose a
-    // window based on whether its median makes the listing profitable.
+    // Any eligible current sale takes precedence over older prices. Use the
+    // explicitly labeled 180-day fallback only when no current match remains;
+    // never choose a window based on whether its median makes a deal profitable.
     const recent = passing.filter(sale => (criteria.now - Date.parse(sale.sold_at)) / DAY_MS <= 90 && verdicts?.get(sale)?.keep !== false);
-    const windowDays = recent.length >= 3 ? 90 : 180;
+    const windowDays = recent.length >= 1 ? 90 : 180;
     return summarizeComps(comps, { ...criteria, windowDays }, verdicts);
 }
 

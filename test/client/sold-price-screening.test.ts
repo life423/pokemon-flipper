@@ -69,15 +69,16 @@ test("sold-price UI keeps preliminary evidence separate from assessed prices and
         assert.deepEqual(listing, before);
     });
 
-    await t.test("a sparse matched sale is visible as evidence and cannot become a supported screening ceiling", () => {
+    await t.test("one matched sale supports preliminary screening while keeping its low confidence visible", () => {
         const listing = applySoldPriceScreen({ ...base, isGraded: true }, evidence([
             reference({ grader: "PSA", grade: "8", summary: summary("PSA", "8", 120, 1) }),
         ]));
-        assert.equal(listing.screen.soldEvidence?.status, "UNAVAILABLE");
+        assert.equal(listing.screen.soldEvidence?.status, "AVAILABLE");
         const detail = renderDetail(listing), card = renderCard(listing);
-        assert.match(detail, /1 sales, median \$120\.00, Low/);
-        assert.match(card, /Price unconfirmed/);
-        for (const html of [card, detail]) assert.doesNotMatch(html, /Est\. net profit|Unverified screening ceiling|Your review needed/);
+        assert.match(detail, /1 sale, median \$120\.00, Low/);
+        assert.doesNotMatch(card, /Price unconfirmed/);
+        assert.match(card, /Unverified screening ceiling/);
+        for (const html of [card, detail]) assert.doesNotMatch(html, /Est\. net profit|Your review needed/);
     });
 
     await t.test("printing, finish and exact grade references remain separate instead of appearing as one blended market", () => {
