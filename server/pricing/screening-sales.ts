@@ -1,4 +1,3 @@
-import { readTitleByRules } from "../ai/title-reader.ts";
 import { isPrinting, normalizeCardNumber, normalizeSetName, printingClaimFromText, sameCardNumber, sameSetFamily, setFamily, titleDecidesPrinting } from "../identity/card-identity.ts";
 import { finishClaim } from "../../shared/finish.ts";
 import { RAW_CONDITIONS } from "../../shared/conditions.ts";
@@ -6,7 +5,7 @@ import { StorageUnavailableError } from "../storage/index.ts";
 import type { ListingSummary, ScreeningSoldEvidence, ScreeningSoldReference, SearchIntent } from "../../shared/types.ts";
 import type { CardRecord, Comp, FetchComps, FetchRawComps, FetchSoldPage, LookupCards, SoldPage } from "./types.ts";
 import { compCondition } from "./raw-comps.ts";
-import { compProblem, summarizeComps, type CompCriteria } from "./sold-comps.ts";
+import { compProblem, summarizeComps, readSoldTitleClaims, matchesSoldTarget, type CompCriteria } from "./sold-comps.ts";
 import { createScreeningPriceSource, ScreeningPriceBudgetError } from "./pkmnprices.ts";
 import { PriceResearchBudgetError } from "./research-budget.ts";
 import { resolveScreeningName } from "../identity/screening-name.ts";
@@ -25,23 +24,9 @@ const hasMatchedSales = (references: ScreeningSoldReference[]) => references.som
 const ordinarySale = (sale: Comp) => !/\blot\b|\bbundle\b|\bset of\b|\b\d+\s*(?:cards|pcs)\b|\bsigned\b|\bautograph(?:ed)?\b|\baltered\b|\bcustom\b|\bproxy\b|\breplica\b|\bmiscut\b|\bcrimp\b|\bholo\s*bleed\b|\bdouble\s*holo\b/i.test(sale.title);
 const specialSlab = (title: string) => /\((?:oc|mk|mc|st|pd|of)\)|\b(?:pristine|black label|perfect|altered|miscut|qualified|qualifier|authentic(?:ated)?)\b/i.test(title);
 const unique = (sales: Comp[]) => [...new Map(sales.map(sale => [sale.id != null ? `id:${sale.id}` : sale.listing_url ? `url:${sale.listing_url}` : `${sale.title}|${sale.sold_at}|${sale.price}`, sale])).values()];
-// Preserve a negative edition claim as metadata rather than leaving "no"
-// attached to the name after the literal reader removes "1st Edition".
-const readClaims = (title: string, knownSets: readonly string[] = []) => readTitleByRules(title.replace(/\b(?:no|not|without|non)[\s-]*(?:1st|first)[\s-]*ed(?:ition|it)?\b/gi, "Unlimited"), knownSets);
-function matchesSaleTarget(sale: Comp, record: CardRecord, grader: string | null, grade: string | null) {
-    const reading = readClaims(sale.title, record.setName ? [record.setName] : []);
-    const name = resolveScreeningName({ title: sale.title, claims: [reading.cardName], candidate: record.name });
-    return !(reading.kind && reading.kind !== "SINGLE_CARD" || reading.language === "Other" ||
-        reading.cardName && (!name || !sameCatalogName(name, record.name)) ||
-        reading.set && !sameSetFamily(reading.set, record.setName) ||
-        reading.cardNumber && !sameCardNumber(reading.cardNumber, record.cardNumber) ||
-        grader && reading.grader && reading.grader !== grader ||
-        grade && reading.grade && Number(reading.grade) !== Number(grade));
-}
-
 function marketSummaries(sales: Comp[], market: Market, grader: string | null, grade: string | null, asOf: number): ScreeningSoldReference[] {
     const { record, printing, finish } = market;
-    const eligible = unique(sales).filter(sale => sale.currency === "USD" && ordinarySale(sale) && matchesSaleTarget(sale, record, grader, grade));
+    const eligible = unique(sales).filter(sale => sale.currency === "USD" && ordinarySale(sale) && matchesSoldTarget(sale, record, grader, grade));
     const base = { recordId: record.id, name: record.name, set: record.setName!, cardNumber: record.cardNumber, printing, finish };
     if (grader && grade) {
         const ordinary = eligible.filter(sale => !specialSlab(sale.title));
@@ -137,7 +122,7 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
         signal?.throwIfAborted();
         const evidence: ScreeningSoldEvidence = { status: "UNAVAILABLE", exactScope: false, references: [], note: "The listing does not establish one exact card market for sold-price screening." };
         const card = listing.screen?.card;
-        const reading = readClaims(listing.title, [card?.set, ...intent.sets].filter((set): set is string => Boolean(set)));
+        const reading = readSoldTitleClaims(listing.title, [card?.set, ...intent.sets].filter((set): set is string => Boolean(set)));
         if (reading.kind && reading.kind !== "SINGLE_CARD") return evidence;
         const claimedNames = [card?.name, reading.cardName].filter((value): value is string => Boolean(value?.trim()));
         const claimedSets = [card?.set, reading.set].filter((value): value is string => Boolean(value?.trim()));

@@ -15,6 +15,7 @@ import { createShortlistService } from "../../server/shortlist/service.ts";
 import { photoReviewStatus } from "../../shared/photo-review.ts";
 import { resultGroup } from "../../shared/analysis.ts";
 import { seedRawSoldCopies } from "../fixtures/raw-sold-copies.ts";
+import { createSoldConditionAcquirer, type SoldConditionReading } from "../../server/ai/sold-condition.ts";
 import { drainSharedWork } from "../../server/lib/shared-work.ts";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -188,6 +189,96 @@ test("a supported near-mint raw resale can proceed without numeric grading detai
     assert.equal(result.underwriting?.best?.path, "RAW");
     assert.equal(calls.raw, 1);
     assert.equal(calls.comps, 0);
+});
+
+test("a fresh raw resale acquires one relevant sold copy and reuses its photo evidence across live listings", async () => {
+    const live = reading(); live.condition!.rawCondition = "LIGHTLY_PLAYED"; live.condition!.gradeRange = null;
+    let reviews = 0;
+    const { evaluate, calls, cache } = harness({
+        assess: async () => { calls.assessed++; return { result: structuredClone(live), usage: { inputTokens: 700, outputTokens: 450 } }; },
+        fetchRawComps: async () => [{ id: "raw-lp", title: "Venusaur Base Set 15/102 Unlimited Holo LP", price: 150,
+            sold_at: new Date(now - 86400000).toISOString(), variant: "Holofoil", currency: "USD", attribution: "exact",
+            sale_type: "fixed_price", listing_url: "https://www.ebay.com/itm/223456789012", grader: null, grade: null, grade_qualifier: null },
+            { id: "wrong-newer", title: "Charizard Base Set 4/102 Unlimited Holo LP", price: 999,
+                sold_at: new Date(now - 1000).toISOString(), variant: "Holofoil", currency: "USD", attribution: "exact",
+                sale_type: "fixed_price", listing_url: "https://www.ebay.com/itm/223456789013", grader: null, grade: null, grade_qualifier: null }],
+        soldCondition: options => createSoldConditionAcquirer({ ...options, assess: async ({ identity }) => {
+            reviews++;
+            const result: SoldConditionReading = { card: { name: identity.name, set: identity.set, cardNumber: identity.cardNumber,
+                language: "English", finish: "HOLO", confidence: "HIGH", evidence: ["Readable name, number and set artwork"] },
+                printing: "UNLIMITED", condition: "LIGHTLY_PLAYED", confidence: "HIGH", oneRawCard: true, frontVisible: true,
+                backVisible: true, closeUps: true, structuralDamage: false, evidence: ["Minor whitening, no structural damage"], limitations: [] };
+            return { result, usage: { inputTokens: 800, outputTokens: 300 } };
+        } }),
+    });
+    const first = await evaluate("v1|fresh-raw|0");
+    assert.equal(first.underwriting?.verdict, "BUY_RAW");
+    const quote = first.rawPricing?.prices?.find(value => value.condition === "LIGHTLY_PLAYED");
+    assert.equal(quote?.basis, "EBAY_SOLD"); assert.equal(quote?.comps?.count, 1); assert.equal(quote?.comps?.confidence, "LOW");
+    assert.equal(reviews, 1); assert.equal(calls.assessed, 1);
+    assert.ok(first.usage.some(value => value.step === "soldConditionAssessment" && value.outputTokens === 300));
+    assert.ok([...cache.keys()].some(key => key.startsWith("sold-condition:") && key.includes("bounded-1")));
+    const repeated = await evaluate("v1|fresh-raw|0");
+    assert.equal(reviews, 1); assert.equal(repeated.usage.length, 0);
+    const another = await evaluate("v1|another-raw|0");
+    assert.equal(another.underwriting?.verdict, "BUY_RAW");
+    assert.equal(reviews, 1, "another live listing must reuse the sold copy's accepted evidence");
+    assert.equal(calls.assessed, 1, "equivalent live photos also remain reusable");
+});
+
+test("catalog-corroborated photos correct stale seller fields without repurchasing the accepted reading or restoring a generic mismatch hold", async () => {
+    const listing = details({ aspects: { ...details().aspects, "Card Number": "14/102", Finish: "Regular" } });
+    const accepted = reading(); accepted.condition!.rawCondition = "LIGHTLY_PLAYED"; accepted.condition!.gradeRange = null;
+    accepted.photoCheck.cardMatch = { verdict: "MISMATCH", problems: [
+        "The visible collector number is 15/102, not seller aspects 14/102.",
+        "The visible finish is holo, not seller aspects Regular.",
+    ] };
+    let sales: Comp[] = [];
+    const { evaluate, cache, calls } = harness({ details: async () => listing,
+        assess: async () => assert.fail("accepted photo reading must be reused"),
+        fetchRawComps: async () => { calls.raw++; return sales; } });
+    sales = seedRawSoldCopies(cache, listing, "LIGHTLY_PLAYED", 150, now);
+    const plan = boundedAssessmentPlan(listing);
+    const stored = { ...accepted, version: plan.version, answeredAt: new Date(now).toISOString() };
+    cache.set(plan.key, structuredClone(stored));
+    const result = await evaluate(listing.id);
+    assert.equal(result.identity?.status, "IDENTIFIED");
+    assert.equal(result.identity?.cardNumber, "15/102");
+    assert.equal(result.identity?.finish, "HOLO");
+    assert.equal(result.underwriting?.verdict, "BUY_RAW");
+    assert.equal(resultGroup({ ...listing, currentPrice: listing.price, isGraded: false }, result), "deals");
+    assert.equal(photoReviewStatus(result).needsYourReview, false);
+    assert.equal(calls.assessed, 0);
+    assert.deepEqual(result.usage, []);
+    assert.deepEqual(result.photoCheck?.cardMatch, accepted.photoCheck.cardMatch, "original mismatch observations stay visible");
+    assert.deepEqual(cache.get(plan.key), stored);
+    assert.equal(listing.aspects["Card Number"], "14/102");
+    assert.equal(listing.aspects.Finish, "Regular");
+});
+
+test("a sold-copy spending or storage failure cannot become a raw market-price recommendation", async () => {
+    for (const failure of [new AiSpendingError("AI_BUDGET", "Search budget exhausted."), new StorageUnavailableError()]) {
+        const live = reading(); live.condition!.rawCondition = "NEAR_MINT"; live.condition!.gradeRange = null;
+        const { evaluate } = harness({ assess: async () => ({ result: live, usage: { inputTokens: 700, outputTokens: 450 } }),
+            soldCondition: options => createSoldConditionAcquirer({ ...options, assess: async () => { throw failure; } }) });
+        await assert.rejects(evaluate("v1|raw-stop|0"), error => error === failure);
+    }
+});
+
+test("material uncertainty in the live copy cannot buy an unrelated historical condition assessment", async () => {
+    for (const concern of ["CREASE", "AUTHENTICITY"] as const) {
+        const live = reading(); live.condition!.gradeRange = null;
+        if (concern === "CREASE") live.condition!.creases = "SUSPECTED";
+        else live.condition!.authenticity = { concern: "POSSIBLE", reasons: ["The readable card name has inconsistent print spacing."],
+            limitations: [], observations: [{ photoNumber: 1, feature: "FONTS", observation: "The readable card name has inconsistent print spacing.",
+                expected: "Consistent printed letter spacing.", judgment: "SUSPICIOUS" }] };
+        const { evaluate } = harness({ assess: async () => ({ result: live, usage: { inputTokens: 700, outputTokens: 450 } }),
+            soldCondition: options => createSoldConditionAcquirer({ ...options, assess: async () => assert.fail("another copy cannot resolve this copy's uncertainty") }) });
+        const result = await evaluate(`v1|uncertain-raw-${concern}|0`);
+        assert.ok(!result.underwriting?.verdict.startsWith("BUY"));
+        assert.equal(result.condition?.rawCondition, live.condition!.rawCondition);
+        assert.equal(result.condition?.creases, live.condition!.creases);
+    }
 });
 
 test("raw-condition retention cannot bypass missing front, multiple-card or unknown-count blockers", async () => {

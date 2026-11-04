@@ -11,7 +11,7 @@ export function seedRawSoldCopies(cache: Map<string, unknown>, listing: ListingD
     return [0, 1, 2].map(index => {
         const ebayId = String(923456789010 + index);
         const photos = ["front", "back"].map(side => `https://i.ebayimg.com/images/g/offline-${ebayId}-${side}/s-l1600.jpg`);
-        cache.set(listingCacheKey(`v1|${ebayId}|0`), { ...listing, images: photos });
+        cache.set(listingCacheKey(`v1|${ebayId}|0`), { ...listing, id: `v1|${ebayId}|0`, url: `https://www.ebay.com/itm/${ebayId}`, images: photos });
         const reading: SoldConditionReading = {
             card: { name: "Venusaur", set: "Base Set", cardNumber: "15/102", language: "English", finish: "HOLO", confidence: "HIGH",
                 evidence: ["Readable name, set and collector number on this sold copy"] },

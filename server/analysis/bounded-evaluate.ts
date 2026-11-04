@@ -1,4 +1,4 @@
-import { getListingDetails, listingCacheKey, type ListingDetails } from "../ebay/listings.ts";
+import { getListingDetails } from "../ebay/listings.ts";
 import { ANALYSIS_VERSION, CONDITION_VERSION } from "./legacy-evidence.ts";
 import { assessBoundedListing, type BoundedReading } from "../ai/bounded-assessment.ts";
 import { compatibleBoundedPlans, type BoundedAssessmentPlan } from "./bounded-plan.ts";
@@ -6,8 +6,7 @@ export { assessBoundedListing, BOUNDED_ASSESSMENT_SCHEMA, type BoundedReading } 
 export { BOUNDED_VISION_MODEL, BOUNDED_ASSESSMENT_VERSION, BOUNDED_CONDITION_VERSION, BOUNDED_SLAB_ASSESSMENT_VERSION, BOUNDED_PHOTO_LIMIT, selectBoundedPhotos, boundedAssessmentKey, boundedAssessmentPlan } from "./bounded-plan.ts";
 import { cachedCompChecks } from "../ai/comp-checker.ts";
 import { deferJungleNoSymbolPricing, jungleNoSymbolReason } from "../../shared/jungle-no-symbol.ts";
-import { acceptedSoldCondition, corroboratedSoldCondition, type SoldConditionReading } from "../ai/sold-condition.ts";
-import { VISION_MODEL } from "../ai/policy.ts";
+import { createSoldConditionAcquirer } from "../ai/sold-condition.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { createSharedWork } from "../lib/shared-work.ts";
 import { storageFailure } from "../lib/storage-failure.ts";
@@ -17,21 +16,21 @@ import { identifyCard, readyForPricing } from "../identity/card-identity.ts";
 import { checkSlab } from "../identity/slab-check.ts";
 import { lookupCards, fetchComps, fetchRawComps } from "../pricing/pkmnprices.ts";
 import { gradedPricesFor, compsForGrade } from "../pricing/graded-comps.ts";
-import { rawPricesWithSales } from "../pricing/raw-comps.ts";
+import { rawPricesWithSales, compCondition } from "../pricing/raw-comps.ts";
 import { rawPricesFor } from "../pricing/raw-prices.ts";
+import { matchesSoldTarget } from "../pricing/sold-comps.ts";
 import { loadSaved, reusableRecord, photoFingerprint } from "./store.ts";
 import { applyPhotoCheckRules, applyConditionRules, getGradingMode, hasCloseUps } from "./rules.ts";
-import { underwrite, GRADERS } from "../../shared/money/underwriting.ts";
+import { underwrite, GRADERS, netFromSale, pathNumbers } from "../../shared/money/underwriting.ts";
+import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { rateDeal } from "../../shared/money/rating.ts";
 import { cardLanguageStatus, EnglishOnlyError } from "../../shared/card-language.ts";
 import { listingEvidenceKey } from "../../shared/listing-evidence.ts";
-import { parseListingLink } from "../../shared/listing-link.ts";
 import { currentPriceEvidence, PRICING_VERSION } from "../../shared/pricing-freshness.ts";
-import { RAW_CONDITIONS, CONDITION_RULES_VERSION } from "../../shared/conditions.ts";
+import { RAW_CONDITIONS } from "../../shared/conditions.ts";
 import { withinAutomaticAuctionWindow } from "../../shared/listing-filters.ts";
 import type { Evaluation } from "../../shared/types.ts";
 import type { Usage } from "./types.ts";
-import type { Comp } from "../pricing/types.ts";
 import { createPrivateEvaluationStore, evaluationContextKey } from "./private-evaluation.ts";
 import { reconcileIdentityReadings } from "./resolve-evidence.ts";
 import { assertPriceResearchAvailable, PriceResearchBudgetError, withPriceResearchSignal } from "../pricing/research-budget.ts";
@@ -77,6 +76,7 @@ interface Dependencies {
     details: typeof getListingDetails; saved: typeof loadSaved; cached: typeof readCache; save: typeof writeCache;
     assess: typeof assessBoundedListing; identify: typeof identifyCard; lookup: typeof lookupCards; fetchComps: typeof fetchComps; fetchRawComps: typeof fetchRawComps;
     compChecks: typeof cachedCompChecks; now: () => number; assertPriceAvailable: typeof assertPriceResearchAvailable;
+    soldCondition: typeof createSoldConditionAcquirer;
 }
 function stopFailure(error: unknown) { return aiSpendingFailure(error) ?? storageFailure(error); }
 class CandidateOutsideWindow extends Error {}
@@ -95,7 +95,8 @@ function recheckSavedSlab(evaluation: Evaluation, aspects: Record<string, string
 
 export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
     const deps: Dependencies = { details: getListingDetails, saved: loadSaved, cached: readCache, save: writeCache, assess: assessBoundedListing, identify: identifyCard,
-        lookup: lookupCards, fetchComps, fetchRawComps, compChecks: cachedCompChecks, now: Date.now, assertPriceAvailable: assertPriceResearchAvailable, ...overrides };
+        lookup: lookupCards, fetchComps, fetchRawComps, compChecks: cachedCompChecks, now: Date.now, assertPriceAvailable: assertPriceResearchAvailable,
+        soldCondition: createSoldConditionAcquirer, ...overrides };
     const share = createSharedWork();
     const shareReading = createSharedWork();
     type ReadingConsumer = { needed: () => boolean; context: AiUsageContext };
@@ -317,7 +318,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             evaluation.identity.reasons.push("Saved independent photo readings disagree about this card's finish.");
         }
         if (cardLanguageStatus(listing.title, [identified.identity.language]) === "OTHER") throw new EnglishOnlyError();
-        if (check.cardMatch?.verdict === "MISMATCH" && !evaluation.identity.notThisCard && !legacyResolution?.confirmation) {
+        if (check.cardMatch?.verdict === "MISMATCH" && !evaluation.identity.notThisCard && !legacyResolution?.confirmation && !identified.sellerClaimsCorrected) {
             if (evaluation.pricingDeferred) delete evaluation.pricingDeferred.identityLookupPending;
             evaluation.identity.status = "NEEDS_REVIEW"; evaluation.identity.notThisCard = check.cardMatch.problems.join("; ") || "The photographed card differs from the listing.";
             evaluation.identity.reasons.push(evaluation.identity.notThisCard);
@@ -345,26 +346,42 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         } else {
             const condition = evaluation.condition;
             if (!condition || condition.rawCondition === "UNKNOWN" && !condition.gradeRange) return finish();
-            const cachedSoldCondition = async (sale: Comp) => {
-                const parsed = parseListingLink(sale.listing_url); if (!parsed) return null;
-                const oldDetails = await guarded(() => deps.cached<ListingDetails>(listingCacheKey(parsed.itemId), 24 * 30));
-                if (!oldDetails?.images.length) return null;
-                const target = JSON.stringify([identity.name, identity.set, identity.cardNumber, identity.printing, identity.finish]);
-                const photos = [...new Set(oldDetails.images)].filter(Boolean).slice(0, 24);
-                const key = `sold-condition:v${CONDITION_RULES_VERSION}:${VISION_MODEL}:${target}:${JSON.stringify(photos)}`;
-                const saved = await guarded(() => deps.cached<{ primary: SoldConditionReading; corroboration?: SoldConditionReading } | SoldConditionReading>(key, 24 * 365));
-                const first = saved && ("primary" in saved ? saved.primary : saved);
-                return first ? acceptedSoldCondition(first, identity, photos.length) ?? (saved && "corroboration" in saved && saved.corroboration ? corroboratedSoldCondition(first, saved.corroboration, identity, photos.length) : null) : null;
-            };
             if (condition.rawCondition !== "UNKNOWN") {
+                const sold = deps.soldCondition({ condition: condition.rawCondition, loadDetails: (...args) => guarded(() => deps.details(...args)),
+                    cached: deps.cached, save: deps.save, now: deps.now });
                 const beforeRaw = priceLimits;
-                const raw = await rawPricesWithSales(identified.card, identity, { fetchRawComps: (...args) => guarded(() => deps.fetchRawComps(...args)), assessCondition: cachedSoldCondition, signal, now: deps.now() });
+                const raw = await rawPricesWithSales(identified.card, identity, {
+                    fetchRawComps: (...args) => guarded(() => deps.fetchRawComps(...args)), signal, now: deps.now(), requestedCondition: condition.rawCondition,
+                    assessCondition: (sale, target) => guarded(() => sold.read(sale, target, signal)),
+                    acquireCondition: async sales => {
+                        // Resolving another copy's resale price cannot settle
+                        // this copy's suspected structural damage or authenticity.
+                        if (condition.creases === "SUSPECTED" || condition.authenticity.concern !== "NONE_SEEN") return null;
+                        const pending = sales.filter(sale => sold.status(sale, identity) === "UNREVIEWED" &&
+                            matchesSoldTarget(sale, { name: identity.name!, setName: identity.set, cardNumber: identity.cardNumber }));
+                        // Seller condition is a research clue, never the accepted
+                        // category. Avoid buying a review of a known different
+                        // category while a like-for-like comparison is available.
+                        const claimed = pending.filter(sale => compCondition(sale.title) === condition.rawCondition);
+                        const candidates = claimed.length ? claimed : pending.filter(sale => compCondition(sale.title) === null);
+                        const shipping = listing.shipping ?? MONEY_CONFIG.buying.assumedShippingWhenUnknown;
+                        const sale = candidates.filter(sale => {
+                            if (listing.price === null || !Number.isFinite(sale.price) || sale.price <= 0) return false;
+                            const net = netFromSale(sale.price, "raw", MONEY_CONFIG.selling);
+                            return pathNumbers({ expectedNet: net, downsideNet: net, fixedCosts: 0, shipping, price: listing.price },
+                                { ...MONEY_CONFIG, targets: { minProfit: 0, minRoi: 0 } }).profit > 0;
+                        }).sort((a, b) => Date.parse(b.sold_at) - Date.parse(a.sold_at))[0];
+                        if (!sale) return null;
+                        const evidence = await guarded(() => sold.acquire(sale, identity, signal));
+                        return evidence ? { sale, evidence } : null;
+                    },
+                });
+                evaluation.usage.push(...sold.usage.map(usage => ({ step: "soldConditionAssessment", ...usage })));
                 // The raw helper's ordinary outage fallback cannot turn a denied
                 // sold-research request into a fresh market-price recommendation.
                 evaluation.rawPricing = priceLimits > beforeRaw ? { status: "PRICE_UNAVAILABLE", reason: evaluation.pricingDeferred!.note } : raw;
             }
             if (hardFailure) throw hardFailure;
-            if (evaluation.rawPricing?.conditionEvidence === "AI_PHOTOS") evaluation.rawPricing.evidenceNote = `${evaluation.rawPricing.reviewedSoldCopies ?? 0} sold copies reused accepted saved photo-condition evidence. No historical listing photos or new sold-copy AI reviews were requested. Conditions without three matched sales use a labeled market fallback.`;
             if (evaluation.condition) {
                 evaluation.gradedPricing = {};
                 for (const grader of GRADERS) try {

@@ -92,6 +92,16 @@ flowchart TD
    90-day market even when only one valid current sale exists; the labeled
    180-day fallback applies only when no current match remains. Pricing-policy
    changes reprice saved evaluations without invalidating paid photo readings.
+   Raw resale first reads accepted sold-copy condition observations. When no
+   suitable match exists, the evaluator may select one recent confirmed sale
+   whose amount could support positive net resale at the current purchase terms.
+   Seller condition text prioritizes research but never supplies the accepted
+   category. One compact historical assessment checks at most six source photos,
+   with a 1,100-token output limit, under the original search allowance. It has
+   no retry, corroboration or next-copy loop. Suspected structural damage or
+   authenticity uncertainty in the live copy prevents this new paid stage.
+   One physically accepted condition match may price a route at LOW confidence;
+   missing/unaccepted matches retain labeled reference-only quotes.
 10. Shared result rules and client selectors determine the visible groups. Card
    and detail components present that result; they do not independently appraise
    cards or invent new buying decisions.
@@ -118,7 +128,7 @@ All paths below are relative to the repository root.
 | Explicit deeper photo review | `server/analysis/deeper-review.ts`, `server/ai/deeper-photo-review.ts` | Keep the original assessment and a separately keyed focused report; no broad discovery. |
 | Isolated model comparison | `scripts/compare-saved-models.ts`, `server/analysis/model-experiment.ts`, `server/ai/focused-printing-experiment.ts` | Explicit saved-example diagnostics; immutable inputs, private additive evidence and original spending allowances. Does not change production routing or accepted assessments. |
 | AI transport and identity rules | `server/ai/openai.ts`, `server/ai/policy.ts`, `server/identity/` | Exact preflight, spending and SDK dispatch remain distinct from canonical identification and label checks. |
-| Raw resale evidence | `server/pricing/raw-comps.ts`, `raw-prices.ts`, `server/ai/sold-condition.ts` | Match condition/printing/finish; reuse saved sold-copy findings and keep any market-price fallback labeled. No new sold-photo writer. |
+| Raw resale evidence | `server/pricing/raw-comps.ts`, `raw-prices.ts`, `server/ai/sold-condition.ts` | Reuse accepted sold-copy findings first, then at most one relevant bounded acquisition. Exact physical condition/printing/finish acceptance stays separate from seller clues and market fallbacks. |
 | Existing slabs and grading scenarios | `server/pricing/graded-comps.ts` | Exact grader/grade sold evidence; asking references in older saved records remain distinct from sales. |
 | Shared sold-evidence rules | `server/pricing/sold-comps.ts` | Pure comp rejection, median, outlier and summary helpers shared by raw/graded pricing. Provider access stays outside this module. |
 | Money and purchase decisions | `shared/money/underwriting.ts`, `config.ts`, `offer.ts`, `rating.ts`, `targets.ts` | Deterministic calculations shared by server and browser. |

@@ -5,8 +5,13 @@ import {
     noveltyIn,
     titleDecidesPrinting,
     finishOfVariant,
+    sameCardNumber,
+    sameSetFamily,
     type PrintingClaim,
 } from "../identity/card-identity.ts";
+import { readTitleByRules } from "../ai/title-reader.ts";
+import { resolveScreeningName } from "../identity/screening-name.ts";
+import { sameCatalogName } from "../identity/catalog-name.ts";
 import { gradeQualifier } from "../../shared/grade-qualifier.ts";
 import type { CompSummary, Confidence } from "../../shared/types.ts";
 import type { Comp, CompDropReason, CompVerdict, PrintingOrUnknown } from "./types.ts";
@@ -14,6 +19,20 @@ import { jungleNoSymbolReason } from "../../shared/jungle-no-symbol.ts";
 
 // Shared evidence rules for raw and graded sold comparables. These functions
 // filter and summarize supplied sales without fetching prices or photos.
+
+// Preserve a negative edition claim as metadata rather than leaving "no"
+// attached to the name after the literal reader removes "1st Edition".
+export const readSoldTitleClaims = (title: string, knownSets: readonly string[] = []) => readTitleByRules(title.replace(/\b(?:no|not|without|non)[\s-]*(?:1st|first)[\s-]*ed(?:ition|it)?\b/gi, "Unlimited"), knownSets);
+export function matchesSoldTarget(sale: Comp, target: { name: string; setName: string | null; cardNumber: string | null }, grader: string | null = null, grade: string | null = null): boolean {
+    const reading = readSoldTitleClaims(sale.title, target.setName ? [target.setName] : []);
+    const name = resolveScreeningName({ title: sale.title, claims: [reading.cardName], candidate: target.name });
+    return !(reading.kind && reading.kind !== "SINGLE_CARD" || reading.language === "Other" ||
+        reading.cardName && (!name || !sameCatalogName(name, target.name)) ||
+        reading.set && !sameSetFamily(reading.set, target.setName) ||
+        reading.cardNumber && !sameCardNumber(reading.cardNumber, target.cardNumber) ||
+        grader && reading.grader && reading.grader !== grader ||
+        grade && reading.grade && Number(reading.grade) !== Number(grade));
+}
 
 // How an AI-dropped sale is counted with the rest of the dropped sales.
 const AI_DROP_NAMES: Record<CompDropReason, string> = {

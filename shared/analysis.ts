@@ -43,7 +43,8 @@ export function resultGroup(listing: ListingSummary, evaluation: Evaluation | nu
             evaluation.slab?.status === "NEEDS_REVIEW" ||
             !check || !observedCardKind(evaluation) ||
             !card?.name || !card.set || !card.cardNumber || card.confidence === "LOW" ||
-            check.cardMatch?.verdict === "MISMATCH" ||
+            check.cardMatch?.verdict === "MISMATCH" && evaluation.identity?.status !== "IDENTIFIED" ||
+            !evaluation.slab && evaluation.condition?.creases === "SUSPECTED" && verdict === "NEEDS_REVIEW" ||
             !evaluation.slab && (!evaluation.condition || evaluation.condition.rawCondition === "UNKNOWN" || evaluation.condition.authenticity.concern !== "NONE_SEEN") ||
             evaluation.deeperPhotoReview?.findings.some(finding => finding.impact === "NEW_CONCERN");
         return materialReview ? "review" : "candidates";

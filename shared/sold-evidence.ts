@@ -3,12 +3,13 @@ import type { ScreeningSoldReference } from "./types.ts";
 
 const positive = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value > 0;
 const normalize = (value: unknown) => String(value ?? "").trim().toUpperCase();
+export const MIN_MATCHED_SALES = 1;
 
 // Shared numerical/scope contract for already-matched public sold facts.
 // Eligibility of the underlying transactions remains the provider layer's job.
 export function usableSoldReference(reference: ScreeningSoldReference, slab: boolean): boolean {
     const { summary } = reference;
-    if (!summary || !Number.isInteger(summary.count) || summary.count < 1 || !positive(summary.median) ||
+    if (!summary || !Number.isInteger(summary.count) || summary.count < MIN_MATCHED_SALES || !positive(summary.median) ||
         !positive(summary.windowDays) || summary.windowDays > 180 ||
         !["HIGH", "MEDIUM", "LOW"].includes(summary.confidence)) return false;
     if (summary.low !== null && (!positive(summary.low) || summary.low > summary.median)) return false;

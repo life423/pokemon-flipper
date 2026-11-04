@@ -362,6 +362,88 @@ test("date-shaped specifics alone, partial photo numbers and real contradictions
     }
 });
 
+function sellerFieldCorrectionCase() {
+    const listing = { title: "Wizards of the Coast Dark Blastoise 3/82 Team Rocket Holo Rare English 2000",
+        aspects: { "Card Name": "Dark Blastoise", Set: "Team Rocket", "Card Number": "20/82", Finish: "Regular", Features: "Unlimited", Language: "English" } };
+    const photos = photoCheck({ firstEditionStamp: "NOT_PRESENT", artBoxShadow: "CANT_TELL", evidence: ["The edition stamp area is visibly empty."] }, {
+        holder: "NONE", cardCount: "ONE", printedName: "Dark Blastoise", printedNumber: "3/82",
+        images: [{ number: 1, view: "FRONT", usable: true, isStockImage: false, issues: [] }, { number: 2, view: "BACK", usable: true, isStockImage: false, issues: [] }],
+        cardIdentity: { name: "Dark Blastoise", set: "Team Rocket", cardNumber: "3/82", finish: "HOLO", language: "English", confidence: "HIGH", evidence: ["Readable name, 3/82 fraction, Rocket symbol and holo artwork agree."] },
+        cardMatch: { verdict: "MISMATCH", problems: ["The visible collector number is 3/82, not the seller aspects' 20/82.", "The visible finish is holo, not the seller aspects' Regular."] } });
+    const record = toCardRecord({ id: 26301, name: "Dark Blastoise", number: "003", total_set_number: "82", set: { id: 1, name: "Team Rocket" }, prices: [usd("Unlimited Holofoil", "Lightly Played", 100)] });
+    return { listing, photos, record };
+}
+
+test("catalog-backed physical number and finish correct conflicting seller fields while original claims remain intact", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("seller-field correction needs only supplied observations and catalog records"));
+    const { listing, photos, record } = sellerFieldCorrectionCase(), before = structuredClone({ listing, photos });
+    let lookups = 0;
+    const result = await identifyCard(listing, photos, { lookupCards: async query => { lookups++; assert.equal(query.cardNumber, "3/82"); return [record]; } });
+    assert.equal(lookups, 1); assert.equal(result.identity.status, "IDENTIFIED"); assert.equal(result.sellerClaimsCorrected, true);
+    assert.equal(sameCardNumber(result.identity.cardNumber, "3/82"), true); assert.equal(result.identity.finish, "HOLO"); assert.equal(result.identity.printing, "UNLIMITED");
+    assert.equal(result.identity.notThisCard, undefined); assert.match(result.identity.reasons.join(" "), /seller|item details/i);
+    assert.doesNotMatch(result.identity.reasons.join(" "), /independent.*readings/i);
+    assert.deepEqual({ listing, photos }, before);
+});
+
+test("seller-field correction requires complete strong photos and an explicit agreeing title before any corrected lookup", async () => {
+    const cases = [
+        ["medium identity", value => { value.photos.cardIdentity.confidence = "MEDIUM"; }],
+        ["missing identity evidence", value => { value.photos.cardIdentity.evidence = []; }],
+        ["unknown language", value => { value.photos.cardIdentity.language = null; }],
+        ["partial photographed number", value => { value.photos.printedNumber = "3"; }],
+        ["partial structured number", value => { value.photos.cardIdentity.cardNumber = "3"; }],
+        ["partial title number", value => { value.listing.title = "Dark Blastoise #3 Team Rocket Holo English"; }],
+        ["different title number", value => { value.listing.title = "Dark Blastoise 20/82 Team Rocket Holo English"; }],
+        ["unresolved name mixed with metadata", value => { value.photos.cardMatch.problems.push("The seller aspects say Regular finish, but the card name is unreadable despite holo treatment."); }],
+        ["different title denominator", value => { value.listing.title = "Dark Blastoise 3/83 Team Rocket Holo English"; }],
+        ["different title finish", value => { value.listing.title = "Dark Blastoise 3/82 Team Rocket Non-Holo English"; }],
+        ["reverse-holo title", value => { value.listing.title = "Dark Blastoise 3/82 Team Rocket Reverse Holo English"; }],
+        ["missing title set", value => { value.listing.title = "Dark Blastoise 3/82 Holo English"; }],
+        ["different title set", value => { value.listing.title = "Dark Blastoise 3/82 Jungle Holo English"; }],
+        ["wrong reprint set", value => { value.listing.title = "Dark Blastoise 3/82 EX Team Rocket Returns Holo English"; }],
+        ["stock front", value => { value.photos.images[0].isStockImage = true; }],
+        ["unknown holder", value => { value.photos.holder = "UNKNOWN"; }],
+        ["multiple cards", value => { value.photos.cardCount = "MULTIPLE"; }],
+        ["unexplained mismatch", value => { value.photos.cardMatch.problems = ["The pictured card does not match the listing."]; }],
+    ];
+    for (const [label, change] of cases) {
+        const value = sellerFieldCorrectionCase(); change(value);
+        const result = await identifyCard(value.listing, value.photos, { lookupCards: async () => assert.fail(`${label}: rejected evidence cannot authorize a guessed catalog target`) });
+        assert.equal(result.identity.status, "NEEDS_REVIEW", label); assert.equal(result.sellerClaimsCorrected, undefined, label);
+    }
+});
+
+test("seller-field correction does not collapse different printed names, owners or forms", async () => {
+    for (const name of ["Blastoise", "Dark Alakazam", "Dark Blastoise ex", "Misty's Dark Blastoise"]) {
+        const value = sellerFieldCorrectionCase(); value.listing.title = `${name} 3/82 Team Rocket Holo English`;
+        const result = await identifyCard(value.listing, value.photos, { lookupCards: async () => assert.fail("a different name or printed form cannot authorize correction") });
+        assert.equal(result.identity.status, "NEEDS_REVIEW", name); assert.equal(result.sellerClaimsCorrected, undefined, name);
+    }
+});
+
+test("real printing, authenticity and reprint concerns remain blocking after seller-field comparisons", async () => {
+    for (const change of [
+        value => { value.photos.printingMarks.firstEditionStamp = "VISIBLE"; },
+        value => { value.photos.printingMarks.reprintMark = "CELEBRATIONS_25TH"; },
+        value => { value.photos.cardMatch.problems.push("The card shows a suspicious counterfeit texture."); },
+        value => { value.photos.cardMatch.problems.push("The visible First Edition stamp contradicts the seller's Unlimited claim."); },
+    ]) {
+        const value = sellerFieldCorrectionCase(); change(value);
+        const result = await identifyCard(value.listing, value.photos, { lookupCards: lookup(value.record) });
+        assert.equal(result.identity.status, "NEEDS_REVIEW"); assert.equal(result.sellerClaimsCorrected, undefined);
+    }
+});
+
+test("a local seller-field correction is not accepted without a matching catalog identity and finish", async () => {
+    for (const records of [[], [{ ...sellerFieldCorrectionCase().record, variants: [{ name: "Unlimited", printing: "UNLIMITED", finish: "NON_HOLO", prices: [] }] }],
+        [{ ...sellerFieldCorrectionCase().record, name: "Dark Blastoise ex" }]]) {
+        const { listing, photos } = sellerFieldCorrectionCase();
+        const result = await identifyCard(listing, photos, { lookupCards: lookup(...records) });
+        assert.equal(result.identity.status, "NEEDS_REVIEW"); assert.equal(result.sellerClaimsCorrected, undefined);
+    }
+});
+
 // Printing claims and evidence
 
 test("reads printing claims from seller text", () => {

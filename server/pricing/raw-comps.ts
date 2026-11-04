@@ -1,18 +1,21 @@
-import { RAW_CONDITIONS } from "../../shared/conditions.ts";
+import { RAW_CONDITIONS, type RawCondition } from "../../shared/conditions.ts";
 import type { CompSummary, Identity, RawPrice, RawPricing } from "../../shared/types.ts";
 import { rawPricesFor, variantFor } from "./raw-prices.ts";
 import { compProblem, summarizeComps } from "./sold-comps.ts";
 import type { CheckComps, Comp, FetchRawComps, PricedCard } from "./types.ts";
 import type { SoldConditionEvidence } from "../ai/sold-condition.ts";
 import { readyForPricing } from "../../shared/identity.ts";
+import { MIN_MATCHED_SALES } from "../../shared/sold-evidence.ts";
 
 // Seller text only bootstraps screening; final valuations inspect sold photos.
 export { rawConditionClaim as compCondition } from "../../shared/raw-condition-claim.ts";
 import { rawConditionClaim as compCondition } from "../../shared/raw-condition-claim.ts";
 
 export async function rawPricesWithSales(card: PricedCard | null, identity: Identity, {
-    fetchRawComps, checkComps, now = Date.now(), assessCondition, signal,
-}: { fetchRawComps: FetchRawComps; checkComps?: CheckComps; now?: number; assessCondition?: (sale: Comp, identity: Identity, signal?: AbortSignal) => Promise<SoldConditionEvidence | null>; signal?: AbortSignal }): Promise<RawPricing> {
+    fetchRawComps, checkComps, now = Date.now(), assessCondition, acquireCondition, requestedCondition, signal,
+}: { fetchRawComps: FetchRawComps; checkComps?: CheckComps; now?: number; assessCondition?: (sale: Comp, identity: Identity, signal?: AbortSignal) => Promise<SoldConditionEvidence | null>;
+    acquireCondition?: (sales: readonly Comp[], identity: Identity, signal?: AbortSignal) => Promise<{ sale: Comp; evidence: SoldConditionEvidence } | null>;
+    requestedCondition?: RawCondition; signal?: AbortSignal }): Promise<RawPricing> {
     signal?.throwIfAborted();
     const fallback = rawPricesFor(card, identity);
     const { variant } = variantFor(card, identity);
@@ -29,11 +32,35 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
             const eligible = sales.filter(sale => sale.currency === "USD" && sale.sale_type && !sale.grader && !sale.grade &&
                 !/\b(psa|cgc|bgs|sgc|tag|lot|bundle)\b/i.test(sale.title) && compProblem({ ...sale, grader: "RAW", grade: "ANY" },
                     { printing: identity.printing, setName: variant.setName, finish: variant.finish, grader: "RAW", grade: "ANY", now, windowDays: 90 }) === null);
-            sales = (await Promise.all(eligible.map(async sale => {
+            const accepted = new Map<Comp, SoldConditionEvidence>();
+            let cacheReadFailed = false;
+            // This callback reads accepted evidence only. New photo work has
+            // a separate, one-shot acquisition after every cache read finishes.
+            await Promise.all(eligible.map(async sale => {
                 signal?.throwIfAborted();
-                const assessed = await assessCondition(sale, identity, signal).catch(() => { signal?.throwIfAborted(); return null; });
-                return assessed ? { ...sale, photoCondition: assessed.condition, conditionEvidence: assessed.evidence, sellerCondition: compCondition(sale.title) } : null;
-            }))).filter((sale): sale is Comp & { photoCondition: import("../../shared/conditions.ts").RawCondition; conditionEvidence: string[]; sellerCondition: import("../../shared/conditions.ts").RawCondition | null } => sale !== null);
+                const assessed = await assessCondition(sale, identity, signal).catch(() => { signal?.throwIfAborted(); cacheReadFailed = true; return null; });
+                signal?.throwIfAborted();
+                if (assessed) accepted.set(sale, assessed);
+            }));
+            const matched = [...accepted.values()].filter(evidence => evidence.condition === requestedCondition).length;
+            const unassessed = eligible.filter(sale => !accepted.has(sale));
+            if (acquireCondition && requestedCondition && RAW_CONDITIONS.includes(requestedCondition) &&
+                !cacheReadFailed && matched < MIN_MATCHED_SALES && unassessed.length) {
+                signal?.throwIfAborted();
+                const acquired = await acquireCondition(Object.freeze(unassessed), identity, signal);
+                signal?.throwIfAborted();
+                // The callback validates physical identity/condition; it may
+                // only supply evidence for an offered source copy, never inject
+                // a different transaction or alter its price/printing fields.
+                if (acquired && unassessed.includes(acquired.sale) && RAW_CONDITIONS.includes(acquired.evidence.condition) &&
+                    acquired.evidence.evidence.length && Number.isSafeInteger(acquired.evidence.photoCount) && acquired.evidence.photoCount > 0) {
+                    accepted.set(acquired.sale, acquired.evidence);
+                }
+            }
+            sales = eligible.flatMap(sale => {
+                const assessed = accepted.get(sale);
+                return assessed ? [{ ...sale, photoCondition: assessed.condition, conditionEvidence: assessed.evidence, sellerCondition: compCondition(sale.title) }] : [];
+            });
         }
         const summaries: CompSummary[] = [];
         for (const condition of RAW_CONDITIONS) {
@@ -73,13 +100,16 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
         const prices = RAW_CONDITIONS.flatMap<RawPrice>(condition => {
             const summary = summaries.find(s => s.grade === condition)!;
             const market = fallback.prices?.find(p => p.condition === condition);
-            // A lone premium copy or a pair of sales cannot overwrite the feed.
-            if (summary.count >= 3 && summary.median !== null) return [{ condition, price: summary.median, updatedAt: summary.newestSale, basis: "EBAY_SOLD" as const, comps: summary }];
+            // The shared sparse-sale policy applies to physical-condition
+            // evidence. Keep the legacy title-only floor until its final-price
+            // compatibility path is retired; seller text cannot gain admission.
+            const minimum = assessCondition ? MIN_MATCHED_SALES : 3;
+            if (summary.count >= minimum && summary.median !== null) return [{ condition, price: summary.median, updatedAt: summary.newestSale, basis: "EBAY_SOLD" as const, comps: summary }];
             return market ? [{ ...market, basis: "TCGPLAYER" as const }] : [];
         });
         return { ...fallback, status: prices.length ? "PRICED" : "PRICE_UNAVAILABLE", prices, ebayComps: summaries,
             conditionEvidence: assessCondition ? "AI_PHOTOS" : "SELLER_TEXT", reviewedSoldCopies: assessCondition ? sales.length : undefined, sampledSoldCopies,
-            evidenceNote: assessCondition ? `${sales.length} sold copies have accepted AI photo-condition assessments from ${sampledSoldCopies} returned records. All eligible returned copies receive photo review; results are reused for unchanged photos. Three matched sales are required for an eBay median; other conditions retain a marked market fallback.`
+            evidenceNote: assessCondition ? `${sales.length} sold copies have accepted photo-condition assessments from ${sampledSoldCopies} returned records. Accepted findings are reused for unchanged photos. Matched-sale minimum for an eBay median: ${MIN_MATCHED_SALES}; one or two sales retain LOW confidence. Other conditions retain a marked market fallback.`
                 : "Screening uses seller-stated raw conditions. Final evaluations assess sold-copy photos where available. Up to 40 returned records over 90 days are sampled." };
     } catch {
         signal?.throwIfAborted();

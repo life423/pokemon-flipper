@@ -31,3 +31,27 @@ test("a completed financial rejection remains terminal even when a deferred phot
     value.underwriting = { verdict: "PASS", reasons: ["Resale loses money at asking."], best: null, paths: [], assumptions: [] };
     assert.equal(resultGroup(listing, value, true), null);
 });
+
+test("resolved seller-metadata mismatches stay in Sorting while deferred prices preserve real identity holds", () => {
+    const value = cardEvaluation();
+    const listing = { ...value.listing, currentPrice: value.listing.price, images: [], isGraded: false };
+    value.pricingDeferred = { provider: "PKMNPRICES", note: "Matching sold prices are deferred." };
+    value.rawPricing = null; value.gradedPricing = null;
+    value.underwriting = { verdict: "CANT_PRICE", reasons: [value.pricingDeferred.note], best: null, paths: [], assumptions: [] };
+    value.photoCheck!.cardCount = "ONE";
+    value.photoCheck!.cardIdentity = { name: value.identity!.name, set: value.identity!.set, cardNumber: value.identity!.cardNumber,
+        language: "English", finish: "HOLO", confidence: "HIGH", evidence: ["The visible name, set and collector fraction agree."] };
+    value.photoCheck!.cardMatch = { verdict: "MISMATCH", problems: ["The seller-entered number and finish differ from the readable card and title."] };
+    const original = structuredClone(value);
+    assert.equal(resultGroup(listing, value), "candidates", "a final identified card needs prices, not another identity review");
+    assert.deepEqual(value, original, "grouping preserves the original paid photo report");
+    for (const change of [
+        copy => { copy.identity!.notThisCard = "The photos establish a different release."; },
+        copy => { copy.identity!.status = "NEEDS_REVIEW"; copy.identity!.reasons = ["The set remains uncertain."]; },
+        copy => { copy.identity!.status = "NEEDS_REVIEW"; copy.pricingDeferred!.identityLookupPending = true; },
+        copy => { copy.identity = null; },
+    ]) {
+        const copy = structuredClone(value); change(copy);
+        assert.equal(resultGroup(listing, copy), "review", "unresolved or disproved identities must retain their review hold");
+    }
+});

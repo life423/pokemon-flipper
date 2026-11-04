@@ -42,7 +42,7 @@ export interface UnderwritingInput {
     deeperPhotoReview?: DeeperPhotoReview;
     listing: { price: number | null; shipping: number | null; availability?: string; title?: string };
     identity: Identity | null;
-    condition: Pick<Condition, "rawCondition" | "gradeRange" | "authenticity"> | null;
+    condition: Pick<Condition, "rawCondition" | "gradeRange" | "authenticity"> & Partial<Pick<Condition, "creases">> | null;
     rawPricing?: RawPricing | null;
     gradedPricing?: Partial<Record<Grader, GradedPricing>> | null;
     slab?: Pick<Slab, "status" | "grader" | "grade" | "reasons" | "concerns"> & Partial<Pick<Slab, "labelText">> | null;
@@ -605,6 +605,11 @@ function underwriteBase(input: UnderwritingInput, config: MoneyConfig): Underwri
 
 export function underwrite(input: UnderwritingInput, config: MoneyConfig = MONEY_CONFIG): Underwriting {
     const result = underwriteBase(input, config);
+    // Keep the observed condition and price scenarios, but an unresolved
+    // structural flaw cannot support purchase advice under any local targets.
+    if (!input.slab && input.condition?.creases === "SUSPECTED" && result.verdict.startsWith("BUY")) return {
+        ...result, verdict: "NEEDS_REVIEW", reasons: ["The photos suggest a possible crease. Confirm whether structural damage is present before buying."],
+    };
     const concerns = input.deeperPhotoReview?.findings.filter((finding) => finding.impact === "NEW_CONCERN").map((finding) => finding.observation) ?? [];
     // Preserve the original grade and money scenarios, but pause actionable
     // purchase advice when the optional second opinion finds a new risk.

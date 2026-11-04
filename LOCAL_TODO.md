@@ -5,13 +5,41 @@ with the repository. Older entries calling it private or ignored describe the
 previous arrangement. Credentials, environment values, API payloads, paid photo
 evidence and data/ remain excluded. A separate computer handoff is deferred.
 
-The tested catalog/search checkpoint is being committed and merged to main.
-Current next work is pricing coverage: fresh raw assessments cannot acquire
-condition evidence for sold copies, and the legacy raw estimator still requires
-three accepted comparisons. Inspect the existing acceptance rules and original
-one-sale instruction before reconnecting one bounded, decision-relevant check.
-Preserve the two-cent default, original search IDs, shared SQL evidence and
-cancellation behavior; do not restore the old automatic multi-comparison loop.
+Catalog/search checkpoint ecae9e9 is committed and pushed on main, including
+tracked Markdown notes. Work continues on improve/raw-resale-evidence. No
+handoff was created; preserve the unrelated .env.example deletion.
+
+## Current raw-resale work — November 4
+
+- [x] Restore one bounded, decision-relevant historical photo-condition
+  acquisition after saved evidence reads; no comparison loop or second opinion.
+  Share the original AI/Browse allowances, save negative findings and retain
+  original photo indices and accepted legacy readers.
+- [x] Apply the one-sale minimum to physically accepted raw condition matches
+  at LOW confidence. Preserve reference-only market quotes and the older
+  seller-title-only compatibility floor until that branch is retired safely.
+- [x] Correct stale raw Card Number/Finish fields only when strong photos,
+  explicit title and catalog agree; retain original claims and real conflicts.
+  Price-only deferral must not restore resolved metadata manual-review holds.
+- [x] Keep suspected structural damage out of purchase advice and prevent paid
+  sold-copy work that cannot resolve that live-copy concern. Do not invent a
+  damaged category, numeric grade or completed negative decision.
+- [x] Cache definitive historical 404/410 responses without treating temporary
+  outages, Stop or storage/accounting errors as missing evidence.
+- [x] Consolidate the existing sold-title name/number/set matcher and reuse it
+  before cold detail/photo dispatch. Preserve accepted physical findings when
+  seller titles were wrong; do not introduce a second paid text check.
+- [x] Validate normal HTTP acquisition and saved replay: 1.54424 cents for
+  three live readings and one sold-copy reading; no BIN Deal established. The
+  seller-LP comparison was physically MP/MEDIUM and was correctly not used as
+  a confirmed LP price. Replay added no generation or price-provider requests.
+- [ ] Finish supported profitable BIN validation using useful exact-scope
+  candidates, then verified cheapest matching live BIN competition. Do not
+  repeat a broad ten-search matrix or weaken evidence merely to get a count.
+- [ ] Retire the remaining seller-title-only raw final-price branch after
+  caller/compatibility review; preserve historical accepted prices/readers.
+- [ ] Continue the full older strategy/UI/queue/market backlog below. The new
+  raw acquisition fixes a missing path, not every pricing-coverage problem.
 
 ## Latest continuation — November 4, after commit 7b26ca0
 

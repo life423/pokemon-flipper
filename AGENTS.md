@@ -85,6 +85,14 @@ Read docs/architecture.md for the source map and reading order.
   Actual photographed holder/grader/grade determines resale, not seller category.
   A compact request finding raw does not buy another raw assessment automatically.
   BGS/TAG resale is separate from configured PSA/CGC submission services.
+- Raw resale reads accepted historical photo-condition evidence first. If a
+  confirmed recent transaction could support positive net resale at current
+  terms, one relevant unreviewed sold copy may receive one compact assessment
+  of up to six photos (1,100 output tokens, no retries or second opinion).
+  This shares the original search's AI/Browse allowances. Suspected structural
+  damage or authenticity uncertainty in the live copy prevents new sold-photo
+  acquisition. Accepted negative findings and definitive unavailable pages are
+  reused; do not turn this into an automatic comparison-review loop.
 - Direct links require validated eBay IDs and explicit submission, never arbitrary
   submitted URL fetches or silent broad searches. Shortlist saves/notes/load
   require no provider work; targeted refresh never purchases photo analysis.
@@ -171,14 +179,20 @@ Read docs/architecture.md for the source map and reading order.
   printings, finishes, currencies, grades or raw conditions.
 - Prefer the 90-day graded market as soon as one valid current match exists;
   use the labeled 180-day fallback only if there are no eligible current sales.
-  One or two matched sales retain LOW confidence. Preliminary raw references
-  admit photo research; the separate raw sold-copy condition evidence workflow
-  remains unfinished and was not changed into seller-claim pricing.
+  One or two matched sales retain LOW confidence. Raw final prices require
+  physical condition evidence for the sold copy, including exact identity and
+  printing; one accepted condition match can price the route. Seller titles
+  remain research clues, never a substitute for that physical acceptance.
 - Corroborated physical identity can correct seller metadata. Readable slab-cert
   typos are informational; actual holder/identity/authenticity conflicts matter.
   Anniversary Pikachu marks, Base Set 2 symbols and copyright clues distinguish
   releases. Premium upgrades require corroboration, not one missing shadow.
   Ordinary complete PSA Base Set labels must not become Shadowless on a guess.
+  A high-confidence raw identity, explicit agreeing title and matching catalog
+  may correct conflicting seller Card Number/Finish fields locally. Preserve
+  original claims and photo findings; real printing/authenticity/holder or
+  title/card contradictions still hold. Resolved metadata notes must not become
+  manual review again when only prices are deferred.
 - Seller condition is a clue, not assessed condition. Keep Mint, Near Mint, LP,
   MP, HP and Damaged distinct. Numeric ranges span at most three adjacent grades;
   likely may be unknown. Supported raw condition may have no numeric range.
@@ -192,6 +206,9 @@ Read docs/architecture.md for the source map and reading order.
   backgrounds may hide wear but do not prove damage or seller deception.
   Generalize user examples into fixes and counterexample regressions, not item-ID
   exceptions or blanket paid reanalysis.
+  A suspected crease does not relabel the card Damaged in code. It blocks
+  otherwise actionable purchase advice, including local retargeting; already
+  priced negative/below-target results remain finished.
 - Keep deterministic money math: Any profit/ROI removes targets, not costs or the
   need for profitable buying. Preserve cents rounding, tax-inclusive fee bases,
   max-scenario grading tiers, minimum modeled net downside and exact slab grades.

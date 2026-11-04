@@ -5,13 +5,55 @@ with the repository. Older entries calling it private or ignored describe the
 previous arrangement. Credentials, environment values, API payloads, paid photo
 evidence and data/ remain excluded. A separate computer handoff is deferred.
 
-The tested catalog/search checkpoint is being committed and merged to main.
-Current next work is pricing coverage: fresh raw assessments cannot acquire
-condition evidence for sold copies, and the legacy raw estimator still requires
-three accepted comparisons. Inspect the existing acceptance rules and original
-one-sale instruction before reconnecting one bounded, decision-relevant check.
-Preserve the two-cent default, original search IDs, shared SQL evidence and
-cancellation behavior; do not restore the old automatic multi-comparison loop.
+Catalog/search checkpoint ecae9e9 was committed, fast-forwarded to main and
+pushed; local and remote main matched. Markdown notes are tracked. Work continues
+on improve/raw-resale-evidence; no handoff was created. The pre-existing
+.env.example deletion remains unrelated and uncommitted.
+
+## Current raw-resale checkpoint — November 4
+
+Fresh raw resale can now acquire one decision-relevant historical condition
+assessment after reading accepted SQL evidence first. It selects a recent
+confirmed exact-scope sale whose amount could support positive net resale,
+uses seller condition only as a research clue, and checks up to six photos
+with a 1,100-output-token limit. No repeated-comparison or second-opinion loop.
+One physically accepted condition match can price the route at LOW confidence.
+TCGplayer quotes remain reference-only; the older seller-title-only branch
+retains its three-sale compatibility floor pending retirement. Pricing revision
+12 reprices saved work without changing paid live-photo keys/prompts/models.
+The existing sold-title target matcher is shared with admission and cold sold
+acquisition, ruling out explicit wrong names/numbers/sets before detail or paid
+work. Cached physical findings retain precedence over mistaken seller titles.
+Negative readings, source indices, Stop behavior, accounting failures and the
+original search cap are preserved. Definitive historical 404/410 responses use
+the existing five-minute negative cache; temporary failures do not.
+
+The $75 holo Dark Blastoise exposed stale seller fields (20/82, Regular).
+Strong photographed 3/82 HOLO identity plus the explicit agreeing title and
+catalog now correct those fields locally, preserving original seller/paid data.
+Real printing, holder, language, title or authenticity conflicts remain holds.
+A resolved metadata discrepancy no longer becomes Review during price deferral.
+The physical answer reports MP with a possible crease. A suspected crease now
+blocks otherwise actionable BUY advice through local retargeting without
+rewriting the condition to Damaged; known priced losses remain finished. Such
+live uncertainty cannot buy a historical review that would not resolve it.
+
+Normal HTTP validation reused the original natural-query account. Three live
+raw assessments plus one historical condition assessment cost $0.0154424
+(1.54424 cents), four settled generations, no holds, unchanged $0.02 cap.
+The $100 live copy was assessed LP. A sold $162.54 copy advertised LP was instead
+assessed MP/MEDIUM and did not establish an accepted LP sale. No profitable BIN
+was manufactured. Saved HTTP replay returned CANT_PRICE/savedEvaluation with
+usage[], unchanged cost/generation/PKMN request counts. Historical cache
+diagnosis blocked all provider transports and added none. Data reports remain
+under data/candidate-validation/2026-11-04/raw-resale/.
+
+Verification: 999 offline tests, both typechecks, production build and whitespace
+checks pass. Current next work is a small metadata-only fresh CGC/PSA BIN check
+for a genuinely useful exact-scope candidate, followed by verified competing
+BIN ceilings and the broader backlog. A supported conditional auction is already
+proven; a supported profitable fixed-price purchase remains unproven. Do not
+raise the default cap or repeatedly recheck rejected historical photos.
 
 ## November 4 continuation: committed checkpoint and catalog-first narrowing
 

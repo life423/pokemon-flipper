@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { BENCHMARK_TRANSPORT_LIMITS, BenchmarkTransportBlockedError, createBenchmarkTransport } from "../../scripts/review/benchmark-transport.ts";
+import { BOUNDED_VISION_MODEL } from "../../server/ai/policy.ts";
 
 const generation = "https://api.openai.com/v1/responses";
 const preflight = generation + "/input_tokens";
@@ -92,6 +93,28 @@ test("text priority experiments cannot send images or silently select another mo
     assert.equal(observer.snapshot().actual.aiGeneration, 1);
     assert.equal(observer.snapshot().actual.aiPreflight, 1);
     assert.equal(JSON.stringify(observer.records).includes("PRIVATE"), false);
+});
+
+test("sold-copy benchmarks allow the compact writer and count proof while rejecting legacy photo/model/output work", async () => {
+    let sent = 0;
+    const images = (count: number) => [{ role: "user", content: Array.from({ length: count }, () => ({ type: "input_image", image_url: "data:image/jpeg;base64,PRIVATE-PHOTO" })) }];
+    const body = { model: BOUNDED_VISION_MODEL, reasoning: { effort: "none" }, max_output_tokens: 1100,
+        input: images(6), text: { format: { type: "json_schema", name: "sold_card_condition", strict: true } } };
+    const observer = createBenchmarkTransport({ live: true, limits: { aiGeneration: 1, aiPreflight: 1 }, fetch: async () => { sent++; return Response.json({}); } });
+    const { max_output_tokens: _output, ...countBody } = body;
+    await observer.fetch(preflight, { method: "POST", body: JSON.stringify(countBody) });
+    await observer.fetch(generation, { method: "POST", body: JSON.stringify({ ...body, input: images(2) }) });
+    assert.equal(observer.snapshot().actual.aiPreflight, 1); assert.equal(observer.snapshot().actual.aiGeneration, 1);
+    await assert.rejects(observer.fetch(generation, { method: "POST", body: JSON.stringify(body) }), /limit/);
+    for (const invalid of [
+        { ...body, input: images(1) }, { ...body, input: images(7) }, { ...body, input: images(24) },
+        { ...body, model: "unapproved-vision-model" }, { ...body, reasoning: { effort: "medium" } },
+        { ...body, max_output_tokens: undefined }, { ...body, max_output_tokens: 1101 }, { ...body, max_output_tokens: 4096 },
+        { ...body, text: { format: { ...body.text.format, strict: false } } },
+    ]) await assert.rejects(observer.fetch(generation, { method: "POST", body: JSON.stringify(invalid) }), /schema/);
+    await assert.rejects(observer.fetch(preflight, { method: "POST", body: JSON.stringify({ ...countBody, input: images(24) }) }), /schema/);
+    await assert.rejects(observer.fetch(preflight, { method: "POST", body: JSON.stringify(body) }), /schema/);
+    assert.equal(sent, 2); assert.equal(JSON.stringify(observer.records).includes("PRIVATE-PHOTO"), false);
 });
 
 test("price metadata counts returned rows and safe credit headers without storing IDs, queries, headers or response fields", async () => {

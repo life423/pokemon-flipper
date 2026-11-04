@@ -190,3 +190,47 @@ and unexamined inventory prevent a broader claim that those markets lack deals.
 Final verification: 965 offline tests, both TypeScript checks, production build
 and whitespace checks pass. The two-cent default stayed unchanged; the user's
 conditional ten-cent fallback was not used.
+
+## Bounded raw sold-condition acquisition
+
+The raw-pricing gap described above now has a bounded acquisition path. The
+evaluator reads accepted historical observations first, then may review one
+decision-relevant confirmed sale with up to six original photos and a
+1,100-token output limit. It shares the original search allowance and does not
+retry, buy a second opinion or walk through further comparisons. One physically
+accepted condition match can price a raw route at LOW confidence. Seller labels
+remain clues; reference-only TCGplayer quotes cannot establish a Deal.
+
+Cold acquisition now shares the existing sold-title identity checks with
+screening. Explicit wrong names, numbers and sets cannot buy detail or photo
+work, while previously accepted physical findings retain their precedence over
+mistaken seller titles. This consolidates an existing predicate rather than
+adding a paid text stage.
+
+Accepted negative readings are saved. Definitive historical 404/410 responses
+are briefly cached, whereas temporary errors, cancellation and invalid storage
+or accounting do not authorize replacement work. Pricing revision 12 preserves
+existing paid live-photo answers and legacy historical readers.
+
+A real $75 Dark Blastoise had clear holo 3/82 photos and an agreeing title, but
+seller fields said 20/82 and Regular. Catalog-backed reconciliation now corrects
+these fields locally, retaining the original data and observations. Unresolved
+printing/holder/authenticity and genuine title/card conflicts still hold. The
+same case exposed suspected creasing: that now blocks otherwise actionable
+purchase advice through local retargeting, without inventing a Damaged category
+or reopening an already priced rejection. It also prevents a new historical
+review that cannot resolve uncertainty in the live copy.
+
+Normal HTTP validation on the original account used three live readings and
+one historical reading for **$0.0154424 (1.54424 cents)**, four settled
+generations and no unknown-charge holds. A $100 live copy was assessed LP. The
+selected $162.54 historical copy advertised as LP was assessed MP/MEDIUM, so it
+did not become a confirmed LP sale. No profitable BIN was established. Saved
+HTTP replay returned the stored evaluation with no new generation or
+PKMNPrices request, and unchanged spending. The default two-cent ceiling and
+model selection were unchanged.
+
+All 999 offline tests, both TypeScript checks, the production build and
+whitespace checks passed. Useful positive BIN validation and verified current
+competition remain next; this result does not establish profitable inventory
+or broad raw-condition accuracy.

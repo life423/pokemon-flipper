@@ -1,6 +1,8 @@
 import { normalizeText } from "../ebay/filters.ts";
 import { PRINTINGS, isPrinting, readyForPricing } from "../../shared/identity.ts";
 import { finishClaim, type FinishClaim } from "../../shared/finish.ts";
+import { sameCatalogName } from "./catalog-name.ts";
+import { cardLanguageStatus } from "../../shared/card-language.ts";
 
 export { PRINTINGS, isPrinting, readyForPricing };
 import type { Identity, PhotoCheck, Printing } from "../../shared/types.ts";
@@ -19,7 +21,7 @@ export interface IdentityListing {
 
 // What identity reads from the photo check.
 export type IdentityPhotos = Pick<PhotoCheck, "printedName" | "printedNumber" | "printingMarks" | "cardMatch" | "slab"> &
-    Partial<Pick<PhotoCheck, "cardIdentity" | "cardCount" | "images">>;
+    Partial<Pick<PhotoCheck, "cardIdentity" | "cardCount" | "images" | "holder" | "problems">>;
 
 export interface PhotoConfirmation {
     name: string;
@@ -638,6 +640,48 @@ function corroboratedDateNumber(listing: IdentityListing, photos: IdentityPhotos
     return titleNumbers.length && titleNumbers.every(number => sameCardNumber(number, card.cardNumber)) ? card.cardNumber! : null;
 }
 
+function corroboratedSellerClaims(listing: IdentityListing, photos: IdentityPhotos): Partial<Record<"Card Number" | "Finish", string>> | null {
+    const card = photos.cardIdentity, aspects = listing.aspects ?? {};
+    const fraction = /^#?[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?$/i;
+    if (!card?.name || !card.set || !card.cardNumber || !fraction.test(card.cardNumber.trim()) || card.confidence !== "HIGH" || !card.evidence.length ||
+        photos.cardCount !== "ONE" || !["NONE", "SLEEVE", "TOPLOADER"].includes(photos.holder ?? "") || photos.slab?.present ||
+        !photos.images?.some(photo => photo.view === "FRONT" && photo.usable && !photo.isStockImage) ||
+        !sameCatalogName(card.name, photos.printedName) || !sameCatalogName(card.name, aspects["Card Name"] ?? aspects.Character) ||
+        !fraction.test(photos.printedNumber?.trim() ?? "") || !sameCardNumber(card.cardNumber, photos.printedNumber) || !sameSetFamily(card.set, aspects.Set) ||
+        normalizeWords(card.language) !== "english" || cardLanguageStatus(listing.title, [aspects.Language, card.language]) !== "ENGLISH" ||
+        !["HOLO", "NON_HOLO", "REVERSE_HOLO"].includes(card.finish) || finishClaim(listing.title) !== card.finish ||
+        titleContradiction(listing.title, card.set, card.cardNumber)) return null;
+    const numbers = [...listing.title.matchAll(/\b[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?\b/gi)].map(match => match[0]);
+    if (!numbers.length || numbers.some(number => !sameCardNumber(number, card.cardNumber))) return null;
+    let words = ` ${normalizeWords(listing.title.replace(/\b[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?\b/gi, " "))} `;
+    for (const claim of [card.name, card.set]) {
+        const explicit = ` ${normalizeWords(claim)} `;
+        if (!words.includes(explicit)) return null;
+        words = words.replace(explicit, " ");
+    }
+    words = words.replace(/\bwizards of the coast\b|\bthe pokemon company\b/g, " ")
+        .replace(/\b(?:pokemon|tcg|cards?|holo(?:graphic|foil)?|foil|non|reverse|rare|english|eng|en|raw|ungraded|unlimited|wotc|vintage|first|1st|edition|\d+)\b/g, " ").trim();
+    if (words) return null;
+    const changes: Partial<Record<"Card Number" | "Finish", string>> = {};
+    if (aspects["Card Number"] && !sameCardNumber(aspects["Card Number"], card.cardNumber)) changes["Card Number"] = card.cardNumber;
+    if (aspects.Finish && finishClaim(aspects.Finish) !== card.finish) changes.Finish = card.finish;
+    if (!Object.keys(changes).length) return null;
+    const risk = /\b(?:authenticity|counterfeit|fake|forged|tamper(?:ed|ing)?|reprint|replica|stock|multiple|slab|holder|case|cert(?:ificate|ification)?|edition|shadowless|stamp)\b|\b(?:different|wrong|another)\s+(?:card(?!\s+number)|set|printing|language)\b/i;
+    if ([...(photos.problems ?? []), ...(photos.cardMatch?.problems ?? [])].some(problem => risk.test(problem))) return null;
+    if (photos.cardMatch?.verdict === "MISMATCH") {
+        if (!photos.cardMatch.problems.length || photos.cardMatch.problems.some(problem => {
+            if (!/\b(?:seller|aspects?|specifics?|details?|metadata)\b/i.test(problem) || /\b(?:name|set|language|printing|grade|unclear|uncertain|unknown|unreadable|unresolved)\b/i.test(problem)) return true;
+            const mentioned = [...problem.matchAll(/\b[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?\b/gi)].map(match => match[0]);
+            const numberIssue = changes["Card Number"] && mentioned.some(number => sameCardNumber(number, card.cardNumber)) &&
+                mentioned.some(number => sameCardNumber(number, aspects["Card Number"])) && mentioned.every(number => sameCardNumber(number, card.cardNumber) || sameCardNumber(number, aspects["Card Number"]));
+            const finishIssue = changes.Finish && /\bfinish\b/i.test(problem) && normalizeWords(problem).includes(normalizeWords(aspects.Finish)) &&
+                /\b(?:holo(?:graphic|foil)?|foil|reverse|non[ -]?holo)\b/i.test(problem);
+            return !numberIssue && !finishIssue;
+        })) return null;
+    } else if (photos.cardMatch?.verdict !== "MATCH") return null;
+    return changes;
+}
+
 // Builds the canonical identity for a listing. lookupCards returns
 // candidate card records from a price database; it's passed in so tests
 // can supply their own.
@@ -645,7 +689,7 @@ export async function identifyCard(
     listing: IdentityListing,
     photoCheck: IdentityPhotos,
     { lookupCards, photoIdentity }: { lookupCards: LookupCards; photoIdentity?: PhotoConfirmation }
-): Promise<{ identity: IdentityDraft; card: PricedCard | null; lookupFailed?: boolean }> {
+): Promise<{ identity: IdentityDraft; card: PricedCard | null; lookupFailed?: boolean; sellerClaimsCorrected?: boolean }> {
     const sellerListing = listing;
     if (photoIdentity) {
         listing = {
@@ -655,7 +699,8 @@ export async function identifyCard(
         };
     }
     const correctedNumber = corroboratedDateNumber(listing, photoCheck);
-    const aspects = correctedNumber ? { ...listing.aspects, "Card Number": correctedNumber } : listing.aspects ?? {};
+    const correctedClaims = photoIdentity ? null : corroboratedSellerClaims(listing, photoCheck);
+    const aspects = correctedNumber || correctedClaims ? { ...listing.aspects, ...(correctedNumber ? { "Card Number": correctedNumber } : {}), ...correctedClaims } : listing.aspects ?? {};
     const listedName = aspects["Card Name"] ?? aspects.Character ?? photoCheck.printedName ?? null;
 
     const identity: IdentityDraft = {
@@ -723,7 +768,7 @@ export async function identifyCard(
             (card) =>
                 sameSetFamily(card.setName, identity.set) &&
                 sameCardNumber(card.cardNumber, identity.listedCardNumber) &&
-                sameName(card.name, listedName)
+                sameName(card.name, listedName) && (!correctedClaims || sameCatalogName(card.name, photoCheck.cardIdentity?.name))
         ),
         listing.title
     );
@@ -839,7 +884,7 @@ export async function identifyCard(
     }
 
     // Anything else on the card that shows it isn't what the listing claims.
-    if (photoCheck.cardMatch?.verdict === "MISMATCH" && !photoIdentity) {
+    if (photoCheck.cardMatch?.verdict === "MISMATCH" && !photoIdentity && !correctedClaims) {
         const problems = photoCheck.cardMatch.problems.join("; ") || "the card differs from the listing";
 
         identity.notThisCard = problems;
@@ -885,7 +930,10 @@ export async function identifyCard(
     }
 
     identity.printingLabel = printingLabel(identity.printing, identity.set);
+    if (correctedClaims && !card.variants.some(variant => variant.printing === identity.printing && variant.finish === photoCheck.cardIdentity?.finish)) {
+        return needsReview("The catalog does not corroborate the title and photographed finish for this printing.", card);
+    }
     identity.status = "IDENTIFIED";
-
-    return { identity, card };
+    if (correctedClaims) identity.reasons.push("The explicit title, readable photographed identity and matching catalog agree. Conflicting seller-entered card number or finish fields were corrected for pricing.");
+    return { identity, card, ...(correctedClaims ? { sellerClaimsCorrected: true } : {}) };
 }
