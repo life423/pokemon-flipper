@@ -68,3 +68,35 @@ test("a bounded image error cannot enter the legacy image-download retry and buy
         photos: [{ url: "https://i.ebayimg.com/images/g/offline-no-retry/s-l1600.png" }], schemaName: "no_image_retry", schema: { type: "object", additionalProperties: false, required: [], properties: {} } })), /Unable to download/);
     assert.equal(images, 1); assert.equal(counts, 1); assert.equal(generations, 1);
 });
+
+test("explicit bounded comparisons keep exact model counting, compact output and the shared cap while defaults remain unchanged", async t => {
+    const old = process.env.OPENAI_API_KEY; process.env.OPENAI_API_KEY = "offline-model-comparison";
+    t.after(() => { if (old === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = old; });
+    await aiSpending.configure({ paused: false, perSearchCapUsd: 0.02 });
+    const searchId = randomUUID(), counted: any[] = [], sent: any[] = [];
+    t.mock.method(globalThis, "fetch", async (input, init) => {
+        const url = new URL(String(input)), body = JSON.parse(String(init?.body));
+        assert.equal(url.origin, "https://api.openai.com");
+        if (url.pathname.endsWith("/input_tokens")) {
+            counted.push(body); return Response.json({ object: "response.input_tokens", input_tokens: 120 });
+        }
+        sent.push(body);
+        assert.deepEqual(body.input, counted.at(-1).input);
+        assert.equal(body.model, counted.at(-1).model);
+        assert.equal(body.reasoning.effort, "none");
+        assert.equal(body.service_tier, "default");
+        return Response.json({ id: `offline-comparison-${sent.length}`, model: body.model, service_tier: "default", status: "completed", object: "response",
+            output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: '{"ok":true}', annotations: [] }] }],
+            usage: { input_tokens: 120, output_tokens: 35, input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 } } });
+    });
+    const base = { bounded: true, step: "Offline explicit comparison", prompt: "Visible evidence only", photos: [],
+        schemaName: "offline_model_comparison", schema: { type: "object", additionalProperties: false, required: ["ok"], properties: { ok: { type: "boolean" } } } };
+    for (const [model, maxOutputTokens] of [["gpt-6-luna", 1600], ["gpt-5.6-terra", 250], [undefined, 100]] as const) {
+        assert.deepEqual((await withAiUsageContext({ searchId }, () => runStructured({ ...base, model, maxOutputTokens }))).result, { ok: true });
+    }
+    assert.deepEqual(sent.map(body => [body.model, body.max_output_tokens]), [["gpt-6-luna", 1600], ["gpt-5.6-terra", 250], ["gpt-5.6-luna", 100]]);
+    const budget = await aiSpending.summary(searchId);
+    assert.equal(budget.attempts, 3); assert.equal(budget.heldUsd, 0); assert.ok(budget.committedUsd < 0.02);
+    await assert.rejects(runStructured({ ...base, bounded: false, model: "gpt-6-luna" }), /only for bounded/);
+    assert.equal(sent.length, 3);
+});

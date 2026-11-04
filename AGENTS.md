@@ -66,6 +66,8 @@ Read docs/architecture.md for the source map and reading order.
   rows do not promise fifty paid assessments. Reuse saved evidence first.
 - Raw requests combine identity/condition across at most six selected photos.
   Compact slab-label requests use the first two unique photos and null condition.
+  Slab model selection has a separate optional override; defaults are unchanged.
+  Compatible readers retain older compact models across selection and rollback.
   Actual photographed holder/grader/grade determines resale, not seller category.
   A compact request finding raw does not buy another raw assessment automatically.
   BGS/TAG resale is separate from configured PSA/CGC submission services.
@@ -191,5 +193,11 @@ Read docs/architecture.md for the source map and reading order.
 - docs/price-research-accounting-2026-11-03.md: shared 32/64 PKMN request
   safeguards, 830 offline tests, live 65-credit / 0.3991-cent slab sample,
   zero additional provider work on replay; this sample found no Deal.
+- docs/selective-model-comparison-2026-11-03.md: five isolated saved-example
+  checks cost 0.42322 cents; three cheaper slab checks and two focused stamp
+  reviews. Replay made no provider calls; production defaults/answers unchanged.
+  Stopping checkpoint: 858 tests pass under default and explicit cheaper slab
+  configuration; current CGC search cost 0.44524 cents and found no Deal.
+  Broader validation and automatic stronger follow-ups remain unfinished.
 - Dated reports retain measured scope. Git records delivery history; private
   notes retain the full strategy and implementation backlog.

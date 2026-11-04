@@ -79,8 +79,11 @@ test("unapproved schema and endpoints are denied without recording their content
 });
 
 test("price metadata counts returned rows and safe credit headers without storing IDs, queries, headers or response fields", async () => {
+    // Compare the complete header, not a date prefix that can legitimately
+    // occur in the observer's own event timestamp when the day rolls over.
+    const privateReset = "2026-11-04T00:00:00+00:00";
     const observer = createBenchmarkTransport({ live: true, fetch: async () => Response.json({ data: [{ id: "private-sale-one", price: 100 }, { id: "private-sale-two", price: 200 }], privateInfo: "secret-body" }, {
-        headers: { "x-credits-charged": "2", "x-credits-limit": "20000", "x-credits-remaining": "19998", "x-credits-reset": "20019", "x-ratelimit-remaining": "99", "x-ratelimit-reset": "2026-11-04T00:00:00Z", "x-credits-note": "secret-note", "set-cookie": "private-cookie", authorization: "secret-auth" },
+        headers: { "x-credits-charged": "2", "x-credits-limit": "20000", "x-credits-remaining": "19998", "x-credits-reset": "20019", "x-ratelimit-remaining": "99", "x-ratelimit-reset": privateReset, "x-credits-note": "secret-note", "set-cookie": "private-cookie", authorization: "secret-auth" },
     }) });
     const response = await observer.fetch(prices, { headers: { "x-api-key": "secret-key" } });
     assert.equal((await response.json()).data.length, 2);
@@ -90,7 +93,7 @@ test("price metadata counts returned rows and safe credit headers without storin
     assert.deepEqual(observer.records[0].numericHeaders, { "x-credits-charged": 2, "x-credits-limit": 20000, "x-credits-remaining": 19998, "x-credits-reset": 20019, "x-ratelimit-remaining": 99 });
     assert.deepEqual(observer.snapshot().pricingCredits, { reportedCharged: 2, unreportedRequests: 0 });
     const report = JSON.stringify(observer.records);
-    for (const secret of ["private", "secret", "20019T", "2026-11-04T", "authorization", "set-cookie"]) assert.equal(report.includes(secret), false);
+    for (const secret of ["private", "secret", "20019T", privateReset, "authorization", "set-cookie"]) assert.equal(report.includes(secret), false);
     await observer.fetch(prices);
     await observer.fetch(prices.replace("limit=20", "limit=5"));
     assert.equal(observer.records[0].requestHash, observer.records[1].requestHash);

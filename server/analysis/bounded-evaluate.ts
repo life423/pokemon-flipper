@@ -1,7 +1,7 @@
 import { getListingDetails, listingCacheKey, type ListingDetails } from "../ebay/listings.ts";
 import { ANALYSIS_VERSION, CONDITION_VERSION } from "./legacy-evidence.ts";
 import { assessBoundedListing, type BoundedReading } from "../ai/bounded-assessment.ts";
-import { BOUNDED_ASSESSMENT_VERSION, BOUNDED_CONDITION_VERSION, BOUNDED_SLAB_ASSESSMENT_VERSION, compatibleBoundedPlans, type BoundedAssessmentPlan } from "./bounded-plan.ts";
+import { compatibleBoundedPlans, type BoundedAssessmentPlan } from "./bounded-plan.ts";
 export { assessBoundedListing, BOUNDED_ASSESSMENT_SCHEMA, type BoundedReading } from "../ai/bounded-assessment.ts";
 export { BOUNDED_VISION_MODEL, BOUNDED_ASSESSMENT_VERSION, BOUNDED_CONDITION_VERSION, BOUNDED_SLAB_ASSESSMENT_VERSION, BOUNDED_PHOTO_LIMIT, selectBoundedPhotos, boundedAssessmentKey, boundedAssessmentPlan } from "./bounded-plan.ts";
 import { cachedCompChecks } from "../ai/comp-checker.ts";
@@ -108,7 +108,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         if (cardLanguageStatus(listing.title, [listing.aspects.Language]) === "OTHER") throw new EnglishOnlyError();
         const plans = compatibleBoundedPlans(listing), requestedPlan = plans[0];
         const ended = listing.availability === "UNAVAILABLE" || listing.endTime && Date.parse(listing.endTime) <= deps.now();
-        const evaluation: Evaluation = { assessmentVersion: requestedPlan.version, conditionVersion: requestedPlan.mode === "RAW" ? BOUNDED_CONDITION_VERSION : undefined, pricingVersion: PRICING_VERSION,
+        const evaluation: Evaluation = { assessmentVersion: requestedPlan.version, conditionVersion: requestedPlan.conditionVersion, pricingVersion: PRICING_VERSION,
             listing: { id: listing.id, title: listing.title, url: listing.url, listedAt: listing.listedAt, createdAt: listing.createdAt,
                 availability: ended ? "UNAVAILABLE" : listing.availability, termsCheckedAt: listing.retrievedAt,
                 price: listing.price, shipping: listing.shipping, buyingOption: listing.buyingOption, bids: listing.bids, endTime: listing.endTime,
@@ -136,7 +136,8 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                 const answers: SharedAnswer[] = [];
                 for (const plan of plans) {
                     const stored = await deps.cached<SavedBoundedReading>(plan.key, CACHE_HOURS);
-                    if (!stored) continue;
+                    if (stored === null) continue;
+                    if (!stored || typeof stored !== "object" || Array.isArray(stored)) return invalidReading();
                     const timestamp = Date.parse(stored.answeredAt);
                     if (stored.version !== plan.version || typeof stored.answeredAt !== "string" ||
                         !Number.isFinite(timestamp) || timestamp > deps.now()) return invalidReading();
@@ -156,7 +157,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         };
         const hasNewerSharedReading = async (candidate: Evaluation): Promise<boolean> => {
             // Stronger legacy full assessments keep their existing preference.
-            if (![BOUNDED_ASSESSMENT_VERSION, BOUNDED_SLAB_ASSESSMENT_VERSION].includes(candidate.assessmentVersion ?? "")) return false;
+            if (!plans.some(plan => plan.version === candidate.assessmentVersion)) return false;
             const shared = await readShared();
             if (!shared) return false;
             const previous = Date.parse(candidate.answeredAt ?? "");
@@ -179,7 +180,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         const remembered = await privateEvaluations.load(itemId);
         const revisedRemembered = remembered ? recheckSavedSlab(remembered.evaluation, listing.aspects) : null;
         if (remembered?.contextKey === privateContext.contextKey &&
-            !remembered.evaluation.pricingDeferred && !revisedRemembered!.needsPricing && [BOUNDED_ASSESSMENT_VERSION, BOUNDED_SLAB_ASSESSMENT_VERSION, ANALYSIS_VERSION].includes(remembered.evaluation.assessmentVersion ?? "") && currentPriceEvidence(remembered.evaluation, deps.now()) && !await hasNewerSharedReading(remembered.evaluation)) {
+            !remembered.evaluation.pricingDeferred && !revisedRemembered!.needsPricing && (remembered.evaluation.assessmentVersion === ANALYSIS_VERSION || plans.some(plan => plan.version === remembered.evaluation.assessmentVersion)) && currentPriceEvidence(remembered.evaluation, deps.now()) && !await hasNewerSharedReading(remembered.evaluation)) {
             const reused = revisedRemembered!.evaluation;
             if (cardLanguageStatus(listing.title, [reused.identity?.language, reused.photoCheck?.cardIdentity?.language]) === "OTHER") throw new EnglishOnlyError();
             reused.listing = { ...reused.listing, ...evaluation.listing, photosAnalyzed: reused.listing.photosAnalyzed };
@@ -260,7 +261,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             evaluation.photoCheck = applyPhotoCheckRules(reading.photoCheck, listing.images.length);
             evaluation.condition = reading.condition;
             evaluation.assessmentVersion = answer.plan.version;
-            evaluation.conditionVersion = answer.plan.mode === "RAW" ? BOUNDED_CONDITION_VERSION : undefined;
+            evaluation.conditionVersion = answer.plan.conditionVersion;
             evaluation.answeredAt = answeredAt; evaluation.listing.photosAnalyzed = sourcePhotos.length;
             evaluation.modeReasons.push(`One bounded ${answer.plan.mode === "SLAB_LABEL" ? "slab identity and label check" : "raw identity and condition assessment"} checked listing photos ${sourcePhotos.map(photo => photo.number).join(", ")} of ${listing.images.length}. Unselected photos were not assessed; no second opinion was purchased.`);
             if (answer.plan.mode === "SLAB_LABEL" && reading.photoCheck.holder !== "GRADED_SLAB") evaluation.modeReasons.push("The seller's graded-card claim was not confirmed. Raw condition was not assessed by this label-only check; no second paid assessment was started automatically.");

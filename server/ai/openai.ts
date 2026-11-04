@@ -85,6 +85,7 @@ export async function runStructured<T>({
     maxRetries,
     maxOutputTokens,
     bounded = false,
+    model: explicitModel,
 }: {
     step: string;
     prompt: string;
@@ -99,7 +100,12 @@ export async function runStructured<T>({
     maxOutputTokens?: number;
     // One compact immutable assessment for the two-cent development workflow.
     bounded?: boolean;
+    // Explicit bounded comparisons/refinements can select a verified model.
+    // Normal callers keep their configured policy; the spending guard still
+    // requires exact model rates, immutable input and the original search cap.
+    model?: string;
 }): Promise<{ result: T; usage: Usage }> {
+    if (explicitModel !== undefined && !bounded) throw new Error("An explicit model is supported only for bounded research.");
     const waitingSignal = signal && dispatchSignal ? AbortSignal.any([signal, dispatchSignal]) : signal ?? dispatchSignal;
     waitingSignal?.throwIfAborted();
     const response = await limitRequests(async () => {
@@ -110,8 +116,9 @@ export async function runStructured<T>({
         while (Date.now() < coolingUntil) { creditGate.check(); await delay(Math.min(30_000, coolingUntil - Date.now()), undefined, { signal: waitingSignal }); }
         creditGate.check();
         const deadline = AbortSignal.timeout(120_000);
-        const policy = bounded ? { model: BOUNDED_VISION_MODEL, maxOutputTokens: BOUNDED_MAX_OUTPUT_TOKENS, effort: "none" as const,
-            supportsReasoning: /^(?:gpt-[56](?:[.-]|$)|o\d)/.test(BOUNDED_VISION_MODEL) } : aiPolicy(schemaName);
+        const selectedModel = explicitModel ?? BOUNDED_VISION_MODEL;
+        const policy = bounded ? { model: selectedModel, maxOutputTokens: BOUNDED_MAX_OUTPUT_TOKENS, effort: "none" as const,
+            supportsReasoning: /^(?:gpt-[56](?:[.-]|$)|o\d)/.test(selectedModel) } : aiPolicy(schemaName);
         const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
         const immutablePhotos: Photo[] = [];
         if (bounded) {

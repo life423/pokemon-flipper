@@ -8,14 +8,15 @@ import { CONDITION_RULES_VERSION } from "../../shared/conditions.ts";
 import { BOUNDED_PHOTO_LIMIT } from "../../shared/research-policy.ts";
 export { BOUNDED_PHOTO_LIMIT } from "../../shared/research-policy.ts";
 import { EVALUATION_CLAIM_FIELDS } from "./private-evaluation.ts";
+import { BOUNDED_VISION_MODEL, BOUNDED_SLAB_MODEL } from "../ai/policy.ts";
+export { BOUNDED_VISION_MODEL } from "../ai/policy.ts";
 
-export const BOUNDED_VISION_MODEL = process.env.OPENAI_BOUNDED_VISION_MODEL ?? "gpt-5.6-luna";
 export const BOUNDED_ASSESSMENT_VERSION = `${BOUNDED_VISION_MODEL}/bounded-prompts-${BOUNDED_REVIEW_REVISION}`;
 export const BOUNDED_CONDITION_VERSION = `${BOUNDED_VISION_MODEL}/bounded-condition-${CONDITION_RULES_VERSION}/prompts-${BOUNDED_CONDITION_REVISION}`;
-export const BOUNDED_SLAB_ASSESSMENT_VERSION = `${BOUNDED_VISION_MODEL}/bounded-slab-label-prompts-${BOUNDED_SLAB_REVIEW_REVISION}`;
+export const BOUNDED_SLAB_ASSESSMENT_VERSION = `${BOUNDED_SLAB_MODEL}/bounded-slab-label-prompts-${BOUNDED_SLAB_REVIEW_REVISION}`;
 export type BoundedAssessmentMode = "RAW" | "SLAB_LABEL";
 export interface BoundedPhoto { number: number; url: string }
-export interface BoundedAssessmentPlan { mode: BoundedAssessmentMode; version: string; photos: BoundedPhoto[]; key: string }
+export interface BoundedAssessmentPlan { mode: BoundedAssessmentMode; model: string; version: string; conditionVersion?: string; photos: BoundedPhoto[]; key: string }
 
 function uniquePhotos(urls: readonly string[]): BoundedPhoto[] {
     const seen = new Set<string>();
@@ -56,10 +57,14 @@ function requestsSlabLabel(listing: ListingDetails): boolean {
     const reading = readTitleByRules(listing.title);
     return Boolean(reading.grader && reading.grade);
 }
-function planFor(listing: ListingDetails, mode: BoundedAssessmentMode): BoundedAssessmentPlan {
-    const version = mode === "RAW" ? BOUNDED_ASSESSMENT_VERSION : BOUNDED_SLAB_ASSESSMENT_VERSION;
+export function boundedModel(mode: BoundedAssessmentMode): string {
+    return mode === "RAW" ? BOUNDED_VISION_MODEL : BOUNDED_SLAB_MODEL;
+}
+function planFor(listing: ListingDetails, mode: BoundedAssessmentMode, model = boundedModel(mode)): BoundedAssessmentPlan {
+    const version = mode === "RAW" ? `${model}/bounded-prompts-${BOUNDED_REVIEW_REVISION}` : `${model}/bounded-slab-label-prompts-${BOUNDED_SLAB_REVIEW_REVISION}`;
     const photos = mode === "RAW" ? selectBoundedPhotos(listing.images) : uniquePhotos(listing.images).slice(0, 2);
-    return { mode, version, photos, key: keyFor(listing, version, photos) };
+    const conditionVersion = mode === "RAW" ? `${model}/bounded-condition-${CONDITION_RULES_VERSION}/prompts-${BOUNDED_CONDITION_REVISION}` : undefined;
+    return { mode, model, version, conditionVersion, photos, key: keyFor(listing, version, photos) };
 }
 export function boundedAssessmentPlan(listing: ListingDetails): BoundedAssessmentPlan {
     return planFor(listing, requestsSlabLabel(listing) ? "SLAB_LABEL" : "RAW");
@@ -68,5 +73,11 @@ export function compatibleBoundedPlans(listing: ListingDetails): BoundedAssessme
     const requested = boundedAssessmentPlan(listing);
     // The physical holder is model evidence. A changed advisory seller
     // category must not force another assessment of an already-read slab.
-    return [requested, planFor(listing, requested.mode === "RAW" ? "SLAB_LABEL" : "RAW")];
+    // A model change changes cold work, not the validity of accepted older
+    // evidence. Keep historical compact and combined selectors/keys intact.
+    const rawModels = [...new Set([BOUNDED_VISION_MODEL, "gpt-5.6-luna"])];
+    const slabModels = [...new Set([BOUNDED_SLAB_MODEL, BOUNDED_VISION_MODEL, "gpt-5.6-luna", "gpt-6-luna"])];
+    const candidates = [requested, ...rawModels.map(model => planFor(listing, "RAW", model)),
+        ...slabModels.map(model => planFor(listing, "SLAB_LABEL", model))];
+    return [...new Map(candidates.map(plan => [plan.key, plan])).values()];
 }

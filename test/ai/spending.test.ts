@@ -58,6 +58,42 @@ test("unknown billing retains its hold; complete known usage reconciles once wit
     assert.equal((await book(directory)).searches[context.searchId].heldNanoUsd, 181900);
 });
 
+test("the verified newer Luna rates preserve mixed-model reservations and historical holds across restart", async () => {
+    const { directory, guard, context } = await fixture(0.02);
+    await guard.reserve(body, context);
+    const request = { ...body, model: "gpt-6-luna" };
+    assert.notEqual(aiInputHash(request), aiInputHash(body), "a token proof for another model cannot establish the new request's input");
+    const restarted = createAiSpendingGuard({ directory, preflight: proof });
+    const reservation = await restarted.reserve(request, context);
+    const before = (await book(directory)).searches[context.searchId];
+    assert.deepEqual(before.attempts.map((attempt: { model: string; reservedNanoUsd: number }) => [attempt.model, attempt.reservedNanoUsd]),
+        [["gpt-5.6-luna", 145000], ["gpt-6-luna", 62500]]);
+    assert.equal(before.heldNanoUsd, 207500);
+    await restarted.settle(reservation, { model: request.model, service_tier: "default", usage: { input_tokens: 80, output_tokens: 20 } });
+    assert.equal((await restarted.summary(context.searchId)).heldUsd, 0.0002075, "unknown cache billing retains the entire reservation");
+    await restarted.settle(reservation, { model: request.model, service_tier: "default", usage: { input_tokens: 80, output_tokens: 20,
+        input_tokens_details: { cached_tokens: 20, cache_write_tokens: 10, cache_write_tokens_details: { ttl_30m_tokens: 10, ttl_12h_tokens: 0 } } } });
+    const again = createAiSpendingGuard({ directory, preflight: proof });
+    const after = await again.summary(context.searchId);
+    assert.equal(after.capUsd, 0.02); assert.equal(after.heldUsd, 0.000145); assert.equal(after.settledUsd, 0.00001645);
+    assert.equal(after.committedUsd, 0.00016145); assert.equal(after.unsettledAttempts, 1);
+    assert.equal((await book(directory)).searches[context.searchId].attempts[0].state, "RESERVED", "adding model support cannot refund historical work");
+});
+
+test("newer Luna support retains the exact model, tier and two-cent input/output boundaries", async () => {
+    const { directory, guard, context } = await fixture(0.02);
+    const request = { ...body, model: "gpt-6-luna" };
+    for (const invalid of [{ ...request, model: "gpt-6-luna-preview" }, { ...request, service_tier: "priority" },
+        { ...request, prompt_cache_options: { mode: "explicit", ttl: "12h" } }]) {
+        await assert.rejects(guard.reserve(invalid, context), denied("AI_BUDGET"));
+    }
+    await assert.rejects(guard.reserve({ ...request, max_output_tokens: 40000 }, context), /would exceed the search's remaining AI budget/,
+        "the maximum output plus exact input must fit, even when output alone equals two cents");
+    const longInput = createAiSpendingGuard({ directory, preflight: async value => ({ inputHash: aiInputHash(value), inputTokens: 272001 }) });
+    await assert.rejects(longInput.reserve(request, context), /standard-context price boundary/);
+    assert.deepEqual((await book(directory)).searches, {});
+});
+
 test("unattributed, unknown model/tier/cache, tool charges and unproven inputs fail closed", async () => {
     const { directory, guard, context } = await fixture(0.02);
     const unknownInputs = createAiSpendingGuard({ directory });

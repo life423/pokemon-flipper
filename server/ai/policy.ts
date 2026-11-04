@@ -5,6 +5,9 @@ export const VISION_MODEL = process.env.OPENAI_VISION_MODEL ?? process.env.OPENA
 // The small development workflow uses one compact visual assessment rather
 // than the legacy chain of independent photo, condition and comp requests.
 export const BOUNDED_VISION_MODEL = process.env.OPENAI_BOUNDED_VISION_MODEL ?? "gpt-5.6-luna";
+// Label transcription can be selected independently of raw condition work.
+// Existing bounded overrides still apply unless a slab override is supplied.
+export const BOUNDED_SLAB_MODEL = process.env.OPENAI_BOUNDED_SLAB_MODEL ?? BOUNDED_VISION_MODEL;
 export const BOUNDED_MAX_OUTPUT_TOKENS = 2200;
 // User-approved throughput. Provider rate limits still trigger their normal
 // backoff; these are concurrency ceilings, not spending budgets.

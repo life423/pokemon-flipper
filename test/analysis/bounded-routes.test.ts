@@ -5,6 +5,9 @@ import { setImmediate } from "node:timers/promises";
 import { createBoundedEvaluator, boundedAssessmentKey, boundedAssessmentPlan, selectBoundedPhotos,
     BOUNDED_ASSESSMENT_VERSION, BOUNDED_SLAB_ASSESSMENT_VERSION, type BoundedReading } from "../../server/analysis/bounded-evaluate.ts";
 import { ANALYSIS_VERSION } from "../../server/analysis/legacy-evidence.ts";
+import { compatibleBoundedPlans } from "../../server/analysis/bounded-plan.ts";
+import { buildBoundedAssessmentRequest } from "../../server/ai/bounded-assessment.ts";
+import { BOUNDED_SLAB_MODEL, BOUNDED_VISION_MODEL } from "../../server/ai/policy.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
 import { photoFingerprint } from "../../server/analysis/store.ts";
 import { currentPriceEvidence } from "../../shared/pricing-freshness.ts";
@@ -52,6 +55,11 @@ function harness(subject = listing(), overrides: Parameters<typeof createBounded
     return { cache, calls, evaluate };
 }
 const saved = (reading: BoundedReading, version: string, answeredAt = NOW - 1000) => ({ ...reading, version, answeredAt: new Date(answeredAt).toISOString(), usage: { inputTokens: 500, outputTokens: 300 } });
+function compactPlan(model: string, subject = listing()) {
+    const plan = compatibleBoundedPlans(subject).find(value => value.mode === "SLAB_LABEL" && value.model === model);
+    assert.ok(plan, `accepted ${model} compact evidence must remain readable regardless of the configured cold-work model`);
+    return plan;
+}
 
 test("routing changes the cold-work plan while the combined cache key remains independently reusable", () => {
     const subject = listing();
@@ -62,6 +70,107 @@ test("routing changes the cold-work plan while the combined cache key remains in
     assert.equal(raw.mode, "RAW"); assert.equal(raw.version, BOUNDED_ASSESSMENT_VERSION); assert.equal(raw.photos.length, 6);
     const fromLabel = boundedAssessmentPlan({ ...subject, condition: "Used" });
     assert.equal(fromLabel.mode, "SLAB_LABEL", "an unambiguous listed grader and grade can route compact work without proving it is a slab");
+});
+
+test("independent compact model selection changes cold transport while historical paid keys stay stable", () => {
+    const subject = listing(), compact = boundedAssessmentPlan(subject);
+    assert.equal(compact.model, BOUNDED_SLAB_MODEL);
+    const compactRequest = buildBoundedAssessmentRequest(subject, compact.photos, compact.mode);
+    assert.equal(compactRequest.model, compact.model); assert.equal(compactRequest.maxOutputTokens, 1600);
+    assert.equal(compactRequest.photos.length, 2); assert.equal(compactRequest.maxRetries, 0);
+    const rawSubject = listing({ condition: "Ungraded" }), raw = boundedAssessmentPlan(rawSubject);
+    const rawRequest = buildBoundedAssessmentRequest(rawSubject, raw.photos, raw.mode);
+    assert.equal(raw.model, BOUNDED_VISION_MODEL); assert.equal(rawRequest.model ?? BOUNDED_VISION_MODEL, raw.model);
+    assert.equal(rawRequest.maxOutputTokens, 2200); assert.equal(rawRequest.photos.length, 6);
+    // Fictional fixture keys pinned before the independent model setting.
+    assert.equal(compactPlan("gpt-5.6-luna").key, "bounded-assessment:gpt-5.6-luna/bounded-slab-label-prompts-1:a303468515cae536f3f5347b81fdcf84033355a8f05c6b081bd0c29c97b9de6f");
+    const historicalRaw = compatibleBoundedPlans(subject).find(plan => plan.mode === "RAW" && plan.model === "gpt-5.6-luna")!;
+    assert.equal(historicalRaw.key, "bounded-assessment:gpt-5.6-luna/bounded-prompts-1:b09025387772cb68c22838f8a8976be264fb3babe507aad0cd96b63a29695b7f");
+    assert.notEqual(compactPlan("gpt-6-luna").key, compactPlan("gpt-5.6-luna").key);
+});
+
+test("an accepted 5.6 compact reading retains its original photo mapping without a new-model purchase or rewrite", async () => {
+    const subject = listing({ images: [photo(1), photo(1, 500), photo(2), photo(3)] });
+    const previous = compactPlan("gpt-5.6-luna", subject), requested = boundedAssessmentPlan(subject);
+    const { evaluate, cache, calls } = harness(subject);
+    const accepted = saved(slabReading(previous.photos.length), previous.version);
+    cache.set(previous.key, structuredClone(accepted));
+    const result = await evaluate(subject.id);
+    assert.equal(calls.assessed.length, 0); assert.equal(result.assessmentVersion, previous.version);
+    assert.deepEqual(result.photoCheck?.images.map(image => image.number), [1, 3]);
+    assert.deepEqual(cache.get(previous.key), accepted);
+    if (previous.key !== requested.key) assert.equal(cache.has(requested.key), false, "reuse must not relabel old evidence as a new model's answer");
+});
+
+test("fresh private 5.6 compact prices remain reusable after a cold-model change even without their shared record", async () => {
+    const { evaluate, cache, calls } = harness(); const previous = compactPlan("gpt-5.6-luna");
+    cache.set(previous.key, saved(slabReading(previous.photos.length), previous.version));
+    const first = await evaluate(listing().id);
+    const before = { lookup: calls.lookup, comps: calls.comps.length };
+    cache.delete(previous.key);
+    const reopened = await evaluate(listing().id, { current: { price: 60, shipping: 5, bids: 0, endTime: null } });
+    assert.equal(calls.assessed.length, 0); assert.equal(calls.lookup, before.lookup); assert.equal(calls.comps.length, before.comps);
+    assert.equal(reopened.assessmentVersion, previous.version); assert.equal(reopened.answeredAt, first.answeredAt);
+    assert.ok(reopened.reusedSteps.includes("savedEvaluation")); assert.equal(reopened.listing.price, 60);
+});
+
+test("accepted compact corrections supersede private prices by timestamp in both model directions", async () => {
+    for (const [firstModel, correctionModel] of [["gpt-5.6-luna", "gpt-6-luna"], ["gpt-6-luna", "gpt-5.6-luna"]]) {
+        const { evaluate, cache, calls } = harness();
+        const first = compactPlan(firstModel), correction = compactPlan(correctionModel);
+        cache.set(first.key, saved(slabReading(first.photos.length), first.version, NOW - 2000));
+        assert.equal((await evaluate(listing().id)).assessmentVersion, first.version);
+        const corrected = slabReading(correction.photos.length); corrected.photoCheck.slab!.certNumber = "87654321";
+        const accepted = saved(corrected, correction.version, NOW - 1000);
+        cache.set(correction.key, structuredClone(accepted));
+        const result = await evaluate(listing().id);
+        assert.equal(result.assessmentVersion, correction.version); assert.equal(result.slab?.certNumber, "87654321");
+        assert.equal(calls.assessed.length, 0); assert.equal(calls.comps.length, 2);
+        assert.equal(result.reusedSteps.includes("savedEvaluation"), false);
+        assert.deepEqual(cache.get(correction.key), accepted);
+    }
+});
+
+test("equal-time combined coverage wins over a compact answer without preferring the newer model", async () => {
+    const { evaluate, cache, calls } = harness();
+    const compact = compactPlan("gpt-6-luna");
+    cache.set(compact.key, saved(slabReading(compact.photos.length, "9"), compact.version));
+    cache.set(boundedAssessmentKey(listing()), saved(slabReading(6, "8.5"), BOUNDED_ASSESSMENT_VERSION));
+    const result = await evaluate(listing().id);
+    assert.equal(calls.assessed.length, 0); assert.equal(result.assessmentVersion, BOUNDED_ASSESSMENT_VERSION);
+    assert.equal(result.listing.photosAnalyzed, 6); assert.equal(result.slab?.grade, "8.5");
+});
+
+test("corrupt historical compact evidence cannot be ignored in favor of a valid newer-model answer", async () => {
+    for (const malformed of [false, 0, "", { photoCheck: null }]) {
+        const { evaluate, cache, calls } = harness();
+        const historical = compactPlan("gpt-5.6-luna"), newer = compactPlan("gpt-6-luna");
+        cache.set(newer.key, saved(slabReading(newer.photos.length), newer.version));
+        const corrupt = typeof malformed === "object"
+            ? { ...saved(slabReading(historical.photos.length), historical.version, NOW - 2000), ...malformed } : malformed;
+        cache.set(historical.key, structuredClone(corrupt));
+        await assert.rejects(evaluate(listing().id), StorageUnavailableError);
+        assert.equal(calls.assessed.length, 0); assert.equal(calls.lookup, 0); assert.equal(calls.comps.length, 0);
+        assert.deepEqual(cache.get(historical.key), corrupt);
+    }
+});
+
+test("accepted new-model slab facts survive a raw routing hint while a compact raw finding cannot replace condition work", async () => {
+    const subject = listing({ condition: "Ungraded" });
+    for (const graded of [true, false]) {
+        const { evaluate, cache, calls } = harness(subject);
+        const compact = compactPlan("gpt-6-luna", subject);
+        const reading = graded ? slabReading(compact.photos.length) : rawReading(compact.photos.length);
+        reading.condition = null;
+        cache.set(compact.key, saved(reading, compact.version));
+        const result = await evaluate(subject.id);
+        if (graded) {
+            assert.equal(calls.assessed.length, 0); assert.equal(result.assessmentVersion, compact.version);
+        } else {
+            assert.equal(calls.assessed.length, 1); assert.equal(calls.assessed[0].mode, "RAW");
+            assert.equal(result.assessmentVersion, BOUNDED_ASSESSMENT_VERSION);
+        }
+    }
 });
 
 test("a cold slab uses one compact request and exact certified-grade pricing only", async () => {

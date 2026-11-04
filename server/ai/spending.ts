@@ -44,6 +44,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const RATES: Record<string, { input: number; cached: number; write: number; output: number }> = {
     "gpt-5.6-terra": { input: 2000, cached: 200, write: 2500, output: 12000 },
     "gpt-5.6-luna": { input: 200, cached: 20, write: 250, output: 1200 },
+    "gpt-6-luna": { input: 100, cached: 10, write: 125, output: 500 },
 };
 const count = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 const fail = (message: string, cause?: unknown): never => { throw new AiSpendingError("AI_BUDGET", `${message} Cached results and screened candidates remain available.`, cause === undefined ? undefined : { cause }); };

@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { assessBoundedListing, buildBoundedAssessmentRequest, BOUNDED_ASSESSMENT_SCHEMA, SLAB_LABEL_SCHEMA, BOUNDED_PHOTO_LIMIT,
     type BoundedReading } from "../../server/ai/bounded-assessment.ts";
 import type { ListingDetails } from "../../server/ebay/listings.ts";
+import { BOUNDED_SLAB_MODEL } from "../../server/ai/policy.ts";
 
 const listing: ListingDetails = { id: "offline-plan", title: "Venusaur Base Set 15/102 Holo English", url: "#", price: 50, shipping: 5,
     buyingOption: "FIXED_PRICE", bids: 0, endTime: null, seller: null, condition: "Ungraded", cardCondition: "Lightly Played", conditionNotes: [],
@@ -115,7 +116,8 @@ test("plans preserve original photo labels, input-order coverage and seller-data
         assert.equal(plan.bounded, true);
         assert.equal(plan.maxRetries, 0);
         assert.equal(plan.dispatchSignal, undefined);
-        assert.equal(Object.hasOwn(plan, "model"), false, "the existing bounded transport still owns model policy");
+        assert.equal(plan.model, mode === "SLAB_LABEL" ? BOUNDED_SLAB_MODEL : undefined,
+            "slab transport follows its selected model while the original raw request stays unchanged");
         assert.deepEqual(plan.photos, photos.map(photo => ({ url: photo.url, label: `Listing photo ${photo.number}` })));
         assert.match(plan.prompt, /Only 2 supplied images from 4 listing photos/);
         assert.match(plan.prompt, /numbered 1 to 2 in INPUT ORDER/);
