@@ -5,23 +5,26 @@ import { CHEAP_FIRST_EDITION_BASE_SET_LIMIT } from "../../shared/research-policy
 import { sameSetFamily } from "../identity/card-identity.ts";
 import { mapLimit } from "../lib/concurrency.ts";
 import type { ListingSummary, SearchIntent, Targets } from "../../shared/types.ts";
+import { createScreeningPriceSource } from "../pricing/pkmnprices.ts";
+import { resolveQueryCatalog } from "../search/catalog.ts";
 
 export type SoldScreeningFactory = typeof createSoldScreening;
-interface PriceFirstOptions { signal?: AbortSignal; targets?: Targets; includeOffers?: boolean; now?: number }
+interface PriceFirstOptions { signal?: AbortSignal; targets?: Targets; includeOffers?: boolean; now?: number; sourceFactory?: typeof createScreeningPriceSource }
 
 // Finish shared market research before emitting photo-ready candidates. This
 // prevents the browser buying the first few assessments while stronger priced
 // candidates are still waiting for the same market page.
 export function createPriceFirstSession(intent: SearchIntent, {
-    signal, targets, includeOffers = false, now = Date.now(),
+    signal, targets, includeOffers = false, now = Date.now(), sourceFactory,
 }: PriceFirstOptions = {}, createScreening: SoldScreeningFactory = createSoldScreening) {
     signal?.throwIfAborted();
     const stopped = new AbortController();
     const workSignal = signal ? AbortSignal.any([signal, stopped.signal]) : stopped.signal;
-    const screen = createScreening({ signal: workSignal, now: () => now });
+    const source = sourceFactory?.({ signal: workSignal });
+    const screen = createScreening({ signal: workSignal, now: () => now, ...(source ? { source } : {}) });
     // Refill batches share the same source allowance, memoized catalog/markets
     // and cancellation signal. A new batch never renews a provider allowance.
-    return async (listings: ListingSummary[]): Promise<ListingSummary[]> => {
+    const screenBatch = async (listings: ListingSummary[]): Promise<ListingSummary[]> => {
         workSignal.throwIfAborted();
         let priced: ListingSummary[];
         try { priced = await mapLimit(listings, 4, async listing => {
@@ -48,6 +51,10 @@ export function createPriceFirstSession(intent: SearchIntent, {
         return priced.sort((a, b) => Number(a.screen?.status === "DROPPED") - Number(b.screen?.status === "DROPPED") ||
             comparePriority(analysisPriority(a, targets), analysisPriority(b, targets)));
     };
+    return Object.assign(screenBatch, { resolveIntent: async () => {
+        intent = await resolveQueryCatalog(intent, source?.lookupQueryCards, workSignal);
+        return intent;
+    } });
 }
 
 export async function priceFirstListings(listings: ListingSummary[], intent: SearchIntent,

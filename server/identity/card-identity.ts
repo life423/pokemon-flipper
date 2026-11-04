@@ -18,7 +18,8 @@ export interface IdentityListing {
 }
 
 // What identity reads from the photo check.
-export type IdentityPhotos = Pick<PhotoCheck, "printedName" | "printedNumber" | "printingMarks" | "cardMatch" | "slab">;
+export type IdentityPhotos = Pick<PhotoCheck, "printedName" | "printedNumber" | "printingMarks" | "cardMatch" | "slab"> &
+    Partial<Pick<PhotoCheck, "cardIdentity" | "cardCount" | "images">>;
 
 export interface PhotoConfirmation {
     name: string;
@@ -617,6 +618,26 @@ export function titleContradiction(title: string, setName: string | null, cardNu
     return null;
 }
 
+// Some seller spreadsheets turn a collector fraction into a month/year. Only
+// an agreeing explicit title number and a clear photographed fraction can
+// correct that local claim; the date-shaped text alone establishes nothing.
+function corroboratedDateNumber(listing: IdentityListing, photos: IdentityPhotos): string | null {
+    const date = listing.aspects?.["Card Number"]?.match(/^\s*#?(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s*[-–—]\s*(\d{2,4})\s*$/i);
+    const card = photos.cardIdentity;
+    const fraction = card?.cardNumber?.match(/^\s*#?(\d{1,3})\s*\/\s*(\d{1,4})\s*$/);
+    if (!date || !fraction || card?.confidence !== "HIGH" || !card.evidence.length || photos.cardCount !== "ONE" ||
+        photos.cardMatch?.verdict !== "MATCH" || !sameName(card.name, photos.printedName) ||
+        !photos.images?.some(photo => photo.view === "FRONT" && photo.usable && !photo.isStockImage) ||
+        !/^\s*#?\d{1,3}\s*\/\s*\d{1,4}\s*$/.test(photos.printedNumber ?? "") || !sameCardNumber(photos.printedNumber, card.cardNumber)) return null;
+    const month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(date[1].toLowerCase()) + 1;
+    if (Number(fraction[1]) !== month || Number(fraction[2]) !== Number(date[2]) || Number(fraction[2]) <= 10) return null;
+    const titleNumbers = [
+        ...[...listing.title.matchAll(/\b[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?\b/gi)].map(match => match[0]),
+        ...[...listing.title.matchAll(/#\s*([a-z]{0,5}\d{1,4}[a-z]?(?:\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?)?)(?![\w/])/gi)].map(match => match[1]),
+    ].filter(number => { const total = normalizeCardNumber(number)?.total; return total == null || total > 10; });
+    return titleNumbers.length && titleNumbers.every(number => sameCardNumber(number, card.cardNumber)) ? card.cardNumber! : null;
+}
+
 // Builds the canonical identity for a listing. lookupCards returns
 // candidate card records from a price database; it's passed in so tests
 // can supply their own.
@@ -633,7 +654,8 @@ export async function identifyCard(
             aspects: { ...listing.aspects, "Card Name": photoIdentity.name, Set: photoIdentity.set, "Card Number": photoIdentity.cardNumber, Language: "English" },
         };
     }
-    const aspects = listing.aspects ?? {};
+    const correctedNumber = corroboratedDateNumber(listing, photoCheck);
+    const aspects = correctedNumber ? { ...listing.aspects, "Card Number": correctedNumber } : listing.aspects ?? {};
     const listedName = aspects["Card Name"] ?? aspects.Character ?? photoCheck.printedName ?? null;
 
     const identity: IdentityDraft = {
@@ -652,7 +674,7 @@ export async function identifyCard(
         recordId: null,
         tcgPlayerId: null,
         evidence: null,
-        reasons: [],
+        reasons: correctedNumber ? [`The seller-entered card number #${listing.aspects!["Card Number"]} is date-formatted; the title and photographed fraction establish #${correctedNumber}.`] : [],
     };
 
     const needsReview = (reason: string, card: PricedCard | null = null) => {

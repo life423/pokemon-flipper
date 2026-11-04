@@ -56,7 +56,7 @@ export function gradeQualifier(text: unknown, grader: string | null, grade: stri
 
     // Exact aliases only: removing separators cannot strip OC, altered,
     // Pristine, Perfect or any other additional designation from a label.
-    const description = value.toUpperCase().replace(/[\s/._-]+/g, "");
+    const description = value.toUpperCase().replace(/[\s/._–—-]+/g, "");
     if (grader === "CGC" && grade && CGC_DESCRIPTIONS[grade]?.includes(description)) return null;
     if (grader === "PSA" && grade && PSA_DESCRIPTIONS[grade]?.includes(description)) return null;
     if (grader === "BGS" && grade && BGS_DESCRIPTIONS[grade]?.includes(description)) return null;

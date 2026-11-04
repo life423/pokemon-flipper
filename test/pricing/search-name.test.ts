@@ -17,6 +17,8 @@ test("catalog names remove known descriptive suffixes while preserving owners an
     for (const [source, expected] of [
         ["Snorlax Holofoil", "snorlax"],
         ["Leafeon V (Alternate Full Art)", "leafeon v"],
+        ["Mew VMAX (Alternate Art Secret)", "mew vmax"],
+        ["Pikachu VMAX (Secret)", "pikachu vmax"],
         ["Leafeon V Full Art Holofoil", "leafeon v"],
         ["Blaine’s Arcanine", "blaine's arcanine"],
         ["Rocket's Mewtwo", "rocket's mewtwo"],
@@ -29,6 +31,8 @@ test("catalog names remove known descriptive suffixes while preserving owners an
         assert.equal(pricingSearchName(source), expected, source);
     }
     assert.ok(sameCatalogName("Leafeon V", "Leafeon V (Alternate Full Art)"));
+    assert.ok(sameCatalogName("Mew VMAX", "Mew VMAX (Alternate Art Secret)"));
+    assert.ok(sameCatalogName("Pikachu VMAX", "Pikachu VMAX (Secret)"));
     assert.ok(sameCatalogName("Unown [R]", "Unown R"));
     for (const [left, right] of [
         ["Mew", "Mewtwo"], ["Arcanine", "Blaine's Arcanine"], ["Blaines Arcanine", "Blaine's Arcanine"],
@@ -36,6 +40,9 @@ test("catalog names remove known descriptive suffixes while preserving owners an
         ["Mega Charizard X", "Mega Charizard Y"], ["Unown A", "Unown R"], ["Nidoran♀", "Nidoran♂"],
         ["Charizard ☆", "Charizard"], ["Pikachu δ", "Pikachu"], ["Leafeon V Curious Art", "Leafeon V"],
         ["Snorlax R", "Snorlax"], ["Snorlax Edition", "Snorlax"],
+        ["Mew VMAX (Alternate Art Secret)", "Mew V"], ["Pikachu VMAX (Secret)", "Pikachu"],
+        ["Rocket's Mewtwo (Secret)", "Mewtwo"], ["Unown (R) (Secret)", "Unown A"],
+        ["Mew VMAX Secret", "Mew VMAX"], ["Mew VMAX (Secret Power)", "Mew VMAX"],
     ]) assert.equal(sameCatalogName(left, right), false, `${left} / ${right}`);
     assert.equal(sameCatalogName("Holofoil", ""), false);
     assert.equal(sameCatalogName(undefined, "Snorlax"), false);

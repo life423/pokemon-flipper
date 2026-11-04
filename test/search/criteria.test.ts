@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { criteriaMismatch, describeSearchCriteria, evaluatedCriteriaMismatch, explicitCriteria, finishIn, marketplaceQuery, searchAttributes } from "../../shared/search-criteria.ts";
-import { cleanReading, readSearchByRules } from "../../server/search/intent.ts";
+import { cleanReading, readSearchByRules, readSearchLocally } from "../../server/search/intent.ts";
 import { canAutoAnalyze } from "../../shared/analysis.ts";
 import { photoFitsSearch } from "../../server/ai/photo-find.ts";
 
@@ -37,6 +37,33 @@ test("range searches omit the exact grade from marketplace keywords", () => {
     assert.equal(marketplaceQuery("show me some aquapolis cards graded 7+ holo", readSearchByRules("show me some aquapolis cards graded 7+ holo")), "aquapolis holo graded");
     assert.ok(marketplaceQuery("charizard 4/102", readSearchByRules("charizard 4/102")).includes("4/102"));
     assert.equal(marketplaceQuery("Unown A", readSearchByRules("Unown A")), "unown a");
+});
+
+test("conversational deal requests retain the exact printed name and independent criteria", () => {
+    for (const prefix of ["find me a good deal on a", "Can you please find me the best deal on a", "show me deals for a", "get me a cheap deal on a"]) {
+        const search = `${prefix} holographic Dark Blastoise Team Rocket`;
+        const read = readSearchLocally(search);
+        assert.equal(read.cardName, "dark blastoise", search);
+        assert.deepEqual(read.sets, ["Team Rocket"]);
+        assert.equal(read.finish, "HOLO");
+        assert.equal(read.cardNumber, null, "only the catalog may supply an omitted number");
+        assert.equal(marketplaceQuery(search, read), "holo dark blastoise team rocket");
+    }
+    const read = readSearchLocally("find me a good deal on a Team Rocket Dark Blastoise 1st Edition PSA 8 reverse holo");
+    assert.equal(read.cardName, "dark blastoise");
+    assert.equal(read.printing, "FIRST_EDITION");
+    assert.equal(read.grader, "PSA");
+    assert.equal(read.minGrade, 8);
+    assert.equal(read.maxGrade, 8);
+    assert.equal(read.finish, "REVERSE_HOLO");
+    assert.ok(marketplaceQuery("reverse holographic", readSearchByRules("reverse holographic")).includes("reverse holo"));
+    assert.equal(marketplaceQuery("non-holographic", readSearchByRules("non-holographic")), "non-holo");
+    assert.equal(readSearchLocally("find me deals on raw Dark Blastoise Team Rocket non-holo").graded, false);
+    for (const name of ["Unown A", "Rocket's Mewtwo", "Blaine's Arcanine"]) {
+        const plain = readSearchLocally(name);
+        assert.equal(readSearchLocally(`find me a good deal on ${name}`).cardName, plain.cardName);
+        assert.equal(marketplaceQuery(name, plain), name.toLowerCase());
+    }
 });
 
 test("AI cleaning preserves explicit constraints and never requires filler words in titles", () => {

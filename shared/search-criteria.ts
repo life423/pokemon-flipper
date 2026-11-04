@@ -33,13 +33,19 @@ export function explicitCriteria(search: string): Pick<SearchIntent, "grader" | 
 
 export function fallbackKeywords(search: string): string {
     return search.toLowerCase()
+        // Remove request wording at the start, where it cannot be part of a
+        // printed name. Keep letters/articles inside names such as Unown A.
+        .replace(/^\s*(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:find|show|get)\s+(?:me\s+)?/i, "")
+        .replace(/^\s*(?:(?:a|the|some)\s+)?(?:(?:good|great|best|profitable|cheap)\s+)?deals?\s+(?:on|for)\s+(?:(?:an?|the)\s+)?/i, "")
         .replace(new RegExp(`\\b(?:(?:at least|minimum|min|at most|maximum|max)\\s+)?(?:${GRADER}|grades?|graded)\\s*(?:grades?\\s*)?(?:(?:at least|at most|minimum|maximum|between)\\s+)?${GRADE}(?:\\s*(?:to|through|and|-)\\s*${GRADE}|\\s*(?:\\+|or (?:better|higher|above|lower|less)|and (?:up|above|under|below)))?`, "gi"), " ")
         .replace(/\b(?:can you|could you|show me|find me|i want|i am looking for|looking for|please|some|any|all|cards?|graded|grading|copies|from|with|the|by)\b/gi, " ")
         .replace(/\s+/g, " ").trim();
 }
 
 export function marketplaceQuery(search: string, intent: SearchIntent): string {
-    let words = fallbackKeywords(intent.keywords || search);
+    // Sellers usually write "holo". Keep its non/reverse modifiers while
+    // avoiding an unnecessarily narrow literal "holographic" keyword search.
+    let words = fallbackKeywords(intent.keywords || search).replace(/\bholographic\b/gi, "holo");
     // Never turn a range into an exact-grade eBay keyword search.
     words = words.replace(new RegExp(`\\b${GRADER}\\b`, "gi"), " ").replace(/\s+/g, " ").trim();
     return [words, intent.grader || (intent.graded === true ? "graded" : null), intent.grader && intent.minGrade != null && intent.minGrade === intent.maxGrade ? intent.minGrade : null].filter((v) => v !== null && v !== undefined && v !== "").join(" ").slice(0, 300) || search;

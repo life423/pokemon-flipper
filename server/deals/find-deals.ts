@@ -11,6 +11,7 @@ import { sameCardNumber } from "../identity/card-identity.ts";
 import { DEVELOPMENT_SEARCH_LIMIT } from "../../shared/research-policy.ts";
 import { createPriceFirstSession, type SoldScreeningFactory } from "./price-first.ts";
 import { compareAnalysisPriority } from "../../shared/analysis-priority.ts";
+import { createScreeningPriceSource } from "../pricing/pkmnprices.ts";
 
 const SOURCE_PAGE_LIMIT = 200;
 
@@ -25,6 +26,7 @@ interface FindSteps {
     search: typeof searchListings;
     readTitle: typeof readTitleWithoutAi;
     soldScreening?: SoldScreeningFactory;
+    priceSource?: typeof createScreeningPriceSource;
 }
 
 export interface SearchSummary {
@@ -61,11 +63,15 @@ export async function findDeals(search: string, {
     onStart = () => {}, onListing = () => {}, onPriceExcluded = () => {}, minPrice = 0, signal, targets,
     includeOffers = false, newOnly, filters, asOf = Date.now(),
 }: SearchOptions = {}, dependencies: FindSteps = {
-    readIntent: readSearchWithoutAi, search: searchListings, readTitle: readTitleWithoutAi,
+    readIntent: readSearchWithoutAi, search: searchListings, readTitle: readTitleWithoutAi, priceSource: createScreeningPriceSource,
 }): Promise<ListingSummary[]> {
     if (signal?.aborted) return [];
     if (cardLanguageStatus(search) === "OTHER") throw new EnglishOnlyError();
-    const intent = await dependencies.readIntent(search, signal);
+    let intent = await dependencies.readIntent(search, signal);
+    if (signal?.aborted) return [];
+    const screenPrices = createPriceFirstSession(intent, { signal, targets, includeOffers, now: asOf, sourceFactory: dependencies.priceSource }, dependencies.soldScreening);
+    try { intent = await screenPrices.resolveIntent(); }
+    catch (error) { if (signal?.aborted) return []; throw error; }
     if (signal?.aborted) return [];
     const { listings, total, skipped } = await dependencies.search(marketplaceQuery(search, intent), {
         maxResults: SOURCE_PAGE_LIMIT, signal, filters, asOf, auctionEndsWithinHours: AUTOMATIC_AUCTION_WINDOW_HOURS,
@@ -91,7 +97,6 @@ export async function findDeals(search: string, {
 
     let cursor = 0, screenedCount = 0, priceExcluded = 0, started = false;
     const matching: ListingSummary[] = [];
-    const screenPrices = createPriceFirstSession(intent, { signal, targets, includeOffers, now: asOf }, dependencies.soldScreening);
     const summary = (): SearchSummary => ({ total, found: live.length, count: matching.length, skipped, intent, mode: "development",
         deferred: eligible.length - cursor, screened: screenedCount, priceExcluded,
         ...(newOnly ? { previouslySeen: live.length - unseen.length } : {}),

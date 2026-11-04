@@ -56,6 +56,8 @@ export interface Comp {
 export type FetchRawComps = (recordId: CardRecord["id"], variant: string) => Promise<Comp[]>;
 
 export type LookupCards = (query: { set: string; name: string; cardNumber: string }) => Promise<CardRecord[]>;
+export interface QueryCatalogResult { cards: CardRecord[]; complete: boolean }
+export type LookupQueryCards = (query: { set: string; name: string }) => Promise<QueryCatalogResult>;
 
 export type FetchComps = (
     recordId: CardRecord["id"],

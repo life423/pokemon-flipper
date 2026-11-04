@@ -8,6 +8,7 @@ const GRADER = "(?:psa|cgc|bgs|sgc|tag)";
 const GRADE = "(?:10|[1-9](?:\\.5)?)(?![\\d./])";
 const DESCRIPTION = "(?:near[ -]+mint(?:[ -]+to[ -]+mint)?|gem[ -]+(?:mint|mt)|nm[ -]+(?:mint|mt)|ex[ -]+mt|vg[ -]+ex|very[ -]+good|excellent|pristine|mint|good|poor|fair|nm|ex|mt|vg)";
 const GRADE_SPAN = new RegExp(`\\b${GRADER}\\s*(?:[-–—]\\s*)?(?:${DESCRIPTION}[ -]+)*${GRADE}(?:[ -]+(${DESCRIPTION}))?`, "gi");
+const BEFORE_GRADE_GEM = new RegExp(`\\bgem[ -]+(?:mint|mt)(?=\\s+${GRADER}\\s*(?:[-–—]\\s*)?${GRADE})`, "gi");
 const INCLUDED_HOLDER_SUFFIX = /\s+(?:with|w\s*\/|includes?|including)\s+(?:(?:a|an|the)\s+)?(?:(?:protective|protection|magnetic|acrylic|hard|fitted|display|slab)\s+)*(?:guards?|cases?|holders?|sleeves?|top[ -]?loaders?)\s*[.!]?\s*$/i;
 const GRADED_ARTIST_SUFFIX = /\s+(?:kagemaru\s+)?himeno\s*$/i;
 const ART_DESCRIPTION = /\b(?:(?:alternate|alt)(?:[\s/-]+full)?[\s-]+art|full[\s-]+art|(?:special[\s-]+)?illustration[\s-]+rare)\b(?!['’])/gi;
@@ -33,11 +34,11 @@ function removeLastWord(value: string, word: string): string {
     return last?.index === undefined ? value : value.slice(0, last.index) + " " + value.slice(last.index + last[0].length);
 }
 
-function removeObservedSuffix(value: string, suffix: RegExpMatchArray, title: string): string {
-    const outsideSuffix = title.slice(0, suffix.index);
-    for (const word of screeningNameKey(suffix[0]).split(" ").filter(Boolean).reverse()) {
+function removeObservedWords(value: string, match: RegExpMatchArray, title: string): string {
+    const outside = title.slice(0, match.index) + title.slice((match.index ?? 0) + match[0].length);
+    for (const word of screeningNameKey(match[0]).split(" ").filter(Boolean).reverse()) {
         const occurrences = (text: string) => [...text.matchAll(new RegExp(`\\b${word}\\b(?!['’])`, "gi"))].length;
-        if (occurrences(value) > occurrences(outsideSuffix)) value = removeLastWord(value, word);
+        if (occurrences(value) > occurrences(outside)) value = removeLastWord(value, word);
     }
     return value;
 }
@@ -48,20 +49,23 @@ function removeObservedSuffix(value: string, suffix: RegExpMatchArray, title: st
 // slab; an unanchored Guard/name fragment must never disappear.
 export function stripListingNameBoilerplate(value: string, title = value): string {
     let cleaned = value.replace(/[‘’]/g, "'").replace(BOILERPLATE, " ").replace(ART_DESCRIPTION, " ");
+    // A complete grade descriptor may precede the grader. Remove only its
+    // observed excess words, including residual "gem" in older name readings.
+    for (const match of title.matchAll(BEFORE_GRADE_GEM)) cleaned = removeObservedWords(cleaned, match, title);
     if (/\b[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?\b/i.test(title)) {
         const release = SWORD_SHIELD_RELEASES.find(([set]) => set.test(title));
         if (release) cleaned = cleaned.replace(/\b(?:sword\s*(?:&|and)\s*shield|swsh)\b(?!['’])/gi, " ").replace(release[1], " ");
     }
     const graded = new RegExp(GRADE_SPAN.source, "i").test(title);
     const artist = graded ? title.match(GRADED_ARTIST_SUFFIX) : null;
-    if (artist) cleaned = removeObservedSuffix(cleaned, artist, title);
+    if (artist) cleaned = removeObservedWords(cleaned, artist, title);
     const suffix = title.match(INCLUDED_HOLDER_SUFFIX);
     if (!suffix || !graded) return cleaned;
     if (INCLUDED_HOLDER_SUFFIX.test(cleaned)) return cleaned.replace(INCLUDED_HOLDER_SUFFIX, " ");
     // Earlier literal readings may have removed "with" already. Remove only
     // excess source-observed suffix words, keeping any occurrences belonging
     // to the printed name (e.g. a name containing Guard).
-    return removeObservedSuffix(cleaned, suffix, title);
+    return removeObservedWords(cleaned, suffix, title);
 }
 
 function cleanedClaim(claim: string, title: string): string {

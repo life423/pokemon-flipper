@@ -154,3 +154,39 @@ Final verification: 951 offline tests, both TypeScript checks, production build
 and whitespace checks pass. The hard AI ceiling stayed at two cents per search;
 the user's conditional ten-cent fallback was not needed. Private reports retain
 the original accounts, UI evidence, source observations and quota accounting.
+
+## Catalog resolution before listing assessment
+
+The conversational query “find me a good deal on a holographic dark blastoise
+team rocket” now resolves through the English catalog to holo 3/82. Complete
+catalog coverage must establish a unique number; incomplete or ambiguous data
+preserves the original query. Explicit numbers, edition and holder constraints
+remain intact. Derived numbers filter locally, keeping numberless eBay titles
+eligible, and query and listing research share the existing source allowance.
+Cached model interpretations cannot introduce an untyped collector number.
+
+Live catalog validation used three PKMNPrices requests and four reported
+credits, with no AI or Browse calls. Repeating it reused the database without
+transport. A normal HTTP search also exposed an overly literal eBay keyword:
+“holographic” returned eight results, while the normalized “holo” query returned
+762. The first source page retained 196 listings; screening loaded 50 preliminary
+matches and excluded two overpriced candidates. Retained explicit numbers were
+3/82 or its padded/partial equivalents. This search made zero AI generation
+requests; listing photographs still require their own assessment.
+
+Other corrections remove catalog artwork suffix mismatches, contextual GEM MINT
+name residue, corroborated date-formatted seller numbers and neutral Unicode
+grade descriptions. Saved photo evidence remains reusable. Two previous false
+number holds cleared with zero transports; absent exact sales still prevented
+invented valuations.
+
+Five fresh graded BIN markets produced no supported profitable purchase in the
+tested inventory. One apparent bargain was photographed as a different collector
+number and correctly blocked. It was the only new photo assessment, costing
+$0.0019812. A provider outage interrupted the first vintage pass; one bounded
+retry recovered useful comparisons without photo spending. Missing references
+and unexamined inventory prevent a broader claim that those markets lack deals.
+
+Final verification: 965 offline tests, both TypeScript checks, production build
+and whitespace checks pass. The two-cent default stayed unchanged; the user's
+conditional ten-cent fallback was not used.

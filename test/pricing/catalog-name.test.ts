@@ -10,10 +10,12 @@ const listPath = (setId: number, name: string) => `/cards?${new URLSearchParams(
 const detail = (id: number, name: string, number: string, total: string, set: string) =>
     ({ id, name, number, total_set_number: total, set: { name: set }, prices: [] });
 
-test("saved real-shape Snorlax and Leafeon catalog records survive descriptor-only differences in both lookup paths", async t => {
+test("saved real-shape catalog records survive descriptor-only differences in both lookup paths", async t => {
     const fixtures = [
         { setId: 51001, set: "Jungle", query: "Snorlax Holofoil", term: "snorlax", item: detail(51002, "Snorlax", "11", "64", "Jungle") },
         { setId: 503, set: "Evolving Skies", query: "Leafeon V", term: "leafeon v", item: detail(17178, "Leafeon V (Alternate Full Art)", "167", "203", "Evolving Skies") },
+        { setId: 633, set: "Fusion Strike", query: "Mew VMAX", term: "mew vmax", item: detail(34436, "Mew VMAX (Alternate Art Secret)", "269", "264", "SWSH08: Fusion Strike") },
+        { setId: 606, set: "Vivid Voltage", query: "Pikachu VMAX", term: "pikachu vmax", item: detail(27943, "Pikachu VMAX (Secret)", "188", "185", "SWSH04: Vivid Voltage") },
     ];
     for (const { setId, set, term, item } of fixtures) {
         await writeCache(`pkmnprices:${setsPath(set)}`, { data: [{ id: setId, name: set }] });

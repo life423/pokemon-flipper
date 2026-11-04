@@ -6,15 +6,18 @@ describe their own checkpoints; consult Git for branch and delivery state.
 ## Workspace and delivery
 
 - Use /Users/andrewclark/programming/pokemon-flipper on this Mac. The older
-  Documents/ChatGPT path is not the checkout.
+  Documents/ChatGPT path is not the checkout. On another computer, use its
+  actual clone location rather than assuming either Mac path exists.
 - Normal app port is 3017; port 3000 belongs to another app. Do not kill other
   instances or overwrite their data. Source changes restart tsx watch and may
   interrupt live searches.
 - Commit, merge and push only when requested. Preserve unrelated changes,
   including the existing unstaged .env.example deletion.
-- Read ignored LOCAL_PLAN.md and LOCAL_TODO.md before product/strategy work.
-  They hold the complete private roadmap. Keep them, credentials, .env, API
-  responses, paid evidence and data/ contents out of commits and public reports.
+- Read tracked LOCAL_PLAN.md and LOCAL_TODO.md before product/strategy work.
+  The user explicitly requested that Markdown notes and the roadmap travel with
+  Git for work across computers. Older entries describing ignored/private notes
+  are historical. Keep credentials, .env, API responses, paid evidence and data/
+  contents out of commits and public reports. A separate handoff is deferred.
 
 ## Product outcome
 
@@ -44,6 +47,11 @@ Read docs/architecture.md for the source map and reading order.
   Confident price exclusions free slots for later summaries in that same window;
   refills share one screening session and its allowance. Excluded rows require
   a new search after relaxing targets; local retargeting covers retained rows.
+- A named English set/card/finish query can resolve its collector number before
+  eBay admission, using complete catalog coverage in the same screening session.
+  Ambiguous or incomplete catalogs retain the original intent. Derived numbers
+  filter locally without adding a required eBay keyword; numberless titles stay
+  eligible. Cached model guesses cannot replace an untyped collector number.
 - English-only current scope: exclude known foreign evidence, but unknown
   language is preliminary. Holo, reverse holo and non-holo are distinct.
   Normalize aliases/descriptors without losing printed forms, owners or numbers.
@@ -92,6 +100,10 @@ Read docs/architecture.md for the source map and reading order.
   Exact final-input preflight, maximum input/output reservation and unknown-charge
   holds are required. Invalid state/config fails closed. Cache hits do not reset
   the allowance; brainstorming is not authorization to raise it.
+- The user explicitly permits up to $0.10 per search only if desperately needed
+  to finish useful analysis. Keep the default at $0.02, report an actual increase
+  and its spending, and preserve existing charges/holds. This fallback has not
+  been used. Prefer a free catalog/local resolution before additional text AI.
 - New searches allow **50 actual eBay Browse requests per search**, separate from daily
   account quota/reserve. Retries, nested calls and restarts retain spent counts.
   Cache hits, OAuth and Analytics are separate. The old expiring development

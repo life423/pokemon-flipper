@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { findDeals, type SearchSummary } from "../../server/deals/find-deals.ts";
 import { readSearchLocally, readSearchWithoutAi } from "../../server/search/intent.ts";
 import { readTitleByRules, readTitleWithoutAi } from "../../server/ai/title-reader.ts";
-import { writeCache } from "../../server/lib/cache.ts";
+import { readCache, writeCache } from "../../server/lib/cache.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
 import { MODEL } from "../../server/ai/openai.ts";
 import { canAutoAnalyze } from "../../shared/analysis.ts";
@@ -144,6 +144,18 @@ test("bounded helpers reuse existing paid title and intent readings without invo
     assert.deepEqual(reused.sets, ["Base Set"]);
     assert.deepEqual(reused.titleWords, ["charizard"]);
     assert.equal(fetch.mock.callCount(), 0);
+});
+
+test("saved intent numbers cannot replace omitted, partial or lettered numbers with a model guess", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("saved intent corrections must remain free"));
+    for (const [query, expected] of [["Dark Blastoise Team Rocket holo", null], ["Dark Blastoise Team Rocket #3 holo", "3"],
+        ["Espeon Aquapolis H9/H32 holo", "H9/H32"], ["Galarian Sirfetch'd SWSH050 promo", "SWSH050"]]) {
+        const saved = { ...readSearchLocally(query), cardNumber: "4/82", source: "ai" };
+        const key = `search-intent:v2:${MODEL}:${query.toLowerCase()}`;
+        await writeCache(key, saved);
+        assert.equal((await readSearchWithoutAi(query)).cardNumber, expected, query);
+        assert.deepEqual(await readCache(key, 24), saved, "the accepted cache payload remains unchanged");
+    }
 });
 
 test("invalid saved bounded metadata fails closed rather than becoming a new AI request", async () => {

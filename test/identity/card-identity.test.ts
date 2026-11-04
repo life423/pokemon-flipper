@@ -316,6 +316,52 @@ test("promo numbers keep their letters", () => {
     assert.equal(sameCardNumber("TG01/TG30", "TG1/TG30"), true);
 });
 
+function dateNumberCase(name = "Dark Alakazam", numerator = 1, month = "Jan") {
+    const fraction = `${numerator}/82`;
+    const listing = { title: `${name} 2000 Pokemon Team Rocket #${numerator} Holo PSA 9`,
+        aspects: { Set: "Team Rocket", "Card Name": name, "Card Number": `${month}-82`, Language: "English" } };
+    const photos = photoCheck({}, { printedName: name, printedNumber: fraction, cardCount: "ONE",
+        cardMatch: { verdict: "MATCH", problems: [] }, images: [{ number: 1, view: "FRONT", usable: true, isStockImage: false, issues: [] }],
+        cardIdentity: { name, set: "Team Rocket", cardNumber: fraction, language: "English", finish: "HOLO", confidence: "HIGH", evidence: ["Collector fraction is readable."] } });
+    const record = toCardRecord({ id: numerator, name, number: String(numerator), total_set_number: "82", set: { id: 1, name: "Team Rocket" }, prices: [usd("Unlimited Holofoil", "Near Mint", 100)] });
+    return { listing, photos, record, fraction };
+}
+
+test("date-formatted seller numbers use an agreeing title and clear photographed fraction without changing source evidence", async () => {
+    for (const [name, numerator, month] of [["Dark Alakazam", 1, "Jan"], ["Dark Gyarados", 8, "Aug"], ["Dark Arbok", 2, "Feb"]]) {
+        const { listing, photos, record, fraction } = dateNumberCase(name, numerator, month);
+        const before = structuredClone({ listing, photos });
+        const { identity } = await identifyCard(listing, photos, { lookupCards: async query => { assert.equal(query.cardNumber, fraction); return [record]; } });
+        assert.equal(identity.status, "IDENTIFIED"); assert.equal(identity.cardNumber, fraction);
+        assert.match(identity.reasons.join(" "), /seller-entered card number.*date-formatted/);
+        assert.deepEqual({ listing, photos }, before);
+        assert.equal(sameCardNumber(`${month}-82`, fraction), false, "global number matching must not guess from a month");
+    }
+});
+
+test("date-shaped specifics alone, partial photo numbers and real contradictions never authorize a corrected lookup", async () => {
+    for (const change of [
+        (value) => { value.listing.title = "Dark Alakazam Team Rocket Holo PSA 9"; },
+        (value) => { value.listing.title = "Dark Alakazam Team Rocket #2 Holo PSA 9"; },
+        (value) => { value.listing.title = "Dark Alakazam Team Rocket #1/83 Holo PSA 9"; },
+        (value) => { value.listing.aspects["Card Number"] = "Feb-82"; },
+        (value) => { value.listing.aspects["Card Number"] = "Jan-83"; },
+        (value) => { value.listing.aspects["Card Number"] = "2/82"; },
+        (value) => { value.photos.cardIdentity.confidence = "MEDIUM"; },
+        (value) => { value.photos.printedNumber = "1"; },
+        (value) => { value.photos.cardIdentity.cardNumber = "1"; },
+        (value) => { value.photos.images[0].isStockImage = true; },
+        (value) => { value.photos.cardCount = "UNKNOWN"; },
+        (value) => { value.photos.cardMatch = { verdict: "MISMATCH", problems: ["Another card is pictured."] }; },
+        (value) => { value.photos.printedNumber = value.photos.cardIdentity.cardNumber = "H1/H82"; value.listing.title = "Dark Alakazam Team Rocket #H1/H82 Holo PSA 9"; },
+        (value) => { value.photos.printedNumber = value.photos.cardIdentity.cardNumber = "1a/82"; value.listing.title = "Dark Alakazam Team Rocket #1a/82 Holo PSA 9"; },
+    ]) {
+        const value = dateNumberCase(); change(value);
+        const result = await identifyCard(value.listing, value.photos, { lookupCards: async () => assert.fail("unresolved number must not start a catalog lookup") });
+        assert.equal(result.identity.status, "NEEDS_REVIEW"); assert.equal(result.card, null);
+    }
+});
+
 // Printing claims and evidence
 
 test("reads printing claims from seller text", () => {

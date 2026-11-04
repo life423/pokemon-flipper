@@ -74,10 +74,12 @@ test("TAG certificate letters survive normalization and distinguish otherwise id
 });
 
 test("PSA ordinary grade descriptions are not special qualifiers; mixed or incorrect descriptions remain blocked", () => {
-    for (const [grade, gradeQualifier] of [["7", "NM"], ["7", "Near Mint"], ["8", "NM-MT"], ["9", "MINT"], ["10", "GEM-MT"], ["6", "EX-MT"]]) {
+    for (const [grade, gradeQualifier] of [["7", "NM"], ["7", "Near Mint"], ["8", "NM-MT"], ["8", "NM–MT"], ["8", "NM—MT"], ["9", "MINT"], ["10", "GEM-MT"], ["6", "EX-MT"]]) {
         assert.equal(checkSlab(slabPhotos({ grade, gradeQualifier })).status, "OK");
     }
     for (const gradeQualifier of ["NM OC", "OC", "MK", "Authentic", "MINT"]) assert.equal(checkSlab(slabPhotos({ grade: "7", gradeQualifier })).status, "NEEDS_REVIEW");
+    for (const gradeQualifier of ["NM–MT OC", "NM—MT MK", "Pristine"]) assert.equal(checkSlab(slabPhotos({ grade: "8", gradeQualifier })).status, "NEEDS_REVIEW");
+    assert.equal(checkSlab(slabPhotos({ grade: "8", gradeQualifier: "NM–MT", authenticity: "POSSIBLE" })).status, "NEEDS_REVIEW");
 });
 
 test("a seller grade conflict remains material while a certificate typo is a note for a readable slab", () => {

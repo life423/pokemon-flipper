@@ -1,9 +1,9 @@
 import { readCache, writeCache } from "../lib/cache.ts";
-import { sameCardNumber, sameSetFamily, setSearchTerm } from "../identity/card-identity.ts";
-import { pricingSearchName, sameCatalogName } from "./search-name.ts";
+import { sameCardNumber, sameSetFamily, setFamily, setSearchTerm } from "../identity/card-identity.ts";
+import { canonicalCatalogName, pricingSearchName, sameCatalogName } from "./search-name.ts";
 import { conditionOf } from "./raw-prices.ts";
 import { cardNumberOf, cardVariants } from "./records.ts";
-import type { CardRecord, Comp, FetchComps, FetchRawComps, FetchSoldPage, LookupCards } from "./types.ts";
+import type { CardRecord, Comp, FetchComps, FetchRawComps, FetchSoldPage, LookupCards, LookupQueryCards, QueryCatalogResult } from "./types.ts";
 import { createLimiter } from "../lib/concurrency.ts";
 import { createSharedWork } from "../lib/shared-work.ts";
 import { fetchJson, ProviderError } from "../lib/http.ts";
@@ -276,6 +276,60 @@ export function toCardRecord(detail: PkmnCard): CardRecord {
     };
 }
 
+// Query resolution needs complete candidate coverage, unlike a bounded list
+// of research leads. Reuse ordinary cache paths and the screening source's get.
+async function lookupQueryCardsFrom({ set, name }: Parameters<LookupQueryCards>[0], get: typeof apiGet): Promise<QueryCatalogResult> {
+    const incomplete: QueryCatalogResult = { cards: [], complete: false };
+    const nameTerm = pricingSearchName(name);
+    if (!nameTerm) return incomplete;
+    async function pages(endpoint: string, params: URLSearchParams, size: number, age = DAY): Promise<any[] | null> {
+        const items: any[] = [];
+        let total: number | undefined, pageCount: number | undefined;
+        for (let page = 1; page <= 4; page++) {
+            const body = await get(`${endpoint}?${params}`, age);
+            if (!Array.isArray(body?.data) || body.data.length > size) return null;
+            items.push(...body.data);
+            const pagination = body.pagination;
+            if (pagination == null) return page === 1 && body.data.length < size ? items : null;
+            if (pagination.page !== page || pagination.per_page !== size || !Number.isSafeInteger(pagination.total) || pagination.total < 0 ||
+                !Number.isSafeInteger(pagination.total_pages) || pagination.total_pages !== Math.max(1, Math.ceil(pagination.total / size)) ||
+                total !== undefined && (pagination.total !== total || pagination.total_pages !== pageCount)) return null;
+            total = pagination.total; pageCount = pagination.total_pages;
+            if (body.data.length !== Math.min(size, Math.max(0, total! - (page - 1) * size))) return null;
+            if (page === pageCount) return pagination.next_cursor ? null : items;
+            params.set("page", String(page + 1));
+        }
+        return null;
+    }
+    const sets = await pages("/sets", new URLSearchParams({ name: setSearchTerm(set), language: "English", per_page: "50" }), 50, DAY * 7);
+    if (!sets) return incomplete;
+    const family = new Map<number, { id: number; name: string }>();
+    for (const entry of sets.filter(entry => sameSetFamily(entry?.name, set))) {
+        if (!Number.isSafeInteger(entry.id) || entry.id < 1 || family.has(entry.id) && family.get(entry.id)!.name !== entry.name) return incomplete;
+        family.set(entry.id, entry);
+    }
+    const candidates = new Map<number, PkmnCard>();
+    for (const entry of family.values()) {
+        const items = await pages("/cards", new URLSearchParams({ set_id: String(entry.id), name: nameTerm, per_page: "20" }), 20);
+        if (!items) return incomplete;
+        for (const item of items.filter(item => sameCatalogName(item?.name, name))) {
+            if (!Number.isSafeInteger(item.id) || item.id < 1 || item.set?.name && !sameSetFamily(item.set.name, set)) return incomplete;
+            const previous = candidates.get(item.id);
+            if (previous && !sameCardNumber(cardNumberOf(previous), cardNumberOf(item))) return incomplete;
+            candidates.set(item.id, item);
+            if (candidates.size > 4) return incomplete;
+        }
+    }
+    const cards: CardRecord[] = [];
+    for (const item of candidates.values()) {
+        const detail = await get(`/cards/${item.id}?currency=usd`);
+        if (detail?.id !== item.id || !sameCatalogName(detail.name, name) || !sameSetFamily(detail.set?.name, set) ||
+            !sameCardNumber(cardNumberOf(detail), cardNumberOf(item))) return incomplete;
+        cards.push(toCardRecord(detail));
+    }
+    return { cards, complete: true };
+}
+
 // Candidate cards for a listing: every set in the listing's set family,
 // narrowed by name and number before the per-card price lookups.
 async function lookupCardsFrom({ set, name, cardNumber }: Parameters<LookupCards>[0],
@@ -392,6 +446,8 @@ export function createScreeningPriceSource({ signal: sourceSignal, maxRequests =
     if (!Number.isSafeInteger(maxRequests) || maxRequests < 0) throw new RangeError("The price-screening request allowance must be a nonnegative integer.");
     const requestLimit = maxRequests;
     let requests = 0;
+    const queryCatalogs = new Map<string, CardRecord[]>();
+    const queryKey = (query: { set: string; name: string }) => JSON.stringify([[...setFamily(query.set)].sort(), canonicalCatalogName(query.name)]);
     const cached: typeof readApiCache = async (path, maxAgeHours) => {
         signal?.throwIfAborted();
         const result = await readApiCache(path, maxAgeHours);
@@ -432,8 +488,18 @@ export function createScreeningPriceSource({ signal: sourceSignal, maxRequests =
                 ? body.pagination.next_cursor : null,
         };
     };
-    const source: { lookupCards: LookupCards; fetchComps: FetchComps; fetchRawComps: FetchRawComps; fetchSoldPage: FetchSoldPage; stats(): { requests: number; limit: number } } = {
-        lookupCards: query => lookupCardsFrom(query, get, cached, { maxCards: 4 }),
+    const source: { lookupCards: LookupCards; lookupQueryCards: LookupQueryCards; fetchComps: FetchComps; fetchRawComps: FetchRawComps; fetchSoldPage: FetchSoldPage; stats(): { requests: number; limit: number } } = {
+        lookupCards: query => {
+            signal?.throwIfAborted();
+            const complete = queryCatalogs.get(queryKey(query));
+            return complete ? Promise.resolve(structuredClone(complete.filter(card => !query.cardNumber || sameCardNumber(card.cardNumber, query.cardNumber))))
+                : lookupCardsFrom(query, get, cached, { maxCards: 4 });
+        },
+        lookupQueryCards: async query => {
+            const result = await lookupQueryCardsFrom(query, get);
+            if (result.complete) queryCatalogs.set(queryKey(query), structuredClone(result.cards));
+            return result;
+        },
         fetchComps: async (recordId, { grader, grade, variant }) => {
             if (variant) return (await fetchSoldPage(recordId, { grader, grade: String(grade), variant })).sales;
             // Retain the optional variant's established URL for other callers.

@@ -123,7 +123,9 @@ export function cleanReading(reading: Reading, search: string): SearchIntent {
     return {
         cardName: cardName && explicitlyTyped(cardName) ? cardName : null,
         sets: (reading.sets ?? []).map((set) => set.trim()).filter(Boolean),
-        cardNumber: reading.cardNumber?.trim() || null,
+        // A saved model interpretation is not a catalog authority. Retain
+        // only the number actually typed, including partial/promo numbers.
+        cardNumber: readTitleByRules(search).cardNumber?.toUpperCase() ?? null,
         printing: isPrinting(reading.printing) ? reading.printing : null,
         graded,
         grader,

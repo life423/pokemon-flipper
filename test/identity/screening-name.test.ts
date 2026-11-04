@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resolveScreeningName, screeningNameKey } from "../../server/identity/screening-name.ts";
+import { readTitleByRules } from "../../server/ai/title-reader.ts";
 
 test("recognized seller metadata reconciles saved and literal card names without a species dictionary", () => {
     const cases = [
@@ -35,6 +36,24 @@ test("post-grade EX descriptors cannot erase the card's own ex from a clean cach
     assert.equal(resolveScreeningName({ title: "Charizard ex PSA 5 EX", claims: ["Charizard ex", "charizard ex ex"], candidate: "Charizard ex" }), "Charizard ex");
     assert.equal(resolveScreeningName({ title: "Charizard ex PSA 8 NM-MT", claims: ["Charizard ex", "charizard ex -mt"], candidate: "Charizard ex" }), "Charizard ex");
     assert.equal(resolveScreeningName({ title: "Venusaur ex", claims: ["Venusaur ex"], candidate: "Venusaur" }), "Venusaur ex");
+});
+
+test("complete pre-grader GEM MINT descriptions do not pollute literal or saved card names", () => {
+    const title = "Pokemon 1999 Dragonite 4/62 Holo Fossil GEM MINT CGC 10";
+    assert.equal(readTitleByRules(title).cardName, "dragonite");
+    assert.equal(resolveScreeningName({ title, claims: ["Dragonite", "dragonite gem"], candidate: "Dragonite" }), "Dragonite");
+    for (const name of ["Dark Dragonite", "Charizard ex", "Mew VMAX", "Rocket's Mewtwo", "Unown G", "Gem Dragonite"]) {
+        for (const descriptor of ["GEM MINT CGC 10", "GEM MT PSA - 10"]) {
+            const source = `${name} ${descriptor}`;
+            assert.equal(resolveScreeningName({ title: source, claims: [name, `${name} gem`], candidate: name }), name, source);
+        }
+    }
+    assert.equal(resolveScreeningName({ title: "GEM MINT CGC 10 Gem Dragonite", claims: ["Gem Dragonite"], candidate: "Dragonite" }), "Gem Dragonite");
+    for (const source of ["Dragonite GEM", "Dragonite GEM MINT", "Dragonite GEM MINT CGC", "Dragonite GEM MINT CGC Authentic", "Dragonite GEM MINT curious CGC 10"]) {
+        assert.equal(resolveScreeningName({ title: source, claims: ["Dragonite gem"], candidate: "Dragonite" }), "Dragonite gem", source);
+    }
+    assert.equal(resolveScreeningName({ title: "Dark Dragonite GEM MINT CGC 10", claims: ["Dragonite", "Dark Dragonite gem"], candidate: "Dragonite" }), null);
+    assert.equal(resolveScreeningName({ title: "Dragonite GEM MINT CGC 10 Curious", claims: ["Dragonite gem curious"], candidate: "Dragonite" }), "Dragonite curious");
 });
 
 test("unknown residuals and conflicting claims remain unresolved instead of borrowing the search", () => {

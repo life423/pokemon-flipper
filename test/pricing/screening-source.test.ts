@@ -154,6 +154,133 @@ test("screening without a collector number loads at most four exact-name card de
     assert.equal(paths.length, 4);
 });
 
+const querySet = { id: 91000, name: "Team Rocket" };
+const queryCard = (id: number, number: string, variant = "Unlimited Holofoil") => ({ id, name: "Dark Blastoise", number,
+    total_set_number: "82", set: querySet, prices: [{ currency: "USD", variant, condition: "Near Mint", market_price: 100 }] });
+function queryOffline(t: Parameters<typeof offline>[0]) { offline(t); clock += 8 * 86_400_000; }
+
+test("complete query catalog lookup retains the distinct holo and non-holo collector numbers", async t => {
+    queryOffline(t);
+    const holo = queryCard(91003, "3"), plain = queryCard(91020, "20", "Unlimited");
+    const paths: string[] = [];
+    t.mock.method(globalThis, "fetch", async input => {
+        const requested = requestPath(input); paths.push(requested);
+        const url = new URL(String(input));
+        if (url.pathname === "/v1/sets") { assert.equal(url.searchParams.get("language"), "English"); return Response.json({ data: [querySet], pagination: { page: 1, per_page: 50, total: 1, total_pages: 1, next_cursor: null } }); }
+        if (url.pathname === "/v1/cards") { assert.equal(url.searchParams.get("number"), null, "the query does not yet establish a collector number"); return Response.json({ data: [holo, plain], pagination: { page: 1, per_page: 20, total: 2, total_pages: 1 } }); }
+        return Response.json(url.pathname.endsWith("/91003") ? holo : plain);
+    });
+    const source = createScreeningPriceSource();
+    const result = await source.lookupQueryCards({ set: "Team Rocket", name: "Dark Blastoise" });
+    assert.equal(result.complete, true);
+    assert.deepEqual(result.cards.map(card => [card.cardNumber, card.variants[0].finish]), [["3/82", "HOLO"], ["20/82", "NON_HOLO"]]);
+    assert.equal(paths.length, 4);
+});
+
+test("query catalog traversal finishes set and card pages and loads duplicate exact-name IDs only once", async t => {
+    queryOffline(t);
+    const holo = queryCard(92003, "3"), plain = queryCard(92020, "20", "Unlimited");
+    const paths: string[] = [];
+    t.mock.method(globalThis, "fetch", async input => {
+        const requested = requestPath(input); paths.push(requested); const url = new URL(String(input));
+        const page = Number(url.searchParams.get("page") ?? 1);
+        assert.equal(url.searchParams.get("cursor"), null, "catalog pagination uses page numbers");
+        if (url.pathname === "/v1/sets") return Response.json({ data: page === 2 ? [querySet]
+            : Array.from({ length: 50 }, (_, id) => ({ id: 92000 + id, name: `Other set ${id}` })),
+            pagination: { page, per_page: 50, total: 51, total_pages: 2 } });
+        if (url.pathname === "/v1/cards") return Response.json({ data: page === 2 ? [holo, plain]
+            : [holo, ...Array.from({ length: 19 }, (_, id) => ({ ...holo, id: 92900 + id, name: "Blastoise" }))],
+            pagination: { page, per_page: 20, total: 22, total_pages: 2 } });
+        return Response.json(url.pathname.endsWith("/92003") ? holo : plain);
+    });
+    const source = createScreeningPriceSource();
+    const result = await source.lookupQueryCards({ set: "Team Rocket", name: "Dark Blastoise" });
+    assert.equal(result.complete, true); assert.deepEqual(result.cards.map(card => card.id), [92003, 92020]);
+    assert.equal(paths.filter(requested => requested.startsWith("/sets?")).length, 2);
+    assert.equal(paths.filter(requested => requested.startsWith("/cards?")).length, 2);
+    assert.equal(paths.filter(requested => /^\/cards\/\d+\?/.test(requested)).length, 2);
+    assert.ok(paths.findIndex(requested => requested.startsWith("/cards?") && requested.includes("page=2")) < paths.findIndex(requested => requested.startsWith("/cards/")));
+    const requestsBeforeReuse = paths.length;
+    assert.deepEqual((await source.lookupCards({ set: "Team Rocket", name: "Dark Blastoise", cardNumber: "20/82" })).map(card => card.id), [92020], "row research reuses the complete query result, including records from page two");
+    assert.equal(paths.length, requestsBeforeReuse, "the completed query catalog must not buy another lookup");
+});
+
+test("query catalog pages without terminal proof or consistent page metadata stay incomplete before detail work", async t => {
+    queryOffline(t);
+    const failures = [
+        { data: Array.from({ length: 20 }, (_, id) => ({ id, name: "Other card" })) },
+        { data: [queryCard(93003, "3")], pagination: { page: 1, per_page: 20, total: 2, total_pages: 1 } },
+        { data: [queryCard(93003, "3")], pagination: { page: "1", per_page: 20, total: 1, total_pages: 1 } },
+        { data: [queryCard(93003, "3")], pagination: { total: 1, total_pages: 1 } },
+        { data: [queryCard(93003, "3")], pagination: { page: 1, per_page: 10, total: 1, total_pages: 1 } },
+        { data: [queryCard(93003, "3")], pagination: { page: 1, per_page: 20, total: 1, total_pages: 2 } },
+    ];
+    let response = failures[0], details = 0;
+    t.mock.method(globalThis, "fetch", async input => {
+        const url = new URL(String(input));
+        if (url.pathname === "/v1/sets") return Response.json({ data: [querySet] });
+        if (url.pathname === "/v1/cards") return Response.json(response);
+        details++; assert.fail("an incomplete query catalog cannot authorize detail work");
+    });
+    for (const failure of failures) {
+        clock += 8 * 86_400_000; response = failure;
+        assert.deepEqual(await createScreeningPriceSource().lookupQueryCards({ set: "Team Rocket", name: "Dark Blastoise" }), { cards: [], complete: false });
+    }
+    assert.equal(details, 0);
+});
+
+test("query catalog refuses a fifth exact-name candidate and repeating or excessive page numbers", async t => {
+    queryOffline(t);
+    let mode: "overflow" | "repeat" | "many" = "overflow", pages = 0;
+    t.mock.method(globalThis, "fetch", async input => {
+        const url = new URL(String(input));
+        if (url.pathname === "/v1/sets") return Response.json({ data: [querySet] });
+        assert.equal(url.pathname, "/v1/cards", "incomplete candidate lists must not dispatch details"); pages++;
+        return Response.json(mode === "overflow" ? { data: Array.from({ length: 5 }, (_, id) => queryCard(94000 + id, String(id + 1))), pagination: { page: 1, per_page: 20, total: 5, total_pages: 1 } }
+            : { data: Array.from({ length: 20 }, () => queryCard(94003, "3")),
+                pagination: { page: mode === "repeat" ? 1 : pages, per_page: 20, total: 81, total_pages: 5 } });
+    });
+    for (const next of ["overflow", "repeat", "many"] as const) {
+        mode = next; pages = 0; clock += 8 * 86_400_000;
+        assert.deepEqual(await createScreeningPriceSource().lookupQueryCards({ set: "Team Rocket", name: "Dark Blastoise" }), { cards: [], complete: false });
+        assert.ok(pages <= 4, "catalog pagination must stay bounded");
+    }
+});
+
+test("query catalog detail contradictions cannot establish a complete identity set", async t => {
+    queryOffline(t);
+    let detail = queryCard(95003, "3");
+    t.mock.method(globalThis, "fetch", async input => {
+        const url = new URL(String(input));
+        return Response.json(url.pathname === "/v1/sets" ? { data: [querySet] }
+            : url.pathname === "/v1/cards" ? { data: [queryCard(95003, "3")] } : detail);
+    });
+    for (const change of [{ name: "Blastoise" }, { number: "20" }, { set: { id: 95000, name: "EX Team Rocket Returns" } }]) {
+        clock += 8 * 86_400_000; detail = { ...queryCard(95003, "3"), ...change };
+        assert.deepEqual(await createScreeningPriceSource().lookupQueryCards({ set: "Team Rocket", name: "Dark Blastoise" }), { cards: [], complete: false });
+    }
+});
+
+test("query catalog and sold work share one screening allowance and remain reusable after it is exhausted", async t => {
+    queryOffline(t);
+    const item = queryCard(96003, "3"), paths: string[] = [];
+    t.mock.method(globalThis, "fetch", async input => {
+        const requested = requestPath(input); paths.push(requested); const url = new URL(String(input));
+        if (url.pathname === "/v1/sets") return Response.json({ data: [querySet] });
+        if (url.pathname === "/v1/cards") return Response.json({ data: [item] });
+        if (url.pathname.includes("/listings/ebay")) return Response.json({ data: [sale(96)] });
+        return Response.json(item);
+    });
+    const source = createScreeningPriceSource({ maxRequests: 4 }), query = { set: "Team Rocket", name: "Dark Blastoise" };
+    assert.equal((await source.lookupQueryCards(query)).complete, true);
+    assert.deepEqual(source.stats(), { requests: 3, limit: 4 });
+    assert.deepEqual(await source.fetchRawComps(96003, "Unlimited Holofoil"), [sale(96)]);
+    await assert.rejects(source.fetchRawComps(96020, "Unlimited"), ScreeningPriceBudgetError);
+    assert.equal((await source.lookupQueryCards(query)).complete, true);
+    assert.deepEqual(await source.fetchRawComps(96003, "Unlimited Holofoil"), [sale(96)]);
+    assert.equal(paths.length, 4); assert.deepEqual(source.stats(), { requests: 4, limit: 4 });
+});
+
 test("concurrent searches share a sold page and one stopped subscriber cannot cancel its other consumer", async t => {
     offline(t);
     const started = deferred<void>(), response = deferred<Response>();
