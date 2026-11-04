@@ -1,9 +1,9 @@
 import { readCache, writeCache } from "../lib/cache.ts";
-import { sameCardNumber, sameSetFamily, setSearchTerm, normalizeWords } from "../identity/card-identity.ts";
-import { pricingSearchName } from "./search-name.ts";
+import { sameCardNumber, sameSetFamily, setSearchTerm } from "../identity/card-identity.ts";
+import { pricingSearchName, sameCatalogName } from "./search-name.ts";
 import { conditionOf } from "./raw-prices.ts";
 import { cardNumberOf, cardVariants } from "./records.ts";
-import type { CardRecord, Comp, FetchComps, FetchRawComps, LookupCards } from "./types.ts";
+import type { CardRecord, Comp, FetchComps, FetchRawComps, FetchSoldPage, LookupCards } from "./types.ts";
 import { createLimiter } from "../lib/concurrency.ts";
 import { createSharedWork } from "../lib/shared-work.ts";
 import { fetchJson, ProviderError } from "../lib/http.ts";
@@ -282,6 +282,8 @@ async function lookupCardsFrom({ set, name, cardNumber }: Parameters<LookupCards
     get: typeof apiGet, cached: typeof readApiCache,
     screening?: { maxCards: number }): ReturnType<LookupCards> {
 
+    const nameTerm = pricingSearchName(name);
+    if (!nameTerm) return [];
     const sets = await get(
         `/sets?${new URLSearchParams({ name: setSearchTerm(set), language: "English", per_page: "50" })}`,
         DAY * 7
@@ -290,7 +292,6 @@ async function lookupCardsFrom({ set, name, cardNumber }: Parameters<LookupCards
     const familySets: { id: number; name: string }[] = (sets.data ?? []).filter((s: { name: string }) =>
         sameSetFamily(s.name, set)
     );
-    const nameTerm = pricingSearchName(name);
     const cards: CardRecord[] = [];
 
     for (const familySet of familySets) {
@@ -302,18 +303,39 @@ async function lookupCardsFrom({ set, name, cardNumber }: Parameters<LookupCards
         // Promo/gallery prefixes and missing catalog totals retain their old
         // lookup semantics rather than guessing a new API normalization rule.
         const numeric = /^#?(\d+)(?:\/\d+)?$/.exec(cardNumber.replace(/\s+/g, ""));
-        let list: ApiBody;
-        if (numeric) {
-            const previous = await cached(legacyPath, DAY);
-            params.set("number", numeric[1]!.replace(/^0+(?=\d)/, ""));
-            list = previous ?? await get(`/cards?${params}`);
-        } else list = await get(legacyPath);
+        let list = await cached(legacyPath, DAY);
+        if (numeric) params.set("number", numeric[1]!.replace(/^0+(?=\d)/, ""));
+        // Earlier provider queries split owner apostrophes into spaces. Reuse
+        // their positive exact matches from cache, but an empty malformed
+        // query must never prevent the corrected spelling from being tried.
+        if (!list && nameTerm.includes("'")) {
+            const previousParams = new URLSearchParams(params);
+            previousParams.set("name", nameTerm.replace(/'/g, " ").replace(/\s+/g, " ").trim());
+            const previousPaths = [`/cards?${previousParams}`];
+            if (numeric) {
+                previousParams.delete("number");
+                previousPaths.unshift(`/cards?${previousParams}`);
+            }
+            for (const previousPath of previousPaths) {
+                const previous = await cached(previousPath, DAY);
+                if (previous?.data?.some((item: PkmnCard) => sameCatalogName(item.name, name) &&
+                    (!item.set?.name || sameSetFamily(item.set.name, set)) &&
+                    (!cardNumber || sameCardNumber(cardNumberOf(item), cardNumber)))) {
+                    list = previous;
+                    break;
+                }
+            }
+        }
+        list ??= await get(`/cards?${params}`);
 
         for (const item of list.data ?? []) {
             if (cardNumber ? !sameCardNumber(cardNumberOf(item), cardNumber) : !screening) continue;
-            if (screening && normalizeWords(item.name) !== normalizeWords(name)) continue;
+            if (!sameCatalogName(item.name, name)) continue;
 
             const detail = await get(`/cards/${item.id}?currency=usd`);
+            if (!sameCatalogName(detail.name, name) || !sameSetFamily(detail.set?.name, set) ||
+                cardNumber && !sameCardNumber(cardNumberOf(detail), cardNumber) ||
+                !sameCardNumber(cardNumberOf(detail), cardNumberOf(item))) continue;
             cards.push(toCardRecord(detail));
             if (screening && cards.length >= screening.maxCards) return cards;
         }
@@ -394,20 +416,34 @@ export function createScreeningPriceSource({ signal: sourceSignal, maxRequests =
             return finish(path, response, body);
         } finally { detach(); }
     };
-    const source: { lookupCards: LookupCards; fetchComps: FetchComps; fetchRawComps: FetchRawComps; stats(): { requests: number; limit: number } } = {
+    const fetchSoldPage: FetchSoldPage = async (recordId, { grader, grade, variant, cursor }) => {
+        if (Boolean(grader) !== Boolean(grade)) throw new Error("A sold-page target requires both its grader and grade.");
+        // Keep the existing final-valuation URLs: both stages share cached
+        // first pages, cursor pages and in-flight provider requests.
+        const params = grader && grade
+            ? new URLSearchParams({ graded: "true", grader, grade, limit: "20", sort: "date_desc", period: "180d", variant })
+            : new URLSearchParams({ graded: "false", period: "90d", sort: "date_desc", limit: "20", variant });
+        if (cursor) params.set("cursor", cursor);
+        const body = await get(`/cards/${recordId}/listings/ebay?${params}`, 6);
+        const sales: Comp[] = (body.data ?? []).filter((sale: Comp) => sale.currency === "USD");
+        return {
+            sales: [...new Map(sales.map(sale => [sale.id ?? sale.listing_url ?? JSON.stringify(sale), sale])).values()],
+            nextCursor: body.pagination?.has_more && typeof body.pagination.next_cursor === "string" && body.pagination.next_cursor
+                ? body.pagination.next_cursor : null,
+        };
+    };
+    const source: { lookupCards: LookupCards; fetchComps: FetchComps; fetchRawComps: FetchRawComps; fetchSoldPage: FetchSoldPage; stats(): { requests: number; limit: number } } = {
         lookupCards: query => lookupCardsFrom(query, get, cached, { maxCards: 4 }),
         fetchComps: async (recordId, { grader, grade, variant }) => {
+            if (variant) return (await fetchSoldPage(recordId, { grader, grade: String(grade), variant })).sales;
+            // Retain the optional variant's established URL for other callers.
             const params = new URLSearchParams({ graded: "true", grader, grade: String(grade), limit: "20", sort: "date_desc", period: "180d" });
-            if (variant) params.set("variant", variant);
             const body = await get(`/cards/${recordId}/listings/ebay?${params}`, 6);
             const sales: Comp[] = (body.data ?? []).filter((sale: Comp) => sale.currency === "USD");
             return [...new Map(sales.map(sale => [sale.id ?? sale.listing_url ?? JSON.stringify(sale), sale])).values()];
         },
-        fetchRawComps: async (recordId, variant) => {
-            const params = new URLSearchParams({ graded: "false", period: "90d", sort: "date_desc", limit: "20", variant });
-            const body = await get(`/cards/${recordId}/listings/ebay?${params}`, 6);
-            return (body.data ?? []).filter((sale: Comp) => sale.currency === "USD");
-        },
+        fetchRawComps: async (recordId, variant) => (await fetchSoldPage(recordId, { grader: null, grade: null, variant })).sales,
+        fetchSoldPage,
         stats: () => ({ requests, limit: requestLimit }),
     };
     return source;

@@ -5,6 +5,8 @@ import { describeOffer, numbersAtOffer, offerFor } from "../../../../shared/mone
 import { writeOfferNote } from "../../api";
 import { Pairs, Section } from "./primitives";
 import styles from "../DetailPanel.module.css";
+import { priceEvidenceGap } from "../../../../shared/money/price-evidence.ts";
+import { isResearchDeferred } from "../../../../shared/photo-review.ts";
 
 export function OfferSection({ listing, evaluation }: { listing: ListingSummary; evaluation: Evaluation }) {
     const plan = offerFor(listing, evaluation.underwriting?.best?.maxBid);
@@ -12,7 +14,7 @@ export function OfferSection({ listing, evaluation }: { listing: ListingSummary;
     const [writing, setWriting] = useState(false);
     const [copied, setCopied] = useState(false);
 
-    if (!plan || listing.currentPrice === null) return null;
+    if (!plan || listing.currentPrice === null || priceEvidenceGap(evaluation) || isResearchDeferred(evaluation)) return null;
     const best = evaluation.underwriting?.best;
     const offerNumbers = best ? numbersAtOffer(best, plan) : null;
 

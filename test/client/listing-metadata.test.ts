@@ -8,6 +8,37 @@ import type { ListingSummary } from "../../shared/types.ts";
 import { cardEvaluation } from "../fixtures/card-evaluation.ts";
 import { mixedCoverageEvaluation } from "../fixtures/photo-coverage.ts";
 
+test("raw-condition facts are absent for listed and photographed slabs while actual raw cards retain them", async t => {
+    const server = await createServer({ configFile: path.resolve("client/vite.config.js"), envFile: false, appType: "custom", logLevel: "silent",
+        server: { middlewareMode: true, hmr: false, watch: null } });
+    t.after(() => server.close());
+    const { DealCard } = await server.ssrLoadModule("/src/components/DealCard.tsx");
+    const item: ListingSummary = { id: "holder-card", title: "Venusaur Base Set 15/102 Holo PSA 8", currentPrice: 100, shipping: 0,
+        bids: 0, isGraded: true, buyingOption: "FIXED_PRICE", endTime: null, images: [], url: "#", seller: null };
+    const render = (listing: ListingSummary, analysis?: unknown) => renderToStaticMarkup(createElement(DealCard, {
+        listing, analysis, selected: false, now: Date.now(), onOpen: () => {}, years: {},
+    }));
+    for (const analysis of [undefined, { status: "loading" }, { status: "error", error: "Offline failure" }]) {
+        assert.doesNotMatch(render(item, analysis), /AI raw condition|Not assessed|Certified slab/);
+    }
+    const slab = cardEvaluation();
+    slab.condition = null;
+    slab.photoCheck!.cardCount = "ONE";
+    slab.photoCheck!.holder = "GRADED_SLAB";
+    slab.photoCheck!.slab = { present: true, grader: "PSA", grade: "8", gradeQualifier: null, certNumber: null,
+        labelText: "PSA 8", caseCondition: "INTACT", authenticity: "NONE_SEEN", concerns: [] };
+    slab.slab = { status: "OK", grader: "PSA", grade: "8", gradeQualifier: null, certNumber: null, certUrl: null,
+        labelText: "PSA 8", caseCondition: "INTACT", reasons: [], concerns: [] };
+    for (const isGraded of [true, false]) {
+        assert.doesNotMatch(render({ ...item, isGraded }, { status: "done", evaluation: slab }), /AI raw condition|Not assessed|Certified slab/);
+    }
+    const raw = cardEvaluation(); raw.photoCheck!.cardCount = "ONE";
+    for (const isGraded of [true, false]) {
+        assert.match(render({ ...item, isGraded }, { status: "done", evaluation: raw }), /<dt>AI raw condition<\/dt><dd>Lightly Played<\/dd>/);
+    }
+    assert.match(render({ ...item, isGraded: false }), /<dt>AI raw condition<\/dt><dd>Not assessed<\/dd>/);
+});
+
 test("cards show real listed dates, distinguish creation, and keep the card-type choice visible before a search", async t => {
     const server = await createServer({ configFile: path.resolve("client/vite.config.js"), envFile: false, appType: "custom", logLevel: "silent",
         server: { middlewareMode: true, hmr: false, watch: null } });

@@ -9,19 +9,21 @@ import { withFileLease } from "../lib/file-lease.ts";
 import { getAiUsageContext } from "../ai/usage-context.ts";
 import { EbayBudgetError } from "./daily-budget.ts";
 
-export const EBAY_SEARCH_BROWSE_LIMIT = 25;
+export const EBAY_SEARCH_BROWSE_LIMIT = 50;
+const STORED_SEARCH_BROWSE_LIMITS = new Set([25, EBAY_SEARCH_BROWSE_LIMIT]);
 const VALID_ID = /^[a-zA-Z0-9_-]{1,80}$/;
 interface Ledger { version: 1; searchId: string; limit: number; used: number }
 export class EbaySearchBudgetError extends EbayBudgetError {}
 
 export function requireBrowseSearchId(searchId = getAiUsageContext().searchId): string {
     if (!searchId || !VALID_ID.test(searchId)) throw new EbaySearchBudgetError(
-        "A valid search ID is required before eBay Browse requests can start. Start a search in the app; follow-up work must keep that search ID so its 25-request cap is shared.");
+        "A valid search ID is required before eBay Browse requests can start. Start a search in the app; follow-up work must keep that search ID so its stored request cap is shared.");
     return searchId;
 }
 
 // A distinct search gets its own persistent allowance. A repeated search ID,
 // process restart or later calendar day never resets already-reserved calls.
+// Existing searches retain their original stored cap when the default changes.
 export function createSearchBrowseBudget({ directory }: { directory: string }) {
     const serial = createLimiter(1);
     const fileFor = (id: string) => path.join(directory, `${createHash("sha256").update(id).digest("hex")}.json`);
@@ -33,8 +35,8 @@ export function createSearchBrowseBudget({ directory }: { directory: string }) {
             throw new EbaySearchBudgetError("The eBay per-search request accounting could not be read. No Browse request was sent.");
         }
         const ledger = value as Partial<Ledger> | null;
-        if (!ledger || ledger.version !== 1 || ledger.searchId !== id || ledger.limit !== EBAY_SEARCH_BROWSE_LIMIT ||
-            !Number.isSafeInteger(ledger.used) || ledger.used! < 0 || ledger.used! > EBAY_SEARCH_BROWSE_LIMIT) {
+        if (!ledger || ledger.version !== 1 || ledger.searchId !== id || typeof ledger.limit !== "number" || !STORED_SEARCH_BROWSE_LIMITS.has(ledger.limit) ||
+            !Number.isSafeInteger(ledger.used) || ledger.used! < 0 || ledger.used! > ledger.limit) {
             throw new EbaySearchBudgetError("The eBay per-search request accounting is invalid. No Browse request was sent.");
         }
         return ledger as Ledger;

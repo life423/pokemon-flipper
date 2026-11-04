@@ -19,17 +19,29 @@ test("empty card-name results expire after five minutes while positive metadata 
             JSON.stringify({ key, savedAt: new Date(Date.now() - ageMinutes * 60_000).toISOString(), data }));
     };
     await put("/sets?" + new URLSearchParams({ name: setSearchTerm("Neo Discovery"), language: "English", per_page: "50" }), { data: [{ id: 99999, name: "Neo Discovery" }] });
-    const item = { id: 999999, name: "Offline card", number: "1", total_set_number: "75", set: { name: "Neo Discovery" }, prices: [] };
-    await put("/cards/999999?currency=usd", item);
-    for (const [name, data, age] of [["cache old empty", [], 60], ["cache recent empty", [], 2], ["cache positive", [item], 20 * 60]] as const) {
+    const refreshed = { id: 999999, name: "Espeon", number: "1", total_set_number: "75", set: { name: "Neo Discovery" }, prices: [] };
+    const positive = { ...refreshed, id: 999996, name: "Smeargle", number: "11" };
+    await put("/cards/999999?currency=usd", refreshed);
+    await put("/cards/999996?currency=usd", positive);
+    for (const [name, data, age] of [["espeon", [], 60], ["umbreon", [], 2], ["smeargle", [positive], 20 * 60]] as const) {
         await put("/cards?" + new URLSearchParams({ set_id: "99999", name, per_page: "20" }), { data }, age);
     }
     const requests: string[] = [];
-    t.mock.method(globalThis, "fetch", async (url: string | URL | Request) => { requests.push(String(url)); return new Response(JSON.stringify({ data: [item] }), { status: 200 }); });
-    assert.equal((await lookupCards({ set: "Neo Discovery", name: "cache old empty", cardNumber: "1/75" })).length, 1);
+    t.mock.method(globalThis, "fetch", async (url: string | URL | Request) => {
+        requests.push(String(url));
+        const parsed = new URL(String(url));
+        if (parsed.pathname === "/v1/cards") {
+            assert.equal(parsed.searchParams.get("name"), "espeon");
+            assert.equal(parsed.searchParams.get("number"), "1");
+            return Response.json({ data: [refreshed] });
+        }
+        return Response.json({ data: [] });
+    });
+    assert.equal((await lookupCards({ set: "Neo Discovery", name: "Espeon", cardNumber: "1/75" })).length, 1);
     assert.equal(requests.length, 1, "a stale empty answer is refreshed automatically on lookup");
-    assert.equal((await lookupCards({ set: "Neo Discovery", name: "cache recent empty", cardNumber: "1/75" })).length, 0);
-    assert.equal((await lookupCards({ set: "Neo Discovery", name: "cache positive", cardNumber: "1/75" })).length, 1);
+    assert.equal((await lookupCards({ set: "Neo Discovery", name: "Espeon", cardNumber: "1/75" })).length, 1);
+    assert.equal((await lookupCards({ set: "Neo Discovery", name: "Umbreon", cardNumber: "13/75" })).length, 0);
+    assert.equal((await lookupCards({ set: "Neo Discovery", name: "Smeargle", cardNumber: "11/75" })).length, 1);
     assert.equal(requests.length, 1, "recent empty answers and positive metadata do not waste another request");
     const params = new URLSearchParams({ graded: "true", grader: "PSA", grade: "7", limit: "20", sort: "date_desc", period: "180d" });
     await put(`/cards/999997/listings/ebay?${params}`, { data: [] }, 60);

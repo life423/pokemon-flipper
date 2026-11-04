@@ -1,6 +1,6 @@
 # Project memory and working agreement
 
-Updated November 3, 2026. These are current requirements. Older dated reports
+Updated November 4, 2026. These are current requirements. Older dated reports
 describe their own checkpoints; consult Git for branch and delivery state.
 
 ## Workspace and delivery
@@ -55,8 +55,10 @@ Read docs/architecture.md for the source map and reading order.
   Automatic auctions must end within the search window's next 12 hours.
   Minimum Buy It Now price does not exclude low auction starts. Widening a
   server-side filter requires an explicit rerun, never paid work while typing.
-- Sold screening shares catalog/market work across rows: four workers, 32
-  uncached PKMNPrices requests including catalog work, one 20-sale page per market.
+- Sold screening shares catalog/market work across rows: four workers, 64
+  uncached PKMNPrices requests including catalog work. Sparse markets may follow
+  up to four 20-sale pages, stopping once three eligible matched sales support a
+  scope; cached final-valuation pages are reused.
   It makes no AI or eBay-detail requests. Missing/deferred data stays Sorting.
   Three applicable sales authorize automatic photos, retaining the focused
   <=$10 raw First Edition Base Set research exception.
@@ -89,13 +91,15 @@ Read docs/architecture.md for the source map and reading order.
   Exact final-input preflight, maximum input/output reservation and unknown-charge
   holds are required. Invalid state/config fails closed. Cache hits do not reset
   the allowance; brainstorming is not authorization to raise it.
-- Preserve **25 actual eBay Browse requests per search**, separate from daily
+- New searches allow **50 actual eBay Browse requests per search**, separate from daily
   account quota/reserve. Retries, nested calls and restarts retain spent counts.
   Cache hits, OAuth and Analytics are separate. The old expiring development
-  ledger is historical, not a daily app limit.
+  ledger is historical, not a daily app limit. Existing 25-request ledgers retain
+  their stored limits and counts; opening an old search never resets it.
 - The two-cent cap does not cover PKMNPrices credits or eBay quota. Screening
-  permits 32 uncached requests; final valuation and retries share one persistent
-  **64-request PKMNPrices allowance per search UUID**. Cache hits cost no new
+  permits 64 uncached requests; final valuation and retries share one persistent
+  **128-request PKMNPrices allowance per new search UUID**. Existing 64-request
+  ledgers remain usable with their original limits and counts. Cache hits cost no new
   request; failed/unknown attempts remain counted across restarts/days. Actual
   credits are read from provider headers separately from returned rows and USD.
   The user's subscription supplies 20,000 daily credits. Local request accounting
@@ -104,9 +108,15 @@ Read docs/architecture.md for the source map and reading order.
   Price-only deferral stays Sorting while accepted photos and completed prices
   remain reusable; a supported profitable route can still reach Deals.
   The user authorizes broader PKMNPrices research as needed within reason.
-  Treat 32/64 as tunable runaway safeguards, not desired consumption or a reason
+  Treat 64/128 as tunable runaway safeguards, not desired consumption or a reason
   to starve useful comparisons. Raise them when measured useful work is deferred
   and provider capacity supports it; preserve rate limits and shared cache reuse.
+- Daily usage warnings appear outside the drawer at <=20% remaining or >=5% of
+  an allowance observed consumed within 15 minutes. Account-keyed local samples
+  persist across searches/restarts, expire when stale or reset, and do not
+  authorize requests. Existing Analytics/Browse observations and completed price
+  response headers supply them; warning polling never calls providers. A failed
+  telemetry write must not invalidate or repurchase accepted evidence.
 - Optimize AI cost per correctly identified deal. Two cents is a ceiling, not
   desired spending. Evaluate cheap first checks and selective stronger reviews
   without automatically running both models or discarding accepted work.
@@ -114,6 +124,11 @@ Read docs/architecture.md for the source map and reading order.
   unresolved question; prior model guesses are context, not physical proof.
   Measure accuracy, missed deals, corrections, latency and total cost before a
   production model/prompt change. Preserve existing accepted keys and records.
+- Exclude deprecated or retiring models. Bounded requests already use reasoning
+  effort none. A separate saved-BIN text-priority diagnostic can test one compact
+  GPT-6 Luna request against free ordering under the original search allowance;
+  it is not a production paid stage. Flex/Batch need tier-aware spending and
+  cancellation support before use, and their latency can miss fresh listings.
 - Cancellation prevents subsequent paid dispatch; accepted responses may finish
   saving. No automatic bounded assessment retries/fallback opinions. Never clear
   quota ledgers or paid caches to work around failures.
@@ -132,6 +147,11 @@ Read docs/architecture.md for the source map and reading order.
 
 ## Evidence and financial rules
 
+- Explicit TCGplayer raw quotes and asking-only slab references retain labeled
+  scenario math but cannot establish a Deal or a completed rejection. Price-only
+  gaps stay Sorting; material photo risks still need attention. A separately
+  supported profitable route remains usable. Unknown downside is null, not a
+  repeated point estimate. Older absent-basis price records remain readable.
 - Recent matched eBay transactions supplied by PKMNPrices are primary truth.
   Reject unconfirmed historical amounts. Distinguish asking references, TCGplayer
   fallback, unspecified raw sales and condition-matched sold prices. Do not merge
@@ -206,5 +226,9 @@ Read docs/architecture.md for the source map and reading order.
   publisher/holder name cleanup and source-order ties; six more saved PSA5/CGC9
   checks cost 0.47467 cents, with original evidence preserved and free replay.
   Production model defaults remain unchanged; no current Deal established.
+- docs/catalog-and-evidence-validation-2026-11-04.md: catalog/sold-title fixes,
+  adaptive sparse sold pages, reference-only price safeguards, nineteen new
+  assessments and six cheaper slab comparisons. Saved text ranking of thirty
+  candidates cost 0.08581 cents; net savings and positive Deals remain unproven.
 - Dated reports retain measured scope. Git records delivery history; private
   notes retain the full strategy and implementation backlog.

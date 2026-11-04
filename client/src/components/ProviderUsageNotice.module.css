@@ -1,0 +1,17 @@
+.root {
+    display: grid;
+    gap: var(--space-3);
+    margin-block: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--warning);
+    border-radius: var(--radius-card);
+    background: var(--surface);
+    color: var(--text);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
+.provider { min-width: 0; }
+.provider strong { display: block; color: var(--warning); }
+.provider p { margin-block: var(--space-1); }
+.provider small { color: var(--text-muted); font-size: inherit; }

@@ -9,6 +9,7 @@ import { ListingEvidenceSection, ListingSection, IdentitySection, SlabSection, C
 import { PricesSection } from "./PricingSections";
 import { Notes, Pairs, Section } from "./primitives";
 import styles from "../DetailPanel.module.css";
+import { priceEvidenceGap, referencePriceReason } from "../../../../shared/money/price-evidence.ts";
 
 export function AnalysisDetails({
     listing,
@@ -46,7 +47,7 @@ export function AnalysisDetails({
                 <Section title="Every path">
                     <div className={styles.paths}>
                         {evaluation.underwriting.paths.map((path) => (
-                            <PathCard key={path.label} path={path} auction={evaluation.listing.buyingOption === "AUCTION"} />
+                            <PathCard key={path.label} path={path} auction={evaluation.listing.buyingOption === "AUCTION"} referenceReason={path.status === "PRICED" ? referencePriceReason(evaluation, path) : null} />
                         ))}
                     </div>
                 </Section>
@@ -88,9 +89,9 @@ export function AnalysisDetails({
                         ? `The initial analysis used ${tokens.toLocaleString()} tokens.`
                         : "The initial analysis reused saved AI assessments."}
                 </p>
-                <button type="button" className={styles.secondary} onClick={onReanalyze} disabled={reviewing}>
+                {priceEvidenceGap(evaluation) ? <p className={styles.small}>Price evidence is incomplete. Saved photo findings can be reused when matched sales become available.</p> : <button type="button" className={styles.secondary} onClick={onReanalyze} disabled={reviewing}>
                     {evaluation.researchMode && evaluation.researchMode !== "FULL" ? "Run full research (paid; reuse photos)" : "Reanalyze full listing (paid)"}
-                </button>
+                </button>}
             </footer>
         </>
     );

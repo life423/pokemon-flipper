@@ -3,6 +3,7 @@ import { MONEY_CONFIG, type BuyingConfig, type GradingConfig, type MoneyConfig, 
 import { RAW_CONDITIONS, isRawCondition } from "../conditions.ts";
 import { dollars, round2 } from "../format.ts";
 import { cents, meetsMoneyTargets, money, sellingFeeCents, taxedCents } from "./cents.ts";
+import { referencePriceReason } from "./price-evidence.ts";
 import type {
     CompSummary,
     Condition,
@@ -177,7 +178,7 @@ interface PathMoney {
     path: PathKind;
     label: string;
     expectedNet: number;
-    downsideNet: number;
+    downsideNet: number | null;
     fixedCosts: number;
     listing: PricedListing;
     shipping: number;
@@ -193,11 +194,11 @@ export function pathNumbers(
         fixedCosts,
         shipping,
         price,
-    }: { expectedNet: number; downsideNet?: number; fixedCosts: number; shipping: number; price: number },
+    }: { expectedNet: number; downsideNet?: number | null; fixedCosts: number; shipping: number; price: number },
     config: MoneyConfig
 ) {
     expectedNet = money(expectedNet);
-    downsideNet = money(downsideNet);
+    downsideNet = downsideNet === null ? null : money(downsideNet);
     fixedCosts = money(fixedCosts);
     const totalCost = (amount: number) => (cents(acquisitionCost(amount, shipping, config.buying)) + cents(fixedCosts)) / 100;
     const cost = totalCost(price);
@@ -210,7 +211,7 @@ export function pathNumbers(
         cost,
         profit,
         roi: cost > 0 ? cents(profit) / cents(cost) : null,
-        downside: round2(downsideNet - cost),
+        downside: downsideNet === null ? null : round2(downsideNet - cost),
         maxBid: limit,
         clears: [price, cost, profit, config.targets.minProfit, config.targets.minRoi].every(Number.isFinite) &&
             price >= 0 && fixedCosts >= 0 && config.targets.minProfit >= 0 && config.targets.minRoi >= 0 &&
@@ -218,7 +219,7 @@ export function pathNumbers(
         profitAtMaxBid,
         roiAtMaxBid: costAtLimit && profitAtMaxBid !== null ? cents(profitAtMaxBid) / cents(costAtLimit) : null,
         costAtMaxBid: costAtLimit,
-        downsideAtMaxBid: costAtLimit === null ? null : round2(downsideNet - costAtLimit),
+        downsideAtMaxBid: costAtLimit === null || downsideNet === null ? null : round2(downsideNet - costAtLimit),
     };
 }
 
@@ -305,9 +306,12 @@ export function rawPath(input: UnderwritingInput, listing: PricedListing, shippi
         }
     }
     const net = netFromSale(salePrice, "raw", config.selling);
+    const low = entry.basis !== "TCGPLAYER" ? entry.comps?.low : null;
+    const downsideNet = typeof low === "number" && Number.isFinite(low) && low > 0 && low <= salePrice
+        ? netFromSale(low, "raw", config.selling) : null;
 
     return pricedPath(
-        { path: "RAW", label, expectedNet: net, downsideNet: net, fixedCosts: 0, listing, shipping, config },
+        { path: "RAW", label, expectedNet: net, downsideNet, fixedCosts: 0, listing, shipping, config },
         { salePrice, priceCondition: entry.condition, ...(pricingNotes.length ? { pricingNotes } : {}) }
     );
 }
@@ -451,13 +455,16 @@ function underwriteSlab(
         : active && active.grader === slab.grader && active.grade === slab.grade && active.listings.length > 0 &&
             Number.isFinite(active.resalePrice) && active.resalePrice > 0 && active.resalePrice <= active.lowestTotal ? pricedPath({
             path: "GRADED_RESALE", label: `Resell as ${slab.grader} ${slab.grade}`, expectedNet: netFromSale(active.resalePrice, "graded", config.selling),
-            downsideNet: netFromSale(active.resalePrice, "graded", config.selling), fixedCosts: 0, listing, shipping, config,
+            downsideNet: null, fixedCosts: 0, listing, shipping, config,
         }, { salePrice: active.resalePrice, pricingNotes: [`Current Buy It Now competition: ${active.listings.length} photo-checked matching slabs. Resale target is ${Math.round(active.discountRate * 100)}% below the cheapest item-plus-shipping total of ${dollars(active.lowestTotal)}.`] })
         : unavailablePath("GRADED_RESALE", `Resell as ${slab.grader} ${slab.grade}`, "No usable sold or current-listing reference.");
 
     if (!isPriced(path)) {
         return { ...verdict("CANT_PRICE", [path.reason], assumptions), paths: [path] };
     }
+
+    const evidenceGap = referencePriceReason({ slabPricing }, path);
+    if (evidenceGap) return { verdict: "CANT_PRICE", reasons: [evidenceGap], best: path, paths: [path], assumptions };
 
     if (path.clears) {
         return { verdict: "BUY_GRADED", reasons: [], best: path, paths: [path], assumptions };
@@ -548,7 +555,8 @@ function underwriteBase(input: UnderwritingInput, config: MoneyConfig): Underwri
         assumptions.push(`Grading shipping assumes ${dollars(config.grading.shippingPerCard)} per card shared across a submission batch; a single-card shipment may cost more. Grading-service taxes are not included.`);
         assumptions.push("Grade-outcome percentages are modeling assumptions, not calibrated probabilities. The estimate includes grading fees and shipping but does not predict grading turnaround or resale time.");
     }
-    const best = bestPath(paths.filter(isPriced));
+    const priced = paths.filter(isPriced);
+    const best = bestPath(priced.filter(path => !referencePriceReason(input, path)));
 
     if (best?.clears) {
         return {
@@ -559,6 +567,11 @@ function underwriteBase(input: UnderwritingInput, config: MoneyConfig): Underwri
             assumptions,
         };
     }
+
+    const evidenceGaps = [...new Set(priced.map(path => referencePriceReason(input, path)).filter((reason): reason is string => reason !== null))];
+    if (evidenceGaps.length) return {
+        verdict: "CANT_PRICE", reasons: evidenceGaps, best: bestPath(priced), paths, assumptions,
+    };
 
     if (best) {
         return {

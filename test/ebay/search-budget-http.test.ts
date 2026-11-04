@@ -7,7 +7,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { ROOT } from "../../server/lib/paths.ts";
 
-test("HTTP middleware carries a search's25-call cap despite an expired obsolete global ledger", async t => {
+test("HTTP middleware carries a new search's50-call cap despite an expired obsolete global ledger", async t => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "pokemon-http-search-cap-"));
     t.after(() => fs.rm(directory, { recursive: true, force: true }));
     const source = `
@@ -47,22 +47,22 @@ test("HTTP middleware carries a search's25-call cap despite an expired obsolete 
             const noId=await request('POST','/api/listings/resolve',undefined,{input:'123456780001'});
             assert.equal(noId.status,503);assert.match(noId.body.error,/valid search ID/);
             assert.equal(noId.body.retryable,false);assert.equal(oauth,0);assert.equal(browse,0);
-            for(let n=0;n<25;n++){
+            for(let n=0;n<50;n++){
                 const result=await request('POST','/api/listings/resolve','http-search-one',{input:String(123456780001+n)});
                 assert.equal(result.status,200,JSON.stringify(result.body));
             }
             const blocked=await request('POST','/api/listings/resolve','http-search-one',{input:'123456780099'});
-            assert.equal(blocked.status,503);assert.match(blocked.body.error,/25-request.*cap/);
-            assert.equal(blocked.body.retryable,false);assert.equal(blocked.body.code,'EBAY_BUDGET');assert.equal(browse,25);
+            assert.equal(blocked.status,503);assert.match(blocked.body.error,/50-request.*cap/);
+            assert.equal(blocked.body.retryable,false);assert.equal(blocked.body.code,'EBAY_BUDGET');assert.equal(browse,50);
             const first=await request('GET','/api/ebay-usage','http-search-one');
-            assert.deepEqual(first.body.searchBudget,{searchId:'http-search-one',limit:25,used:25,remaining:0});
+            assert.deepEqual(first.body.searchBudget,{searchId:'http-search-one',limit:50,used:50,remaining:0});
             const next=await request('POST','/api/listings/resolve','http-search-two',{input:'123456780100'});
-            assert.equal(next.status,200);assert.equal(browse,26);
+            assert.equal(next.status,200);assert.equal(browse,51);
             const second=await request('GET','/api/ebay-usage','http-search-two');
-            assert.deepEqual(second.body.searchBudget,{searchId:'http-search-two',limit:25,used:1,remaining:24});
-            assert.equal(second.body.limit,5000);assert.equal(second.body.used,26);
+            assert.deepEqual(second.body.searchBudget,{searchId:'http-search-two',limit:50,used:1,remaining:49});
+            assert.equal(second.body.limit,5000);assert.equal(second.body.used,51);
             assert.deepEqual(JSON.parse(await fs.readFile(oldFile,'utf8')),oldLedger);
-            assert.deepEqual({browse,oauth,analytics},{browse:26,oauth:1,analytics:1});
+            assert.deepEqual({browse,oauth,analytics},{browse:51,oauth:1,analytics:1});
             console.log('HTTP_CAP_RESULT '+JSON.stringify({browse,oauth,analytics}));
         }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
     `;
@@ -73,5 +73,5 @@ test("HTTP middleware carries a search's25-call cap despite an expired obsolete 
     });
     const marker = output.stdout.split("\n").find(line => line.startsWith("HTTP_CAP_RESULT "));
     assert.ok(marker, output.stdout);
-    assert.deepEqual(JSON.parse(marker.slice("HTTP_CAP_RESULT ".length)), { browse: 26, oauth: 1, analytics: 1 });
+    assert.deepEqual(JSON.parse(marker.slice("HTTP_CAP_RESULT ".length)), { browse: 51, oauth: 1, analytics: 1 });
 });

@@ -21,40 +21,85 @@ async function temporary(t: TestContext) {
 }
 const isLimit = (error: unknown) => error instanceof PriceResearchBudgetError && error.reason === "LIMIT" && error.code === "PRICE_RESEARCH_BUDGET" && !error.retryable;
 
-test("one search has64 durable attempts across instances/restarts/dates while read-only checks and cached work consume none", async t => {
+test("new searches have128 durable attempts across instances/restarts/dates while read-only checks and cached work consume none", async t => {
     const directory = await temporary(t), searchId = randomUUID();
     const a = createPriceResearchBudget({ directory }), b = createPriceResearchBudget({ directory });
     await a.assertAvailable(searchId); await a.summary(searchId);
     assert.deepEqual(await fs.readdir(directory), [], "an availability read is not a reservation or a cache-clearing write");
-    const results = await Promise.allSettled(Array.from({ length: 100 }, (_, index) => (index % 2 ? a : b).reserve("/cards/one/listings/ebay?limit=20", { searchId })));
+    const results = await Promise.allSettled(Array.from({ length: PRICE_RESEARCH_LIMIT + 40 }, (_, index) => (index % 2 ? a : b).reserve("/cards/one/listings/ebay?limit=20", { searchId })));
     assert.equal(results.filter(result => result.status === "fulfilled").length, PRICE_RESEARCH_LIMIT);
     assert.ok(results.filter(result => result.status === "rejected").every(result => isLimit(result.reason)));
     const before = await fs.readFile(fileFor(directory, searchId), "utf8");
     const summary = await createPriceResearchBudget({ directory, now: () => Date.now() + 30 * 86400000 }).summary(searchId.toUpperCase());
-    assert.equal(summary?.used, 64); assert.equal(summary?.remaining, 0); assert.equal(summary?.pending, 64);
-    assert.equal(summary?.unreportedCreditAttempts, 64); assert.equal(summary?.unreportedRowAttempts, 64);
+    assert.equal(summary?.limit, PRICE_RESEARCH_LIMIT); assert.equal(summary?.used, PRICE_RESEARCH_LIMIT); assert.equal(summary?.remaining, 0); assert.equal(summary?.pending, PRICE_RESEARCH_LIMIT);
+    assert.equal(summary?.unreportedCreditAttempts, PRICE_RESEARCH_LIMIT); assert.equal(summary?.unreportedRowAttempts, PRICE_RESEARCH_LIMIT);
     await assert.rejects(b.assertAvailable(searchId), isLimit);
     await assert.rejects(b.reserve("/cards/another", { searchId: searchId.toUpperCase() }), isLimit);
     assert.equal(await fs.readFile(fileFor(directory, searchId), "utf8"), before, "reads and rejected work cannot rewrite/reset the exhausted ledger");
     const other = randomUUID(); await a.reserve("/cards/one", { searchId: other });
-    assert.equal((await a.summary(other))?.remaining, 63); assert.equal((await a.summary(searchId))?.used, 64);
+    assert.equal((await a.summary(other))?.remaining, PRICE_RESEARCH_LIMIT - 1); assert.equal((await a.summary(searchId))?.used, PRICE_RESEARCH_LIMIT);
 });
 
-test("independent processes cannot authorize a65th request under the same UUID", async t => {
+test("independent processes cannot authorize a129th request under the same new UUID", async t => {
     const directory = await temporary(t), searchId = randomUUID();
     const source = `import {createPriceResearchBudget} from './server/pricing/research-budget.ts';
         const b=createPriceResearchBudget({directory:process.env.PRICE_TEST_DIRECTORY});
-        const r=await Promise.allSettled(Array.from({length:32},()=>b.reserve('/cards/1',{searchId:process.env.PRICE_TEST_SEARCH})));
+        const r=await Promise.allSettled(Array.from({length:${PRICE_RESEARCH_LIMIT / 2}},()=>b.reserve('/cards/1',{searchId:process.env.PRICE_TEST_SEARCH})));
         console.log(JSON.stringify(r.filter(x=>x.status==='fulfilled').length));`;
     const children = await Promise.all(Array.from({ length: 3 }, () => execute(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", source], {
         cwd: ROOT, env: { ...process.env, PRICE_TEST_DIRECTORY: directory, PRICE_TEST_SEARCH: searchId },
     })));
-    assert.equal(children.reduce((sum, child) => sum + JSON.parse(child.stdout.trim()), 0), 64);
+    assert.equal(children.reduce((sum, child) => sum + JSON.parse(child.stdout.trim()), 0), PRICE_RESEARCH_LIMIT);
     assert.equal((await createPriceResearchBudget({ directory }).summary(searchId))?.remaining, 0);
 });
 
+test("existing64-request searches retain their stored allowance and every attempt across reopening and late settlement", async t => {
+    const directory = await temporary(t), searchId = randomUUID(), budget = createPriceResearchBudget({ directory });
+    const completed = await budget.reserve("/cards/legacy-complete", { searchId });
+    await completed.complete(Response.json({}, { headers: { "x-credits-charged": "3" } }), { data: [{}, {}] });
+    const unresolved = await budget.reserve("/cards/legacy-unknown", { searchId }); await unresolved.unresolved();
+    const pending = await budget.reserve("/cards/legacy-pending", { searchId });
+    const file = fileFor(directory, searchId), original = JSON.parse(await fs.readFile(file, "utf8"));
+    original.limit = 64;
+    await fs.writeFile(file, JSON.stringify(original));
+    const before = await fs.readFile(file, "utf8"), reopened = createPriceResearchBudget({ directory, now: () => Date.now() + 30 * 86400000 });
+    assert.deepEqual(await reopened.summary(searchId), { searchId, limit: 64, used: 3, remaining: 61, completed: 1, pending: 1, unresolved: 1,
+        reportedCredits: 3, unreportedCreditAttempts: 2, returnedRows: 2, unreportedRowAttempts: 2, provider: null });
+    assert.equal(await fs.readFile(file, "utf8"), before, "reading a legacy ledger never migrates its limit or counters");
+    await reopened.reserve("/cards/legacy-next", { searchId });
+    const after = JSON.parse(await fs.readFile(file, "utf8"));
+    assert.equal(after.limit, 64); assert.equal(after.attempts.length, 4);
+    assert.deepEqual(after.attempts.slice(0, 3), original.attempts, "new research must preserve every earlier accepted, pending and unknown attempt");
+    await pending.complete(Response.json({}, { headers: { "x-credits-charged": "1" } }), { data: [] });
+    const settled = await reopened.summary(searchId);
+    assert.equal(settled?.limit, 64); assert.equal(settled?.used, 4); assert.equal(settled?.remaining, 60);
+    assert.equal(settled?.completed, 2); assert.equal(settled?.reportedCredits, 4);
+    const freshId = randomUUID();
+    await reopened.reserve("/cards/new-search", { searchId: freshId });
+    assert.equal((await reopened.summary(freshId))?.limit, PRICE_RESEARCH_LIMIT);
+    assert.equal((await reopened.summary(freshId))?.remaining, PRICE_RESEARCH_LIMIT - 1);
+});
+
+test("an exhausted legacy64-request ledger stays exhausted and rejects counters above its stored limit", async t => {
+    const directory = await temporary(t), searchId = randomUUID(), budget = createPriceResearchBudget({ directory });
+    await budget.reserve("/cards/legacy", { searchId });
+    const file = fileFor(directory, searchId), ledger = JSON.parse(await fs.readFile(file, "utf8"));
+    ledger.limit = 64;
+    ledger.attempts = Array.from({ length: 64 }, () => ({ ...ledger.attempts[0], id: randomUUID() }));
+    await fs.writeFile(file, JSON.stringify(ledger));
+    const before = await fs.readFile(file, "utf8"), reopened = createPriceResearchBudget({ directory });
+    const summary = await reopened.summary(searchId);
+    assert.equal(summary?.limit, 64); assert.equal(summary?.used, 64); assert.equal(summary?.remaining, 0);
+    await assert.rejects(reopened.assertAvailable(searchId), error => isLimit(error) && /64-request/.test((error as Error).message));
+    await assert.rejects(reopened.reserve("/cards/one-more", { searchId }), error => isLimit(error) && /64-request/.test((error as Error).message));
+    assert.equal(await fs.readFile(file, "utf8"), before, "a larger new-search default cannot reopen an exhausted legacy ID");
+    ledger.attempts.push({ ...ledger.attempts[0], id: randomUUID() });
+    await fs.writeFile(file, JSON.stringify(ledger));
+    await assert.rejects(reopened.summary(searchId), error => error instanceof PriceResearchBudgetError && error.reason === "STATE");
+});
+
 test("reported credit units, inferred rows and unknown attempts remain separate and completion is idempotent", async t => {
-    const directory = await temporary(t), budget = createPriceResearchBudget({ directory }), searchId = randomUUID();
+    const directory = await temporary(t), observedAt = "2023-11-14T22:13:20.000Z", budget = createPriceResearchBudget({ directory, now: () => Date.parse(observedAt) }), searchId = randomUUID();
     const one = await budget.reserve("/cards/1/listings/ebay?limit=20", { searchId, listingId: "v1|123456789012|0" });
     const response = Response.json({}, { headers: { "x-credits-charged": "5", "x-credits-limit": "20000", "x-credits-remaining": "19995", "x-credits-balance": "42", "x-credits-reset": "1200", "x-rate-limit": "60", "x-rate-remaining": "59", "x-rate-reset": "10" } });
     await one.complete(response, { data: [{}, {}, {}] }); await one.complete(response, { data: [{}, {}, {}] });
@@ -65,14 +110,46 @@ test("reported credit units, inferred rows and unknown attempts remain separate 
     const pending = await budget.reserve("/cards/3", { searchId });
     const failed = await budget.reserve("/cards/4", { searchId }); await failed.unresolved(); await failed.unresolved();
     const summary = await budget.summary(searchId);
-    assert.deepEqual(summary, { searchId, limit: 64, used: 5, remaining: 59, completed: 3, pending: 1, unresolved: 1,
+    assert.deepEqual(summary, { searchId, limit: PRICE_RESEARCH_LIMIT, used: 5, remaining: PRICE_RESEARCH_LIMIT - 5, completed: 3, pending: 1, unresolved: 1,
         reportedCredits: 5, unreportedCreditAttempts: 3, returnedRows: 5, unreportedRowAttempts: 2,
-        provider: { limit: 20000, remaining: 19995, balance: 42, resetSeconds: 1200 } });
+        provider: { limit: 20000, remaining: 19995, balance: 42, resetSeconds: 1200, observedAt } });
     await failed.complete(Response.json({}, { headers: { "x-credits-charged": "1", "x-credits-remaining": "19999" } }), { id: 4, name: "metadata record" });
     assert.equal((await budget.summary(searchId))?.unresolved, 0, "a late known response can resolve an unknown attempt without buying another request");
     assert.equal((await budget.summary(searchId))?.provider?.remaining, 19999, "retain the actual latest observed value without projecting a balance");
     await pending.complete(Response.json({}), { data: { id: "one", number: "4/102" } });
     assert.equal((await budget.summary(searchId))?.returnedRows, 7);
+});
+
+test("provider observations follow durable completion once, retain their original clock/account, and cannot invalidate accepted responses", async t => {
+    const directory = await temporary(t), searchId = randomUUID(), configuredKey = "offline-original-price-account";
+    let at = Date.parse("2026-11-04T10:00:00.000Z");
+    const observations: unknown[][] = [];
+    const budget = createPriceResearchBudget({ directory, providerKey: configuredKey, now: () => at, observeProviderUsage: async (...args) => {
+        const persisted = JSON.parse(await fs.readFile(fileFor(directory, searchId), "utf8"));
+        assert.equal(persisted.attempts.at(-1).state, "COMPLETE", "monitoring must start after durable price accounting");
+        observations.push(args);
+        throw new Error("offline monitor write failure");
+    } });
+    const one = await budget.reserve("/cards/accepted", { searchId });
+    const response = Response.json({}, { headers: { "x-credits-limit": "20000", "x-credits-remaining": "19990", "x-credits-reset": "60" } });
+    await one.complete(response, { data: [] });
+    at += 5 * 60_000;
+    await one.complete(response, { data: [] });
+    assert.deepEqual(observations, [["PKMNPRICES", configuredKey, { limit: 20000, remaining: 19990,
+        observedAt: "2026-11-04T10:00:00.000Z", resetsAt: "2026-11-04T10:01:00.000Z" }]]);
+    const summary = await budget.summary(searchId);
+    assert.equal(summary?.completed, 1); assert.equal(summary?.used, 1);
+    assert.equal(summary?.provider?.observedAt, "2026-11-04T10:00:00.000Z", "polling and reopening never refresh stale reset seconds");
+    for (const headers of [
+        { "x-credits-limit": "20000", "x-credits-remaining": "19990" },
+        { "x-credits-limit": "20000", "x-credits-remaining": "20001", "x-credits-reset": "60" },
+        { "x-credits-limit": "20000", "x-credits-remaining": "19990", "x-credits-reset": "0" },
+    ]) {
+        await (await budget.reserve("/cards/incomplete-headers", { searchId })).complete(Response.json({}, { headers }), { data: [] });
+    }
+    assert.equal(observations.length, 1, "missing or inconsistent daily-limit/reset headers cannot invent a provider observation");
+    assert.equal((await budget.summary(searchId))?.completed, 4);
+    assert.equal((await fs.readFile(fileFor(directory, searchId), "utf8")).includes(configuredKey), false);
 });
 
 test("ledger stores hashed request targets and safe numeric counters, never payloads, raw paths or credentials", async t => {
@@ -103,7 +180,7 @@ test("invalid scopes, endpoints and corrupt/unreadable ledgers fail closed witho
     for (const id of [undefined, "", "../search", "not-a-uuid", "x".repeat(81)]) await assert.rejects(budget.reserve("/cards", { searchId: id }), error => error instanceof PriceResearchBudgetError && error.reason === "SCOPE");
     for (const endpoint of ["https://example.com/private", "//example.com/private", "/cards\\private", "/cards\nprivate"]) await assert.rejects(budget.reserve(endpoint, { searchId }), error => error instanceof PriceResearchBudgetError && error.reason === "STATE");
     assert.deepEqual(await fs.readdir(directory), []);
-    const base = { version: 1, searchId, limit: 64, attempts: [] };
+    const base = { version: 1, searchId, limit: PRICE_RESEARCH_LIMIT, attempts: [] };
     for (const value of ["{bad-json", JSON.stringify({ ...base, limit: 16 }), JSON.stringify({ ...base, searchId: randomUUID() }),
         JSON.stringify({ ...base, version: 2 }), JSON.stringify({ ...base, attempts: [{}] }), JSON.stringify({ ...base, unexpectedPayload: "kept" })]) {
         await fs.writeFile(fileFor(directory, searchId), value);

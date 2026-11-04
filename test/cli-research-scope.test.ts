@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { createCliResearchScope } from "../scripts/review/research-scope.ts";
 import { getAiUsageContext, withAiUsageContext } from "../server/ai/usage-context.ts";
-import { createSearchBrowseBudget } from "../server/ebay/search-budget.ts";
+import { createSearchBrowseBudget, EBAY_SEARCH_BROWSE_LIMIT } from "../server/ebay/search-budget.ts";
 
 test("one CLI command retains its research ID through nested, parallel and later follow-up work", async () => {
     const command = createCliResearchScope();
@@ -22,16 +22,16 @@ test("one CLI command retains its research ID through nested, parallel and later
     assert.notEqual(createCliResearchScope()(() => getAiUsageContext().searchId), first);
 });
 
-test("a later CLI stage cannot acquire a new allowance after this command spends25 Browse reservations", async t => {
+test("a later CLI stage cannot acquire a new allowance after this command exhausts its Browse reservations", async t => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "pokemon-cli-scope-"));
     t.after(() => fs.rm(directory, { recursive: true, force: true }));
     const budget = createSearchBrowseBudget({ directory });
     const command = createCliResearchScope();
     let dailyReservations = 0;
     const reserve = () => budget.reserve(getAiUsageContext().searchId, async () => { dailyReservations++; });
-    await command(() => Promise.all(Array.from({ length: 25 }, reserve)));
-    await assert.rejects(command(reserve), /25-request.*cap/);
-    assert.equal(dailyReservations, 25);
+    await command(() => Promise.all(Array.from({ length: EBAY_SEARCH_BROWSE_LIMIT }, reserve)));
+    await assert.rejects(command(reserve), new RegExp(`${EBAY_SEARCH_BROWSE_LIMIT}-request.*cap`));
+    assert.equal(dailyReservations, EBAY_SEARCH_BROWSE_LIMIT);
     await createCliResearchScope()(reserve);
-    assert.equal(dailyReservations, 26, "a new explicit command has its own cap");
+    assert.equal(dailyReservations, EBAY_SEARCH_BROWSE_LIMIT + 1, "a new explicit command has its own cap");
 });

@@ -9,7 +9,7 @@ import { MONEY_CONFIG } from "../../../shared/money/config.ts";
 import { auctionDecision, returnText } from "../../../shared/card-presentation.ts";
 import { yearOf } from "../../../shared/sets.ts";
 import { resaleActivity } from "../../../shared/liquidity.ts";
-import { photoEvidence } from "../../../shared/photo-evidence.ts";
+import { observedCardKind, photoEvidence } from "../../../shared/photo-evidence.ts";
 import { currentSellerMistakes } from "../../../shared/seller-mistakes.ts";
 import { AuctionSummary } from "./AuctionSummary";
 import { GradingComparison } from "./GradingComparison";
@@ -17,8 +17,9 @@ import { PhotoReview, type DeeperReviewState } from "./PhotoReview";
 import styles from "./DealCard.module.css";
 import { cardDetails } from "../../../shared/card-details.ts";
 import { claimedCondition, CONDITION_NAMES } from "../../../shared/conditions.ts";
-import { isResearchDeferred } from "../../../shared/photo-review.ts";
+import { isResearchDeferred, photoReviewStatus } from "../../../shared/photo-review.ts";
 import { SoldPriceScreening } from "./SoldPriceScreening";
+import { priceEvidenceGap } from "../../../shared/money/price-evidence.ts";
 
 interface Props {
     index?: number;
@@ -43,10 +44,12 @@ const dateOf = (value: string | null | undefined) => typeof value === "string" &
 
 export function DealCard({ listing, analysis, selected, now, onOpen, years, index = 0, transitionName, minGrade = 0, targets = MONEY_CONFIG.targets, photoReviewState, saved, saving, onSave }: Props) {
     const evaluation = analysis?.status === "done" ? analysis.evaluation : null;
-    const deferred = isResearchDeferred(evaluation);
+    const priceGap = priceEvidenceGap(evaluation);
+    const deferred = Boolean(priceGap) || isResearchDeferred(evaluation);
+    const priceReview = Boolean(priceGap && evaluation && photoReviewStatus(evaluation).needsYourReview);
     const best = evaluation?.underwriting?.best;
     const verdict = evaluation?.underwriting?.verdict;
-    const deal = verdict?.startsWith("BUY");
+    const deal = !priceGap && verdict?.startsWith("BUY");
     const auction = listing.buyingOption === "AUCTION";
     const decision = auction && evaluation ? auctionDecision(evaluation, targets, now) : null;
     const screen = listing.screen;
@@ -59,12 +62,15 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
     const activity = resaleActivity(evaluation, now);
     const card = evaluation?.identity ?? screen?.card;
     const details = cardDetails(listing, evaluation);
+    const observedKind = observedCardKind(evaluation);
+    const rawConditionApplies = observedKind === "raw" || observedKind === null && !listing.isGraded &&
+        !evaluation?.slab && !evaluation?.photoCheck?.slab?.present && evaluation?.photoCheck?.holder !== "GRADED_SLAB";
     const number = card?.cardNumber?.replace(/^0+(?=\d)/, "");
     const title = card?.name ? [card.name, number].filter(Boolean).join(" ") : listing.title;
     const subtitle = card?.name ? [card.set, yearOf(years, card.set), card.printing !== "UNLIMITED" ? card.printingLabel : null].filter(Boolean).join(" · ") : listing.isGraded ? "Graded card" : "Raw card";
     const [badge, tone] = analysis?.status === "loading" ? ["Analyzing", "pending"]
         : analysis?.status === "error" ? ["Analysis failed", "watch"]
-        : deferred ? ["Research deferred", "quiet"]
+        : deferred ? [priceReview ? "Your review needed" : priceGap ? "Price unconfirmed" : "Research deferred", priceReview ? "watch" : "quiet"]
         : decision?.status === "ENDED" ? ["Ended", "quiet"]
         : decision?.status === "OVER_LIMIT" ? ["Over limit", "pass"]
         : decision?.status === "PROVISIONAL" ? ["Your review needed", "watch"]
@@ -97,7 +103,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
             <span className={styles.badge}>{badge}</span>
         </header>
         <PhotoReview compact evaluation={evaluation} listing={listing} state={photoReviewState} phase={analysis?.status === "loading" || analysis?.status === "error" ? analysis.status : undefined} />
-        {evaluation?.underwriting?.verdict === "CANT_PRICE" && <p className={styles.note}>{evaluation.underwriting.reasons[0]}</p>}
+        {priceGap ? <p className={styles.note}>{priceGap}</p> : evaluation?.underwriting?.verdict === "CANT_PRICE" && <p className={styles.note}>{evaluation.underwriting.reasons[0]}</p>}
         {!evaluation && screen?.soldEvidence && <SoldPriceScreening listing={listing} compact />}
         {!evaluation && !screen?.soldEvidence && screen?.status === "UNSCREENED" && <p className={styles.note}>{screen.pricingIssue?.kind === "RATE_LIMIT" ? "Pricing paused for provider cooldown." : screen.pricingIssue?.kind === "TEMPORARY" ? "Price lookup temporarily unavailable." : screen.pricingIssue?.kind === "CREDITS" ? "Pricing unavailable. Check provider credits." : screen.pricingIssue?.kind === "CONFIG" ? "Pricing unavailable. Check provider setup." : screen.reason}</p>}
         {deferred ? <div className={styles.money}><div><span className={styles.label}>{auction ? "Current bid" : "Asking price"}</span><strong className={styles.price}>{dollars(listing.currentPrice)}</strong></div></div> : auction && evaluation ? <AuctionSummary evaluation={evaluation} targets={targets} now={now} /> : <>
@@ -121,7 +127,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
         {minGrade > 0 && evidence && <p className={styles.note}>{evidence.target}</p>}
         <dl className={styles.facts}>
             <div><dt>Seller</dt><dd>{sellerText}</dd></div>
-            <div><dt>AI raw condition</dt><dd>{evaluation?.condition ? name(evaluation.condition.rawCondition) : evaluation?.slab ? "Certified slab" : "Not assessed"}</dd></div>
+            {rawConditionApplies && <div><dt>AI raw condition</dt><dd>{evaluation?.condition ? name(evaluation.condition.rawCondition) : "Not assessed"}</dd></div>}
         </dl>
         {evaluation && <p className={styles.note} title={activity.detail}>{activity.label}{activity.recentSales !== null ? ` · ${activity.recentSales} ${activity.scope === "MATCHED" ? "matching sold comps" : evaluation.marketActivity?.scope === "RAW" ? "sales across raw conditions" : "sales across all grades"} / 30 days` : ""}</p>}
         <div className={styles.actions}><p className={styles.openHint}>View analysis <span aria-hidden="true">↗</span></p>

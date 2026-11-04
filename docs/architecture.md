@@ -36,8 +36,10 @@ flowchart TD
    automatic auctions must fall within the fixed search-start 12-hour window.
 2. Before candidates are emitted to the browser, `price-first.ts` runs shared
    sold research with at most four candidates in flight. Its source permits
-   32 uncached PKMNPrices requests including catalog work, and one page of
-   up to 20 sales per requested market. SQL/file response caches and shared
+   64 uncached PKMNPrices requests including catalog work, and adaptive reads of
+   up to four 20-sale pages per requested market when the preceding pages lack
+   three eligible matched sales. It stops once a scope has enough usable
+   observations; cached pages from final valuation can satisfy follow-up reads. SQL/file response caches and shared
    catalog/market work avoid repeated requests. This stage calls neither AI nor
    eBay Browse. The retired broad-discovery and automatic pricing-recovery
    branches are no longer alternative search paths.
@@ -58,7 +60,7 @@ flowchart TD
    Base Set lead priced at $10 or less. The browser considers eligible loaded
    rows with two assessments in flight, reuses saved evidence first and shares
    the persistent $0.02 AI cap. Fifty metadata rows do not imply fifty paid
-   assessments. All nested Browse work shares the separate 25-request ceiling
+   assessments. All nested Browse work shares the separate 50-request ceiling for new searches
    per search and account-wide daily quota protection.
 5. A direct listing link resolves only that listing. Shortlist load/save uses
    stored snapshots; selected refresh checks current eBay terms without starting
@@ -102,7 +104,7 @@ All paths below are relative to the repository root.
 | Query interpretation and criteria | `server/search/intent.ts`, `server/search/relevance.ts`, `shared/search-criteria.ts` | Seller keywords and requested slab grades are not verified photo evidence. |
 | Local metadata screening | `server/deals/screen-listing.ts` | Saved/local readings only, without new AI or listing-detail calls. `prescreen.ts` remains behind the compatibility pricing-retry endpoint, not normal admission. |
 | Sold-price-first admission | `server/deals/price-first.ts`, `server/pricing/screening-sales.ts`, `shared/money/sold-screen.ts` | Shared matched sold references precede browser emission; public observations stay separate from private fee/target calculations and verified photo identity. |
-| Screening price transport | `server/pricing/pkmnprices.ts` (`createScreeningPriceSource`) | Cache first, 32 uncached requests including catalog work within the all-stage 64-request allowance, one 20-sale page per market; no AI/Browse calls or automatic retry loop. |
+| Screening price transport | `server/pricing/pkmnprices.ts` (`createScreeningPriceSource`) | Cache first, 64 uncached requests including catalog work within the all-stage 128-request new-search allowance, adaptive sparse-market recovery up to four 20-sale pages; no AI/Browse calls or automatic retry loop. |
 | All-stage price accounting | `server/pricing/research-budget.ts`, `shared/pricing-usage.ts` | Per-search durable reservations before transport; actual credits from provider headers, cached responses remain in SQL/file storage. |
 | Direct links and shortlist | `server/listings/resolve.ts`, `server/shortlist/service.ts`, `server/shortlist/store.ts` | Isolated listing lookup, durable snapshots and targeted refresh. |
 | Advisory assessment planning | `server/analysis/bounded-plan.ts` | Stable original RAW selection/key plus compact SLAB_LABEL plan; seller metadata chooses request scope, never the physical holder or final certified grade. |
@@ -146,25 +148,40 @@ normal searches now offer working retries or automatic price recovery.
 - **Missing evidence stays visible:** do not turn missing sales into a price,
   treat asking prices as completed sales, or describe a market fallback as a
   verified sold median. Missing/deferred screening evidence does not buy photo
-  work by default. Existing labeled full-pricing fallbacks remain separate from
-  the new sold-only preliminary gate.
+  work by default. Explicit TCGplayer raw quotes and asking-only slab references retain scenario
+  math but cannot independently create Deals or final rejections. Price-only
+  reference gaps remain Sorting; physical risks retain their review status.
+  Supported independent routes and sparse matched sales retain their existing
+  behavior. Unknown downside is shown as unknown. Legacy prices without a
+  recorded basis remain readable for compatibility.
 - **Money stays in code:** photos do not set fees, profit or ROI. Grade scenario
   weights are assumptions, not measured odds. An upper grade bound is a
   possibility, not the likely outcome or a certified grade.
 - **Offers remain conditional:** an unaccepted Best Offer is separate from a
   deal at asking price. Preserve the maximum 10% discount and explicit amount.
   The app does not submit bids, offers or seller messages automatically.
-- **Requests stay bounded:** the sold-screen source's 32-request sublimit
+- **Requests stay bounded:** the sold-screen source's 64-request sublimit
   includes uncached catalog calls; final valuation and retries share one durable
-  64-request allowance per search UUID. Failed/unknown attempts remain counted;
+  128-request allowance per new search UUID. Old 64-request price ledgers and
+  25-request Browse ledgers preserve their original limits and counters.
+  Failed/unknown attempts remain counted;
   credits come from provider response headers, independently of request counts.
   Cached response reads consume neither. The ledger is local to the configured
   key and does not establish provider-wide accounting across key rotation or
   independent replicas. It does not replace the persistent two-cent AI
-  cap or the 25 actual Browse requests per search. `server/ebay/api.ts` reserves
+  cap or the 50 actual Browse requests per new search. `server/ebay/api.ts` reserves
   Browse calls through `usage.ts` and `daily-budget.ts`; optional work preserves
   the daily reserve. Cached reads do not consume Browse calls. Cancellation
   blocks later dispatch while accepted responses finish saving for reuse.
+- **Quota warnings use existing observations:** `server/lib/provider-usage.ts`
+  stores account-hashed first/last minute samples for a fifteen-minute window.
+  The UI warns below 20% remaining or after a 5% observed daily-allowance burst.
+  Completed PKMN response headers and existing eBay reconciliation/reservations
+  supply samples. PKMN countdown resets are anchored to response completion,
+  not UI polling. Local `/api/ai-usage` reads expose warnings while discovery or
+  assessment runs; no extra provider poll is added. Stale, expired, corrupt or
+  unobserved data does not claim a current balance. Telemetry failures cannot
+  block an accepted response or trigger repeat analysis.
 - **Reuse has an evidence boundary:** `server/analysis/store.ts` checkpoints
   model answers; `shared/listing-evidence.ts` ties them to listing/photo inputs.
   `shared/pricing-freshness.ts` separates pricing, photo and condition revisions.
@@ -228,3 +245,22 @@ every photo/identity judgment. A controlled cost benchmark is recorded in
 `search-cost-benchmark-2026-11-03.md`; useful-deal validation, deferred
 early-completion/English/visibility reports and the positive-deal example remain
 separate work.
+
+## Continuing a measured diagnostic
+
+`scripts/bounded-search-benchmark.ts --live --resume <report.json>` reruns the
+normal bounded search/evaluator under the original search ID and query. It
+retains existing AI, Browse and all-stage pricing counters, uses accepted
+photo evidence, and never creates a replacement allowance. `--replay` remains
+strictly saved-only, disallowing all provider/image/preflight requests. Private
+reports retain before/after counts and transport costs.
+
+`scripts/compare-listing-priority.ts --live --report <report.json>` separately
+tests one compact GPT-6 Luna text ranking of already eligible saved Buy It Now
+metadata, after existing free filters. It cannot change app queue order. Input
+excludes photos and later assessment answers; output is at most eight known
+candidate keys and reason codes. Separate experiment storage preserves accepted
+photo findings. Its original search's generation allowance, exact preflight,
+dispatch-only Stop and maximum output reservation still apply. `--replay`
+cannot buy missing work. Batch/Flex are not enabled. Measurements and limits are
+recorded in `catalog-and-evidence-validation-2026-11-04.md`.

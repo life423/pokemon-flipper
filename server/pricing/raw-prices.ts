@@ -97,6 +97,8 @@ export function rawPricesFor(card: PricedCard | null, identity: Identity): RawPr
         printingLabel: label,
         finish: variant.finish,
         variant: variant.name,
-        prices,
+        // Both supported raw market feeds are TCGplayer references. Mark the
+        // fallback here too, including callers that never reach sold research.
+        prices: prices.map(price => ({ ...price, basis: "TCGPLAYER" })),
     };
 }

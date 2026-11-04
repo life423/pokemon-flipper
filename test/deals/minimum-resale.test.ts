@@ -91,14 +91,17 @@ test("LP-to-NM and NM-to-Mint opportunities reopen only when existing better-con
         assert.match(result.reason!, /AI must verify the condition.*not a verified deal/);
         assert.equal(calls.rawComps, 1); assert.equal(calls.gradedComps, 2, "the hypothetical improvement adds no comp requests");
         const tooExpensive = await prescreen(input({ price: 95, cardCondition: sellerCondition }), fixture(record).deps);
-        assert.equal(tooExpensive.status, "DROPPED"); assert.equal(tooExpensive.conditionUpside, undefined, "a better label alone cannot justify work if the money still fails");
+        assert.equal(tooExpensive.status, "UNSCREENED"); assert.equal(tooExpensive.needsAnalysis, "PRICE_EVIDENCE");
+        assert.equal(tooExpensive.conditionUpside, undefined, "the higher quote does not establish a condition-upgrade opportunity when its money fails");
+        assert.equal(tooExpensive.money?.priceEvidenceIncomplete, true, "missing grading prices cannot establish a complete negative scope");
     }
 });
 
-test("a damaged seller claim gets no blanket clean-condition bypass from an unrelated NM quote", async () => {
+test("a damaged seller claim gets no clean-condition upgrade while missing grading evidence remains unresolved", async () => {
     const record = card(); record.variants[0].prices = [{ condition: "DAMAGED", price: 5, updatedAt: null }, { condition: "NEAR_MINT", price: 100, updatedAt: null }];
     const result = await prescreen(input({ price: 35, cardCondition: "Damaged" }), fixture(record).deps);
-    assert.equal(result.status, "DROPPED"); assert.equal(result.conditionUpside, undefined); assert.equal(result.needsAnalysis, undefined);
+    assert.equal(result.status, "UNSCREENED"); assert.equal(result.conditionUpside, undefined); assert.equal(result.needsAnalysis, "PRICE_EVIDENCE");
+    assert.ok(result.bestCase); assert.equal(result.money?.priceEvidenceIncomplete, true);
 });
 
 test("condition-upside screening follows current targets and purchase price without another lookup", async () => {
@@ -107,10 +110,15 @@ test("condition-upside screening follows current targets and purchase price with
     const original = await prescreen(input({ price: 20, cardCondition: "Lightly played (Excellent)" }), deps);
     assert.equal(original.status, "UNSCREENED");
     const strict = retargetScreen(original, 20, { minProfit: 500, minRoi: 5 });
-    assert.equal(strict.status, "DROPPED"); assert.equal(strict.needsAnalysis, undefined);
+    assert.equal(strict.status, "UNSCREENED"); assert.equal(strict.needsAnalysis, "PRICE_EVIDENCE");
+    assert.equal(strict.bestCase!.maxBid, 0, "the preliminary quote cannot support a bid under the stricter targets");
     const row: ListingSummary = { id: "repriced", title: "Machop", currentPrice: 20, shipping: 0, bids: 0, isGraded: false, buyingOption: "FIXED_PRICE", endTime: null, images: ["front"], url: "#", seller: null, screen: strict };
-    assert.equal(canAutoAnalyze(row), false);
-    assert.equal(retargetScreen(original, 95, { minProfit: 50, minRoi: 0.25 }).status, "DROPPED");
-    assert.equal(retargetScreen(strict, 20, { minProfit: 50, minRoi: 0.25 }).status, "UNSCREENED", "relaxing targets can reopen the saved hypothesis");
+    assert.equal(canAutoAnalyze(row), true, "legacy unresolved research remains eligible; the normal sold-first gate has separate evidence requirements");
+    const expensive = retargetScreen(original, 95, { minProfit: 50, minRoi: 0.25 });
+    assert.equal(expensive.status, "UNSCREENED"); assert.equal(expensive.needsAnalysis, "PRICE_EVIDENCE");
+    assert.ok(expensive.bestCase!.profit < original.bestCase!.profit);
+    const relaxed = retargetScreen(strict, 20, { minProfit: 50, minRoi: 0.25 });
+    assert.equal(relaxed.status, "UNSCREENED", "relaxing targets can reopen the saved hypothesis");
+    assert.equal(relaxed.needsAnalysis, "IDENTITY"); assert.match(relaxed.reason!, /better-condition.*could clear/);
     assert.equal(calls.lookup, 1); assert.equal(original.status, "UNSCREENED", "retargeting never mutates the saved screen");
 });

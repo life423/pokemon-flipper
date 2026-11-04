@@ -13,11 +13,12 @@ import { createPrivateEvaluationStore, PRIVATE_EVALUATION_PREFIX } from "../../s
 import { createShortlistStore } from "../../server/shortlist/store.ts";
 import { createShortlistService } from "../../server/shortlist/service.ts";
 import { photoReviewStatus } from "../../shared/photo-review.ts";
+import { seedRawSoldCopies } from "../fixtures/raw-sold-copies.ts";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { ListingDetails } from "../../server/ebay/listings.ts";
-import type { CardRecord } from "../../server/pricing/types.ts";
+import type { CardRecord, Comp } from "../../server/pricing/types.ts";
 import type { SavedRecord } from "../../server/analysis/types.ts";
 
 const now = Date.UTC(2026, 10, 2, 12);
@@ -98,7 +99,7 @@ test("one bounded raw assessment produces priced outcomes without historical pho
     assert.equal(result.photoReviewKey, undefined, "a bounded answer cannot authorize the legacy full-record deeper endpoint");
 });
 
-test("insufficient numeric grading detail retains obvious raw damage for a completed priced rejection", async t => {
+test("insufficient numeric grading detail retains obvious raw damage and a market estimate without claiming a completed rejection", async t => {
     t.mock.method(globalThis, "fetch", () => { assert.fail("bounded raw-condition regression must use mocked providers only"); });
     for (const range of [null, { low: 1, likely: 2, high: 3 }]) {
         const report = reading();
@@ -116,7 +117,7 @@ test("insufficient numeric grading detail retains obvious raw damage for a compl
         assert.equal(result.gradeStatus, "RAW_CONDITION_ONLY");
         assert.equal(result.condition?.rawCondition, "DAMAGED");
         assert.equal(result.condition?.gradeRange, null);
-        assert.equal(result.underwriting?.verdict, "PASS");
+        assert.equal(result.underwriting?.verdict, "CANT_PRICE");
         assert.equal(result.underwriting?.best?.path, "RAW");
         assert.equal(result.underwriting?.best?.profit, -75.29);
         assert.equal(photoReviewStatus(result).needsYourReview, false);
@@ -132,12 +133,16 @@ test("a supported near-mint raw resale can proceed without numeric grading detai
     const report = reading(); report.photoCheck.photoSufficiency = "INSUFFICIENT";
     report.condition!.rawCondition = "NEAR_MINT";
     report.condition!.gradeRange = null;
-    const { evaluate, calls } = harness({ assess: async () => ({ result: report, usage: { inputTokens: 700, outputTokens: 450 } }) });
+    let sales: Comp[] = [];
+    const { evaluate, calls, cache } = harness({ assess: async () => ({ result: report, usage: { inputTokens: 700, outputTokens: 450 } }),
+        fetchRawComps: async () => { calls.raw++; return sales; } });
+    sales = seedRawSoldCopies(cache, details(), "NEAR_MINT", 220, now);
     const result = await evaluate("v1|near-mint-raw-only|0");
     assert.equal(result.condition?.rawCondition, "NEAR_MINT");
     assert.equal(result.condition?.gradeRange, null);
     assert.equal(result.gradeStatus, "RAW_CONDITION_ONLY");
     assert.equal(result.underwriting?.verdict, "BUY_RAW");
+    assert.equal(result.rawPricing?.prices?.find(quote => quote.condition === "NEAR_MINT")?.basis, "EBAY_SOLD");
     assert.equal(result.underwriting?.best?.path, "RAW");
     assert.equal(calls.raw, 1);
     assert.equal(calls.comps, 0);

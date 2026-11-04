@@ -1,4 +1,5 @@
 import type { PricingResearchUsage } from "./pricing-usage.ts";
+import type { ProviderUsageSnapshot } from "./provider-usage.ts";
 
 export interface AiUsageStage {
     step: string;
@@ -27,6 +28,7 @@ export interface AiUsageDay {
     stages: AiUsageStage[];
     budget?: AiSearchBudget;
     pricing?: PricingResearchUsage | null;
+    providers?: ProviderUsageSnapshot[];
 }
 
 export interface AiSearchBudget {

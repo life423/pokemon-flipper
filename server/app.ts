@@ -31,6 +31,7 @@ import { assertSqlStorageReady, storageBackend } from "./storage/index.ts";
 import { storageFailure } from "./lib/storage-failure.ts";
 import { aiSpending } from "./ai/spending.ts";
 import { priceResearchSummary, withPriceResearchSignal } from "./pricing/research-budget.ts";
+import { dailyProviderUsage } from "./lib/provider-usage.ts";
 
 const app = express();
 
@@ -98,8 +99,8 @@ app.post("/api/deals/new", validSearchRequest);
 app.get("/api/ai-usage", async (req, res) => {
     try {
         const id = searchId(req.query.searchId);
-        const [usage, budget, pricing] = await Promise.all([aiUsageToday(id), aiSpending.summary(id), priceResearchSummary(id)]);
-        res.json({ ...usage, budget, pricing });
+        const [usage, budget, pricing, providers] = await Promise.all([aiUsageToday(id), aiSpending.summary(id), priceResearchSummary(id), dailyProviderUsage()]);
+        res.json({ ...usage, budget, pricing, providers });
     }
     catch { res.status(500).json({ error: "Search usage could not be read. Provider operations are unchanged." }); }
 });

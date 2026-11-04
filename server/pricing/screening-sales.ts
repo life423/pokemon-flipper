@@ -4,22 +4,24 @@ import { finishClaim } from "../../shared/finish.ts";
 import { RAW_CONDITIONS } from "../../shared/conditions.ts";
 import { StorageUnavailableError } from "../storage/index.ts";
 import type { ListingSummary, ScreeningSoldEvidence, ScreeningSoldReference, SearchIntent } from "../../shared/types.ts";
-import type { CardRecord, Comp, FetchComps, FetchRawComps, LookupCards } from "./types.ts";
+import type { CardRecord, Comp, FetchComps, FetchRawComps, FetchSoldPage, LookupCards, SoldPage } from "./types.ts";
 import { compCondition } from "./raw-comps.ts";
 import { compProblem, summarizeComps, type CompCriteria } from "./sold-comps.ts";
 import { createScreeningPriceSource, ScreeningPriceBudgetError } from "./pkmnprices.ts";
 import { PriceResearchBudgetError } from "./research-budget.ts";
-import { resolveScreeningName, screeningNameKey } from "../identity/screening-name.ts";
+import { resolveScreeningName } from "../identity/screening-name.ts";
+import { canonicalCatalogName, sameCatalogName } from "./search-name.ts";
 
-type Source = { lookupCards: LookupCards; fetchComps: FetchComps; fetchRawComps: FetchRawComps };
+type Source = { lookupCards: LookupCards; fetchComps: FetchComps; fetchRawComps: FetchRawComps; fetchSoldPage?: FetchSoldPage };
 type Finish = ScreeningSoldReference["finish"];
 interface Market { record: CardRecord; printing: ScreeningSoldReference["printing"]; finish: Finish; labels: string[] }
 interface MarketEvidence { references: ScreeningSoldReference[]; complete: boolean; issue: "BUDGET" | "UNAVAILABLE" | null }
 const FINISHES = ["HOLO", "NON_HOLO", "REVERSE_HOLO"];
 const DAY_MS = 86_400_000;
+const MAX_MARKET_PAGES = 4;
 const ordinarySale = (sale: Comp) => !/\blot\b|\bbundle\b|\bset of\b|\b\d+\s*(?:cards|pcs)\b|\bsigned\b|\bautograph(?:ed)?\b|\baltered\b|\bcustom\b|\bproxy\b|\breplica\b|\bmiscut\b|\bcrimp\b|\bholo\s*bleed\b|\bdouble\s*holo\b/i.test(sale.title);
 const specialSlab = (title: string) => /\((?:oc|mk|mc|st|pd|of)\)|\b(?:pristine|black label|perfect|altered|qualified|qualifier|authentic(?:ated)?)\b/i.test(title);
-const unique = (sales: Comp[]) => [...new Map(sales.map(sale => [sale.id ?? sale.listing_url ?? `${sale.title}|${sale.sold_at}|${sale.price}`, sale])).values()];
+const unique = (sales: Comp[]) => [...new Map(sales.map(sale => [sale.id != null ? `id:${sale.id}` : sale.listing_url ? `url:${sale.listing_url}` : `${sale.title}|${sale.sold_at}|${sale.price}`, sale])).values()];
 // Preserve a negative edition claim as metadata rather than leaving "no"
 // attached to the name after the literal reader removes "1st Edition".
 const readClaims = (title: string) => readTitleByRules(title.replace(/\b(?:no|not|without|non)[\s-]*(?:1st|first)[\s-]*ed(?:ition|it)?\b/gi, "Unlimited"));
@@ -27,11 +29,35 @@ function matchesSaleTarget(sale: Comp, record: CardRecord, grader: string | null
     const reading = readClaims(sale.title);
     const name = resolveScreeningName({ title: sale.title, claims: [reading.cardName], candidate: record.name });
     return !(reading.kind && reading.kind !== "SINGLE_CARD" || reading.language === "Other" ||
-        reading.cardName && (!name || screeningNameKey(name) !== screeningNameKey(record.name)) ||
+        reading.cardName && (!name || !sameCatalogName(name, record.name)) ||
         reading.set && !sameSetFamily(reading.set, record.setName) ||
         reading.cardNumber && !sameCardNumber(reading.cardNumber, record.cardNumber) ||
         grader && reading.grader && reading.grader !== grader ||
         grade && reading.grade && Number(reading.grade) !== Number(grade));
+}
+
+function marketSummaries(sales: Comp[], market: Market, grader: string | null, grade: string | null, asOf: number): ScreeningSoldReference[] {
+    const { record, printing, finish } = market;
+    const eligible = unique(sales).filter(sale => sale.currency === "USD" && ordinarySale(sale) && matchesSaleTarget(sale, record, grader, grade));
+    const base = { recordId: record.id, name: record.name, set: record.setName!, cardNumber: record.cardNumber, printing, finish };
+    if (grader && grade) {
+        const ordinary = eligible.filter(sale => !specialSlab(sale.title));
+        const criteria: CompCriteria = { printing, setName: record.setName, finish, grader, grade, now: asOf };
+        const recent = ordinary.filter(sale => compProblem(sale, criteria) === null && asOf - Date.parse(sale.sold_at) <= 90 * DAY_MS);
+        const summary = summarizeComps(ordinary, { ...criteria, windowDays: recent.length >= 3 ? 90 : 180 });
+        return summary.count ? [{ ...base, grader, grade, condition: null, summary }] : [];
+    }
+    const raw = eligible.filter(sale => !sale.grader && !sale.grade && !/\b(?:psa|cgc|bgs|sgc|tag)\b/i.test(sale.title));
+    const accepted = RAW_CONDITIONS.flatMap<ScreeningSoldReference>(condition => {
+        const matching = raw.filter(sale => compCondition(sale.title) === condition).map(sale => ({ ...sale, grader: "RAW", grade: condition }));
+        const summary = summarizeComps(matching, { printing, setName: record.setName, finish, grader: "RAW", grade: condition, now: asOf, windowDays: 90 });
+        return summary.count ? [{ ...base, grader: null, grade: null, condition, summary }] : [];
+    });
+    // Unstated condition remains market context, never this copy's condition.
+    const unspecified = raw.filter(sale => compCondition(sale.title) === null).map(sale => ({ ...sale, grader: "RAW", grade: "UNSPECIFIED" }));
+    const summary = summarizeComps(unspecified, { printing, setName: record.setName, finish, grader: "RAW", grade: "UNSPECIFIED", now: asOf, windowDays: 90 });
+    if (summary.count) accepted.push({ ...base, grader: null, grade: null, condition: null, summary });
+    return accepted;
 }
 function incompleteEvidence(evidence: ScreeningSoldEvidence, budget: boolean): ScreeningSoldEvidence {
     const useful = evidence.references.some(reference => reference.summary.count >= 3);
@@ -50,28 +76,49 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
     { signal?: AbortSignal; now?: () => number; source?: Source } = {}) {
     const asOf = now();
     const catalogs = new Map<string, Promise<CardRecord[]>>();
-    const pages = new Map<string, Promise<Comp[]>>();
+    const pages = new Map<string, Promise<SoldPage>>();
     const references = new Map<string, Promise<MarketEvidence>>();
     const checked = async <T>(work: () => Promise<T>) => { signal?.throwIfAborted(); const value = await work(); signal?.throwIfAborted(); return value; };
     function memo<T>(cache: Map<string, Promise<T>>, key: string, work: () => Promise<T>) {
+        signal?.throwIfAborted();
         let pending = cache.get(key);
         if (!pending) { pending = checked(work); cache.set(key, pending); }
-        return checked(() => pending!);
+        // Attach immediately even when work synchronously stops its subscriber;
+        // a second pre-await abort check would orphan pending's rejection.
+        return pending.then(value => { signal?.throwIfAborted(); return value; });
     }
     const marketReferences = (market: Market, grader: string | null, grade: string | null) => {
         const { record, printing, finish } = market;
         const labels = titleDecidesPrinting(record.setName)
             ? [...new Set(record.variants.filter(variant => variant.finish === finish).map(variant => variant.name))]
-            : market.labels;
+            : [...new Set(market.labels)];
         const key = JSON.stringify([record.id, printing, finish, labels, grader, grade]);
         return memo(references, key, async () => {
             const sales: Comp[] = [];
+            let accepted: ScreeningSoldReference[] = [];
             let issue: MarketEvidence["issue"] = null;
-            for (const variant of labels) {
-                const pageKey = JSON.stringify([record.id, variant, grader, grade]);
+            // Read each relevant catalog label's first page, then follow only
+            // sparse markets. Counts use fully checked, deduplicated summaries,
+            // so unrelated grades, printings and condition buckets cannot stop
+            // useful recovery. Four pages total bounds even an endless cursor.
+            const pending: { variant: string; cursor?: string }[] = labels.map(variant => ({ variant }));
+            const seen = new Set<string>();
+            let pageCount = 0;
+            while (pending.length) {
+                const { variant, cursor } = pending.shift()!;
+                if (cursor && accepted.some(reference => reference.summary.count >= 3)) continue;
+                if (pageCount >= MAX_MARKET_PAGES) { issue = "BUDGET"; break; }
+                const pageKey = JSON.stringify([record.id, variant, grader, grade, cursor]);
+                if (seen.has(pageKey)) { issue = "UNAVAILABLE"; break; }
+                seen.add(pageKey);
                 try {
-                    sales.push(...await memo(pages, pageKey, () => grader && grade
-                        ? source.fetchComps(record.id, { grader, grade, variant }) : source.fetchRawComps(record.id, variant)));
+                    const page = await memo(pages, pageKey, async () => source.fetchSoldPage
+                        ? source.fetchSoldPage(record.id, { grader, grade, variant, ...(cursor ? { cursor } : {}) })
+                        : { sales: await (grader && grade ? source.fetchComps(record.id, { grader, grade, variant }) : source.fetchRawComps(record.id, variant)), nextCursor: null });
+                    pageCount++;
+                    sales.push(...page.sales);
+                    accepted = marketSummaries(sales, market, grader, grade, asOf);
+                    if (page.nextCursor && !accepted.some(reference => reference.summary.count >= 3)) pending.push({ variant, cursor: page.nextCursor });
                 } catch (error) {
                     signal?.throwIfAborted();
                     if (error instanceof StorageUnavailableError || error instanceof PriceResearchBudgetError && error.reason !== "LIMIT") throw error;
@@ -79,28 +126,7 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
                     break;
                 }
             }
-            const result = (accepted: ScreeningSoldReference[]): MarketEvidence => ({ references: accepted, complete: issue === null, issue });
-            const eligible = unique(sales).filter(sale => sale.currency === "USD" && ordinarySale(sale) && matchesSaleTarget(sale, record, grader, grade));
-            const base = { recordId: record.id, name: record.name, set: record.setName!, cardNumber: record.cardNumber, printing, finish };
-            if (grader && grade) {
-                const ordinary = eligible.filter(sale => !specialSlab(sale.title));
-                const criteria: CompCriteria = { printing, setName: record.setName, finish, grader, grade, now: asOf };
-                const recent = ordinary.filter(sale => compProblem(sale, criteria) === null && asOf - Date.parse(sale.sold_at) <= 90 * DAY_MS);
-                const summary = summarizeComps(ordinary, { ...criteria, windowDays: recent.length >= 3 ? 90 : 180 });
-                return result(summary.count ? [{ ...base, grader, grade, condition: null, summary }] : []);
-            }
-            const raw = eligible.filter(sale => !sale.grader && !sale.grade && !/\b(?:psa|cgc|bgs|sgc|tag)\b/i.test(sale.title));
-            const accepted = RAW_CONDITIONS.flatMap<ScreeningSoldReference>(condition => {
-                const matching = raw.filter(sale => compCondition(sale.title) === condition).map(sale => ({ ...sale, grader: "RAW", grade: condition }));
-                const summary = summarizeComps(matching, { printing, setName: record.setName, finish, grader: "RAW", grade: condition, now: asOf, windowDays: 90 });
-                return summary.count ? [{ ...base, grader: null, grade: null, condition, summary }] : [];
-            });
-            // Unstated condition is useful market context for deciding whether
-            // to inspect a card, never a condition-specific resale valuation.
-            const unspecified = raw.filter(sale => compCondition(sale.title) === null).map(sale => ({ ...sale, grader: "RAW", grade: "UNSPECIFIED" }));
-            const summary = summarizeComps(unspecified, { printing, setName: record.setName, finish, grader: "RAW", grade: "UNSPECIFIED", now: asOf, windowDays: 90 });
-            if (summary.count) accepted.push({ ...base, grader: null, grade: null, condition: null, summary });
-            return result(accepted);
+            return { references: accepted, complete: issue === null, issue };
         });
     };
 
@@ -136,9 +162,9 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
         const grade = listing.isGraded ? listedGrade == null ? titleGrade : String(listedGrade) : null;
         if (listing.isGraded && (!grader || !/^(?:PSA|CGC|BGS|SGC|TAG)$/.test(grader) || !grade || !/^(?:10|[1-9](?:\.5)?)$/.test(grade))) return evidence;
         try {
-            const catalogKey = JSON.stringify([screeningNameKey(name), setFamily(set).sort(), normalizeCardNumber(number)]);
+            const catalogKey = JSON.stringify([canonicalCatalogName(name), setFamily(set).sort(), normalizeCardNumber(number)]);
             const found = await memo(catalogs, catalogKey, () => source.lookupCards({ name, set, cardNumber: number ?? "" }));
-            const matches = [...new Map(found.filter(record => record.source === "pkmnprices" && sameSetFamily(record.setName, set) && (!number || sameCardNumber(record.cardNumber, number)) && screeningNameKey(record.name) === screeningNameKey(name)).map(record => [record.id, record])).values()];
+            const matches = [...new Map(found.filter(record => record.source === "pkmnprices" && sameSetFamily(record.setName, set) && (!number || sameCardNumber(record.cardNumber, number)) && sameCatalogName(record.name, name)).map(record => [record.id, record])).values()];
             const identities = matches.map(record => JSON.stringify([normalizeSetName(record.setName), normalizeCardNumber(record.cardNumber)]));
             if (!matches.length || new Set(identities).size !== matches.length) return evidence;
             const markets = new Map<string, Market>();

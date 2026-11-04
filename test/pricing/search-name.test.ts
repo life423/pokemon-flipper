@@ -1,7 +1,7 @@
 import "../fixtures/isolated-data.ts";
 import { test } from "../fixtures/search-context.ts";
 import assert from "node:assert/strict";
-import { pricingSearchName } from "../../server/pricing/search-name.ts";
+import { canonicalCatalogName, pricingSearchName, sameCatalogName } from "../../server/pricing/search-name.ts";
 import { lookupCards } from "../../server/pricing/pkmnprices.ts";
 
 test("Unown letter queries match provider naming without broadening unrelated names", () => {
@@ -11,6 +11,34 @@ test("Unown letter queries match provider naming without broadening unrelated na
     assert.equal(pricingSearchName("PRIMEAPE-REVERSE FOIL"), "primeape");
     assert.equal(pricingSearchName("Kingdra Reverse Holofoil"), "kingdra");
     assert.equal(pricingSearchName("Dark Espeon Non-Holo"), "dark espeon");
+});
+
+test("catalog names remove known descriptive suffixes while preserving owners and printed forms", () => {
+    for (const [source, expected] of [
+        ["Snorlax Holofoil", "snorlax"],
+        ["Leafeon V (Alternate Full Art)", "leafeon v"],
+        ["Leafeon V Full Art Holofoil", "leafeon v"],
+        ["Blaine’s Arcanine", "blaine's arcanine"],
+        ["Rocket's Mewtwo", "rocket's mewtwo"],
+        ["Galarian Sirfetch’d", "galarian sirfetch'd"],
+        ["Nidoran♀", "nidoran female"],
+        ["Charizard ☆", "charizard star"],
+        ["Pikachu δ", "pikachu delta"],
+    ]) {
+        assert.equal(canonicalCatalogName(source), expected, source);
+        assert.equal(pricingSearchName(source), expected, source);
+    }
+    assert.ok(sameCatalogName("Leafeon V", "Leafeon V (Alternate Full Art)"));
+    assert.ok(sameCatalogName("Unown [R]", "Unown R"));
+    for (const [left, right] of [
+        ["Mew", "Mewtwo"], ["Arcanine", "Blaine's Arcanine"], ["Blaines Arcanine", "Blaine's Arcanine"],
+        ["Charizard", "Dark Charizard"], ["Charizard ex", "Charizard"], ["Leafeon V", "Leafeon VMAX"],
+        ["Mega Charizard X", "Mega Charizard Y"], ["Unown A", "Unown R"], ["Nidoran♀", "Nidoran♂"],
+        ["Charizard ☆", "Charizard"], ["Pikachu δ", "Pikachu"], ["Leafeon V Curious Art", "Leafeon V"],
+        ["Snorlax R", "Snorlax"], ["Snorlax Edition", "Snorlax"],
+    ]) assert.equal(sameCatalogName(left, right), false, `${left} / ${right}`);
+    assert.equal(sameCatalogName("Holofoil", ""), false);
+    assert.equal(sameCatalogName(undefined, "Snorlax"), false);
 });
 
 test("provider lookup for Unown A retains exact card-number selection", async t => {

@@ -6,6 +6,7 @@ import { getAiUsageContext, withAiUsageContext } from "../../server/ai/usage-con
 import { resultGroup } from "../../shared/analysis.ts";
 import { retargetEvaluation } from "../../shared/money/targets.ts";
 import { cardEvaluation } from "../fixtures/card-evaluation.ts";
+import { seedRawSoldCopies } from "../fixtures/raw-sold-copies.ts";
 import type { ListingDetails } from "../../server/ebay/listings.ts";
 import type { CardRecord, Comp } from "../../server/pricing/types.ts";
 import type { ListingSummary } from "../../shared/types.ts";
@@ -84,7 +85,9 @@ test("a raw sold-request limit cannot be swallowed into a profitable TCGplayer f
 
 test("completed raw profit remains a Deal when a later grading route is deferred", async () => {
     const values = subject(); values.reading.condition!.gradeRange = { low: 7, likely: 7, high: 7 };
-    const h = harness({ fetchComps: async () => { throw limit(); } }, values);
+    let sales: Comp[] = [];
+    const h = harness({ fetchComps: async () => { throw limit(); }, fetchRawComps: async () => sales }, values);
+    sales = seedRawSoldCopies(h.cache, values.listing, "LIGHTLY_PLAYED", 180, NOW);
     const result = await h.evaluate(h.listing.id);
     assert.equal(result.rawPricing?.status, "PRICED"); assert.equal(result.underwriting?.verdict, "BUY_RAW");
     assert.ok(result.underwriting!.best!.profit > 50); assert.equal(resultGroup(h.summary, result), "deals");
@@ -183,8 +186,8 @@ test("a later search resumes deferred pricing from accepted photos instead of re
     assert.equal(first.underwriting?.verdict, "CANT_PRICE"); assert.ok(first.pricesCheckedAt);
     exhausted = false;
     const completed = await withAiUsageContext({ searchId: "12345678-1234-4234-8234-123456789013" }, () => h.evaluate(h.listing.id));
-    assert.equal(completed.pricingDeferred, undefined); assert.equal(completed.underwriting?.verdict, "BUY_RAW");
-    assert.equal(resultGroup(h.summary, completed), "deals"); assert.equal(h.calls.assessed, 1); assert.equal(h.calls.available, 1);
+    assert.equal(completed.pricingDeferred, undefined); assert.equal(completed.underwriting?.verdict, "CANT_PRICE", "completed requests still need matched sold evidence");
+    assert.equal(resultGroup(h.summary, completed), "candidates"); assert.equal(h.calls.assessed, 1); assert.equal(h.calls.available, 1);
 });
 
 test("different searches keep independent pricing context when one stops after their shared photo answer", async () => {
@@ -209,7 +212,7 @@ test("different searches keep independent pricing context when one stops after t
     await begun; stopped.abort();
     await assert.rejects(first, error => (error as Error).name === "AbortError");
     assert.equal(seen.get(firstId)!.aborted, true); assert.equal(seen.get(secondId)!.aborted, false);
-    releaseSecond!(); assert.equal((await second).underwriting?.verdict, "BUY_RAW");
+    releaseSecond!(); assert.equal((await second).underwriting?.verdict, "CANT_PRICE");
     assert.deepEqual(rawOwners, [secondId]); assert.equal(h.calls.assessed, 1, "immutable photo work remains shared");
 });
 
@@ -229,6 +232,6 @@ test("shared photo work selects the surviving search after its first sponsor sto
     const second = withAiUsageContext({ searchId: secondId }, () => h.evaluate(h.listing.id));
     await new Promise(resolve => setImmediate(resolve));
     stopped.abort(); await assert.rejects(first, error => (error as Error).name === "AbortError");
-    release!(); assert.equal((await second).underwriting?.verdict, "BUY_RAW");
+    release!(); assert.equal((await second).underwriting?.verdict, "CANT_PRICE");
     assert.deepEqual(admissions, [firstId, secondId]); assert.deepEqual(assessed, [secondId]);
 });

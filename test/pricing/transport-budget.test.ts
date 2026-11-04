@@ -70,6 +70,22 @@ test("simultaneous preliminary and final reads share one exact sold-page attempt
     assert.equal(usage?.used, 3); assert.equal(usage?.completed, 3);
 });
 
+test("new searches allow64 screening misses while preserving the separate128-request total", async t => {
+    offline(t); let calls = 0;
+    t.mock.method(globalThis, "fetch", async () => { calls++; return response({ data: [sold(calls)] }); });
+    const source = createScreeningPriceSource();
+    for (let index = 0; index < PRICE_SCREEN_REQUEST_LIMIT; index++) await source.fetchRawComps(91500 + index, "Unlimited Holofoil");
+    await assert.rejects(source.fetchRawComps(91600, "Unlimited Holofoil"), /price-screening request allowance is exhausted/);
+    assert.equal(calls, PRICE_SCREEN_REQUEST_LIMIT);
+    assert.equal((await source.fetchRawComps(91500, "Unlimited Holofoil")).length, 1, "screening cache hits stay usable at its limit");
+    assert.deepEqual(source.stats(), { requests: PRICE_SCREEN_REQUEST_LIMIT, limit: PRICE_SCREEN_REQUEST_LIMIT });
+    const beforeFinal = await priceResearchSummary();
+    assert.equal(beforeFinal?.limit, PRICE_RESEARCH_LIMIT); assert.equal(beforeFinal?.used, PRICE_SCREEN_REQUEST_LIMIT);
+    await fetchComps(91600, { grader: "PSA", grade: 8, variant: "Unlimited Holofoil" });
+    assert.equal(calls, PRICE_SCREEN_REQUEST_LIMIT + 1, "final research can still use the shared total's remaining requests");
+    assert.equal((await priceResearchSummary())?.remaining, PRICE_RESEARCH_LIMIT - PRICE_SCREEN_REQUEST_LIMIT - 1);
+});
+
 test("sharing the first page retains final pagination without extending preliminary screening", async t => {
     offline(t); const started = deferred<void>(), first = deferred<Response>(); const cursors: (string | null)[] = [];
     t.mock.method(globalThis, "fetch", async input => {
@@ -191,11 +207,28 @@ test("a failed transport retains its unknown reservation and makes no automatic 
 });
 
 test("Stop during retry backoff starts no later transport while the accepted response is accounted", async t => {
-    offline(t); const stopped = new AbortController(); let calls = 0;
+    offline(t); const stopped = new AbortController(), completionVisible = deferred<void>(), finishCompletion = deferred<void>(); let calls = 0;
+    const rename = fs.rename.bind(fs);
+    t.mock.method(fs, "rename", async (from: string, to: string) => {
+        await rename(from, to);
+        if (calls && String(to).includes("price-research-budgets")) {
+            completionVisible.resolve();
+            await finishCompletion.promise;
+        }
+    });
     t.mock.method(globalThis, "fetch", async () => { calls++; stopped.abort(); return Response.json({ error: { code: "RATE_LIMIT" } }, { status: 429, headers: { "retry-after": "5", "x-credits-charged": "0" } }); });
     await assert.rejects(withPriceResearchSignal(stopped.signal, () => fetchRawComps(96001, "Unlimited Holofoil")), { name: "AbortError" });
-    const usage = await eventually(() => priceResearchSummary(), value => value?.completed === 1);
+    await completionVisible.promise;
+    const usage = await priceResearchSummary();
+    assert.equal(usage?.completed, 1);
+    assert.equal(pricingCooldown(), null, "durable accounting alone is not a barrier for the detached response's cooldown");
     assert.equal(calls, 1); assert.equal(usage?.used, 1);
+    // The completed ledger can be read before its lock cleanup returns and
+    // the detached accepted response records its provider cooldown. Keep this
+    // test's clock installed until that response finishes its last state change;
+    // otherwise it can apply the old 429 under the following test's clock.
+    finishCompletion.resolve();
+    await eventually(async () => pricingCooldown(), value => value?.kind === "RATE_LIMIT");
 });
 
 test("a normal accepted response saves and settles after its final consumer stops", async t => {

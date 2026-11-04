@@ -58,7 +58,7 @@ test("a card printed once uses its unlabeled price", () => {
     );
 
     assert.equal(pricing.status, "PRICED");
-    assert.deepEqual(pricing.prices, [{ condition: "NEAR_MINT", price: 12.5, updatedAt: null }]);
+    assert.deepEqual(pricing.prices, [{ condition: "NEAR_MINT", price: 12.5, updatedAt: null, basis: "TCGPLAYER" }]);
 });
 
 test("the stated finish picks between holo and reverse holo", () => {

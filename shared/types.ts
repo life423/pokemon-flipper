@@ -81,6 +81,9 @@ export interface Screen {
         paths: { label: string; expectedNet: number; fixedCosts: number; path?: PathKind; downsideNet?: number; compCount?: number; compConfidence?: Confidence }[];
         // Lowest quoted played/damaged raw condition, when one is available.
         rawFloorNet?: number;
+        // Legacy preliminary math cannot exclude raw grading upside while
+        // reference-only prices or unpriced grading routes remain unresolved.
+        priceEvidenceIncomplete?: boolean;
         auction: boolean;
         usual: UsualPrice | null;
         bestOffer?: boolean;
@@ -461,8 +464,9 @@ export interface PricedPath {
     cost: number;
     profit: number;
     roi: number | null;
-    // Lowest modeled resale outcome; not a guaranteed loss limit.
-    downside: number;
+    // Lowest modeled resale outcome; null when the price is only a reference
+    // estimate without supported downside evidence. Never a guaranteed limit.
+    downside: number | null;
     // The most you can pay and still clear your targets.
     maxBid: number;
     clears: boolean;

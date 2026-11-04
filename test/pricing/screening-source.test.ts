@@ -8,7 +8,10 @@ import { setImmediate } from "node:timers/promises";
 import { DATA_DIR } from "../../server/lib/paths.ts";
 import { readCache, writeCache } from "../../server/lib/cache.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
-import { createScreeningPriceSource, ScreeningPriceBudgetError, lookupCards } from "../../server/pricing/pkmnprices.ts";
+import { createScreeningPriceSource, fetchComps, ScreeningPriceBudgetError, lookupCards } from "../../server/pricing/pkmnprices.ts";
+import { createSoldScreening } from "../../server/pricing/screening-sales.ts";
+import type { CardRecord, Comp } from "../../server/pricing/types.ts";
+import type { ListingSummary, SearchIntent } from "../../shared/types.ts";
 import { PRICE_SCREEN_REQUEST_LIMIT } from "../../shared/research-policy.ts";
 
 let clock = Date.now();
@@ -64,6 +67,48 @@ test("existing catalog and sold pages stay usable with zero new-request allowanc
     assert.equal((await source.fetchComps(82002, { grader: "PSA", grade: 8, variant: "Unlimited Holofoil" })).length, 1);
     assert.equal((await source.fetchRawComps(82002, "Unlimited Holofoil")).length, 1);
     assert.deepEqual(source.stats(), { requests: 0, limit: 0 });
+});
+
+test("screening reuses both final-valuation cached pages to recover a sparse exact market for free", async t => {
+    offline(t);
+    const id = 82102;
+    const sold = (saleId: number): Comp => ({ id: saleId, title: "Dragonite Fossil 4/62 Unlimited Holo PSA 8", price: 100 + saleId,
+        sold_at: new Date(clock - 86_400_000).toISOString(), variant: "Unlimited Holofoil", grader: "PSA", grade: "8", currency: "USD",
+        sale_type: "fixed_price", grade_qualifier: null, attribution: "exact", listing_url: `https://www.ebay.com/itm/${saleId}` });
+    const first = [sold(1), sold(2)], next = [first[0], sold(3), sold(4)];
+    const paths: string[] = [];
+    t.mock.method(globalThis, "fetch", async input => {
+        const requested = requestPath(input); paths.push(requested);
+        assert.ok(paths.length <= 2, "saved sold pages must not buy a replacement request");
+        return Response.json(requested.includes("cursor=") ? { data: next, pagination: { has_more: true, next_cursor: "unneeded-third" } }
+            : { data: first, pagination: { has_more: true, next_cursor: "saved-second" } });
+    });
+    assert.equal((await fetchComps(id, { grader: "PSA", grade: 8, variant: "Unlimited Holofoil" })).length, 4);
+    const source = createScreeningPriceSource({ maxRequests: 0 });
+    const record: CardRecord = { source: "pkmnprices", id, name: "Dragonite", setName: "Fossil", cardNumber: "4/62", tcgPlayerId: null,
+        variants: [{ name: "Unlimited Holofoil", printing: "UNLIMITED", finish: "HOLO", prices: [] }] };
+    const subject: ListingSummary = { id: "saved-row", title: "Dragonite Fossil 4/62 Unlimited Holo PSA 8", isGraded: true,
+        currentPrice: 150, shipping: 0, bids: 0, buyingOption: "FIXED_PRICE", endTime: null, images: [], url: "https://www.ebay.com/itm/123", seller: null };
+    const intent: SearchIntent = { cardName: "Dragonite", sets: ["Fossil"], cardNumber: "4/62", printing: null, graded: true, titleWords: ["dragonite"], source: "rules" };
+    const run = createSoldScreening({ now: () => clock, source: { ...source, lookupCards: async () => [record] } });
+    const result = await run(subject, intent);
+    assert.equal(result.status, "AVAILABLE"); assert.equal(result.exactScope, true); assert.equal(result.references[0].summary.count, 4);
+    assert.deepEqual(paths, [gradedPath(id), `${gradedPath(id)}&cursor=saved-second`]);
+    assert.deepEqual(source.stats(), { requests: 0, limit: 0 });
+});
+
+test("cursor pages use canonical half-grade and raw URLs under the same source allowance", async t => {
+    offline(t);
+    const paths: string[] = [];
+    t.mock.method(globalThis, "fetch", async input => { paths.push(requestPath(input)); return Response.json({ data: [sale(paths.length)] }); });
+    const source = createScreeningPriceSource({ maxRequests: 2 });
+    await source.fetchSoldPage(82202, { grader: "CGC", grade: "8.5", variant: "Unlimited Holofoil", cursor: "next graded" });
+    await source.fetchSoldPage(82202, { grader: null, grade: null, variant: "Unlimited Holofoil", cursor: "next raw" });
+    await assert.rejects(source.fetchSoldPage(82203, { grader: null, grade: null, variant: "Unlimited Holofoil" }), ScreeningPriceBudgetError);
+    assert.deepEqual(paths, [`${gradedPath(82202, "CGC", "8.5")}&cursor=next+graded`, `${rawPath(82202)}&cursor=next+raw`]);
+    assert.deepEqual(source.stats(), { requests: 2, limit: 2 });
+    await source.fetchSoldPage(82202, { grader: null, grade: null, variant: "Unlimited Holofoil", cursor: "next raw" });
+    assert.equal(paths.length, 2, "cached cursor pages remain readable after the request limit");
 });
 
 test("catalog and sold misses share one allowance while cached work continues after exhaustion", async t => {

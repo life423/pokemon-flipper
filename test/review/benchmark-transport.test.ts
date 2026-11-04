@@ -78,6 +78,22 @@ test("unapproved schema and endpoints are denied without recording their content
     assert.equal(JSON.stringify(observer.records).includes("PRIVATE"), false);
 });
 
+test("text priority experiments cannot send images or silently select another model or reasoning effort", async () => {
+    let sent = 0;
+    const body = { model: "gpt-6-luna", reasoning: { effort: "none" }, input: [{ role: "user", content: [{ type: "input_text", text: "Saved metadata" }] }],
+        text: { format: { name: "listing_priority_experiment" } } };
+    const observer = createBenchmarkTransport({ live: true, fetch: async () => { sent++; return Response.json({}); } });
+    for (const url of [generation, preflight]) await observer.fetch(url, { method: "POST", body: JSON.stringify(body) });
+    for (const invalid of [{ ...body, model: "gpt-5.6-luna" }, { ...body, reasoning: { effort: "low" } },
+        { ...body, input: [{ role: "user", content: [{ type: "input_image", image_url: "data:image/jpeg;base64,PRIVATE" }] }] }]) {
+        await assert.rejects(observer.fetch(generation, { method: "POST", body: JSON.stringify(invalid) }), /schema/);
+    }
+    assert.equal(sent, 2);
+    assert.equal(observer.snapshot().actual.aiGeneration, 1);
+    assert.equal(observer.snapshot().actual.aiPreflight, 1);
+    assert.equal(JSON.stringify(observer.records).includes("PRIVATE"), false);
+});
+
 test("price metadata counts returned rows and safe credit headers without storing IDs, queries, headers or response fields", async () => {
     // Compare the complete header, not a date prefix that can legitimately
     // occur in the observer's own event timestamp when the day rolls over.

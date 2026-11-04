@@ -3,6 +3,7 @@ import type { EbayUsage } from "../../shared/types.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
 import { reserveDailyBrowseCall } from "./daily-budget.ts";
 import { browseSearchAllowance } from "./search-budget.ts";
+import { recordProviderUsage } from "../lib/provider-usage.ts";
 export { EbayBudgetError } from "./daily-budget.ts";
 const share = createSingleFlight();
 
@@ -23,6 +24,15 @@ interface RateLimits {
 }
 
 let saved: { usage: EbayUsage; at: number } | null = null;
+
+async function observeQuota(usage: EbayUsage) {
+    const account = process.env.EBAY_CLIENT_ID?.trim();
+    if (!account || !usage.resetsAt) return;
+    // This is optional telemetry. A write failure cannot fail/retry an
+    // accepted Analytics response or an already-reserved Browse request.
+    await recordProviderUsage("EBAY", account, { limit: usage.limit, remaining: usage.remaining,
+        observedAt: new Date().toISOString(), resetsAt: usage.resetsAt }).catch(() => {});
+}
 
 async function withSearchAllowance(usage: EbayUsage | null): Promise<EbayUsage | null> {
     const searchBudget = await browseSearchAllowance();
@@ -54,6 +64,7 @@ export async function ebayUsage({ fresh = false }: { fresh?: boolean } = {}): Pr
         const expired = usage.resetsAt && Date.parse(usage.resetsAt) <= Date.now();
         const reconciled = expired ? usage : await reserveDailyBrowseCall(usage, false, false);
         saved = { usage: reconciled, at: Date.now() };
+        await observeQuota(reconciled);
 
         return reconciled;
     } catch (error) {
@@ -70,4 +81,5 @@ export async function reserveBrowseRequest(keepReserve = false): Promise<void> {
     const snapshot = saved?.usage.resetsAt && Date.parse(saved.usage.resetsAt) <= Date.now() ? null : saved?.usage ?? null;
     const usage = await reserveDailyBrowseCall(snapshot, keepReserve);
     saved = { usage, at: saved?.at ?? 0 };
+    await observeQuota(usage);
 }

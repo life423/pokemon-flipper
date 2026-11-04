@@ -22,7 +22,7 @@ test("an unsupported raw premium over matched slab sales cannot recommend the da
     assert.equal(raw.status, "PRICED"); if (raw.status !== "PRICED") return;
     assert.equal(raw.label, "Sell raw"); assert.equal(raw.salePrice, 720);
     assert.ok(raw.maxBid < 699.99); assert.ok(raw.profit < 0);
-    assert.equal(result.underwriting!.verdict, "PASS");
+    assert.equal(result.underwriting!.verdict, "CANT_PRICE", "a capped market estimate cannot establish a completed rejection either");
     assert.match(raw.pricingNotes!.join(" "), /unsupported raw fallback.*matched PSA 1 sold evidence/);
     assert.equal(raw.expectedNet, netFromSale(720, "raw", MONEY_CONFIG.selling));
     assert.equal(e.rawPricing!.prices![0].price, 1049.62, "the original provider quote remains available for inspection");

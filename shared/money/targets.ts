@@ -63,7 +63,7 @@ export function retargetScreen(
         // unquoted zero-dollar screening assumption, rather than a real quote.
         return screen.assumed ? { ...updated, assumed: screen.assumed } : updated;
     }
-    if (!screen.money || price === null || screen.status === "UNSCREENED" && !screen.conditionUpside) return screen;
+    if (!screen.money || price === null || screen.status === "UNSCREENED" && !screen.conditionUpside && !screen.money.priceEvidenceIncomplete) return screen;
 
     const repriced = withTargets(targets, config);
     const { shipping, paths } = screen.money;
@@ -76,16 +76,21 @@ export function retargetScreen(
     if (!best) return screen;
     const requiresOffer = !best.clears && includeOffers && screen.money.bestOffer === true &&
         offerWorthMaking(offerPlan(price, best.maxBid));
+    const unresolved = Boolean(screen.money.priceEvidenceIncomplete && !best.clears && !requiresOffer);
+    const incompleteReason = "The preliminary estimates do not clear your current targets, but missing resale evidence leaves raw-card grading or condition upside unresolved. These estimates do not establish a verified deal or a completed price exclusion.";
 
     const repricedScreen: Screen = {
         ...screen,
-        status: best.clears || requiresOffer ? "CANDIDATE" : "DROPPED",
+        status: best.clears || requiresOffer ? "CANDIDATE" : unresolved ? "UNSCREENED" : "DROPPED",
+        ...(screen.money.priceEvidenceIncomplete ? { needsAnalysis: unresolved ? "PRICE_EVIDENCE" : undefined,
+            reason: unresolved ? incompleteReason : "Seller-based price estimates could clear your targets. Matched resale evidence and photos are still required; this is not a verified deal." } : {}),
         requiresOffer,
         bestCase: { label: best.label, maxBid: best.maxBid, profit: best.profit, roi: best.roi },
     };
     if (!screen.conditionUpside) return repricedScreen;
     if (repricedScreen.status === "CANDIDATE") return { ...repricedScreen, needsAnalysis: undefined };
     const upside = pathNumbers({ expectedNet: netFromSale(screen.conditionUpside.rawMarketPrice, "raw", config.selling), fixedCosts: 0, shipping, price }, repriced);
-    return { ...repricedScreen, status: upside.clears ? "UNSCREENED" : "DROPPED", needsAnalysis: upside.clears ? "IDENTITY" : undefined,
-        reason: upside.clears ? screen.reason : "Even the better-condition raw market quote does not clear your current targets. Manual analysis remains available." };
+    return { ...repricedScreen, status: upside.clears || unresolved ? "UNSCREENED" : "DROPPED", needsAnalysis: upside.clears ? "IDENTITY" : unresolved ? "PRICE_EVIDENCE" : undefined,
+        reason: upside.clears ? "The saved better-condition raw market quote could clear your current targets. Photos must verify that condition; this is not a verified deal."
+            : unresolved ? incompleteReason : "Even the better-condition raw market quote does not clear your current targets. Manual analysis remains available." };
 }

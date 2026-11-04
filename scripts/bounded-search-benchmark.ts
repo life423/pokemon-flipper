@@ -13,30 +13,34 @@ import { DEVELOPMENT_SEARCH_LIMIT } from "../shared/research-policy.ts";
 import { runBenchmarkQueue, type BenchmarkQueueResult } from "./review/benchmark-queue.ts";
 import { BENCHMARK_TRANSPORT_LIMITS, createBenchmarkTransport } from "./review/benchmark-transport.ts";
 import { candidateAdmission, summarizeBenchmark } from "./review/benchmark-results.ts";
+import { benchmarkCommand } from "./review/benchmark-command.ts";
 
 const args = process.argv.slice(2);
-const argument = (name: string) => args[args.indexOf(name) + 1];
-const replayFile = args.includes("--replay") ? argument("--replay") : undefined;
-const queryArg = args.includes("--query") ? argument("--query") : undefined;
-const live = args.includes("--live");
 if (args.includes("--help")) {
-    process.stdout.write("One bounded search: --live --query '<exact card/set/number/finish>'. Cache replay: --replay <report.json>. No forced refresh, broad discovery or automatic retries.\n");
+    process.stdout.write("One bounded search: --live --query '<search>'. Retest under the original account: --live --resume <report.json>. Saved-only replay: --replay <report.json>. No budget resets, forced photo refresh or automatic retries.\n");
     process.exit(0);
 }
-if (live && replayFile || !replayFile && (!live || !queryArg?.trim() || queryArg.length > 300)) {
-    throw new Error("Choose either --live --query '<search>' or --replay <report.json>. Live provider work requires --live explicitly.");
+const command = benchmarkCommand(args);
+const live = command.mode !== "replay";
+const previous = command.mode === "live" ? null : JSON.parse(await fs.readFile(path.resolve(command.file), "utf8"));
+if (previous && (!Array.isArray(previous.listings) || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(previous.searchId) ||
+    typeof previous.query !== "string" || !previous.query.trim() || previous.query.length > 300 || !previous.summary?.intent ||
+    previous.settings?.aiCapUsd !== 0.02 || ![25, BENCHMARK_TRANSPORT_LIMITS.ebayBrowse].includes(previous.settings?.browseCap) ||
+    ![64, BENCHMARK_TRANSPORT_LIMITS.prices].includes(previous.settings?.priceTransportsDiagnosticCap))) {
+    throw new Error("Resume/replay requires an original bounded-search report, its search ID, query, intent and unchanged limits.");
 }
-const previous = replayFile ? JSON.parse(await fs.readFile(path.resolve(replayFile), "utf8")) : null;
-if (previous && (!Array.isArray(previous.listings) || !previous.searchId || !previous.summary?.intent)) throw new Error("Replay requires a saved diagnostic report with listings, intent and the original search ID.");
 const searchId: string = previous?.searchId ?? randomUUID();
-const query: string = previous?.query ?? queryArg!.trim();
+const query: string = previous?.query ?? (command.mode === "live" ? command.query : "");
 const targets = { minProfit: 0, minRoi: 0 };
 const filters = { typeFilter: "FIXED_PRICE" as const, kindFilter: "all" as const };
 const includeOffers = false;
-const directory = path.resolve("data/search-benchmarks", `${new Date().toISOString().replace(/[:.]/g, "-")}-${live ? "live" : "replay"}-${searchId}`);
+const directory = path.resolve("data/search-benchmarks", `${new Date().toISOString().replace(/[:.]/g, "-")}-${command.mode}-${searchId}`);
 await fs.mkdir(directory, { recursive: true });
 const context = new AsyncLocalStorage<{ searchId: string; listingId?: string; phase: string }>();
-const observer = createBenchmarkTransport({ live, context: () => context.getStore() ?? { searchId, phase: "setup" }, allowAzureAuth: true });
+const browseCap = previous?.settings.browseCap ?? BENCHMARK_TRANSPORT_LIMITS.ebayBrowse;
+const priceTransportsDiagnosticCap = previous?.settings.priceTransportsDiagnosticCap ?? BENCHMARK_TRANSPORT_LIMITS.prices;
+const observer = createBenchmarkTransport({ live, context: () => context.getStore() ?? { searchId, phase: "setup" }, allowAzureAuth: true,
+    limits: { ebayBrowse: browseCap, prices: priceTransportsDiagnosticCap } });
 const originalFetch = globalThis.fetch;
 globalThis.fetch = observer.fetch;
 const report: {
@@ -46,17 +50,18 @@ const report: {
     snapshots: Record<string, unknown>; events: object[]; error?: string; transport?: unknown; costDelta?: object;
 } = {
     searchId, query, startedAt: new Date().toISOString(),
-    method: live ? "Actual bounded server search and evaluator under one existing spending/Browse scope; client eligibility/priority/feedback and two slots reproduced after metadata screening."
+    ...(command.mode === "resume" ? { resumedFrom: path.resolve(command.file) } : {}),
+    method: live ? `${command.mode === "resume" ? "Live retest preserving the original search ID, spending and provider counters. " : ""}Actual bounded server search and evaluator; client eligibility/priority/feedback and two slots reproduced after metadata screening.`
         : "Replay only the original completed assessments against saved metadata; same original search ID, SQL assessment/price reuse, all paid/provider transports prohibited.",
     limitations: [
         "One exact Buy It Now search, not an exhaustive marketplace scan or a general model accuracy evaluation.",
         "Not a browser timing test: automatic assessment begins after metadata screening; initial UI bootstrap/shortlist/set-year work is excluded.",
         "This diagnostic does not automatically retry network failures, force photo refreshes or run deeper reviews.",
-        `The diagnostic transport ceiling is ${BENCHMARK_TRANSPORT_LIMITS.prices} uncached PKMNPrices requests, alongside the production persistent all-stage allowance. Requests and charged credits are reported separately.`,
+        `The diagnostic transport ceiling is ${priceTransportsDiagnosticCap} uncached PKMNPrices requests, alongside the production persistent all-stage allowance. Requests and charged credits are reported separately.`,
         "Token-charge totals use actual returned usage and the existing configured rates; provider credit headers are not a cash invoice.",
         ...(live ? [] : ["Replayed listing availability is a saved snapshot, not a new eBay live check. Missing AI evidence fails before any reservation/preflight."]),
     ],
-    settings: { targets, filters, includeOffers, matchingRows: DEVELOPMENT_SEARCH_LIMIT, aiCapUsd: 0.02, browseCap: 25, priceTransportsDiagnosticCap: BENCHMARK_TRANSPORT_LIMITS.prices },
+    settings: { targets, filters, includeOffers, matchingRows: DEVELOPMENT_SEARCH_LIMIT, aiCapUsd: 0.02, browseCap, priceTransportsDiagnosticCap },
     listings: [], snapshots: {}, events: [],
 };
 const started = performance.now();
@@ -95,7 +100,7 @@ try {
     const stop = () => stopped.abort(new Error("Diagnostic stopped"));
     process.once("SIGINT", stop); process.once("SIGTERM", stop);
     try {
-        if (previous) {
+        if (command.mode === "replay") {
             report.summary = previous.summary;
             report.listings = previous.listings;
         } else await scope("sold-screening", () => withPriceResearchSignal(stopped.signal, () => searchDeals(query, {
@@ -112,7 +117,7 @@ try {
         const evaluate = createBoundedEvaluator(live ? {} : {
             assess: async () => { throw new Error("Cache replay needs a saved photo assessment; no paid replacement was authorized."); },
         });
-        const assessmentRows = previous ? report.listings.filter(listing => previous.queue?.evaluations?.[listing.id]) : report.listings;
+        const assessmentRows = command.mode === "replay" ? report.listings.filter(listing => previous.queue?.evaluations?.[listing.id]) : report.listings;
         report.queue = await runBenchmarkQueue(assessmentRows, {
             filters, targets, signal: stopped.signal, assertTransport: observer.assertNoBlock,
             evaluate: (listing, signal) => scope("assessment", () => evaluate(listing.id, {

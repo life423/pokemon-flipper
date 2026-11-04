@@ -1,6 +1,7 @@
 import type { Evaluation, ListingSummary, PhotoCheck } from "./types.ts";
 import { photoAssessmentConfidence, photoCoverage, photoIssueNotes } from "./photo-evidence.ts";
 import { isRawCondition } from "./conditions.ts";
+import { priceEvidenceGap } from "./money/price-evidence.ts";
 
 export const DEEP_PHOTO_LIMIT = 24;
 export function planDeeperPhotos(check: PhotoCheck | null, photos: string[]) {
@@ -100,5 +101,6 @@ export function photoReviewStatus(evaluation: Evaluation | null, listing?: Listi
 }
 
 export function isResearchDeferred(evaluation: Evaluation | null): boolean {
-    return evaluation?.researchMode === "DEFERRED_LOW_RESALE" && !photoReviewStatus(evaluation).needsYourReview;
+    return Boolean(evaluation && (evaluation.researchMode === "DEFERRED_LOW_RESALE" || priceEvidenceGap(evaluation)) &&
+        evaluation.listing.availability !== "UNAVAILABLE" && !photoReviewStatus(evaluation).needsYourReview);
 }

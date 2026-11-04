@@ -5,7 +5,7 @@ import { createSoldScreening } from "../../server/pricing/screening-sales.ts";
 import { ScreeningPriceBudgetError } from "../../server/pricing/pkmnprices.ts";
 import { PriceResearchBudgetError } from "../../server/pricing/research-budget.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
-import type { CardRecord, Comp } from "../../server/pricing/types.ts";
+import type { CardRecord, Comp, FetchSoldPage } from "../../server/pricing/types.ts";
 import type { ListingSummary, SearchIntent } from "../../shared/types.ts";
 import { applySoldPriceScreen } from "../../shared/money/sold-screen.ts";
 
@@ -17,12 +17,13 @@ const listing = (extra: Partial<ListingSummary> = {}): ListingSummary => ({ id: 
 let saleId = 0;
 const sale = (extra: Partial<Comp> = {}): Comp => ({ id: ++saleId, title: "Charizard Base Set 4/102 Unlimited Holo NM", price: 100, sold_at: new Date(NOW - DAY).toISOString(), variant: "Unlimited Holofoil", grader: null, grade: null, currency: "USD", sale_type: "fixed_price", grade_qualifier: null, attribution: "exact", listing_url: `https://www.ebay.com/itm/${saleId}`, ...extra });
 const three = (extra: Partial<Comp> = {}) => [90, 100, 110].map(price => sale({ price, ...extra }));
-function harness(options: { cards?: CardRecord[]; raw?: (record: number | string, label: string) => Promise<Comp[]>; graded?: (...args: any[]) => Promise<Comp[]>; lookup?: (...args: any[]) => Promise<CardRecord[]>; signal?: AbortSignal } = {}) {
-    const calls = { lookup: 0, raw: [] as unknown[][], graded: [] as unknown[][] };
+function harness(options: { cards?: CardRecord[]; raw?: (record: number | string, label: string) => Promise<Comp[]>; graded?: (...args: any[]) => Promise<Comp[]>; page?: FetchSoldPage; lookup?: (...args: any[]) => Promise<CardRecord[]>; signal?: AbortSignal } = {}) {
+    const calls = { lookup: 0, raw: [] as unknown[][], graded: [] as unknown[][], pages: [] as Parameters<FetchSoldPage>[] };
     const run = createSoldScreening({ now: () => NOW, signal: options.signal, source: {
         lookupCards: async query => { calls.lookup++; return options.lookup ? options.lookup(query) : options.cards ?? [card()]; },
         fetchRawComps: async (...args) => { calls.raw.push(args); return options.raw ? options.raw(...args) : three(); },
         fetchComps: async (...args) => { calls.graded.push(args); return options.graded ? options.graded(...args) : []; },
+        ...(options.page ? { fetchSoldPage: async (...args: Parameters<FetchSoldPage>) => { calls.pages.push(args); return options.page!(...args); } } : {}),
     } });
     return { run, calls };
 }
@@ -91,6 +92,28 @@ test("publisher and holder cleanup supports another exact species and grade with
     assert.equal(preliminary.status, "AVAILABLE"); assert.equal(preliminary.exactScope, false);
     assert.equal(applySoldPriceScreen(noSet, preliminary).screen.status, "UNSCREENED");
     assert.equal(calls.lookup, 1); assert.equal(calls.graded.length, 1);
+});
+
+test("Dragonite's publisher and artist sales count on their existing first page without following a cursor", async () => {
+    const wanted: SearchIntent = { ...intent, cardName: "Dragonite", sets: ["Fossil"], cardNumber: "4/62" };
+    const record = card({ id: 10726, name: "Dragonite", setName: "Fossil", cardNumber: "04/62" });
+    const sales = [
+        sale({ title: "Pokemon Dragonite Holo Fossil Unlimited 4/62 PSA 8", price: 355, sold_at: "2026-11-01", grader: "PSA", grade: "8" }),
+        sale({ title: "The Pokémon Company Fossil Dragonite Holo 4/62 Unlimited 1999 English PSA 8", price: 319, sold_at: "2026-10-29", grader: "PSA", grade: "8" }),
+        sale({ title: "Dragonite 4/62 Holo Rare Unlimited Fossil 1999 PSA 8 NM-MT Himeno", price: 402.02, sold_at: "2026-10-22", grader: "PSA", grade: "8" }),
+        sale({ title: "Pokemon Fossil Dragonite Holo Rare 4/62 Unlimited PSA 8 English 1999 W/ GUARD", price: 320, sold_at: "2026-10-20", grader: "PSA", grade: "8" }),
+        ...["The Pokémon Company Fossil Dark Dragonite 4/62 Unlimited Holo PSA 8", "Dragonite Fossil 5/62 Unlimited Holo PSA 8 Himeno",
+            "Dragonite Fossil 4/62 Unlimited Holo PSA 9 Himeno", "Dragonite Fossil 4/62 1st Edition Holo PSA 8 Himeno"].map(title => sale({ title, grader: "PSA", grade: "8" })),
+    ];
+    const { run, calls } = harness({ cards: [record], page: async (_id, target) => {
+        assert.equal(target.cursor, undefined, "four applicable first-page sales already satisfy this exact market");
+        return { sales, nextCursor: "unnecessary-page" };
+    } });
+    const result = await run(listing({ title: "Dragonite Fossil 4/62 Unlimited Holo PSA 8", isGraded: true }), wanted);
+    assert.equal(result.status, "AVAILABLE"); assert.equal(result.exactScope, true);
+    assert.equal(result.references[0].summary.count, 4);
+    assert.equal(result.references[0].summary.median, 337.5);
+    assert.equal(calls.pages.length, 1);
 });
 
 test("holder cleanup never upgrades missing-set, special-label or mixed-printing claims to an exclusion scope", async () => {
@@ -313,6 +336,29 @@ test("scoped catalog matching preserves modern printed forms and a post-grade EX
     assert.deepEqual(queries, [{ name, set, cardNumber: number }]); assert.equal(calls.graded.length, 1);
 });
 
+test("canonical catalog descriptors survive final sold-screen matching without dropping owners or printed forms", async () => {
+    for (const target of [
+        { name: "Snorlax", catalogName: "Snorlax Holofoil", set: "Jungle", number: "11/64", wrongName: "Dark Snorlax" },
+        { name: "Leafeon V", catalogName: "Leafeon V (Alternate Full Art)", set: "Evolving Skies", number: "167/203", wrongName: "Leafeon VMAX" },
+        { name: "Blaine's Arcanine", catalogName: "Blaine’s Arcanine", set: "Gym Challenge", number: "1/132", wrongName: "Arcanine" },
+    ]) {
+        const wanted = { ...intent, cardName: target.name, sets: [target.set], cardNumber: target.number };
+        const subject = listing({ title: `${target.name} ${target.set} ${target.number} Unlimited Holo PSA 8`, isGraded: true });
+        const { run, calls } = harness({ cards: [card({ name: target.catalogName, setName: target.set, cardNumber: target.number })],
+            graded: async () => [
+                ...three({ title: `${target.name} ${target.set} ${target.number} Unlimited Holo PSA 8`, grader: "PSA", grade: "8" }),
+                ...three({ title: `${target.wrongName} ${target.set} ${target.number} Unlimited Holo PSA 8`, grader: "PSA", grade: "8", price: 1000 }),
+            ] });
+        const result = await run(subject, wanted);
+        assert.equal(result.status, "AVAILABLE", target.name); assert.equal(result.exactScope, true, target.name);
+        assert.equal(result.references[0].summary.count, 3, target.name); assert.equal(result.references[0].summary.median, 100, target.name);
+        assert.equal(calls.graded.length, 1, target.name);
+        const wrongCatalog = harness({ cards: [card({ name: target.wrongName, setName: target.set, cardNumber: target.number })] });
+        assert.equal((await wrongCatalog.run(subject, wanted)).status, "UNAVAILABLE", target.name);
+        assert.equal(wrongCatalog.calls.graded.length, 0, target.name);
+    }
+});
+
 test("unknown residual words and lookalike name forms never trigger fallback catalog loops", async () => {
     for (const name of ["Dark Charizard", "Charizard ex", "Charizard VMAX", "Charizard curious variant"]) {
         const { run, calls } = harness();
@@ -375,6 +421,98 @@ test("sparse sales remain observations and graded evidence uses an explicit olde
     const slab = harness({ graded: async () => three({ title: "Charizard Base Set 4/102 Unlimited Holo PSA 8", grader: "PSA", grade: "8", sold_at: new Date(NOW - 100 * DAY).toISOString() }) });
     const old = await slab.run(listing({ title: "Charizard Base Set 4/102 Unlimited Holo PSA 8", isGraded: true }), intent);
     assert.equal(old.status, "AVAILABLE"); assert.equal(old.references[0].summary.windowDays, 180);
+});
+
+test("sparse slab pages recover applicable sales without mixing grade, finish, printing or unconfirmed amounts", async () => {
+    const slab = (extra: Partial<Comp> = {}) => sale({ title: "Charizard Base Set 4/102 Unlimited Holo PSA 8", grader: "PSA", grade: "8", ...extra });
+    const first = [slab({ price: 90 }), slab({ price: 100 })];
+    const { run, calls } = harness({ page: async (_id, target) => {
+        assert.equal(target.grader, "PSA"); assert.equal(target.grade, "8"); assert.equal(target.variant, "Unlimited Holofoil");
+        if (!target.cursor) return { sales: [...first,
+            slab({ title: "Charizard Base Set 4/102 1st Edition Holo PSA 8", variant: "1st Edition Holofoil" }),
+            slab({ title: "Charizard Base Set 4/102 Unlimited Reverse Holo PSA 8", variant: "Unlimited Reverse Holofoil" }),
+            slab({ title: "Charizard Base Set 4/102 Unlimited Holo PSA 9", grade: "9" }),
+            slab({ currency: "EUR" }), slab({ sale_type: null }), slab({ attribution: "shared" }),
+        ], nextCursor: "second" };
+        assert.equal(target.cursor, "second");
+        return { sales: [{ ...first[0], id: String(first[0].id) }, slab({ price: 110 }), slab({ price: 120 })], nextCursor: "third" };
+    } });
+    const subject = listing({ title: "Charizard Base Set 4/102 Unlimited Holo PSA 8", isGraded: true });
+    const result = await run(subject, intent);
+    assert.equal(result.status, "AVAILABLE"); assert.equal(result.exactScope, true);
+    assert.equal(result.references.length, 1); assert.equal(result.references[0].summary.count, 4);
+    assert.equal(result.references[0].summary.median, 105);
+    assert.deepEqual(calls.pages.map(([, target]) => target.cursor), [undefined, "second"]);
+    await run({ ...subject, id: "another-row" }, intent);
+    assert.equal(calls.pages.length, 2, "another listing reuses the recovered exact market");
+    assert.equal(calls.raw.length + calls.graded.length, 0);
+});
+
+test("three applicable first-page sales stop further sold-page research", async () => {
+    const { run, calls } = harness({ page: async (_id, target) => {
+        assert.equal(target.cursor, undefined, "enough matched sales must not request the next cursor");
+        return { sales: three(), nextCursor: "unused" };
+    } });
+    assert.equal((await run(listing(), intent)).status, "AVAILABLE");
+    assert.equal(calls.pages.length, 1);
+});
+
+test("raw pagination waits for three sales in one condition bucket and excludes duplicate transactions", async () => {
+    const nearMint = sale(), lightlyPlayed = sale({ title: "Charizard Base Set 4/102 Unlimited Holo LP" });
+    const { run, calls } = harness({ page: async (_id, target) => target.cursor
+        ? { sales: [nearMint, sale(), sale()], nextCursor: "unused" }
+        : { sales: [nearMint, lightlyPlayed, sale({ title: "Charizard Base Set 4/102 Unlimited Holo" })], nextCursor: "next" } });
+    const result = await run(listing(), intent);
+    assert.equal(result.status, "AVAILABLE");
+    assert.deepEqual(result.references.map(reference => [reference.condition, reference.summary.count]), [["NEAR_MINT", 3], ["LIGHTLY_PLAYED", 1], [null, 1]]);
+    assert.equal(calls.pages.length, 2);
+});
+
+test("outlier rejection cannot prematurely stop sparse-page recovery", async () => {
+    const { run, calls } = harness({ page: async (_id, target) => target.cursor
+        ? { sales: [sale({ price: 110 })], nextCursor: "unused" }
+        : { sales: [sale({ price: 90 }), sale({ price: 100 }), sale({ price: 10000 })], nextCursor: "next" } });
+    const result = await run(listing(), intent);
+    assert.equal(result.status, "AVAILABLE"); assert.equal(result.references[0].summary.count, 3);
+    assert.equal(result.references[0].summary.high, 110); assert.equal(calls.pages.length, 2);
+});
+
+test("an exhausted four-page market stays deferred and never repurchases its sparse evidence", async () => {
+    let cursor = 0;
+    const observation = sale();
+    const { run, calls } = harness({ page: async () => ({ sales: [observation, sale({ sale_type: null })], nextCursor: String(++cursor) }) });
+    const result = await run(listing(), intent);
+    assert.equal(result.status, "DEFERRED"); assert.equal(result.exactScope, false);
+    assert.equal(result.references[0].summary.count, 1); assert.equal(calls.pages.length, 4);
+    await run(listing(), intent); assert.equal(calls.pages.length, 4);
+});
+
+test("a repeating provider cursor cannot buy the same page again", async () => {
+    const observation = sale();
+    const { run, calls } = harness({ page: async () => ({ sales: [observation], nextCursor: "repeated" }) });
+    const result = await run(listing(), intent);
+    assert.equal(result.status, "UNAVAILABLE"); assert.equal(result.exactScope, false);
+    assert.equal(result.references[0].summary.count, 1); assert.equal(calls.pages.length, 2);
+});
+
+test("a request cap between pages retains sparse observations and prevents another row from retrying", async () => {
+    const { run, calls } = harness({ page: async (_id, target) => {
+        if (target.cursor) throw new ScreeningPriceBudgetError();
+        return { sales: [sale(), sale()], nextCursor: "deferred" };
+    } });
+    const result = await run(listing(), intent);
+    assert.equal(result.status, "DEFERRED"); assert.equal(result.references[0].summary.count, 2);
+    await run(listing(), intent); assert.equal(calls.pages.length, 2);
+});
+
+test("cancellation after a recovered page prevents dispatch of another cursor", async () => {
+    const controller = new AbortController();
+    const { run, calls } = harness({ signal: controller.signal, page: async (_id, target) => {
+        if (target.cursor) controller.abort(new Error("stop recovered page"));
+        return { sales: [sale()], nextCursor: target.cursor ? "never" : "second" };
+    } });
+    await assert.rejects(run(listing(), intent), /stop recovered page/);
+    assert.equal(calls.pages.length, 2);
 });
 
 test("storage failures propagate rather than authorizing replacement research", async () => {

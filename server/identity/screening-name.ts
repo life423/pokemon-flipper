@@ -1,13 +1,15 @@
 import { normalizeWords } from "./card-identity.ts";
+import { canonicalCatalogName, sameCatalogName } from "./catalog-name.ts";
 
 // These are listing metadata, never an invitation to match a shorter species
 // name. In particular, printed prefixes/suffixes and owners are not stop words.
-const BOILERPLATE = /\b(?:wizards(?:\s+of\s+(?:the\s+)?coast)?|light[ -]play|swirl|mitsuhiro\s+arita|arita)\b(?!['’])/gi;
+const BOILERPLATE = /\b(?:wizards(?:\s+of\s+(?:the\s+)?coast)?|(?:the\s+)?pok[eé]mon\s+company|light[ -]play|(?:partial\s+)?swirl|mitsuhiro\s+arita|arita)\b(?!['’])/gi;
 const GRADER = "(?:psa|cgc|bgs|sgc|tag)";
 const GRADE = "(?:10|[1-9](?:\\.5)?)(?![\\d./])";
 const DESCRIPTION = "(?:near[ -]+mint(?:[ -]+to[ -]+mint)?|gem[ -]+(?:mint|mt)|nm[ -]+(?:mint|mt)|ex[ -]+mt|vg[ -]+ex|very[ -]+good|excellent|pristine|mint|good|poor|fair|nm|ex|mt|vg)";
 const GRADE_SPAN = new RegExp(`\\b${GRADER}\\s*(?:${DESCRIPTION}[ -]+)*${GRADE}(?:[ -]+(${DESCRIPTION}))?`, "gi");
 const INCLUDED_HOLDER_SUFFIX = /\s+(?:with|w\s*\/|includes?|including)\s+(?:(?:a|an|the)\s+)?(?:(?:protective|protection|magnetic|acrylic|hard|fitted|display|slab)\s+)*(?:guards?|cases?|holders?|sleeves?|top[ -]?loaders?)\s*[.!]?\s*$/i;
+const GRADED_ARTIST_SUFFIX = /\s+(?:kagemaru\s+)?himeno\s*$/i;
 
 // normalizeWords normally discards symbols. Gender and these printed forms
 // distinguish cards, so preserve them even when a catalog uses Unicode glyphs.
@@ -22,24 +24,31 @@ function removeLastWord(value: string, word: string): string {
     return last?.index === undefined ? value : value.slice(0, last.index) + " " + value.slice(last.index + last[0].length);
 }
 
+function removeObservedSuffix(value: string, suffix: RegExpMatchArray, title: string): string {
+    const outsideSuffix = title.slice(0, suffix.index);
+    for (const word of screeningNameKey(suffix[0]).split(" ").filter(Boolean).reverse()) {
+        const occurrences = (text: string) => [...text.matchAll(new RegExp(`\\b${word}\\b(?!['’])`, "gi"))].length;
+        if (occurrences(value) > occurrences(outsideSuffix)) value = removeLastWord(value, word);
+    }
+    return value;
+}
+
 // Clean only the input used to extract/reconcile a name. All exclusion and
 // printing/finish/grade readers still inspect the untouched seller title.
 // A holder is metadata only when explicitly accompanying a numerically graded
 // slab; an unanchored Guard/name fragment must never disappear.
 export function stripListingNameBoilerplate(value: string, title = value): string {
-    let cleaned = value.replace(BOILERPLATE, " ");
+    let cleaned = value.replace(/[‘’]/g, "'").replace(BOILERPLATE, " ");
+    const graded = new RegExp(GRADE_SPAN.source, "i").test(title);
+    const artist = graded ? title.match(GRADED_ARTIST_SUFFIX) : null;
+    if (artist) cleaned = removeObservedSuffix(cleaned, artist, title);
     const suffix = title.match(INCLUDED_HOLDER_SUFFIX);
-    if (!suffix || !new RegExp(GRADE_SPAN.source, "i").test(title)) return cleaned;
+    if (!suffix || !graded) return cleaned;
     if (INCLUDED_HOLDER_SUFFIX.test(cleaned)) return cleaned.replace(INCLUDED_HOLDER_SUFFIX, " ");
     // Earlier literal readings may have removed "with" already. Remove only
     // excess source-observed suffix words, keeping any occurrences belonging
     // to the printed name (e.g. a name containing Guard).
-    const outsideHolder = title.slice(0, suffix.index);
-    for (const word of screeningNameKey(suffix[0]).split(" ").filter(Boolean).reverse()) {
-        const occurrences = (text: string) => [...text.matchAll(new RegExp(`\\b${word}\\b(?!['’])`, "gi"))].length;
-        if (occurrences(cleaned) > occurrences(outsideHolder)) cleaned = removeLastWord(cleaned, word);
-    }
-    return cleaned;
+    return removeObservedSuffix(cleaned, suffix, title);
 }
 
 function cleanedClaim(claim: string, title: string): string {
@@ -64,6 +73,16 @@ function cleanedClaim(claim: string, title: string): string {
     // they are not globally removed from arbitrary printed card names.
     if (/\bpok[eé]mon\s+game\b/i.test(title)) value = value.replace(/\bgame\b(?!['’])/gi, " ");
     if (/\bunlimited\s+set\b/i.test(title)) value = value.replace(/\bset\b(?!['’])/gi, " ");
+    // A residual "edition" or rarity "R" is metadata only when its source
+    // title supplies the matching phrase. Keep unanchored letters (Unown R)
+    // and any separate occurrence belonging to the printed name.
+    const descriptors = /\b(?:(?:unlimited|first|1st|shadowless)\s+(edition)|(?:holo(?:graphic|foil)?|foil|rare)\s+(r)|(partial)\s+swirl|(?:the\s+)?pok[eé]mon\s+(company))\b(?!['’])/gi;
+    const outsideDescriptors = title.replace(descriptors, " ");
+    for (const match of title.matchAll(descriptors)) {
+        const word = match[1] ?? match[2] ?? match[3] ?? match[4];
+        const occurrences = (text: string) => [...text.matchAll(new RegExp(`\\b${word}\\b(?!['’])`, "gi"))].length;
+        if (occurrences(value) > occurrences(outsideDescriptors)) value = removeLastWord(value, word);
+    }
     return value.replace(/(^|\s)[–—-]+(?=\s|$)/g, " ").replace(/\s+/g, " ").trim();
 }
 
@@ -77,8 +96,7 @@ export function resolveScreeningName({ title, claims, candidate }: {
     candidate?: string | null;
 }): string | null {
     const names = claims.filter((value): value is string => Boolean(value?.trim())).map(value => cleanedClaim(value, title));
-    if (!names.length || names.some(name => !screeningNameKey(name))) return null;
-    const key = screeningNameKey(names[0]);
-    if (names.some(name => screeningNameKey(name) !== key)) return null;
-    return candidate?.trim() && screeningNameKey(candidate) === key ? candidate.trim() : names[0];
+    if (!names.length || names.some(name => !canonicalCatalogName(name))) return null;
+    if (names.some(name => !sameCatalogName(name, names[0]))) return null;
+    return candidate?.trim() && sameCatalogName(candidate, names[0]) ? candidate.trim() : names[0];
 }

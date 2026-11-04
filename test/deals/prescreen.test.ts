@@ -4,6 +4,9 @@ import { prescreen } from "../../server/deals/prescreen.ts";
 import { sellerCondition } from "../../shared/conditions.ts";
 import { toCardRecord } from "../../server/pricing/pkmnprices.ts";
 import { canAutoAnalyze, resultGroup } from "../../shared/analysis.ts";
+import { identifyCard } from "../../server/identity/card-identity.ts";
+import { rawPricesFor } from "../../server/pricing/raw-prices.ts";
+import { underwrite } from "../../shared/money/underwriting.ts";
 
 const NOW = Date.parse("2026-09-30T00:00:00Z");
 
@@ -104,11 +107,43 @@ test("a raw card priced well under its best case is a candidate", async () => {
     assert.ok(result.bestCase.maxBid > 300);
 });
 
-test("a raw card that can't clear the targets even at its best is dropped", async () => {
+test("negative raw market context retains its math without rejecting missing grading upside", async () => {
     const result = await prescreen(rawLugia({ price: 2000 }), deps);
 
-    assert.equal(result.status, "DROPPED");
+    assert.equal(result.status, "UNSCREENED");
+    assert.equal(result.needsAnalysis, "PRICE_EVIDENCE");
+    assert.equal(result.money.priceEvidenceIncomplete, true);
     assert.ok(result.bestCase.maxBid < 2000);
+});
+
+test("fully priced preliminary raw and grading routes can still reject a price that fails every target", async () => {
+    const result = await prescreen(rawLugia({ price: 2000 }), { ...deps,
+        fetchRawComps: async () => PSA9.slice(0, 3).map((item, index) => ({ ...item, id: index, price: 531.39,
+            sold_at: "2026-09-25", title: "Lugia Neo Genesis Unlimited 9/111 Holo NM", grader: null, grade: null, currency: "USD" })),
+        fetchComps: async (_recordId, { grader, grade }) => String(grade) === "9" ? PSA9.map(item => ({ ...item, grader,
+            title: item.title.replace(/PSA/g, grader) })) : [],
+    });
+    assert.equal(result.status, "DROPPED");
+    assert.equal(result.money.priceEvidenceIncomplete, undefined);
+    assert.ok(result.bestCase.maxBid < 2000);
+    assert.ok(result.money.paths.every(path => typeof path.downsideNet === "number"));
+});
+
+test("a profitable raw market reference is preliminary potential while final underwriting remains unpriced", async () => {
+    const listing = rawLugia({ title: "Lugia 9/111 Neo Genesis 1st Edition Holo", price: 500 });
+    const result = await prescreen(listing, { ...deps, fetchComps: async () => [] });
+    assert.equal(result.status, "CANDIDATE");
+    assert.equal(result.bestCase.label, "Sell raw");
+    assert.equal(result.money.priceEvidenceIncomplete, true);
+    assert.equal(result.money.paths.find(path => path.path === "RAW").downsideNet, undefined);
+    assert.match(result.reason, /estimates.*matched resale evidence.*not a verified deal/i);
+    const { identity, card } = await identifyCard(listing, { printingMarks: { firstEditionStamp: "VISIBLE", artBoxShadow: "ABSENT" },
+        printedName: null, printedNumber: null, slab: null }, { lookupCards: deps.lookupCards });
+    const final = underwrite({ listing, identity, rawPricing: rawPricesFor(card, identity),
+        condition: { rawCondition: "NEAR_MINT", gradeRange: null, authenticity: { concern: "NONE_SEEN", reasons: [] } } });
+    assert.equal(final.verdict, "CANT_PRICE");
+    assert.ok(final.best.profit > 0);
+    assert.equal(final.best.downside, null);
 });
 
 test("the seller's condition caps its displayed best case while a priced condition upgrade can request verification", async () => {

@@ -7,9 +7,13 @@ import { writeJsonAtomic } from "../lib/atomic-json.ts";
 import { withFileLease } from "../lib/file-lease.ts";
 import { createKeyedLock } from "../lib/keyed-lock.ts";
 import { getAiUsageContext, type AiUsageContext } from "../ai/usage-context.ts";
+import { recordProviderUsage } from "../lib/provider-usage.ts";
 import type { PricingResearchUsage } from "../../shared/pricing-usage.ts";
 
-export const PRICE_RESEARCH_LIMIT = 64;
+// New searches receive more research headroom. A stored search keeps the
+// allowance under which its requests were reserved, including exhausted IDs.
+export const PRICE_RESEARCH_LIMIT = 128;
+const LEGACY_PRICE_RESEARCH_LIMIT = 64;
 type FailureReason = "LIMIT" | "SCOPE" | "ACCOUNT" | "STORAGE" | "LOCK" | "STATE";
 export class PriceResearchBudgetError extends Error {
     readonly code = "PRICE_RESEARCH_BUDGET";
@@ -33,7 +37,7 @@ interface Attempt {
     headers: Record<string, number>;
     rows: number | null;
 }
-interface Ledger { version: 1; searchId: string; limit: typeof PRICE_RESEARCH_LIMIT; attempts: Attempt[] }
+interface Ledger { version: 1; searchId: string; limit: typeof PRICE_RESEARCH_LIMIT | typeof LEGACY_PRICE_RESEARCH_LIMIT; attempts: Attempt[] }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HASH = /^[a-f0-9]{64}$/;
 const LISTING = /^[a-zA-Z0-9_|:-]{1,200}$/;
@@ -49,8 +53,8 @@ function scope(searchId: string | undefined): string {
     if (!searchId || !UUID.test(searchId)) throw new PriceResearchBudgetError("A valid search UUID is required before price research can start. Follow-up work must keep the original search ID and its request allowance.", "SCOPE");
     return searchId.toLowerCase();
 }
-function capError(): PriceResearchBudgetError {
-    return new PriceResearchBudgetError(`This search has reached its ${PRICE_RESEARCH_LIMIT}-request price-research allowance. Saved market evidence remains available; this is a search limit, not exhausted provider credits.`, "LIMIT");
+function capError(limit: Ledger["limit"]): PriceResearchBudgetError {
+    return new PriceResearchBudgetError(`This search has reached its ${limit}-request price-research allowance. Saved market evidence remains available; this is a search limit, not exhausted provider credits.`, "LIMIT");
 }
 function request(path: string): { requestHash: string; endpoint: Endpoint } {
     if (typeof path !== "string" || !/^\/(?!\/)/.test(path) || /[\r\n\\]/.test(path)) throw new PriceResearchBudgetError("The price-research endpoint is invalid. No provider request was authorized.", "STATE");
@@ -88,7 +92,8 @@ function validAttempt(value: unknown): value is Attempt {
 }
 function summarize(ledger: Ledger): PricingResearchUsage {
     const completed = ledger.attempts.filter(attempt => attempt.state === "COMPLETE");
-    const provider = completed.filter(attempt => ["x-credits-limit", "x-credits-remaining", "x-credits-balance", "x-credits-reset"].some(key => attempt.headers[key] !== undefined)).at(-1)?.headers;
+    const observed = completed.filter(attempt => ["x-credits-limit", "x-credits-remaining", "x-credits-balance", "x-credits-reset"].some(key => attempt.headers[key] !== undefined)).at(-1);
+    const provider = observed?.headers;
     return { searchId: ledger.searchId, limit: ledger.limit, used: ledger.attempts.length, remaining: ledger.limit - ledger.attempts.length,
         completed: completed.length, pending: ledger.attempts.filter(attempt => attempt.state === "PENDING").length,
         unresolved: ledger.attempts.filter(attempt => attempt.state === "UNRESOLVED").length,
@@ -97,13 +102,15 @@ function summarize(ledger: Ledger): PricingResearchUsage {
         returnedRows: completed.reduce((sum, attempt) => sum + (attempt.rows ?? 0), 0),
         unreportedRowAttempts: ledger.attempts.filter(attempt => attempt.rows === null).length,
         provider: provider ? { limit: provider["x-credits-limit"] ?? null, remaining: provider["x-credits-remaining"] ?? null,
-            balance: provider["x-credits-balance"] ?? null, resetSeconds: provider["x-credits-reset"] ?? null } : null };
+            balance: provider["x-credits-balance"] ?? null, resetSeconds: provider["x-credits-reset"] ?? null, observedAt: observed!.completedAt! } : null };
 }
 
 // This local namespace is derived from the configured key, not a provider
 // account identity. Key rotation/independent replicas need shared authority;
 // neither a calendar change nor a process restart resets this search ledger.
-export function createPriceResearchBudget({ directory, now = Date.now }: { directory: string; now?: () => number }) {
+export function createPriceResearchBudget({ directory, now = Date.now, providerKey, observeProviderUsage = recordProviderUsage }: {
+    directory: string; now?: () => number; providerKey?: string; observeProviderUsage?: typeof recordProviderUsage;
+}) {
     const locked = createKeyedLock();
     const fileFor = (id: string) => path.join(directory, `${hash(id)}.json`);
     async function read(id: string): Promise<Ledger> {
@@ -114,8 +121,9 @@ export function createPriceResearchBudget({ directory, now = Date.now }: { direc
             throw new PriceResearchBudgetError("The price-research accounting could not be read. No new provider request was authorized.", "STORAGE");
         }
         const ledger = value as Ledger | null;
-        if (!ledger || Object.keys(ledger).some(key => !["version", "searchId", "limit", "attempts"].includes(key)) || ledger.version !== 1 || ledger.searchId !== id || ledger.limit !== PRICE_RESEARCH_LIMIT || !Array.isArray(ledger.attempts) ||
-            ledger.attempts.length > PRICE_RESEARCH_LIMIT || !ledger.attempts.every(validAttempt) || new Set(ledger.attempts.map(attempt => attempt.id.toLowerCase())).size !== ledger.attempts.length ||
+        if (!ledger || Object.keys(ledger).some(key => !["version", "searchId", "limit", "attempts"].includes(key)) || ledger.version !== 1 || ledger.searchId !== id ||
+            ledger.limit !== PRICE_RESEARCH_LIMIT && ledger.limit !== LEGACY_PRICE_RESEARCH_LIMIT || !Array.isArray(ledger.attempts) ||
+            ledger.attempts.length > ledger.limit || !ledger.attempts.every(validAttempt) || new Set(ledger.attempts.map(attempt => attempt.id.toLowerCase())).size !== ledger.attempts.length ||
             !Number.isSafeInteger(ledger.attempts.reduce((sum, attempt) => sum + (attempt.headers["x-credits-charged"] ?? 0), 0)))
             throw new PriceResearchBudgetError("The price-research accounting is invalid. Its evidence was kept and no new provider request was authorized.", "STATE");
         return ledger;
@@ -136,14 +144,14 @@ export function createPriceResearchBudget({ directory, now = Date.now }: { direc
         async summary(searchId?: string): Promise<PricingResearchUsage | null> { return searchId === undefined ? null : summarize(await read(scope(searchId))); },
         async assertAvailable(searchId: string | undefined, signal?: AbortSignal): Promise<void> {
             signal?.throwIfAborted(); const ledger = await read(scope(searchId)); signal?.throwIfAborted();
-            if (ledger.attempts.length >= ledger.limit) throw capError();
+            if (ledger.attempts.length >= ledger.limit) throw capError(ledger.limit);
         },
         async reserve(path: string, context: AiUsageContext, signal?: AbortSignal): Promise<PriceRequestReservation> {
             signal?.throwIfAborted(); const id = scope(context.searchId), target = request(path);
             const attempt: Attempt = { ...target, id: randomUUID(), listingId: context.listingId && LISTING.test(context.listingId) ? context.listingId : null,
                 reservedAt: new Date(now()).toISOString(), completedAt: null, state: "PENDING", status: null, headers: {}, rows: null };
             await edit(id, async ledger => {
-                signal?.throwIfAborted(); if (ledger.attempts.length >= ledger.limit) throw capError();
+                signal?.throwIfAborted(); if (ledger.attempts.length >= ledger.limit) throw capError(ledger.limit);
                 await writeJsonAtomic(fileFor(id), { ...ledger, attempts: [...ledger.attempts, attempt] });
             }, signal);
             signal?.throwIfAborted();
@@ -151,7 +159,7 @@ export function createPriceResearchBudget({ directory, now = Date.now }: { direc
                 complete: async (response, body) => {
                     if (!Number.isInteger(response.status) || response.status < 100 || response.status > 599) throw new PriceResearchBudgetError("The price response has no usable HTTP status; its request remains unresolved.", "STATE");
                     const result = { status: response.status, headers: numericHeaders(response), rows: returnedRows(body) };
-                    await edit(id, async ledger => {
+                    const observation = await edit(id, async ledger => {
                         const saved = ledger.attempts.find(value => value.id === attempt.id);
                         if (!saved) throw new PriceResearchBudgetError("The reserved price request is missing from its ledger. No additional request was authorized.", "STATE");
                         if (saved.state === "COMPLETE") {
@@ -165,7 +173,19 @@ export function createPriceResearchBudget({ directory, now = Date.now }: { direc
                         // the same millisecond or the machine clock moves back.
                         ledger.attempts = [...ledger.attempts.filter(value => value.id !== saved.id), saved];
                         await writeJsonAtomic(fileFor(id), ledger);
+                        return { headers: { ...saved.headers }, completedAt: saved.completedAt! };
                     });
+                    // Record only a newly completed durable response. Its reset
+                    // seconds belong to that observation time, not a later poll.
+                    // Monitoring never turns an accepted paid response into an
+                    // error or a reason to purchase replacement evidence.
+                    if (observation && providerKey?.trim()) try {
+                        const limit = observation.headers["x-credits-limit"], remaining = observation.headers["x-credits-remaining"], resetSeconds = observation.headers["x-credits-reset"];
+                        if (count(limit) && limit > 0 && count(remaining) && remaining <= limit && count(resetSeconds) && resetSeconds > 0) {
+                            const resetsAt = new Date(Date.parse(observation.completedAt) + resetSeconds * 1000).toISOString();
+                            await observeProviderUsage("PKMNPRICES", providerKey, { limit, remaining, observedAt: observation.completedAt, resetsAt });
+                        }
+                    } catch { /* Durable pricing evidence remains authoritative when monitoring is unavailable. */ }
                 },
                 unresolved: async () => edit(id, async ledger => {
                     const saved = ledger.attempts.find(value => value.id === attempt.id);
@@ -183,7 +203,7 @@ function currentBudget() {
     if (!key) throw new PriceResearchBudgetError("A configured price-service key is required before uncached price research can start.", "ACCOUNT");
     const account = hash(key);
     let budget = budgets.get(account);
-    if (!budget) { budget = createPriceResearchBudget({ directory: path.join(DATA_DIR, "price-research-budgets", account) }); budgets.set(account, budget); }
+    if (!budget) { budget = createPriceResearchBudget({ directory: path.join(DATA_DIR, "price-research-budgets", account), providerKey: key }); budgets.set(account, budget); }
     return budget;
 }
 export function priceResearchSummary(searchId = getAiUsageContext().searchId) {

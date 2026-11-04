@@ -3,6 +3,7 @@ import { dollars, percent } from "../format.ts";
 import { auctionOutlook, describeOutlook, usualPrice } from "./auction.ts";
 import { pathNumbers } from "./underwriting.ts";
 import { MONEY_CONFIG } from "./config.ts";
+import { referencePriceReason } from "./price-evidence.ts";
 import type { AuctionOutlook, CompSummary, Confidence, Evaluation, PricedPath, Rating, RatingLevel } from "../types.ts";
 
 // How good a deal is, beyond clearing your targets. Plain rules on what
@@ -38,13 +39,18 @@ function compsBehind(evaluation: RatingInput, best: PricedPath): CompSummary[] {
         return byGrade.filter((summary) => grades.includes(Number(summary.grade)));
     }
 
+    if (best.path === "RAW") {
+        const quote = evaluation.rawPricing?.prices?.find(price => price.condition === best.priceCondition);
+        return quote?.basis === "EBAY_SOLD" && quote.comps?.count ? [quote.comps] : [];
+    }
+
     return [];
 }
 
 export function rateDeal(evaluation: RatingInput): Rating | null {
     const underwriting = evaluation.underwriting;
 
-    if (!underwriting?.verdict.startsWith("BUY") || !underwriting.best) return null;
+    if (!underwriting?.verdict.startsWith("BUY") || !underwriting.best || referencePriceReason(evaluation, underwriting.best)) return null;
 
     const { best } = underwriting;
     const { listing } = evaluation;
@@ -81,9 +87,11 @@ export function rateDeal(evaluation: RatingInput): Rating | null {
     }
 
     if (best.path !== "RAW") {
-        const lowEnd = best.path === "GRADE" ? "in the lowest modeled resale scenario" : evaluation.slabPricing?.activeReference ? "at the competing-listing resale target" : "at the lowest recent sale";
+        const lowEnd = best.path === "GRADE" ? "in the lowest modeled resale scenario" : "at the lowest recent sale";
 
-        if (best.downside >= 0) {
+        if (best.downside === null) {
+            concerns.push("The downside resale value is unknown.");
+        } else if (best.downside >= 0) {
             strengths.push(`Still profitable ${lowEnd}.`);
         } else {
             concerns.push(`Loses ${dollars(-best.downside)} ${lowEnd}.`);
@@ -109,7 +117,8 @@ export function rateDeal(evaluation: RatingInput): Rating | null {
             strengths.push("Every price behind it rests on 5 or more recent verified sales.");
         } else if (weakest.confidence !== "MEDIUM") {
             const sales = weakest.count === 1 ? "sale" : "sales";
-            concerns.push(`Only ${weakest.count} verified ${weakest.grader} ${weakest.grade} ${sales} behind the price.`);
+            const scope = best.path === "RAW" && best.priceCondition ? `${CONDITION_NAMES[best.priceCondition]} raw` : `${weakest.grader} ${weakest.grade}`;
+            concerns.push(`Only ${weakest.count} verified ${scope} ${sales} behind the price.`);
         }
     }
 

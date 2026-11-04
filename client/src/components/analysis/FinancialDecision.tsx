@@ -10,8 +10,19 @@ import { Tween } from "../Tween";
 import { Notes, Pairs, Section } from "./primitives";
 import { isResearchDeferred } from "../../../../shared/photo-review.ts";
 import styles from "../DetailPanel.module.css";
+import { priceEvidenceGap } from "../../../../shared/money/price-evidence.ts";
 
 export function FinancialDecision({ evaluation, targets, now }: { evaluation: Evaluation; targets: Targets; now: number }) {
+    const priceGap = priceEvidenceGap(evaluation);
+    if (priceGap) return <Section title="Resale price unconfirmed">
+        <p>{priceGap}</p>
+        <Pairs rows={[
+            [evaluation.listing.buyingOption === "AUCTION" ? "Current bid" : "Asking price", dollars(evaluation.listing.price)],
+            ["Shipping", evaluation.listing.shipping === null ? "Not quoted" : dollars(evaluation.listing.shipping)],
+            ...(evaluation.underwriting?.best ? [["Reference resale estimate before costs", dollars(evaluation.underwriting.best.salePrice)]] as [string, ReactNode][] : []),
+        ]} />
+        <p className={styles.small}>Saved photo findings remain available. A purchase or bid limit needs matched resale evidence; this estimate is not a purchase recommendation.</p>
+    </Section>;
     if (isResearchDeferred(evaluation)) return <Section title="Automatic research deferred">
         <p>{evaluation.rawPricing?.evidenceNote}</p>
         <p className={styles.small}>This is not a completed purchase recommendation. Run full research below to assess the resale routes; saved photo assessments will be reused.</p>
@@ -135,7 +146,7 @@ function VerdictSection({
     );
 }
 
-export function PathCard({ path, auction }: { path: MoneyPath; auction: boolean }) {
+export function PathCard({ path, auction, referenceReason }: { path: MoneyPath; auction: boolean; referenceReason?: string | null }) {
     if (path.status !== "PRICED") {
         return (
             <div className={styles.path}>
@@ -145,6 +156,17 @@ export function PathCard({ path, auction }: { path: MoneyPath; auction: boolean 
         );
     }
 
+    if (referenceReason) return <div className={styles.path}>
+        <h4>{path.label} · reference estimate</h4>
+        <p className={styles.muted}>{referenceReason}</p>
+        <Pairs rows={[
+            ["Reference resale before costs", dollars(path.salePrice)],
+            ["Total purchase and route costs", dollars(path.cost)],
+            ["Modeled result at that reference", dollars(path.profit)],
+            ["Downside resale value", "Unknown"],
+        ]} />
+        <p className={styles.small}>The modeled result depends on an unverified resale reference. No purchase or bid limit is recommended from it.</p>
+    </div>;
     const sale: [string, ReactNode][] =
         path.path === "GRADE"
             ? [
@@ -170,7 +192,7 @@ export function PathCard({ path, auction }: { path: MoneyPath; auction: boolean 
                         ? [
                               ["Cost at your max bid", dollars(path.costAtMaxBid)],
                               ["Profit at your max bid", `${dollars(path.profitAtMaxBid)} (${returnText(path.costAtMaxBid && path.profitAtMaxBid != null ? path.profitAtMaxBid / path.costAtMaxBid : null)})`],
-                              ["Modeled downside at your max bid", dollars(path.downsideAtMaxBid)],
+                              ["Modeled downside at your max bid", path.downsideAtMaxBid === null ? "Unknown" : dollars(path.downsideAtMaxBid)],
                           ]
                         : [
                               ["All-in cost", dollars(path.cost)],
@@ -180,7 +202,7 @@ export function PathCard({ path, auction }: { path: MoneyPath; auction: boolean 
                                       {dollars(path.profit)} ({returnText(path.cost > 0 ? path.profit / path.cost : null)})
                                   </span>,
                               ],
-                              ["Modeled downside", dollars(path.downside)],
+                              ["Modeled downside", path.downside === null ? "Unknown" : dollars(path.downside)],
                           ]) as [string, ReactNode][]),
                     [auction ? "Max bid" : "Max price", <strong>{dollars(path.maxBid)}</strong>],
                 ]}

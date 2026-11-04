@@ -20,6 +20,7 @@ import type { ShortlistEntry } from "../../shared/shortlist.ts";
 import { ShortlistView } from "./components/ShortlistView";
 import { AiBudgetStatus } from "./components/AiBudgetStatus";
 import { PriceResearchStatus } from "./components/PriceResearchStatus";
+import { ProviderUsageNotice } from "./components/ProviderUsageNotice";
 import type { DeeperReviewState } from "./components/PhotoReview";
 import { DealCard } from "./components/DealCard";
 import { PricingRetries } from "./components/PricingRetries";
@@ -207,7 +208,7 @@ export function App() {
 
     const [rawAnalyses, setAnalyses] = useState<Record<string, AnalysisState>>({});
     useEffect(() => {
-        if (!Object.values(rawAnalyses).some(analysis => analysis.status === "loading")) return;
+        if (searchStatus !== "checking" && linkStatus !== "loading" && !pricingBusy && !Object.values(rawAnalyses).some(analysis => analysis.status === "loading")) return;
         let active = true;
         // This endpoint reads local accounting only; it never calls providers.
         const timer = window.setInterval(() => {
@@ -215,7 +216,7 @@ export function App() {
             fetchAiUsage(id).then(value => { if (active && searchRunId.current === id) setAiUsage(value); }, () => {});
         }, 1500);
         return () => { active = false; window.clearInterval(timer); };
-    }, [rawAnalyses]);
+    }, [rawAnalyses, searchStatus, linkStatus, pricingBusy]);
     const pricingAnalyses = useRef(rawAnalyses);
     pricingAnalyses.current = rawAnalyses;
     const [analysisOutcomes, setAnalysisOutcomes] = useState<boolean[]>([]);
@@ -966,6 +967,7 @@ export function App() {
                         />
                     </header>
 
+                    <ProviderUsageNotice usage={aiUsage?.providers} now={now} />
                     <AiBudgetStatus budget={aiUsage?.budget} calls={aiUsage?.calls ?? 0} />
                     <PriceResearchStatus usage={aiUsage?.pricing} />
                     {analysisBlocked && <AnalysisBlockedNotice message={analysisBlocked} code={analysisBlockCode} onRetry={() => {

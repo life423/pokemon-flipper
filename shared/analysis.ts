@@ -5,6 +5,7 @@ import { AI_CONCURRENCY } from "./work-limits.ts";
 import { AUTOMATIC_PRICE_CEILING, withinAutomaticAuctionWindow } from "./listing-filters.ts";
 import { photoReviewStatus } from "./photo-review.ts";
 import { observedCardKind } from "./photo-evidence.ts";
+import { priceEvidenceGap } from "./money/price-evidence.ts";
 
 // Automatic analysis and its progress counts use the same eligibility rule.
 export function canAutoAnalyze(listing: ListingSummary): boolean {
@@ -32,6 +33,9 @@ export type ResultGroup = "deals" | "offers" | "candidates" | "review";
 
 export function resultGroup(listing: ListingSummary, evaluation: Evaluation | null, includeOffers = false, analysisFailed = false): ResultGroup | null {
     const verdict = evaluation?.underwriting?.verdict;
+    if (evaluation && evaluation.listing?.availability !== "UNAVAILABLE" && priceEvidenceGap(evaluation)) {
+        return photoReviewStatus(evaluation).needsYourReview ? "review" : "candidates";
+    }
     if (evaluation?.pricingDeferred && evaluation.listing.availability !== "UNAVAILABLE" && !verdict?.startsWith("BUY")) {
         const check = evaluation.photoCheck, card = check?.cardIdentity;
         const materialReview = evaluation.identity?.notThisCard ||

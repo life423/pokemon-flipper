@@ -62,6 +62,14 @@ export type FetchComps = (
     options: { grader: string; grade: number | string; variant?: string }
 ) => Promise<Comp[]>;
 
+// Screening chooses whether another page is useful after applying the same
+// identity, transaction and market checks used for its sold summaries.
+export interface SoldPage { sales: Comp[]; nextCursor: string | null }
+export type FetchSoldPage = (
+    recordId: CardRecord["id"],
+    options: { variant: string; grader: string | null; grade: string | null; cursor?: string }
+) => Promise<SoldPage>;
+
 // The card a set of comps is priced for, as the comp checker reads it.
 export interface CompTarget {
     conditionEvidence?: "AI_PHOTOS";

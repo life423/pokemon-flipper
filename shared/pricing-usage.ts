@@ -14,5 +14,5 @@ export interface PricingResearchUsage {
     returnedRows: number;
     unreportedRowAttempts: number;
     // Last observed numeric account headers; not a projected current balance.
-    provider: { limit: number | null; remaining: number | null; balance: number | null; resetSeconds: number | null } | null;
+    provider: { limit: number | null; remaining: number | null; balance: number | null; resetSeconds: number | null; observedAt?: string } | null;
 }

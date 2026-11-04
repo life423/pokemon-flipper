@@ -68,7 +68,7 @@ export function describeOffer(plan: OfferPlan, asking: number): string {
 export function numbersAtOffer(path: PricedPath, plan: OfferPlan) {
     const { profit, roi } = pathNumbers({
         expectedNet: path.expectedNet,
-        downsideNet: path.downside + path.cost,
+        downsideNet: path.downside === null ? null : path.downside + path.cost,
         fixedCosts: path.fixedCosts,
         shipping: path.shipping,
         price: plan.offer,

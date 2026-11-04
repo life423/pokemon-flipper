@@ -77,3 +77,43 @@ test("name cleanup does not remove unanchored, ungraded or unrelated holder word
         assert.notEqual(resolveScreeningName({ title, claims: [claim], candidate: "Charizard" }), "Charizard", title);
     }
 });
+
+test("source-observed rarity and edition descriptors reconcile literal names without erasing Unown letters", () => {
+    for (const [title, claim, candidate] of [
+        ["POKEMON UNGRADED SNORLAX 11/64 HOLO R JUNGLE NM", "snorlax r", "Snorlax"],
+        ["1999 Pokemon Jungle Snorlax Holo #11/64 Rare Unlimited Edition TCG Card Ungraded", "snorlax edition", "Snorlax"],
+        ["Gym Challenge Blaine's Arcanine 1/132 Damaged Pokemon Unlimited Holo R Tcg Card", "blaine's arcanine r", "Blaine's Arcanine"],
+        ["Blaine's Arcanine 1/132 Gym Challenge PARTIAL SWIRL Holo Rare Pokemon Card DMG", "blaine's arcanine partial", "Blaine's Arcanine"],
+        ["Unown R 61/75 Holo R Neo Discovery", "unown r r", "Unown R"],
+    ]) assert.equal(resolveScreeningName({ title, claims: [claim], candidate }), candidate, title);
+    for (const [title, claim] of [
+        ["Unown R Neo Discovery 61/75 Holo", "Unown R"],
+        ["Snorlax R Jungle 11/64", "Snorlax R"],
+        ["Snorlax Edition Jungle 11/64", "Snorlax Edition"],
+        ["Blaine's Arcanine Partial Gym Challenge 1/132", "Blaine's Arcanine Partial"],
+    ]) assert.equal(resolveScreeningName({ title, claims: [claim], candidate: "Snorlax" }), claim, title);
+});
+
+test("canonical catalog descriptors reconcile claims while owner and form conflicts remain distinct", () => {
+    assert.equal(resolveScreeningName({ title: "Snorlax 11/64 Holofoil Jungle", claims: ["Snorlax", "snorlax holofoil"], candidate: "Snorlax" }), "Snorlax");
+    assert.equal(resolveScreeningName({ title: "Leafeon V Evolving Skies 167/203", claims: ["Leafeon V", "Leafeon V (Alternate Full Art)"], candidate: "Leafeon V" }), "Leafeon V");
+    assert.equal(resolveScreeningName({ title: "Blaine’s Arcanine Gym Challenge", claims: ["Blaine’s Arcanine", "Blaine's Arcanine"], candidate: "Blaine's Arcanine" }), "Blaine's Arcanine");
+    assert.equal(resolveScreeningName({ title: "Blaine's Arcanine Gym Challenge", claims: ["Arcanine", "Blaine's Arcanine"], candidate: "Arcanine" }), null);
+    assert.equal(resolveScreeningName({ title: "Leafeon VMAX", claims: ["Leafeon VMAX", "Leafeon V"], candidate: "Leafeon V" }), null);
+});
+
+test("exact publisher phrases and graded artist suffixes clean real sold-title residue conservatively", () => {
+    for (const [title, claim] of [
+        ["The Pokémon Company Fossil Dragonite Holo 4/62 Unlimited 1999 English PSA 8", "company dragonite"],
+        ["Dragonite 4/62 Holo Rare Unlimited Fossil 1999 PSA 8 NM-MT Himeno", "dragonite -mt himeno"],
+        ["Dragonite Fossil 4/62 Unlimited Holo PSA 8 Kagemaru Himeno", "dragonite kagemaru himeno"],
+    ]) assert.equal(resolveScreeningName({ title, claims: ["Dragonite", claim], candidate: "Dragonite" }), "Dragonite", title);
+    for (const [title, claim] of [
+        ["Company Dragonite Fossil PSA 8", "Company Dragonite"],
+        ["Dragonite Fossil 4/62 Himeno", "Dragonite Himeno"],
+        ["Dragonite Fossil PSA Himeno", "Dragonite Himeno"],
+        ["Himeno's Dragonite Fossil PSA 8", "Himeno's Dragonite"],
+        ["Pokemon Company's Dragonite Fossil PSA 8", "Pokemon Company's Dragonite"],
+        ["Dark Dragonite Fossil 4/62 PSA 8 Himeno", "Dark Dragonite"],
+    ]) assert.equal(resolveScreeningName({ title, claims: [claim], candidate: "Dragonite" }), claim, title);
+});

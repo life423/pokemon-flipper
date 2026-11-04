@@ -12,6 +12,7 @@ import { dollars } from "../../shared/format.ts";
 import type { BuyingOption, CompSummary, Screen, Underwriting } from "../../shared/types.ts";
 import { usualPrice } from "../../shared/money/auction.ts";
 import { retargetScreen } from "../../shared/money/targets.ts";
+import { referencePriceReason } from "../../shared/money/price-evidence.ts";
 import { pricingIssue } from "../pricing/errors.ts";
 import { MIN_AUTOMATIC_RAW_RESALE, CHEAP_FIRST_EDITION_BASE_SET_LIMIT } from "../../shared/research-policy.ts";
 
@@ -260,6 +261,8 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
     const { verdict, reasons, best, paths } = outcome;
     const bestCase = best ? { label: best.label, maxBid: best.maxBid, profit: best.profit, roi: best.roi } : null;
     const priced = paths.filter((path) => path.status === "PRICED");
+    const hasReferencePrice = priced.some(path => referencePriceReason(input, path) !== null);
+    const priceEvidenceIncomplete = !listing.isGraded && (hasReferencePrice || paths.some(path => path.path === "GRADE" && path.status !== "PRICED"));
     const playedPrices = (rawPrices.prices ?? []).filter((price) => ["MODERATELY_PLAYED", "HEAVILY_PLAYED", "DAMAGED"].includes(price.condition));
     const money = best
         ? {
@@ -271,23 +274,25 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
                   const support = available.reduce<CompSummary | undefined>((least, summary) =>
                       !least || summary.count < least.count ? summary : least, undefined);
                   return { label: path.label, expectedNet: path.expectedNet, fixedCosts: path.fixedCosts,
-                      path: path.path, downsideNet: path.downside + path.cost,
+                      path: path.path, ...(path.downside === null ? {} : { downsideNet: path.downside + path.cost }),
                       compCount: support?.count, compConfidence: support?.confidence };
               }),
               ...(playedPrices.length ? { rawFloorNet: netFromSale(Math.min(...playedPrices.map((price) => price.price)), "raw", config.selling) } : {}),
               auction: listing.buyingOption === "AUCTION",
               usual: usualPrice(paths, input.slab ? input.slabPricing?.summary : null),
               bestOffer: listing.bestOffer,
+              ...(priceEvidenceIncomplete ? { priceEvidenceIncomplete: true } : {}),
           }
         : undefined;
 
-    if (verdict.startsWith("BUY") || verdict === "PASS") {
-        // Reprice the supported paths against the current purchase targets.
+    if (verdict.startsWith("BUY") || verdict === "PASS" || verdict === "CANT_PRICE" && best && hasReferencePrice) {
+        // A final reference-only CANT_PRICE still contains useful preliminary
+        // math. This compatibility screen selects research, never a final Deal.
         const screened = retargetScreen(screen("DROPPED", reasons[0] ?? null, { card: cardInfo, bestCase, assumed, money, priceAnomaly }), listing.price, config.targets, config, includeOffers);
         const claimed = sellerCondition(listing.cardCondition);
         const betterConditions = claimed === "LIGHTLY_PLAYED" ? ["NEAR_MINT", "MINT"] as const
             : claimed === "NEAR_MINT" ? ["MINT"] as const : [];
-        if (!listing.isGraded && screened.status === "DROPPED" && input.condition) {
+        if (!listing.isGraded && screened.status !== "CANDIDATE" && input.condition) {
             for (const targetCondition of betterConditions) {
                 const quote = marketRawPrices.prices?.find(price => price.condition === targetCondition && price.price >= MIN_AUTOMATIC_RAW_RESALE);
                 if (!quote) continue;
@@ -296,7 +301,7 @@ export async function prescreen(listing: ScreenInput, deps: ScreenDeps): Promise
                 // This reuses feed quotes and money math, with no new comp calls.
                 const alternative = underwrite({ ...input, rawPricing: marketRawPrices, gradedPricing: null,
                     condition: { ...input.condition, rawCondition: targetCondition } }, config);
-                if (alternative.verdict !== "BUY_RAW") continue;
+                if (alternative.best?.path !== "RAW" || !alternative.best.clears) continue;
                 return { ...screened, status: "UNSCREENED", needsAnalysis: "IDENTITY",
                     conditionUpside: { sellerCondition: claimed, targetCondition, rawMarketPrice: quote.price },
                     reason: `Listed ${CONDITION_NAMES[claimed]}. If photos instead support ${CONDITION_NAMES[targetCondition]}, the ${dollars(quote.price)} raw market quote could clear your targets. AI must verify the condition; this is not a verified deal.` };

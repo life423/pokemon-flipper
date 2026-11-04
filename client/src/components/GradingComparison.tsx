@@ -2,6 +2,7 @@ import type { Evaluation } from "../types";
 import { dollars } from "../format";
 import { gradingRoutes } from "../../../shared/card-presentation.ts";
 import styles from "./DecisionSummary.module.css";
+import { priceEvidenceGap } from "../../../shared/money/price-evidence.ts";
 
 export function GradingComparison({ evaluation, expanded = false }: { evaluation: Evaluation; expanded?: boolean }) {
     const routes = gradingRoutes(evaluation);
@@ -14,6 +15,6 @@ export function GradingComparison({ evaluation, expanded = false }: { evaluation
             {priced && <p className={`${styles.note} ${priced.profit < 0 ? styles.loss : styles.gain}`}>{priced.profit < 0 ? "Estimated loss" : "Estimated net profit"} {dollars(Math.abs(priced.profit))} {evaluation.listing.buyingOption === "AUCTION" ? "at current bid" : "at asking price"}</p>}
             {expanded && <><p className={styles.note}>{priced ? `Grading + shipping ${dollars(priced.fixedCosts)} · item limit ${dollars(priced.maxBid)}` : reason}</p></>}
         </div>)}</div>
-        {evaluation.underwriting?.best?.path === "RAW" && <p className={styles.note}>Separate grading scenarios. Selected strategy: sell raw.</p>}
+        {evaluation.underwriting?.best?.path === "RAW" && <p className={styles.note}>Separate grading scenarios. {priceEvidenceGap(evaluation) ? "Raw resale reference shown; a purchase strategy is not confirmed." : "Selected strategy: sell raw."}</p>}
     </section>;
 }
