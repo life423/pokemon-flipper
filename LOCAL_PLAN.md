@@ -10,6 +10,38 @@ were committed and pushed on main. Current work is on
 improve/consistent-sold-pricing. Markdown notes are tracked; no handoff was
 created. The pre-existing .env.example deletion remains unrelated/uncommitted.
 
+## Focused priority and retired-writer cleanup — November 4
+
+After 2c4c13a, continued with two narrow corrections and caller-proven deletion.
+Raw seller HP/damage/conflict cautions now survive missing market context and
+priced priority bands, after financial band selection. They affect order only,
+never physical condition, eligibility or financial verdicts. Slab routes are
+exempt. Unknown shipping uses the configured $7 research allowance instead of
+the screen's conservative $0 exclusion fallback. Replaying the saved $120 Light
+Dragonite terms gives priority profit -$4.83 instead of +$2.75. Its structured
+HP claim is available only with saved details; generic search summaries do not
+supply absent condition notes, and no extra detail fetch was introduced.
+
+Removed the orphan main-photo matcher, orphan discovery writer/wrapper and two
+exclusive writer test files after repository-wide caller tracing. No new module
+was added. Saved discovery keys/version/model, cleaning, compatibility types,
+pure matching and SQL public-cache routing remain, with a no-provider regression.
+Current bounded/deeper assessments and their active cancellation/save tests
+remain. All 1,016 isolated tests, both typechecks, build and whitespace pass.
+Current README feature descriptions now reflect one-sale pricing, saved-only
+retry compatibility and retirement of unused discovery writers.
+
+One fresh Kangaskhan Jungle holo CGC9 scope resolved 05/64 and retained seven
+rows, using one Browse and five PKMN requests/17 reported credits, zero AI.
+Cache-only diagnosis: First Edition page empty; all 13 Unlimited amounts have
+sale_type:null, so none establishes a confirmed transaction price. Eleven pass
+title matching; two date-formatted suffixes leave name residue. Provider docs
+confirm null sale type can retain an accepted offer's asking amount. Missing
+coverage was recorded separately from negative economics; no Deal manufactured.
+Private evidence stays in data/candidate-validation/2026-11-04/focused-slab-bin/.
+Original two-cent caps stayed unchanged. See LOCAL_TODO.md for the confirmed-sale
+filter, prose photo-number mismatch and structural-clue follow-ups.
+
 ## Consistent sold pricing and varied BIN check — November 4
 
 Final graded valuation now applies the existing sold-target name/set/number/

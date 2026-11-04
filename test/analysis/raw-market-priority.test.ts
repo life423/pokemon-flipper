@@ -82,19 +82,70 @@ test("seller-condition conflicts remain inspectable without claiming a verified 
     assert.equal(rawMarketContext(ambiguous)?.caution, "SELLER_CONDITION_CONFLICT"); assert.equal(canAutoAnalyze(ambiguous), true);
 });
 
+test("raw seller cautions order priced research independently of shipping or exact market context", t => {
+    t.mock.method(globalThis, "fetch", () => { assert.fail("Research ordering must not call providers"); });
+    for (const mode of ["ordinary-context", "unknown-shipping", "incomplete-scope"]) {
+        for (const warning of ["HP", "DAMAGED", "CONFLICT"]) {
+            const shipping = mode === "unknown-shipping" ? null : 0;
+            const ordinary = candidate("ordinary", 50, shipping, 2), warned = candidate("warned", 50, shipping, 14);
+            for (const row of [ordinary, warned]) {
+                row.screen!.soldEvidence!.exactScope = mode !== "incomplete-scope";
+                row.screen!.money = { shipping: 0, auction: false, bestOffer: false, usual: null,
+                    paths: [{ path: "RAW", label: "Preliminary raw comparison", expectedNet: row === warned ? 400 : 200,
+                        fixedCosts: 0, compCount: 10, compConfidence: "HIGH" }] };
+            }
+            if (warning === "HP") warned.title += " HP";
+            else if (warning === "DAMAGED") warned.cardCondition = "DAMAGED";
+            else { warned.title += " NM"; warned.cardCondition = "Lightly Played"; }
+            const before = JSON.stringify([ordinary, warned]), eligible = canAutoAnalyze(warned);
+            const priority = analysisPriority(warned, targets);
+            assert.equal(priority.band, 2, `${mode}/${warning}`);
+            assert.equal(priority.rawResearchCaution, warning === "CONFLICT" ? "SELLER_CONDITION_CONFLICT" : "SELLER_DAMAGE");
+            if (mode !== "ordinary-context") assert.equal(priority.rawMarketContext, null);
+            assert.ok(priority.expectedProfit! > analysisPriority(ordinary, targets).expectedProfit!);
+            assert.ok(priority.evidence > analysisPriority(ordinary, targets).evidence);
+            assert.ok(compareAnalysisPriority(ordinary, warned, targets) < 0, "caution precedes stronger photos and optimistic profit within the same financial band");
+            assert.match(priority.reason, warning === "CONFLICT" ? /Seller condition claims disagree/ : /Seller describes heavy play or damage/);
+            assert.equal(eligible, true); assert.equal(canAutoAnalyze(warned), eligible);
+            assert.equal(JSON.stringify([ordinary, warned]), before, "seller claims, financial paths and eligibility remain unchanged");
+        }
+    }
+});
+
 test("LP-to-cleaner upside, unverified Mint claims and unknown conditions keep the ordinary raw research path", () => {
     for (const cardCondition of ["Lightly Played", "Near Mint", "Mint", null, "Unknown", "NM?"]) {
         const row = candidate("ordinary-upside", 50); row.cardCondition = cardCondition;
         const original = JSON.stringify(row), priority = analysisPriority(row, targets);
         assert.equal(priority.rawMarketContext?.caution, null, String(cardCondition)); assert.equal(priority.contextPriority, true);
+        assert.equal(priority.rawResearchCaution, null);
         assert.equal(canAutoAnalyze(row), true); assert.equal(priority.expectedProfit, null); assert.equal(priority.investment, null);
         assert.equal(row.screen?.bestCase, null); assert.equal(row.screen?.money, undefined);
         assert.equal(JSON.stringify(row), original, "seller Mint never becomes an assessed condition or predicted grade");
     }
     const holder = candidate("holder-only", 50); holder.cardCondition = "Near Mint"; holder.conditionNotes = ["The holder is damaged, but the card is near mint."];
     assert.equal(analysisPriority(holder, targets).contextPriority, true, "holder damage cannot lower raw-card priority");
+    assert.equal(analysisPriority(holder, targets).rawResearchCaution, null);
     const hitPoints = candidate("hit-points", 50); hitPoints.title += " 120 HP"; hitPoints.cardCondition = "Near Mint";
     assert.equal(analysisPriority(hitPoints, targets).contextPriority, true, "HP stats do not contradict the saved seller condition");
+    assert.equal(analysisPriority(hitPoints, targets).rawResearchCaution, null);
+});
+
+test("financial bands still take precedence over raw caution and slab research receives no raw penalty", () => {
+    const warned = candidate("warned", 50), grade = candidate("grade", 50), slab = candidate("slab", 50);
+    warned.cardCondition = "HEAVILY_PLAYED";
+    for (const row of [warned, grade, slab]) row.screen!.money = { shipping: 0, auction: false, bestOffer: false, usual: null,
+        paths: [{ path: row === grade ? "GRADE" : row === slab ? "GRADED_RESALE" : "RAW", label: "Existing research path", expectedNet: 250,
+            fixedCosts: 0, compCount: 1, compConfidence: "LOW" }] };
+    slab.isGraded = true; slab.cardCondition = "HEAVILY_PLAYED"; slab.conditionNotes = ["The holder is damaged."];
+    assert.equal(analysisPriority(warned, targets).band, 2); assert.equal(analysisPriority(grade, targets).band, 1);
+    assert.ok(compareAnalysisPriority(warned, grade, targets) < 0, "a seller clue cannot override the existing financial-band policy");
+    assert.equal(analysisPriority(slab, targets).rawResearchCaution, null);
+    assert.doesNotMatch(analysisPriority(slab, targets).reason, /Seller describes|Seller condition claims/);
+    assert.equal(analysisPriority(slab, targets).band, 2);
+    const staleCategory = { ...slab, isGraded: false };
+    assert.equal(analysisPriority(staleCategory, targets).rawResearchCaution, null, "the existing slab resale route also protects a corrected seller category");
+    assert.equal(analysisPriority(staleCategory, targets).expectedProfit, analysisPriority(slab, targets).expectedProfit);
+    assert.equal(canAutoAnalyze(warned), true); assert.equal(canAutoAnalyze(slab), true);
 });
 
 test("raw market context never excludes above-median CGC/PSA grading upside or changes verdicts", () => {

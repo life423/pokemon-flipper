@@ -1,14 +1,32 @@
+import "../fixtures/isolated-data.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sellerMistakes } from "../../server/deals/seller-mistakes.ts";
 import { confirmPhotoIdentity } from "../../server/identity/photo-confirmation.ts";
-import { photoFitsSearch } from "../../server/ai/photo-find.ts";
+import { photoFitsSearch, savedPhotoInspection } from "../../server/ai/photo-find.ts";
+import { readCache, writeCache } from "../../server/lib/cache.ts";
+import { MODEL } from "../../server/ai/openai.ts";
 
 const card = { name: "Charizard", set: "Base Set", cardNumber: "4/102", language: "English", finish: "HOLO", confidence: "HIGH", evidence: ["Printed Charizard, 4/102, Base artwork and copyright"] };
 const marks = { firstEditionStamp: "VISIBLE", artBoxShadow: "ABSENT", reprintMark: "NONE_SEEN" };
 const scan = { cardCount: 1, isStockImage: false, card, printingMarks: marks, shows: "Charizard 4/102" };
 const full = { cardCount: "ONE", holder: "NONE", cardIdentity: card, printingMarks: marks, images: [{ view: "FRONT", usable: true, isStockImage: false }], problems: [] };
 const kinds = (title, photo = scan, claims = {}) => sellerMistakes({ title }, photo, claims).map((entry) => entry.kind);
+
+test("retired discovery keeps accepted version-five readings reusable across image sizes without buying or rewriting evidence", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("saved discovery compatibility must not call providers"));
+    const fullSize = "https://i.ebayimg.com/images/g/saved-discovery-compatibility/s-l1600.jpg";
+    const key = `photo-find:v5:${MODEL}:${fullSize}`;
+    const accepted = { ...scan, card: { ...card, set: "Base Set (no set symbol)" } };
+    await writeCache(key, accepted);
+    for (const size of [225, 500, 1600]) {
+        const saved = await savedPhotoInspection(fullSize.replace("1600", String(size)));
+        assert.deepEqual(saved, { ...accepted, card: { ...accepted.card, set: "Base Set" } });
+        assert.equal(photoFitsSearch(saved!, { cardName: "Charizard", sets: ["Base Set"], cardNumber: "4/102", printing: "FIRST_EDITION" }), true);
+    }
+    assert.deepEqual(await readCache(key, 24 * 365), accepted, "normalizing a reader result must retain the original accepted cache record");
+    assert.equal(await savedPhotoInspection(fullSize.replace("saved-discovery", "missing-discovery")), null);
+});
 
 test("seller mistakes cover spelling, omitted stamps, Shadowless, holo, wrong sets and generic names", () => {
     for (const [wrong, name] of [["Charzard", "Charizard"], ["Blastiose", "Blastoise"], ["Venusuar", "Venusaur"]]) {

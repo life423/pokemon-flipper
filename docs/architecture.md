@@ -144,6 +144,19 @@ All paths below are relative to the repository root.
 | Cards and analysis details | `client/src/components/DealCard.tsx`, `DetailPanel.tsx`, `components/analysis/` | `AnalysisDetails` composes financial, evidence, price and offer sections with shared presentation primitives. |
 | Liquidity/activity labels | `shared/liquidity.ts` | Describe retained matched-sale samples honestly; a broader volume fetch no longer runs as a separate writer. |
 
+`shared/analysis-priority.ts` orders eligible work without purchasing evidence.
+Raw seller HP/damage/conflict clues remain ordering cautions even when market
+context is missing; they never assign physical condition or reject a listing.
+Financial bands retain precedence, and actual slab resale gets no raw penalty.
+Unknown shipping uses the configured purchase allowance for priority; the $0
+screening fallback remains limited to conservative exclusion math.
+
+The unused main-photo matcher and discovery photo writers have been removed.
+`server/ai/photo-find.ts` retains the exact version-five saved-reading key,
+cleaning, compatibility type and pure search-matching helper. Existing cache
+records and SQL key routing remain intact. Current bounded/deeper assessment
+and shared cancellation/save behavior remain covered by their active tests.
+
 The manual pricing-retry endpoint, trusted ticket consumer and UI remain for
 compatibility. The current bounded price-first path already did not issue new
 tickets before this cleanup. Reconnecting an explicit bounded retry or retiring

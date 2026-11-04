@@ -28,6 +28,22 @@ test("actual targets change the queue priority; profitable below-target raw resa
     assert.ok(compareAnalysisPriority(grade, raw, targets) < 0);
 });
 
+test("unknown purchase shipping uses the normal ranking assumption while quoted zero and source money stay unchanged", () => {
+    for (const path of ["RAW", "GRADE", "GRADED_RESALE"]) {
+        const quoted = candidate("quoted-zero", { path, price: 120, net: 132.65, fixed: 0, shipping: 0 });
+        const unknown = candidate("unknown-shipping", { path, price: 120, net: 132.65, fixed: 0, shipping: null });
+        unknown.screen.money.shipping = 0;
+        const before = JSON.stringify([quoted, unknown]);
+        const knownPriority = analysisPriority(quoted, any), unknownPriority = analysisPriority(unknown, any);
+        assert.equal(knownPriority.investment, 129.9); assert.equal(knownPriority.expectedProfit, 2.75);
+        assert.equal(knownPriority.band, path === "GRADE" ? 1 : 2);
+        assert.equal(unknownPriority.investment, 137.48); assert.equal(unknownPriority.expectedProfit, -4.83);
+        assert.equal(unknownPriority.band, 0, "a missing freight quote cannot supply positive-net priority");
+        assert.equal(unknown.screen.money.shipping, 0, "the conservative preliminary exclusion fallback remains untouched");
+        assert.equal(JSON.stringify([quoted, unknown]), before);
+    }
+});
+
 test("clearer photo evidence and supported comps outrank an equally speculative jackpot", () => {
     const credible = candidate("credible");
     const speculative = candidate("speculative", { net: 100000, photos: 1, main: "CANT_TELL", count: 1, confidence: "LOW", shipping: null });

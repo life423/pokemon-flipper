@@ -9,6 +9,29 @@ Catalog/search ecae9e9, raw resale 489ebb7 and catalog-name coverage b123ed7 are
 committed and pushed on main. Current work: improve/consistent-sold-pricing.
 No handoff was created; preserve the unrelated .env.example deletion.
 
+## Current focused cleanup — November 4
+
+- [x] Reuse seller-condition clues directly in raw research priority, including
+  priced rows and incomplete market context. Keep eligibility/condition/verdicts
+  unchanged and financial bands ahead of cautions; exempt actual slab resale.
+- [x] Use the configured shipping allowance for research priority when delivery
+  is unquoted; retain actual free quotes and conservative exclusion math.
+- [x] Retire both caller-proven unused paid photo writers and their exclusive
+  implementation tests. Keep saved version-five discovery readers, exact keys,
+  compatibility types/pure helpers and active cancellation/save tests.
+- [x] Pass 1,016 isolated tests, both typechecks, build and whitespace checks.
+- [ ] Fix prose photo references that use reviewed-input ordinals while structured
+  evidence uses original listing numbers. Preserve accepted prose; avoid a blind
+  regex rewrite or paid reassessment merely to change numbering.
+- [ ] Evaluate negation/holder-aware structural-condition clues (e.g. seller
+  creasing notes). Current raw ranking catches HP/damaged/conflicting claims,
+  and cannot use details that the search summary never supplied. Do not assign
+  a physical condition or add blanket keyword exclusions from these clues.
+- [ ] Evaluate PKMNPrices' documented confirmed-sale-type filter before cold
+  requests, preserving shared cache/cursor provenance and original allowances.
+  The latest CGC9 sample's 13 historical amounts all have unknown sale type;
+  fixing its two date-formatted title residues would still not establish prices.
+
 ## Current pricing consistency — November 4
 
 - [x] Reuse the exact sold-target matcher in final graded prices, before window
@@ -1333,5 +1356,5 @@ Verification of No Symbol saved compatibility: strict Jolteon replay /Users/andr
 
 ### Orphan photo-writer cleanup candidates — November 4, 2026
 
-- [ ] Later retire the unused main-photo matching writer coherently with `test/ai/photo-match.test.ts`. Caller proof: repository-wide references to `createMainPhotoMatcher`/`matchMainPhoto` exist only in `server/ai/photo-match.ts` and that test file; no app, server route or script calls the writer. Preserve or relocate `fullSizePhoto`, still imported by `server/ai/photo-find.ts`; preserve active bounded/shared-work cancellation, accepted-save and cache coverage. No photo-matcher cleanup implemented in this pass.
-- [ ] Later retire the unused discovery photo writer coherently with `test/ai/photo-find-cancellation.test.ts`. Caller proof: `inspectCardPhoto` is called only by its own `findCardInPhoto` wrapper and that test; `findCardInPhoto` has no external callers. Preserve `PhotoInspection` compatibility types used in `server/deals/seller-mistakes.ts` and `server/identity/photo-confirmation.ts`, and assess the pure `photoFitsSearch` compatibility tests in `test/search/seller-mistakes.test.ts`/`test/search/criteria.test.ts` separately. No photo-find cleanup implemented in this pass.
+- [x] Retired unused main-photo matching writer and its five implementation tests after caller recheck; its exact URL helper now lives with the saved discovery reader. Historical records and SQL public-key recognition remain intact.
+- [x] Retired unused discovery photo writer/wrapper and its exclusive cancellation test. Kept `PhotoInspection`, saved version-five key/cleaning and pure `photoFitsSearch`; existing search/identity compatibility tests and a no-provider saved-reader regression cover reuse. Active bounded/deeper/shared-work cancellation and accepted-save tests remain.
