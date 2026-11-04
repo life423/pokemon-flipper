@@ -7,6 +7,7 @@ import {
     finishOfVariant,
     sameCardNumber,
     sameSetFamily,
+    normalizeSetName,
     type PrintingClaim,
 } from "../identity/card-identity.ts";
 import { readTitleByRules } from "../ai/title-reader.ts";
@@ -20,15 +21,26 @@ import { jungleNoSymbolReason } from "../../shared/jungle-no-symbol.ts";
 // Shared evidence rules for raw and graded sold comparables. These functions
 // filter and summarize supplied sales without fetching prices or photos.
 
-// Preserve a negative edition claim as metadata rather than leaving "no"
-// attached to the name after the literal reader removes "1st Edition".
-export const readSoldTitleClaims = (title: string, knownSets: readonly string[] = []) => readTitleByRules(title.replace(/\b(?:no|not|without|non)[\s-]*(?:1st|first)[\s-]*ed(?:ition|it)?\b/gi, "Unlimited"), knownSets);
+// Keep terminal provider provenance out of the card name, recognize the literal
+// Base (Shadowless) alias, and preserve a negative edition claim as metadata.
+// Callers retain untouched source titles for pricing exclusions and provenance.
+export function readSoldTitleClaims(title: string, knownSets: readonly string[] = []) {
+    const teamRocket = knownSets.some(set => normalizeSetName(set) === "team rocket");
+    const returnsRelease = teamRocket ? title.match(/\b(?:EX[\s-]+)?(?:Team[\s-]+)?Rocket[\s-]+Returns\b/i)?.[0] : undefined;
+    const normalized = title.replace(/\s*\[eBay\]\s*$/i, "")
+        .replace(/\bbase\s*\(\s*shadowless\s*\)/gi, "Base Set (Shadowless)")
+        .replace(teamRocket ? /\bpok[eé]mon[\s-]+rocket\b(?![\s-]+returns\b)/gi : /$^/g, "Pokemon Team Rocket")
+        .replace(/\b(?:no|not|without|non)[\s-]*(?:1st|first)[\s-]*ed(?:ition|it)?\b/gi, "Unlimited");
+    const reading = readTitleByRules(normalized, knownSets);
+    // A longer observed release must not borrow the ordinary Rocket alias.
+    return returnsRelease ? { ...reading, set: returnsRelease } : reading;
+}
 export function matchesSoldTarget(sale: Comp, target: { name: string; setName: string | null; cardNumber: string | null }, grader: string | null = null, grade: string | null = null): boolean {
     const reading = readSoldTitleClaims(sale.title, target.setName ? [target.setName] : []);
-    const name = resolveScreeningName({ title: sale.title, claims: [reading.cardName], candidate: target.name });
+    const name = resolveScreeningName({ title: sale.title, claims: [reading.cardName], candidate: target.name, set: target.setName });
     return !(reading.kind && reading.kind !== "SINGLE_CARD" || reading.language === "Other" ||
         reading.cardName && (!name || !sameCatalogName(name, target.name)) ||
-        reading.set && !sameSetFamily(reading.set, target.setName) ||
+        reading.set && !sameSetFamily(reading.set, target.setName) && !sameSetFamily(target.setName, reading.set) ||
         reading.cardNumber && !sameCardNumber(reading.cardNumber, target.cardNumber) ||
         grader && reading.grader && reading.grader !== grader ||
         grade && reading.grade && Number(reading.grade) !== Number(grade));

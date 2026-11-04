@@ -357,20 +357,21 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                         // Resolving another copy's resale price cannot settle
                         // this copy's suspected structural damage or authenticity.
                         if (condition.creases === "SUSPECTED" || condition.authenticity.concern !== "NONE_SEEN") return null;
-                        const pending = sales.filter(sale => sold.status(sale, identity) === "UNREVIEWED" &&
-                            matchesSoldTarget(sale, { name: identity.name!, setName: identity.set, cardNumber: identity.cardNumber }));
-                        // Seller condition is a research clue, never the accepted
-                        // category. Avoid buying a review of a known different
-                        // category while a like-for-like comparison is available.
-                        const claimed = pending.filter(sale => compCondition(sale.title) === condition.rawCondition);
-                        const candidates = claimed.length ? claimed : pending.filter(sale => compCondition(sale.title) === null);
                         const shipping = listing.shipping ?? MONEY_CONFIG.buying.assumedShippingWhenUnknown;
-                        const sale = candidates.filter(sale => {
+                        const pending = sales.filter(sale => sold.status(sale, identity) === "UNREVIEWED" &&
+                            matchesSoldTarget(sale, { name: identity.name!, setName: identity.set, cardNumber: identity.cardNumber })).filter(sale => {
                             if (listing.price === null || !Number.isFinite(sale.price) || sale.price <= 0) return false;
                             const net = netFromSale(sale.price, "raw", MONEY_CONFIG.selling);
                             return pathNumbers({ expectedNet: net, downsideNet: net, fixedCosts: 0, shipping, price: listing.price },
                                 { ...MONEY_CONFIG, targets: { minProfit: 0, minRoi: 0 } }).profit > 0;
-                        }).sort((a, b) => Date.parse(b.sold_at) - Date.parse(a.sold_at))[0];
+                        });
+                        // Seller condition is a research clue, never the accepted
+                        // category. Avoid buying a review of a known different
+                        // category while an economically relevant like-for-like
+                        // comparison is available.
+                        const claimed = pending.filter(sale => compCondition(sale.title) === condition.rawCondition);
+                        const candidates = claimed.length ? claimed : pending.filter(sale => compCondition(sale.title) === null);
+                        const sale = candidates.sort((a, b) => Date.parse(b.sold_at) - Date.parse(a.sold_at))[0];
                         if (!sale) return null;
                         const evidence = await guarded(() => sold.acquire(sale, identity, signal));
                         return evidence ? { sale, evidence } : null;

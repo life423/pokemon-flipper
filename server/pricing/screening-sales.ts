@@ -12,6 +12,7 @@ import { resolveScreeningName } from "../identity/screening-name.ts";
 import { canonicalCatalogName, sameCatalogName } from "./search-name.ts";
 import { jungleNoSymbolReason } from "../../shared/jungle-no-symbol.ts";
 import { usableSoldReference } from "../../shared/sold-evidence.ts";
+import { SOLD_MARKET_PAGE_LIMIT } from "../../shared/research-policy.ts";
 
 type Source = { lookupCards: LookupCards; fetchComps: FetchComps; fetchRawComps: FetchRawComps; fetchSoldPage?: FetchSoldPage };
 type Finish = ScreeningSoldReference["finish"];
@@ -19,7 +20,6 @@ interface Market { record: CardRecord; printing: ScreeningSoldReference["printin
 interface MarketEvidence { references: ScreeningSoldReference[]; complete: boolean; issue: "BUDGET" | "UNAVAILABLE" | null }
 const FINISHES = ["HOLO", "NON_HOLO", "REVERSE_HOLO"];
 const DAY_MS = 86_400_000;
-const MAX_MARKET_PAGES = 4;
 const hasMatchedSales = (references: ScreeningSoldReference[]) => references.some(reference => usableSoldReference(reference, reference.grader !== null));
 const ordinarySale = (sale: Comp) => !/\blot\b|\bbundle\b|\bset of\b|\b\d+\s*(?:cards|pcs)\b|\bsigned\b|\bautograph(?:ed)?\b|\baltered\b|\bcustom\b|\bproxy\b|\breplica\b|\bmiscut\b|\bcrimp\b|\bholo\s*bleed\b|\bdouble\s*holo\b/i.test(sale.title);
 const specialSlab = (title: string) => /\((?:oc|mk|mc|st|pd|of)\)|\b(?:pristine|black label|perfect|altered|miscut|qualified|qualifier|authentic(?:ated)?)\b/i.test(title);
@@ -95,7 +95,7 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
             while (pending.length) {
                 const { variant, cursor } = pending.shift()!;
                 if (cursor && hasMatchedSales(accepted)) continue;
-                if (pageCount >= MAX_MARKET_PAGES) { issue = "BUDGET"; break; }
+                if (pageCount >= SOLD_MARKET_PAGE_LIMIT) { issue = "BUDGET"; break; }
                 const pageKey = JSON.stringify([record.id, variant, grader, grade, cursor]);
                 if (seen.has(pageKey)) { issue = "UNAVAILABLE"; break; }
                 seen.add(pageKey);

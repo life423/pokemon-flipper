@@ -1,7 +1,7 @@
 import { RAW_CONDITIONS, type RawCondition } from "../../shared/conditions.ts";
 import type { CompSummary, Identity, RawPrice, RawPricing } from "../../shared/types.ts";
 import { rawPricesFor, variantFor } from "./raw-prices.ts";
-import { compProblem, summarizeComps } from "./sold-comps.ts";
+import { compProblem, matchesSoldTarget, summarizeComps } from "./sold-comps.ts";
 import type { CheckComps, Comp, FetchRawComps, PricedCard } from "./types.ts";
 import type { SoldConditionEvidence } from "../ai/sold-condition.ts";
 import { readyForPricing } from "../../shared/identity.ts";
@@ -24,14 +24,16 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
     // the listing's finish is unresolved. It does not resolve that photo target.
     if (assessCondition && !["HOLO", "NON_HOLO", "REVERSE_HOLO"].includes(identity.finish)) return fallback;
     try {
-        const fetched = await fetchRawComps(variant.recordId, variant.name);
+        const eligibleSale = (sale: Comp) => sale.currency === "USD" && sale.sale_type && !sale.grader && !sale.grade &&
+            !/\b(psa|cgc|bgs|sgc|tag|lot|bundle)\b/i.test(sale.title) && compProblem({ ...sale, grader: "RAW", grade: "ANY" },
+                { printing: identity.printing, setName: variant.setName, finish: variant.finish, grader: "RAW", grade: "ANY", now, windowDays: 90 }) === null;
+        const fetched = await fetchRawComps(variant.recordId, variant.name, assessCondition ? { stopWhen: sales => sales.some(sale =>
+            eligibleSale(sale) && matchesSoldTarget(sale, { name: identity.name!, setName: variant.setName, cardNumber: identity.cardNumber })) } : undefined);
         signal?.throwIfAborted();
         let sales = [...new Map(fetched.map(sale => [sale.id ?? sale.listing_url ?? JSON.stringify(sale), sale])).values()];
         const sampledSoldCopies = sales.length;
         if (assessCondition) {
-            const eligible = sales.filter(sale => sale.currency === "USD" && sale.sale_type && !sale.grader && !sale.grade &&
-                !/\b(psa|cgc|bgs|sgc|tag|lot|bundle)\b/i.test(sale.title) && compProblem({ ...sale, grader: "RAW", grade: "ANY" },
-                    { printing: identity.printing, setName: variant.setName, finish: variant.finish, grader: "RAW", grade: "ANY", now, windowDays: 90 }) === null);
+            const eligible = sales.filter(eligibleSale);
             const accepted = new Map<Comp, SoldConditionEvidence>();
             let cacheReadFailed = false;
             // This callback reads accepted evidence only. New photo work has

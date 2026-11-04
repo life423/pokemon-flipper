@@ -53,7 +53,11 @@ export interface Comp {
     listing_url: string | null;
 }
 
-export type FetchRawComps = (recordId: CardRecord["id"], variant: string) => Promise<Comp[]>;
+export interface SoldPageSelection {
+    // Eligibility only: never dispatch photo/text assessments from this callback.
+    stopWhen?: (sales: readonly Comp[]) => boolean | Promise<boolean>;
+}
+export type FetchRawComps = (recordId: CardRecord["id"], variant: string, selection?: SoldPageSelection) => Promise<Comp[]>;
 
 export type LookupCards = (query: { set: string; name: string; cardNumber: string }) => Promise<CardRecord[]>;
 export interface QueryCatalogResult { cards: CardRecord[]; complete: boolean }
@@ -61,7 +65,7 @@ export type LookupQueryCards = (query: { set: string; name: string }) => Promise
 
 export type FetchComps = (
     recordId: CardRecord["id"],
-    options: { grader: string; grade: number | string; variant?: string }
+    options: { grader: string; grade: number | string; variant?: string } & SoldPageSelection
 ) => Promise<Comp[]>;
 
 // Screening chooses whether another page is useful after applying the same

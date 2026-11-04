@@ -92,11 +92,18 @@ flowchart TD
    90-day market even when only one valid current sale exists; the labeled
    180-day fallback applies only when no current match remains. Pricing-policy
    changes reprice saved evaluations without invalidating paid photo readings.
+   Final graded prices apply the same exact sold-title target checks as
+   screening before recency selection and outlier handling. Final adapters
+   share bounded cursor collection and canonical cached page URLs: slabs stop
+   once eligible evidence is found; raw research retains its first two-page
+   window, with sparse recovery up to four pages per source-label lookup.
+   Page eligibility performs no paid comp checks; final comp checks run once.
    Raw resale first reads accepted sold-copy condition observations. When no
    suitable match exists, the evaluator may select one recent confirmed sale
    whose amount could support positive net resale at the current purchase terms.
-   Seller condition text prioritizes research but never supplies the accepted
-   category. One compact historical assessment checks at most six source photos,
+   Positive-net source transactions are selected before seller-condition clues
+   prioritize research; those clues never supply the accepted category.
+   One compact historical assessment checks at most six source photos,
    with a 1,100-token output limit, under the original search allowance. It has
    no retry, corroboration or next-copy loop. Suspected structural damage or
    authenticity uncertainty in the live copy prevents this new paid stage.

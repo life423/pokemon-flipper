@@ -3,7 +3,7 @@ import { sameCardNumber, sameSetFamily, setFamily, setSearchTerm } from "../iden
 import { canonicalCatalogName, pricingSearchName, sameCatalogName } from "./search-name.ts";
 import { conditionOf } from "./raw-prices.ts";
 import { cardNumberOf, cardVariants } from "./records.ts";
-import type { CardRecord, Comp, FetchComps, FetchRawComps, FetchSoldPage, LookupCards, LookupQueryCards, QueryCatalogResult } from "./types.ts";
+import type { CardRecord, Comp, FetchComps, FetchRawComps, FetchSoldPage, LookupCards, LookupQueryCards, QueryCatalogResult, SoldPageSelection } from "./types.ts";
 import { createLimiter } from "../lib/concurrency.ts";
 import { createSharedWork } from "../lib/shared-work.ts";
 import { fetchJson, ProviderError } from "../lib/http.ts";
@@ -11,7 +11,7 @@ import { PricingProviderError, retryAfterMs } from "./errors.ts";
 import type { PricingIssue } from "../../shared/pricing-retries.ts";
 import { getAiUsageContext, withAiUsageContext } from "../ai/usage-context.ts";
 import { getPriceResearchSignal, reservePriceRequest, PriceResearchBudgetError } from "./research-budget.ts";
-import { PRICE_SCREEN_REQUEST_LIMIT } from "../../shared/research-policy.ts";
+import { PRICE_SCREEN_REQUEST_LIMIT, SOLD_MARKET_PAGE_LIMIT } from "../../shared/research-policy.ts";
 
 // pkmnprices.com: TCGplayer prices by printing and condition, and
 // individual eBay sold comps. Provider credits describe returned-item quota,
@@ -400,8 +400,32 @@ async function lookupCardsFrom({ set, name, cardNumber }: Parameters<LookupCards
 
 export const lookupCards: LookupCards = query => lookupCardsFrom(query, apiGet, cachedApiGet);
 
-// One page of recent graded eBay sales for a card record and printing.
-export const fetchComps: FetchComps = async (recordId, { grader, grade, variant }) => {
+const uniqueSales = (sales: readonly Comp[]) => [...new Map(sales.map(sale => [sale.id ?? sale.listing_url ?? JSON.stringify(sale), sale])).values()];
+
+// Both final-price adapters reuse screening's canonical page URLs and caches.
+// Eligibility callbacks can recover sparse later pages without unbounded scans
+// or triggering another paid assessment. Legacy readers retain their two pages.
+async function collectSoldPages(recordId: CardRecord["id"], params: URLSearchParams, { stopWhen }: SoldPageSelection = {}, minimumPages = 1) {
+    const sales: Comp[] = [];
+    const seen = new Set<string>();
+    const limit = stopWhen ? SOLD_MARKET_PAGE_LIMIT : 2;
+    for (let page = 0; page < limit; page += 1) {
+        getPriceResearchSignal()?.throwIfAborted();
+        const cursor = params.get("cursor") ?? "";
+        if (seen.has(cursor)) break;
+        seen.add(cursor);
+        const body = await apiGet(`/cards/${recordId}/listings/ebay?${params}`, 6);
+        sales.push(...(body.data ?? []).filter((sale: Comp) => sale.currency === "USD"));
+        const enough = stopWhen && page + 1 >= minimumPages && await stopWhen(uniqueSales(sales));
+        getPriceResearchSignal()?.throwIfAborted();
+        if (enough) break;
+        if (!body.pagination?.has_more || !body.pagination?.next_cursor) break;
+        params.set("cursor", body.pagination.next_cursor);
+    }
+    return sales;
+}
+
+export const fetchComps: FetchComps = async (recordId, { grader, grade, variant, stopWhen }) => {
     const params = new URLSearchParams({
         graded: "true",
         grader,
@@ -413,28 +437,14 @@ export const fetchComps: FetchComps = async (recordId, { grader, grade, variant 
 
     if (variant) params.set("variant", variant);
 
-    const sales: Comp[] = [];
-    for (let page = 0; page < 2; page += 1) {
-        const body = await apiGet(`/cards/${recordId}/listings/ebay?${params}`, 6);
-        sales.push(...(body.data ?? []).filter((sale: Comp) => sale.currency === "USD"));
-        if (!body.pagination?.has_more || !body.pagination?.next_cursor) break;
-        params.set("cursor", body.pagination.next_cursor);
-    }
-    return [...new Map(sales.map(sale => [sale.id ?? sale.listing_url ?? JSON.stringify(sale), sale])).values()];
+    return uniqueSales(await collectSoldPages(recordId, params, { stopWhen }));
 };
 
-// At most 40 recent raw comps per printing, shared by every listing and
-// condition. Bound the pagination; never mistake this sample for volume.
-export const fetchRawComps: FetchRawComps = async (recordId, variant) => {
+// Retain the first two pages of raw research candidates. Sparse markets may
+// recover the same later pages admitted by screening, up to four total.
+export const fetchRawComps: FetchRawComps = async (recordId, variant, selection) => {
     const params = new URLSearchParams({ graded: "false", period: "90d", sort: "date_desc", limit: "20", variant });
-    const sales: Comp[] = [];
-    for (let page = 0; page < 2; page += 1) {
-        const body = await apiGet(`/cards/${recordId}/listings/ebay?${params}`, 6);
-        sales.push(...(body.data ?? []).filter((sale: Comp) => sale.currency === "USD"));
-        if (!body.pagination?.has_more || !body.pagination?.next_cursor) break;
-        params.set("cursor", body.pagination.next_cursor);
-    }
-    return sales;
+    return collectSoldPages(recordId, params, selection, 2);
 };
 
 export class ScreeningPriceBudgetError extends Error {

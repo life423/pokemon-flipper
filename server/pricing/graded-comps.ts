@@ -1,6 +1,6 @@
 import { printingLabel, readyForPricing, titleDecidesPrinting } from "../identity/card-identity.ts";
 import { canPrice, variantFor } from "./raw-prices.ts";
-import { compProblem, summarizeComps, type CompCriteria } from "./sold-comps.ts";
+import { compProblem, matchesSoldTarget, summarizeComps, type CompCriteria } from "./sold-comps.ts";
 import type { CompSummary, GradeRange, GradedPricing, Identity, SlabPricing } from "../../shared/types.ts";
 import type { CheckComps, Comp, CompTarget, FetchComps, PricedCard, PricedVariant } from "./types.ts";
 
@@ -10,6 +10,10 @@ export type { CompCriteria } from "./sold-comps.ts";
 
 const DAY_MS = 86400000;
 
+function matchesTarget(comp: Comp, target: CompTarget): boolean {
+    return matchesSoldTarget(comp, { name: target.cardName, setName: target.setName, cardNumber: target.cardNumber }, target.grader, target.grade);
+}
+
 // The rules, then the AI's second look at whatever passed them.
 async function checkedSummary(
     comps: Comp[],
@@ -17,14 +21,22 @@ async function checkedSummary(
     target: CompTarget,
     checkComps: CheckComps | undefined
 ): Promise<CompSummary> {
-    const passing = comps.filter((comp) => compProblem(comp, criteria) === null);
+    const titleMismatches = new Set<Comp>();
+    const passing = comps.filter(comp => {
+        if (compProblem(comp, criteria) !== null) return false;
+        if (matchesTarget(comp, target)) return true;
+        titleMismatches.add(comp);
+        return false;
+    });
     const verdicts = checkComps && passing.length > 0 ? await checkComps(passing, target) : undefined;
     // Any eligible current sale takes precedence over older prices. Use the
     // explicitly labeled 180-day fallback only when no current match remains;
     // never choose a window based on whether its median makes a deal profitable.
     const recent = passing.filter(sale => (criteria.now - Date.parse(sale.sold_at)) / DAY_MS <= 90 && verdicts?.get(sale)?.keep !== false);
     const windowDays = recent.length >= 1 ? 90 : 180;
-    return summarizeComps(comps, { ...criteria, windowDays }, verdicts);
+    const summary = summarizeComps(comps.filter(comp => !titleMismatches.has(comp)), { ...criteria, windowDays }, verdicts);
+    if (titleMismatches.size) summary.dropped["title does not match target card or grade"] = titleMismatches.size;
+    return summary;
 }
 
 function compTarget(card: PricedCard, identity: Identity, variant: PricedVariant, grader: string, grade: number | string): CompTarget {
@@ -62,7 +74,7 @@ function gradedVariantFor(card: PricedCard | null, identity: Identity): ReturnTy
 async function fetchVariantComps(
     card: PricedCard,
     variant: PricedVariant,
-    { grader, grade, fetchComps }: { grader: string; grade: number | string; fetchComps: FetchComps }
+    { grader, grade, fetchComps, criteria, target }: { grader: string; grade: number | string; fetchComps: FetchComps; criteria: CompCriteria; target: CompTarget }
 ): Promise<Comp[]> {
     const sourceLabels = titleDecidesPrinting(variant.setName)
         ? card.variants.filter((v) => v.recordId === variant.recordId).map((v) => v.name)
@@ -72,7 +84,9 @@ async function fetchVariantComps(
     const seen = new Set<string | number>();
 
     for (const sourceLabel of sourceLabels) {
-        for (const comp of await fetchComps(variant.recordId, { grader, grade, variant: sourceLabel })) {
+        for (const comp of await fetchComps(variant.recordId, { grader, grade, variant: sourceLabel,
+            stopWhen: sales => sales.some(sale => compProblem(sale, criteria) === null && matchesTarget(sale, target)),
+        })) {
             const key = comp.id ?? comp.listing_url ?? `${comp.title}|${comp.sold_at}|${comp.price}`;
 
             if (!seen.has(key)) {
@@ -106,15 +120,12 @@ export async function gradedPricesFor(
     const byGrade: CompSummary[] = [];
 
     for (let grade = gradeRange.low; grade <= gradeRange.high; grade += 1) {
-        const comps = await fetchVariantComps(card, variant, { grader, grade, fetchComps });
+        const criteria: CompCriteria = { printing: identity.printing, setName: variant.setName, finish: variant.finish, grader, grade, now };
+        const target = compTarget(card, identity, variant, grader, grade);
+        const comps = await fetchVariantComps(card, variant, { grader, grade, fetchComps, criteria, target });
 
         byGrade.push(
-            await checkedSummary(
-                comps,
-                { printing: identity.printing, setName: variant.setName, finish: variant.finish, grader, grade, now },
-                compTarget(card, identity, variant, grader, grade),
-                checkComps
-            )
+            await checkedSummary(comps, criteria, target, checkComps)
         );
     }
 
@@ -154,14 +165,11 @@ export async function compsForGrade(
     if (!variant || !card) return unavailable(reason ?? "There is no card to price.");
 
     const label = printingLabel(identity.printing, identity.set);
-    const comps = await fetchVariantComps(card, variant, { grader, grade, fetchComps });
+    const criteria: CompCriteria = { printing: identity.printing, setName: variant.setName, finish: variant.finish, grader, grade, now };
+    const target = compTarget(card, identity, variant, grader, grade);
+    const comps = await fetchVariantComps(card, variant, { grader, grade, fetchComps, criteria, target });
 
-    const summary = await checkedSummary(
-        comps,
-        { printing: identity.printing, setName: variant.setName, finish: variant.finish, grader, grade, now },
-        compTarget(card, identity, variant, grader, grade),
-        checkComps
-    );
+    const summary = await checkedSummary(comps, criteria, target, checkComps);
 
     const details = { printingLabel: label, variant: variant.name, grader, grade, summary };
 

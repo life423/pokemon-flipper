@@ -226,6 +226,58 @@ test("a fresh raw resale acquires one relevant sold copy and reuses its photo ev
     assert.equal(calls.assessed, 1, "equivalent live photos also remain reusable");
 });
 
+test("raw sold research filters positive net before preferring seller condition clues and attempts only one copy", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("sold-research ordering must use mocked providers only"));
+    const sale = (id: string, claim: string, price: number, daysAgo: number, name = "Venusaur", number = "15/102"): Comp => ({
+        id, title: `${name} Base Set ${number} Unlimited Holo ${claim}`.trim(), price,
+        sold_at: new Date(now - daysAgo * 86400000).toISOString(), variant: "Holofoil", currency: "USD", attribution: "exact",
+        sale_type: "fixed_price", listing_url: null, grader: null, grade: null, grade_qualifier: null,
+    });
+    const scenarios: { name: string; sales: Comp[]; expected: string | null; reviewed?: string[];
+        finding: "LIGHTLY_PLAYED" | "MODERATELY_PLAYED" | null }[] = [
+        { name: "an irrelevant LP price cannot block a profitable unspecified sale",
+            sales: [sale("cheap-lp", "LP", 70, 1), sale("unspecified", "", 200, 2)], expected: "unspecified", finding: "LIGHTLY_PLAYED" },
+        { name: "prefer the newest profitable LP clue over newer unspecified or wrong-card sales",
+            sales: [sale("older-lp", "LP", 180, 4), sale("newer-lp", "LP", 190, 3), sale("unspecified", "", 250, 2),
+                sale("wrong-card", "LP", 999, 1, "Charizard", "4/102")], expected: "newer-lp", finding: null },
+        { name: "reviewed LP evidence cannot block the newest unreviewed unspecified candidate",
+            sales: [sale("reviewed-lp", "LP", 250, 1), sale("older-unspecified", "", 220, 3), sale("newer-unspecified", "", 200, 2)],
+            reviewed: ["reviewed-lp"], expected: "newer-unspecified", finding: "LIGHTLY_PLAYED" },
+        { name: "shipping and fees leave no economically relevant candidate",
+            sales: [sale("lp", "LP", 70, 1), sale("unspecified", "", 120, 2)], expected: null, finding: null },
+        { name: "a profitable different seller condition does not become a like-for-like candidate",
+            sales: [sale("cheap-lp", "LP", 70, 1), sale("mp", "MP", 200, 2)], expected: null, finding: null },
+        { name: "physical MP evidence overrides the selected LP clue without trying the next copy",
+            sales: [sale("seller-lp", "LP", 200, 1), sale("unspecified", "", 220, 2)], expected: "seller-lp", finding: "MODERATELY_PLAYED" },
+    ];
+    for (const scenario of scenarios) await t.test(scenario.name, async () => {
+        const live = reading(); live.condition!.rawCondition = "LIGHTLY_PLAYED"; live.condition!.gradeRange = null;
+        const attempted: (string | undefined)[] = [], read: (string | undefined)[] = [];
+        const { evaluate } = harness({
+            details: async id => details({ id, price: 100, shipping: 5.96 }),
+            assess: async () => ({ result: live, usage: { inputTokens: 700, outputTokens: 450 } }),
+            fetchRawComps: async () => scenario.sales,
+            soldCondition: () => ({ usage: [],
+                read: async source => { read.push(source.id); return null; },
+                status: source => scenario.reviewed?.includes(source.id ?? "") ? "REVIEWED" : "UNREVIEWED",
+                acquire: async source => {
+                    assert.equal(read.length, scenario.sales.length, "all saved sold-copy evidence is read before acquiring a copy");
+                    attempted.push(source.id);
+                    return scenario.finding ? { condition: scenario.finding, evidence: ["Accepted physical wear evidence."], photoCount: 4 } : null;
+                },
+            }),
+        });
+        const result = await evaluate("v1|raw-ordering|0");
+        assert.deepEqual(attempted, scenario.expected ? [scenario.expected] : []);
+        assert.equal(result.condition?.rawCondition, "LIGHTLY_PLAYED", "sold research never changes the live copy's physical condition");
+        const lp = result.rawPricing?.prices?.find(quote => quote.condition === "LIGHTLY_PLAYED");
+        assert.equal(lp?.basis, scenario.finding === "LIGHTLY_PLAYED" ? "EBAY_SOLD" : "TCGPLAYER",
+            "only accepted physical LP evidence establishes an LP sold price");
+        if (scenario.finding === "LIGHTLY_PLAYED") assert.ok((result.underwriting?.best?.profit ?? 0) > 0);
+        else assert.equal(result.underwriting?.verdict, "CANT_PRICE");
+    });
+});
+
 test("catalog-corroborated photos correct stale seller fields without repurchasing the accepted reading or restoring a generic mismatch hold", async () => {
     const listing = details({ aspects: { ...details().aspects, "Card Number": "14/102", Finish: "Regular" } });
     const accepted = reading(); accepted.condition!.rawCondition = "LIGHTLY_PLAYED"; accepted.condition!.gradeRange = null;

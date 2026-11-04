@@ -178,3 +178,19 @@ test("anchored art abbreviations reconcile older saved name residue while retain
         ["Pikachu Crown Zenith 160/159 FA Misprint PSA 9", "pikachu fa misprint"],
     ]) assert.notEqual(resolveScreeningName({ title, claims: [claim], candidate: "Pikachu" }), "Pikachu", title);
 });
+
+test("observed Cosmos Holo metadata needs a full number and written catalog release", () => {
+    const title = "Lugia Neo Genesis 9/111 Unlimited Cosmos Holo PSA 9";
+    assert.equal(resolveScreeningName({ title, claims: ["Lugia", "lugia cosmos"], candidate: "Lugia", set: "Neo Genesis" }), "Lugia");
+    for (const [source, set] of [
+        ["Lugia Neo Genesis #9 Cosmos Holo PSA 9", "Neo Genesis"],
+        ["Lugia 9/111 Cosmos Holo PSA 9", "Neo Genesis"],
+        [title, "Neo Revelation"],
+        ["Lugia Neo Genesis 9/111 Cosmos PSA 9", "Neo Genesis"],
+        ["Lugia Neo Genesis 9/111 Curious Holo PSA 9", "Neo Genesis"],
+    ]) assert.notEqual(resolveScreeningName({ title: source, claims: [source.includes("Curious") ? "lugia curious" : "lugia cosmos"], candidate: "Lugia", set }), "Lugia", source);
+    for (const name of ["Cosmos Pikachu", "Cosmos's Lugia", "Dark Lugia"]) {
+        const source = `${name} Neo Genesis 9/111 Cosmos Holo PSA 9`;
+        assert.equal(resolveScreeningName({ title: source, claims: [name, `${name} cosmos`], candidate: "Lugia", set: "Neo Genesis" }), name, source);
+    }
+});

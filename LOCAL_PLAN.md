@@ -5,11 +5,76 @@ with the repository. Older entries calling it private or ignored describe the
 previous arrangement. Credentials, environment values, API payloads, paid photo
 evidence and data/ remain excluded. A separate computer handoff is deferred.
 
-Catalog/search checkpoint ecae9e9 and raw-resale checkpoint 489ebb7 were
-committed, fast-forwarded to main and pushed. Markdown notes are tracked. The
-next catalog-name coverage change is on improve/catalog-name-coverage; no
-handoff was created. The pre-existing .env.example deletion remains unrelated
-and uncommitted.
+Catalog/search ecae9e9, raw resale 489ebb7 and catalog-name coverage b123ed7
+were committed and pushed on main. Current work is on
+improve/consistent-sold-pricing. Markdown notes are tracked; no handoff was
+created. The pre-existing .env.example deletion remains unrelated/uncommitted.
+
+## Consistent sold pricing and varied BIN check — November 4
+
+Final graded valuation now applies the existing sold-target name/set/number/
+language/grader/grade checks before cached vetoes, recency selection and outlier
+handling. Previously, a provider-attributed wrong-card sale could pass final
+pricing even when preliminary screening rejected it. Offline counterexamples
+demonstrated both false losses and inflated profits; neither is an observed
+profitable listing. Original real-market fixtures retain their valid values.
+Terminal provider provenance, Base (Shadowless), and explicitly anchored Cosmos
+Holo descriptions preserve legitimate existing titles without erasing original
+claims, printed names or qualifiers.
+Actual SQL-only replay also retained all three accepted Dark Machamp auction
+sales and identical financial results after preserving the contextual Pokemon
+Rocket alias. Existing Crown Zenith/Galarian Gallery family relationships work
+in either direction without borrowing another explicit card number/release.
+The negative Mewtwo BIN remains PASS; its median changes slightly because the
+new graded sample stops at 20 rather than automatically collecting 40 sales.
+Both controls used original accounts with zero provider/photo/auth transports
+or ledger changes. They replay historical terms, not current availability.
+
+Final adapters share one bounded page collector and screening's four-page
+constant. Eligible slab evidence stops paging early; raw research retains its
+first two-page candidate window and recovers sparse later pages up to four.
+Canonical URLs/shared SQL caches are unchanged, so a third-page sale discovered
+by screening no longer disappears after purchasing a label. Eligibility callbacks
+make no paid checks. Cached/legacy comp checks still run once per final scope;
+Stop and cyclic cursors cannot start further page work. The original search's
+request allowances and AI reservations remain authoritative.
+
+Raw historical research filters positive-net source transactions BEFORE using
+seller-condition clues to prioritize them. An irrelevant low-price LP sale can
+no longer hide a useful unclaimed-condition source. The physical assessment
+still decides its real condition; one acquisition and negative-answer reuse are
+unchanged. Pricing revision 13 reprices financial results while preserving paid
+photo keys, prompts, models and findings.
+
+Two ordinary metadata/sold-only BIN queries (broad CGC 8 and PSA 7 holo scopes)
+screened 103 rows, excluded three by price, and retained 50 each. Three targeted
+current-detail checks and original public front photos ruled out apparent First
+Edition upside: all three copies were Unlimited. Total: five Browse requests,
+125 PKMN attempts, 395 reported credits, zero AI generations or charges; two
+attempts had no credit headers. This remains a negative bounded sample, not
+proof that the market has no deals. Last observed balances at 22:55 UTC were
+eBay 4,835/5,000 and PKMN 16,641/20,000, with no depletion warnings. Detailed
+private results stay under data/candidate-validation/2026-11-04/diverse-bin/.
+
+One additional fresh RAW scope, Light Dragonite Neo Destiny holo, resolved
+014/105 from the catalog and retained 30 matches. Current details and original
+photos showed serious structural damage in the two shortlisted $120/$240
+copies, so neither received paid grading-upside work. Other returned inventory
+remains unassessed, not rejected. This check used three Browse and seven PKMN
+requests/31 reported credits, zero generations; the original two-cent account
+remains intact. At its completion, observed remaining was eBay 4,832/5,000 and
+PKMN 16,618/20,000, without warnings. Private findings and photo paths stay in
+data/candidate-validation/2026-11-04/focused-raw-bin/.
+
+Verification: all 1,018 offline tests, both typechecks, production build and
+whitespace checks pass. The running app shell responds HTTP 200. No production
+files were added; existing pricing modules and tests were extended, and duplicate
+raw/graded page loops were consolidated in the provider adapter.
+
+The supported profitable BIN milestone remains open. Next selection should
+use useful exact-scope evidence, not repeat this negative matrix or weaken
+printing/condition requirements. Verified live BIN competition and raw-photo
+coverage remain on the broader roadmap.
 
 ## Latest catalog coverage and fresh BIN check — November 4
 

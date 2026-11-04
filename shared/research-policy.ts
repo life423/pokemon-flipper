@@ -8,6 +8,9 @@ export const DEVELOPMENT_SEARCH_LIMIT = 50;
 // Preliminary price requests share the larger all-stage per-search allowance.
 // This controls runaway/rate pressure; provider credits are not dollar costs.
 export const PRICE_SCREEN_REQUEST_LIMIT = 64;
+// Sparse sold markets can follow cursors to the same bound in screening and
+// final pricing. Finding an eligible source stops further paging sooner.
+export const SOLD_MARKET_PAGE_LIMIT = 4;
 // Bound in-flight detail/photo work independently of how many rows are shown.
 // More candidates can finish through saved evidence or remaining AI budget.
 export const BOUNDED_AUTO_CONCURRENCY = 2;

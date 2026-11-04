@@ -71,6 +71,10 @@ Read docs/architecture.md for the source map and reading order.
   uncached PKMNPrices requests including catalog work. Sparse markets may follow
   up to four 20-sale pages, stopping once one eligible matched sale supports a
   scope; cached final-valuation pages are reused.
+  Final pricing uses the same sold-target checks before windows/outliers and
+  bounded shared page collection. Slabs stop on eligible evidence; raw keeps
+  two candidate pages with sparse recovery to four per source-label lookup.
+  Page eligibility does not dispatch paid comp checks.
   It makes no AI or eBay-detail requests. Missing/deferred data stays Sorting.
   One applicable sale authorizes automatic photos with sparse confidence retained,
   retaining the focused

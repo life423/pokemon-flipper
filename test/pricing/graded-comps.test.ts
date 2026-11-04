@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { summarizeComps, gradedPricesFor, compsForGrade } from "../../server/pricing/graded-comps.ts";
 import { identifyCard } from "../../server/identity/card-identity.ts";
 import { toCardRecord } from "../../server/pricing/pkmnprices.ts";
+import { matchesSoldTarget, readSoldTitleClaims } from "../../server/pricing/sold-comps.ts";
 
 const NOW = Date.parse("2026-09-30T00:00:00Z");
 
@@ -200,7 +201,9 @@ test("graded prices: one lookup per grade, for this card's own printing label", 
     const pricing = await gradedPricesFor(card, identity, { low: 8, likely: 9, high: 9 }, {
         now: NOW,
         fetchComps: async (recordId, options) => {
-            calls.push({ recordId, ...options });
+            const { stopWhen, ...market } = options;
+            assert.equal(typeof stopWhen, "function", "exact eligibility controls sparse-market pagination");
+            calls.push({ recordId, ...market });
             return options.grade === 9 ? LUGIA_PSA9 : [];
         },
     });
@@ -367,6 +370,77 @@ test("ordinary CGC descriptions do not exclude otherwise matching exact-grade co
     assert.equal(summarizeComps([{ ...ordinary, title: `${ordinary.title} (OC)` }], target).count, 0);
 });
 
+test("final slab and grading prices reject another card before median and outlier selection", async () => {
+    const { identity, card } = await identifyCard({ title: "Lugia Neo Genesis 9/111 Holo Unlimited", aspects: { Set: "Neo Genesis", "Card Number": "9/111", "Card Name": "Lugia", Language: "English" } }, photos("Lugia", "9/111"), { lookupCards: async () => [LUGIA] });
+    for (const [matchingPrice, wrongPrice] of [[200, 20], [100, 1000]]) {
+        const exact = comp(matchingPrice, "2026-09-01", "Unlimited Holofoil", "Lugia Neo Genesis 9/111 Holo PSA 9 [eBay]");
+        const wrong = ["2026-09-02", "2026-09-03"].map(date => comp(wrongPrice, date, "Unlimited Holofoil", "Typhlosion Neo Genesis 18/111 Holo PSA 9"));
+        const qualified = comp(9999, "2026-09-04", "Unlimited Holofoil", "Lugia Neo Genesis 9/111 Cosmos Holo PSA 9 (OC) [eBay]");
+        for (const route of ["slab", "grading"]) {
+            let checks = 0;
+            const options = { now: NOW, grader: "PSA", fetchComps: async (_id, { stopWhen }) => {
+                assert.equal(stopWhen(wrong), false, "wrong attributed titles cannot end sparse research");
+                assert.equal(stopWhen([...wrong, exact]), true, "one exact confirmed sale is enough");
+                assert.equal(stopWhen([qualified]), false, "metadata normalization cannot hide a grade qualifier");
+                return [...wrong, exact, qualified];
+            }, checkComps: async passing => {
+                checks++;
+                assert.deepEqual(passing, [exact], "cached checks only see exact eligible sales");
+                return new Map();
+            } };
+            const result = route === "slab" ? await compsForGrade(card, identity, { ...options, grade: 9 })
+                : await gradedPricesFor(card, identity, { low: 9, likely: 9, high: 9 }, options);
+            const summary = route === "slab" ? result.summary : result.byGrade[0];
+            assert.equal(result.status, "PRICED");
+            assert.equal(summary.count, 1); assert.equal(summary.median, matchingPrice);
+            assert.equal(summary.confidence, "LOW"); assert.equal(summary.windowDays, 90);
+            assert.equal(summary.dropped["title does not match target card or grade"], 2);
+            assert.equal(summary.dropped["qualified or special grade"], 1);
+            assert.equal(summary.dropped["price far from the other sales"], undefined);
+            assert.equal(summary.sales[0].title, exact.title, "source provenance remains in the saved title");
+            assert.equal(checks, 1, "pagination cannot purchase repeated comp checks");
+        }
+    }
+});
+
+test("known Team Rocket context retains all accepted Dark Machamp sales without borrowing Returns or unanchored Rocket", async () => {
+    const record = toCardRecord({ id: 26332, name: "Dark Machamp", number: "010", total_set_number: "82", set: { id: 1, name: "Team Rocket" },
+        prices: [usd("1st Edition Holofoil", "Near Mint", 100)] });
+    const { identity, card } = await identifyCard({ title: "Dark Machamp Team Rocket 10/82 1st Edition Holo PSA 8", aspects: { Set: "Team Rocket", "Card Number": "10/82", "Card Name": "Dark Machamp", Language: "English" } },
+        photos("Dark Machamp", "10/82", { firstEditionStamp: "VISIBLE" }), { lookupCards: async () => [record] });
+    const sales = [
+        comp(248, "2026-10-27", "1st Edition Holofoil", "2000 POKEMON ROCKET 1ST EDITION #10 DARK MACHAMP-HOLO PSA 8", { grade: "8", currency: "USD" }),
+        comp(249.9, "2026-10-26", "1st Edition Holofoil", "Pokémon Team Rocket Dark Machamp 1st Edition Holo PSA 8 10/82 Holo Rare", { grade: "8", currency: "USD" }),
+        comp(248.5, "2026-09-30", "1st Edition Holofoil", "DARK MACHAMP 2000 POKEMON TEAM ROCKET 1ST EDITION 10/82 HOLO RARE PSA 8 Q3963-5", { grade: "8", currency: "USD" }),
+    ];
+    const pricing = await compsForGrade(card, identity, { grader: "PSA", grade: 8, now: Date.parse("2026-11-04T18:00:00Z"), fetchComps: async () => sales });
+    assert.equal(pricing.summary.count, 3); assert.equal(pricing.summary.median, 248.5);
+    assert.equal(pricing.summary.windowDays, 90); assert.equal(pricing.summary.confidence, "MEDIUM");
+    assert.deepEqual(pricing.summary.sales.map(sale => sale.title), sales.map(sale => sale.title));
+    const target = { name: "Dark Machamp", setName: "Team Rocket", cardNumber: "10/82" };
+    for (const title of ["Pokemon Rocket Returns Dark Machamp 10/82 PSA 8", "Pokemon EX Team Rocket Returns Dark Machamp 10/82 PSA 8", "Pokemon Rocket Dark Machamp 11/82 PSA 8", "Pokemon Rocket Machamp 10/82 PSA 8"]) {
+        assert.equal(matchesSoldTarget({ ...sales[0], title }, target, "PSA", "8"), false, title);
+    }
+    assert.equal(readSoldTitleClaims(sales[0].title).set, null, "unknown context does not invent Team Rocket");
+    assert.equal(readSoldTitleClaims(sales[0].title, ["Fossil"]).set, null, "another target release cannot authorize the alias");
+    assert.equal(readSoldTitleClaims("Rocket Dark Machamp 10/82 PSA 8", ["Team Rocket"]).set, null, "Rocket alone stays unanchored");
+});
+
+test("a known Galarian Gallery target accepts its Crown Zenith family without borrowing another numbered card or release", async () => {
+    const record = toCardRecord({ id: 23767, name: "Mewtwo VSTAR", number: "GG44", total_set_number: "GG70", set: { id: 1, name: "SWSH: Crown Zenith: Galarian Gallery" },
+        prices: [usd("Holofoil", "Near Mint", 100)] });
+    const card = { source: record.source, name: record.name, cardNumber: record.cardNumber, records: [record],
+        variants: record.variants.map(variant => ({ ...variant, recordId: record.id, setName: record.setName })) };
+    const identity = { status: "IDENTIFIED", name: "Mewtwo VSTAR", set: record.setName, cardNumber: "GG44/GG70", printing: "UNLIMITED", finish: "HOLO", language: "English", reasons: [], evidence: null };
+    const exact = comp(235, "2026-11-03", "Holofoil", "The Pokémon Company Mewtwo VSTAR GG44/GG70 Crown Zenith Full Art Holo PSA 9", { currency: "USD" });
+    const wrong = ["Mewtwo VSTAR GG45/GG70 Crown Zenith Holo PSA 9", "Mewtwo VSTAR TG44/TG70 Crown Zenith Holo PSA 9", "Mewtwo VSTAR GG44/GG70 Lost Origin Holo PSA 9"]
+        .map(title => ({ ...exact, title, price: 999 }));
+    const pricing = await compsForGrade(card, identity, { grader: "PSA", grade: 9, now: Date.parse("2026-11-04T18:00:00Z"), fetchComps: async () => [exact, ...wrong] });
+    assert.equal(pricing.status, "PRICED"); assert.equal(pricing.summary.count, 1);
+    assert.equal(pricing.summary.median, 235); assert.equal(pricing.summary.confidence, "LOW");
+    assert.equal(pricing.summary.dropped["title does not match target card or grade"], 3);
+});
+
 test("USD graded prices prefer even one current sale over older prices, including a falling market", async () => {
     const { identity, card } = await identifyCard({ title: "Lugia Neo Genesis 9/111 Holo Unlimited", aspects: { Set: "Neo Genesis", "Card Number": "9/111", "Card Name": "Lugia", Language: "English" } }, photos("Lugia", "9/111"), { lookupCards: async () => [LUGIA] });
     for (const [recent, count, oldPrice, oldCount] of [[100, 1, 1000, 2], [1000, 2, 2000, 4], [4000, 3, 2000, 4]]) {
@@ -387,12 +461,22 @@ test("USD graded prices prefer even one current sale over older prices, includin
     assert.equal(sparse.summary.median, 2000);
 });
 
-test("wrong-grade, unconfirmed and cached-rejected current sales cannot suppress the labeled older fallback", async () => {
+test("wrong-grade, contradictory-title, unconfirmed and cached-rejected current sales cannot suppress the labeled older fallback", async () => {
     const { identity, card } = await identifyCard({ title: "Lugia Neo Genesis 9/111 Holo Unlimited", aspects: { Set: "Neo Genesis", "Card Number": "9/111", "Card Name": "Lugia", Language: "English" } }, photos("Lugia", "9/111"), { lookupCards: async () => [LUGIA] });
     const title = "Lugia Neo Genesis PSA 9", older = comp(1000, "2026-05-01", "Unlimited Holofoil", title);
-    for (const kind of ["wrong grade", "unconfirmed", "cached rejection"]) {
+    const contradictory = {
+        "wrong card title": "Typhlosion Neo Genesis 18/111 PSA 9",
+        "wrong number title": "Lugia Neo Genesis 8/111 PSA 9",
+        "wrong set title": "Lugia Neo Revelation 9/111 PSA 9",
+        "wrong grader title": "Lugia Neo Genesis 9/111 CGC 9",
+        "wrong grade title": "Lugia Neo Genesis 9/111 PSA 8",
+        "foreign title": "Japanese Lugia Neo Genesis 9/111 PSA 9",
+        "lot title": "Lugia Neo Genesis 9/111 PSA 9 lot of 3 cards",
+    };
+    for (const kind of ["wrong grade", "unconfirmed", "cached rejection", ...Object.keys(contradictory)]) {
         const current = comp(100, "2026-09-01", "Unlimited Holofoil", title,
-            kind === "wrong grade" ? { grade: "8" } : kind === "unconfirmed" ? { sale_type: null } : {});
+            kind === "wrong grade" ? { grade: "8" } : kind === "unconfirmed" ? { sale_type: null }
+                : contradictory[kind] ? { title: contradictory[kind] } : {});
         const result = await compsForGrade(card, identity, { grader: "PSA", grade: 9, now: NOW,
             fetchComps: async () => [older, current],
             checkComps: async passing => new Map(passing.map(sale => [sale, kind === "cached rejection" && sale === current
@@ -403,5 +487,6 @@ test("wrong-grade, unconfirmed and cached-rejected current sales cannot suppress
         assert.equal(result.summary.count, 1, kind);
         assert.equal(result.summary.median, 1000, kind);
         assert.equal(result.summary.confidence, "LOW", kind);
+        if (contradictory[kind]) assert.equal(result.summary.dropped["title does not match target card or grade"], 1, kind);
     }
 });

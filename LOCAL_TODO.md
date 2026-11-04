@@ -5,10 +5,37 @@ with the repository. Older entries calling it private or ignored describe the
 previous arrangement. Credentials, environment values, API payloads, paid photo
 evidence and data/ remain excluded. A separate computer handoff is deferred.
 
-Catalog/search ecae9e9 and raw-resale 489ebb7 are committed and pushed on main,
-including tracked Markdown notes. The next catalog-name coverage change is on
-improve/catalog-name-coverage. No handoff was created; preserve the unrelated
-.env.example deletion.
+Catalog/search ecae9e9, raw resale 489ebb7 and catalog-name coverage b123ed7 are
+committed and pushed on main. Current work: improve/consistent-sold-pricing.
+No handoff was created; preserve the unrelated .env.example deletion.
+
+## Current pricing consistency — November 4
+
+- [x] Reuse the exact sold-target matcher in final graded prices, before window
+  selection/outliers, preventing wrong-card attribution from creating losses or
+  inflated profits. Preserve valid real-source titles and cached comp vetoes.
+- [x] Consolidate final sold-page collection; recover eligible cached third/
+  fourth pages that screening already found. Stop early on slab eligibility,
+  retain the raw two-page window, enforce cursor/cancellation/page bounds, and
+  keep paid comp checks out of page-eligibility callbacks.
+- [x] Filter economically relevant raw sold-copy research BEFORE seller-condition
+  preference. Preserve one attempt and require accepted physical condition.
+- [x] Run two varied metadata/sold-only BIN queries and inspect three existing
+  candidate front photos without new paid assessments. No supported positive
+  BIN found; observed apparent First Edition upside belonged to Unlimited copies.
+- [x] Replay accepted auction and negative BIN controls through actual SQL cache
+  without provider calls or ledger changes. Preserve contextual Rocket and
+  existing Crown Zenith/Gallery aliases; explicit number/release conflicts stay
+  excluded. Record the new graded first-page sample change separately.
+- [x] Check a fresh raw Light Dragonite market using one ordinary query and
+  current metadata/photos. Two shortlisted copies have structural damage; no
+  paid assessments purchased. Other inventory remains unassessed.
+- [x] Pass 1,018 isolated tests, both typechecks, production build, whitespace
+  check and running app-shell HTTP 200 check.
+- [ ] Finish supported profitable BIN validation; retain original UUIDs/caps and
+  avoid another repetitive negative search matrix. Do not inflate valuations.
+- [ ] Add verified cheapest matching available BIN competition as a separate
+  resale ceiling, reusing rows and accepted labels before new provider work.
 
 ## Latest cheap screening coverage — November 4
 

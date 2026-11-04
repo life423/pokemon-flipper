@@ -1,5 +1,6 @@
 import { normalizeWords } from "./card-identity.ts";
 import { canonicalCatalogName, sameCatalogName } from "./catalog-name.ts";
+import { setKey } from "../../shared/sets.ts";
 
 // These are listing metadata, never an invitation to match a shorter species
 // name. In particular, printed prefixes/suffixes and owners are not stop words.
@@ -48,7 +49,7 @@ function removeObservedWords(value: string, match: RegExpMatchArray, title: stri
 // printing/finish/grade readers still inspect the untouched seller title.
 // A holder is metadata only when explicitly accompanying a numerically graded
 // slab; an unanchored Guard/name fragment must never disappear.
-export function stripListingNameBoilerplate(value: string, title = value): string {
+export function stripListingNameBoilerplate(value: string, title = value, set?: string | null): string {
     let cleaned = value.replace(/[‘’]/g, "'").replace(BOILERPLATE, " ").replace(ART_DESCRIPTION, " ");
     // Earlier saved readings may retain only "full" from "Full Alt Art".
     // Remove only excess words witnessed in the original metadata span.
@@ -58,6 +59,14 @@ export function stripListingNameBoilerplate(value: string, title = value): strin
     for (const match of title.matchAll(BEFORE_GRADE_GEM)) cleaned = removeObservedWords(cleaned, match, title);
     const graded = new RegExp(GRADE_SPAN.source, "i").test(title);
     if (/\b[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?\b/i.test(title)) {
+        // A catalog release and full printed number anchor this observed foil
+        // descriptor. Remove only excess source words, preserving a separate
+        // occurrence belonging to the card's printed name.
+        const releaseWords = set ? setKey(set).split(" ").filter(Boolean) : [];
+        const writtenRelease = releaseWords.length ? new RegExp(`\\b${releaseWords.join("[^a-z0-9]+")}\\b`, "i") : null;
+        if (writtenRelease?.test(title)) for (const match of title.matchAll(/\bcosmos[ -]+holo(?:graphic|foil)?\b/gi)) {
+            cleaned = removeObservedWords(cleaned, match, title);
+        }
         const release = SWORD_SHIELD_RELEASES.find(([set]) => set.test(title));
         if (release) cleaned = cleaned.replace(/\b(?:sword\s*(?:&|and)\s*shield|swsh)\b(?!['’])/gi, " ").replace(release[1], " ");
         // Abbreviations require a written release and a numeric slab label.
@@ -84,8 +93,8 @@ export function stripListingNameBoilerplate(value: string, title = value): strin
     return removeObservedWords(cleaned, suffix, title);
 }
 
-function cleanedClaim(claim: string, title: string): string {
-    let value = stripListingNameBoilerplate(claim, title);
+function cleanedClaim(claim: string, title: string, set?: string | null): string {
+    let value = stripListingNameBoilerplate(claim, title, set);
     const outsideGrades = title.replace(GRADE_SPAN, " ");
     // The literal reader already removes the grader/number, but post-grade
     // descriptors can survive as "ex-mt" or "-mt". Remove just those observed
@@ -123,12 +132,13 @@ function cleanedClaim(claim: string, title: string): string {
 // infer a card number/set, or coerce Dark/EX/etc. into the searched species.
 // Unknown residual words remain in the name and still require an exact catalog
 // match. Conflicting claims stay unresolved rather than borrowing the intent.
-export function resolveScreeningName({ title, claims, candidate }: {
+export function resolveScreeningName({ title, claims, candidate, set }: {
     title: string;
     claims: readonly (string | null | undefined)[];
     candidate?: string | null;
+    set?: string | null;
 }): string | null {
-    const names = claims.filter((value): value is string => Boolean(value?.trim())).map(value => cleanedClaim(value, title));
+    const names = claims.filter((value): value is string => Boolean(value?.trim())).map(value => cleanedClaim(value, title, set));
     if (!names.length || names.some(name => !canonicalCatalogName(name))) return null;
     if (names.some(name => !sameCatalogName(name, names[0]))) return null;
     return candidate?.trim() && sameCatalogName(candidate, names[0]) ? candidate.trim() : names[0];
