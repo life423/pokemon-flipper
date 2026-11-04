@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-    countSearchResults, filterSearchResults, groupSearchResults, sortSearchResults,
+    countSearchResults, filterSearchResults, groupSearchResults, sortSearchResults, selectDealAlternatives,
     type SearchFilters,
 } from "../../client/src/search/results.ts";
 import type { AnalysisState } from "../../client/src/analysis-state.ts";
@@ -476,6 +476,43 @@ test("new-only progress queues only unseen eligible listings while keeping other
     const groups = groupSearchResults(visible, analyses, false, newIds);
     assert.deepEqual(ids(groups.new), ["new-waiting", "new-loading", "new-complete", "new-failed", "new-unchecked", "new-config"]);
     assert.ok(groups.review.some(item => item.id === failed.id), "a failed assessment remains visible for review");
+});
+
+test("empty Deals alternatives prefer positive results below targets and omit losses, mismatches and material holds", () => {
+    const below = listing("below"), loss = listing("loss"), pending = listing("pending"), held = listing("held"), fake = listing("fake");
+    const positive = evaluation(below, 180); positive.underwriting = underwrite(positive, MONEY_CONFIG);
+    assert.equal(positive.underwriting.verdict, "PASS"); assert.ok(positive.underwriting.best!.profit > 0);
+    const hold = evaluation(held); hold.identity = { ...hold.identity!, status: "NEEDS_REVIEW", reasons: ["Release is uncertain."] }; hold.underwriting = underwrite(hold, MONEY_CONFIG);
+    const counterfeit = evaluation(fake); counterfeit.condition!.authenticity.concern = "LIKELY_FAKE"; counterfeit.underwriting = underwrite(counterfeit, MONEY_CONFIG);
+    const analyses = { [below.id]: done(positive), [loss.id]: done(evaluation(loss, 20)), [held.id]: done(hold), [fake.id]: done(counterfeit) };
+    const rows = [loss, listing("mismatch", { match: "OTHER_SET" }), pending, below, held, fake,
+        listing("ended", { endTime: new Date(NOW - 1).toISOString() }), listing("unavailable", { availability: "UNAVAILABLE" }),
+        listing("above-filter", { currentPrice: 200 }), listing("dropped", { screen: screen({ status: "DROPPED" }) })];
+    const filtered = filter(rows, analyses, { maxPrice: "150" });
+    const alternatives = selectDealAlternatives(filtered, analyses, MONEY_CONFIG.targets, NOW);
+    assert.deepEqual(alternatives.map(option => [option.listing.id, option.label]), [[below.id, "Below your targets"], [pending.id, "Resale not yet verified"]]);
+    assert.equal(alternatives[0].profit, positive.underwriting.best!.profit);
+    assert.equal(alternatives[1].profit, null); assert.equal(alternatives[1].roi, null);
+    assert.deepEqual(groupSearchResults(filtered, analyses, false, new Set()).deals, [], "alternatives do not become Deals");
+});
+
+test("unfinished and reference-only alternatives expose no optimistic profit and require no provider work", t => {
+    const fetch = t.mock.method(globalThis, "fetch", () => assert.fail("alternatives only project saved results"));
+    const reference = listing("reference"), value = evaluation(reference, 5000);
+    value.rawPricing!.prices[0].basis = "TCGPLAYER";
+    value.underwriting = underwrite(value, MONEY_CONFIG);
+    const unavailable = listing("no-sold-quotes", { screen: screen({ status: "UNSCREENED", soldEvidence: {
+        status: "UNAVAILABLE", exactScope: false, references: [], note: "No sold quotes are available.",
+    } }) });
+    const rows = [reference, unavailable, ...Array.from({ length: 4 }, (_, index) => listing(`pending-${index}`))];
+    const analyses = { [reference.id]: done(value) }, before = structuredClone({ rows, analyses });
+    const alternatives = selectDealAlternatives(filter(rows, analyses), analyses, MONEY_CONFIG.targets, NOW);
+    assert.equal(alternatives.length, 3);
+    assert.deepEqual(selectDealAlternatives([unavailable], analyses, MONEY_CONFIG.targets, NOW), []);
+    assert.deepEqual(selectDealAlternatives([reference], analyses, MONEY_CONFIG.targets, NOW).map(option => [option.listing.id, option.profit]), [[reference.id, null]]);
+    assert.ok(!alternatives.some(option => option.listing.id === unavailable.id));
+    assert.ok(alternatives.every(option => option.label === "Resale not yet verified" && option.profit === null && option.roi === null));
+    assert.deepEqual({ rows, analyses }, before); assert.equal(fetch.mock.callCount(), 0);
 });
 
 function freeze<T>(value: T): T {

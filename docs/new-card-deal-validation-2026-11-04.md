@@ -105,3 +105,52 @@ three orphaned tests, preserving active title readers and saved-answer reuse.
 Final checks: 942 offline tests, both typechecks, production build and whitespace
 checks pass. These changes required no paid/provider calls; they have not yet
 been validated by another live deal search.
+
+## Later targeted validation
+
+The subsequent saved-only recheck covered 24 prior searches and 213 slab rows
+without provider calls. No explicitly matched saved market had positive net
+profit at its saved asking terms. Apparent premium upside in unresolved
+printings was retained as research uncertainty, not counted as a Deal.
+
+Two targeted modern Buy It Now searches still found no profitable purchase.
+Magikarp exposed a real local-reader gap: the unpaid parser did not recognize
+Paldea Evolved, preventing all 24 rows from reaching sold-price research.
+Local readers now reuse the cached English set catalog, match the longest set
+phrase, and preserve that context when screening listings and sold titles.
+This also prevents EX Team Rocket Returns from being read as original Team
+Rocket. Explicit Illustration Rare wording, standalone separators and dashed
+grader/grade wording no longer obstruct the corresponding literal metadata.
+Accepted paid records, model defaults and spending keys remain unchanged.
+
+After repair, Magikarp price screening excluded 14 of 24 candidates before
+photos. The original search account was resumed; five label assessments cost
+0.8468 cents, and it still produced no Deal. The Mewtwo VSTAR BIN search added
+0.29578 cents. These markets' asking prices did not support profitable resale.
+
+A normal HTTP auction search for `Team Rocket holo PSA`, restricted to graded
+cards ending within 12 hours, produced one supported `BUY_GRADED` result at the
+existing $50 minimum profit and 25% ROI targets. Its photographed First Edition
+PSA 8 identity and three matched transactions supported a maximum item bid.
+This is a conditional auction opportunity, not a winning bid, realized profit
+or evidence that it will close under the limit. No profitable Buy It Now was
+established in this follow-up.
+
+The auction account used seven new label assessments for $0.0105118. An isolated
+Chrome check repeated the search with the same account, exercised the ordinary
+automatic queue and selected Deals: one listing appeared, with all seven readings
+reused and no additional generation spending. No result or verdict was injected.
+The check exposed and fixed asynchronous dropdown handlers that could restore
+the prior format/type before their animated update read the new value.
+
+When Deals is empty, a small local projection now shows up to three useful
+alternatives. Positive results below the selected targets and unfinished priced
+leads are labeled separately; unverified options show no profit or ROI. Known
+losses, mismatches, expired listings, material photo concerns and missing-quote
+rows are excluded. Opening their saved details does not start assessment.
+Targets and existing Deals qualification remain unchanged.
+
+Final verification: 951 offline tests, both TypeScript checks, production build
+and whitespace checks pass. The hard AI ceiling stayed at two cents per search;
+the user's conditional ten-cent fallback was not needed. Private reports retain
+the original accounts, UI evidence, source observations and quota accounting.

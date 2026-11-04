@@ -6,6 +6,7 @@ import type { SearchIntent } from "../../shared/types.ts";
 import { explicitCriteria, fallbackKeywords } from "../../shared/search-criteria.ts";
 import { readTitleByRules } from "../ai/title-reader.ts";
 import { StorageUnavailableError } from "../storage/index.ts";
+import { cachedSetNames } from "./set-catalog.ts";
 
 // What a search means. eBay does the matching; this says which of
 // eBay's results are the card the search is for, so other cards and
@@ -77,9 +78,9 @@ export function readSearchByRules(search: string): SearchIntent {
 
 // A literal local interpretation is only a search constraint, never evidence
 // about a physical card's identity, printing, finish or condition.
-export function readSearchLocally(search: string): SearchIntent {
+export function readSearchLocally(search: string, knownSetNames: readonly string[] = []): SearchIntent {
     const intent = readSearchByRules(search);
-    const local = readTitleByRules(fallbackKeywords(search));
+    const local = readTitleByRules(fallbackKeywords(search), knownSetNames);
     return { ...intent, cardName: local.cardName, sets: local.set ? [local.set] : [],
         cardNumber: intent.cardNumber ?? local.cardNumber,
         titleWords: local.cardName ? normalizeWords(local.cardName).split(" ").filter(Boolean).slice(0, 2) : [] };
@@ -89,7 +90,11 @@ export async function readSearchWithoutAi(search: string, signal?: AbortSignal):
     signal?.throwIfAborted();
     const saved = await readCache<SearchIntent>(`search-intent:v${INTENT_VERSION}:${MODEL}:${normalizeText(search).trim()}`, MONTH_HOURS);
     signal?.throwIfAborted();
-    if (!saved) return readSearchLocally(search);
+    if (!saved) {
+        const knownSetNames = await cachedSetNames();
+        signal?.throwIfAborted();
+        return readSearchLocally(search, knownSetNames);
+    }
     if (typeof saved !== "object" || !Array.isArray(saved.sets) || saved.sets.some(set => typeof set !== "string") ||
         !Array.isArray(saved.titleWords) || saved.titleWords.some(word => typeof word !== "string")) {
         throw new StorageUnavailableError("The saved search interpretation is invalid. No replacement AI request was authorized.");

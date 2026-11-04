@@ -47,7 +47,7 @@ export function marketplaceQuery(search: string, intent: SearchIntent): string {
 
 export interface SearchAttributes { grader: string | null; grade: number | null; finish: Finish | null }
 export function searchAttributes(title: string, aspects: Record<string, string> = {}): SearchAttributes {
-    const fromTitle = textOf(title).match(new RegExp(`\\b(${GRADER})\\s*(?:(?:gem|mint|mt|nm|near|ex|excellent|vg|very|good|poor|fair|pristine|black|label)[ -]+){0,5}${GRADE}`, "i"));
+    const fromTitle = textOf(title).match(new RegExp(`\\b(${GRADER})\\s*(?:-\\s*)?(?:(?:gem|mint|mt|nm|near|ex|excellent|vg|very|good|poor|fair|pristine|black|label)[ -]+){0,5}${GRADE}`, "i"));
     const specificGrader = (aspects["Professional Grader"] ?? "").match(new RegExp(`\\b${GRADER}\\b`, "i"))?.[0].toUpperCase() ?? null;
     const specificGrade = (aspects.Grade ?? "").match(new RegExp(`\\b${GRADE}`));
     return { grader: specificGrader ?? fromTitle?.[1].toUpperCase() ?? null,

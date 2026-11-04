@@ -67,6 +67,12 @@ test("only the requested grader and in-range slab grades match", () => {
     assert.equal(criteriaMismatch(searchAttributes("Aquapolis Holo PSA"), intent()), "UNCONFIRMED_CRITERIA");
     assert.equal(criteriaMismatch(searchAttributes("Aquapolis Holo PSA"), intent(), false), null);
     assert.equal(searchAttributes("1999 Pokemon Aquapolis Holo PSA NM-MT 8").grade, 8);
+    for (const grader of ["PSA", "CGC", "BGS", "SGC", "TAG"]) for (const delimiter of ["-", "- ", " - ", "– ", " — "]) {
+        assert.deepEqual(searchAttributes(`Aquapolis Holo ${grader}${delimiter}8.5`), { grader, grade: 8.5, finish: "HOLO" });
+    }
+    assert.deepEqual(searchAttributes("1999 Pokemon Jolteon-Holo Jungle 4/64 PSA- 8 Fresh Slab With TB"), { grader: "PSA", grade: 8, finish: "HOLO" });
+    assert.equal(searchAttributes("Aquapolis PSA-ready 10").grade, null);
+    assert.equal(searchAttributes("Aquapolis PSA- 2003 Holo 7/147").grade, null);
     assert.equal(searchAttributes("PSA 2003 Aquapolis Holo 7/147").grade, null);
     assert.equal(searchAttributes("Aquapolis holo", { "Professional Grader": "Professional Sports Authenticator (PSA)", Grade: "NM-MT 8" }).grade, 8);
 });

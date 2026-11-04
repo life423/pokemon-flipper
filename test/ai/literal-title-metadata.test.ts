@@ -1,7 +1,13 @@
 import "../fixtures/isolated-data.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readTitleByRules } from "../../server/ai/title-reader.ts";
+import { readTitleByRules, readTitleWithoutAi } from "../../server/ai/title-reader.ts";
+import { readSearchLocally, readSearchWithoutAi } from "../../server/search/intent.ts";
+import { createCachedSetNames } from "../../server/search/set-catalog.ts";
+import { writeCache } from "../../server/lib/cache.ts";
+import { MODEL } from "../../server/ai/openai.ts";
+import { findDeals } from "../../server/deals/find-deals.ts";
+import type { ListingSummary } from "../../shared/types.ts";
 
 test("literal slab names survive explicit publisher and accompanying holder metadata", t => {
     t.mock.method(globalThis, "fetch", async () => assert.fail("literal name extraction needs no provider"));
@@ -12,6 +18,10 @@ test("literal slab names survive explicit publisher and accompanying holder meta
         ["Dark Gyarados Team Rocket 8/82 Holo BGS 8.5 including magnetic holder", "dark gyarados", "Team Rocket", "8/82", "BGS", "8.5"],
         ["Misty's Gyarados Gym Heroes 13/132 Holo CGC 9 includes a sleeve", "misty's gyarados", "Gym Heroes", "13/132", "CGC", "9"],
         ["Guard Spec. Base Set 79/102 PSA 9 with Guard", "guard spec.", "Base Set", "79/102", "PSA", "9"],
+        ["Jolteon Jungle 4/64 Holo PSA- 8", "jolteon", "Jungle", "4/64", "PSA", "8"],
+        ["Dark Gyarados Team Rocket 8/82 Holo BGS - 8.5 including magnetic holder", "dark gyarados", "Team Rocket", "8/82", "BGS", "8.5"],
+        ["Misty's Gyarados Gym Heroes 13/132 Holo CGC– 9 includes a sleeve", "misty's gyarados", "Gym Heroes", "13/132", "CGC", "9"],
+        ["Pokemon Card - Mewtwo VSTAR GG44/GG70 Crown Zenith Galarian Gallery Holo - PSA 9", "mewtwo vstar", "Crown Zenith Galarian Gallery", "GG44/GG70", "PSA", "9"],
     ];
     for (const [title, name, set, number, grader, grade] of cases) {
         const reading = readTitleByRules(title);
@@ -29,6 +39,7 @@ test("literal name extraction retains unknown words, printed forms and missing i
         "Guardians Rising Charizard CGC 9",
     ]) assert.notEqual(readTitleByRules(title).cardName, "charizard", title);
     assert.equal(readTitleByRules("Dark Charizard Team Rocket 4/82 CGC 9 with Guard").cardName, "dark charizard");
+    assert.equal(readTitleByRules("Ho-Oh Neo Revelation 7/64 - PSA 8").cardName, "ho-oh", "standalone separators do not split printed hyphenated names");
     assert.equal(readTitleByRules("Charizard ex Scarlet & Violet 151 199/165 CGC 9 with Guard").cardName, "charizard ex");
     const noSet = readTitleByRules("1999 Pokemon Unlimited Charizard Rare Holo #4/102 CGC 9");
     assert.equal(noSet.cardName, "charizard"); assert.equal(noSet.set, null);
@@ -84,4 +95,92 @@ test("art cleanup preserves printed forms, owners, unknown words and incompatibl
     const qualifier = readTitleByRules("Giratina V Lost Origin 186/196 Full Art Holo PSA 9 (OC)");
     assert.notEqual(qualifier.cardName, "giratina v", "name-only cleaning must not erase the original qualifier");
     assert.equal(qualifier.grade, "9");
+    const dashedQualifier = readTitleByRules("Giratina V Lost Origin 186/196 Full Art Holo PSA- 9 (OC)");
+    assert.notEqual(dashedQualifier.cardName, "giratina v");
+    assert.equal(dashedQualifier.grade, "9");
+    for (const title of ["Giratina V Lost Origin 186/196 Holo raw potential PSA- 10", "Giratina V Lost Origin 186/196 Holo PSA-ready 10",
+        "Giratina V Lost Origin 186/196 Holo BGS 9 cross to PSA- 10"]) {
+        assert.notEqual(readTitleByRules(title).cardName, "giratina v", title);
+    }
+});
+
+test("cached English set phrases resolve unfamiliar releases without erasing card forms or overlapping releases", () => {
+    const names = ["paldea evolved", "fusion strike", "vivid voltage", "scarlet violet", "scarlet violet 151", "base set", "ex team rocket returns"];
+    for (const [title, name, set] of [
+        ["Magikarp Paldea Evolved 203/193 PSA 9", "magikarp", "paldea evolved"],
+        ["Gengar VMAX Fusion Strike 271/264 PSA 9", "gengar vmax", "fusion strike"],
+        ["Pikachu VMAX Vivid-Voltage 188/185 PSA 9", "pikachu vmax", "vivid voltage"],
+        ["Charizard ex Scarlet & Violet 151 199/165 PSA 9", "charizard ex", "Scarlet & Violet 151"],
+        ["Blastoise Base Set 2 2/130 PSA 8", "blastoise", "Base Set 2"],
+        ["Rocket's Suicune ex EX Team Rocket Returns 105/109 PSA 7", "rocket's suicune ex", "ex team rocket returns"],
+    ]) {
+        const reading = readTitleByRules(title, names);
+        assert.equal(reading.cardName, name, title);
+        assert.equal(reading.set, set, title);
+    }
+    const intent = readSearchLocally("Magikarp Paldea Evolved 203/193 PSA 9", names);
+    assert.equal(intent.cardName, "magikarp"); assert.deepEqual(intent.sets, ["paldea evolved"]);
+    assert.deepEqual(intent.titleWords, ["magikarp"]); assert.equal(intent.cardNumber, "203/193");
+    assert.equal(intent.minGrade, 9); assert.equal(intent.maxGrade, 9);
+    assert.deepEqual(readSearchLocally("Rocket's Suicune ex EX Team Rocket Returns 105/109 PSA 7", names).sets, ["ex team rocket returns"]);
+    assert.equal(readTitleByRules("Magikarp Paldea Evolvedness 203/193 PSA 9", names).set, null, "a substring does not identify a release");
+    assert.equal(readTitleByRules("Charizard Base Set Celebrations 4/102 PSA 9", names).set, "Celebrations", "literal reprint evidence retains precedence");
+});
+
+test("explicit illustration rarity phrases clean modern listing names while forms and unresolved wording remain", t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("literal rarity cleanup must remain offline"));
+    const names = ["paldea evolved"];
+    for (const title of [
+        "Pokemon Paldea Evolved Magikarp 203/193 Illustration Rare Holo PSA 9",
+        "Pokemon Magikarp Paldea Evolved 203/193 Illustration Rare PSA 9",
+        "Pokemon Magikarp Paldea Evolved 203/193 Special Illustration Rare Holo PSA 9",
+    ]) {
+        const reading = readTitleByRules(title, names);
+        assert.deepEqual([reading.cardName, reading.set, reading.cardNumber, reading.grader, reading.grade], ["magikarp", "paldea evolved", "203/193", "PSA", "9"], title);
+    }
+    for (const name of ["Dark Magikarp", "Magikarp ex", "Misty's Magikarp", "Magikarp VSTAR"]) {
+        assert.equal(readTitleByRules(`${name} Paldea Evolved 203/193 Special Illustration Rare Holo PSA 9`, names).cardName, name.toLowerCase());
+    }
+    for (const wording of ["Illustration", "IR", "SIR", "Illustration Rare (OC)", "Illustration Rare Misprint", "Illustration Rare's"]) {
+        assert.notEqual(readTitleByRules(`Magikarp Paldea Evolved 203/193 ${wording} Holo PSA 9`, names).cardName, "magikarp", wording);
+    }
+    for (const wording of ["proxy", "custom card", "no card"]) {
+        const reading = readTitleByRules(`Magikarp Paldea Evolved 203/193 Illustration Rare Holo PSA 9 ${wording}`, names);
+        assert.equal(reading.kind, "NOT_A_CARD", wording); assert.equal(reading.cardName, null, wording);
+    }
+});
+
+test("set catalog shares local reads and caches a miss without making a provider refresh", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("set catalog lookup must remain cache-only"));
+    let calls = 0, now = 0;
+    const names = createCachedSetNames({ load: async () => { calls++; return calls === 1 ? null : { "SV02: Paldea Evolved": 2023 }; }, now: () => now, ttlMs: 100 });
+    assert.deepEqual(await Promise.all(Array.from({ length: 50 }, () => names())), Array.from({ length: 50 }, () => []));
+    assert.equal(calls, 1);
+    assert.deepEqual(await names(), []); assert.equal(calls, 1);
+    now = 101;
+    assert.deepEqual(await names(), ["paldea evolved"]); assert.equal(calls, 2);
+});
+
+test("async search and listing fallbacks reuse the stored catalog while accepted paid title readings remain unchanged", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("catalog-backed readers need no paid or provider work"));
+    await writeCache("pokemonpricetracker:set-years", { "paldea evolved": 2023, "fusion strike": 2021, "ex team rocket returns": 2004 });
+    const intent = await readSearchWithoutAi("Magikarp Paldea Evolved 203/193 PSA 9");
+    assert.equal(intent.cardName, "magikarp"); assert.deepEqual(intent.sets, ["paldea evolved"]);
+    const reading = await readTitleWithoutAi("Pokemon Magikarp Paldea Evolved 203/193 PSA 9");
+    assert.equal(reading.cardName, "magikarp"); assert.equal(reading.set, "paldea evolved");
+    const returns = "2004 POKEMON EX TEAM ROCKET RETURNS #105 ROCKET’S SUICUNE EX-HOLO PSA 7";
+    assert.equal((await readTitleWithoutAi(returns)).set, "ex team rocket returns");
+    assert.deepEqual((await readSearchWithoutAi("Suicune EX Team Rocket Returns PSA 7")).sets, ["ex team rocket returns"]);
+    const wrongSet: ListingSummary = { id: "wrong-modern-set", title: returns, currentPrice: 100, shipping: 0, buyingOption: "FIXED_PRICE", bids: 0,
+        isGraded: true, endTime: null, images: ["front"], url: "#", seller: null };
+    const rows = await findDeals("Suicune Team Rocket PSA 7", {}, {
+        readIntent: readSearchWithoutAi, readTitle: readTitleWithoutAi,
+        search: async () => ({ listings: [wrongSet], total: 1, skipped: 0 }),
+        soldScreening: () => async () => assert.fail("a known newer set must be excluded before sold-price research"),
+    });
+    assert.deepEqual(rows, [], "the longer catalog release cannot borrow the original Team Rocket search scope");
+    const title = "Gengar VMAX Fusion Strike 271/264 PSA 9";
+    const paid = { kind: "SINGLE_CARD", cardName: "Gengar VMAX", set: "Fusion Strike", cardNumber: "271/264", language: "English", grader: "PSA", grade: "9", condition: null };
+    await writeCache(`title-reading:v6:${MODEL}:${title.toLowerCase()}`, paid);
+    assert.deepEqual(await readTitleWithoutAi(title), paid);
 });

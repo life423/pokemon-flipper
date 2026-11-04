@@ -7,10 +7,10 @@ const BOILERPLATE = /\b(?:wizards(?:\s+of\s+(?:the\s+)?coast)?|(?:the\s+)?pok[e�
 const GRADER = "(?:psa|cgc|bgs|sgc|tag)";
 const GRADE = "(?:10|[1-9](?:\\.5)?)(?![\\d./])";
 const DESCRIPTION = "(?:near[ -]+mint(?:[ -]+to[ -]+mint)?|gem[ -]+(?:mint|mt)|nm[ -]+(?:mint|mt)|ex[ -]+mt|vg[ -]+ex|very[ -]+good|excellent|pristine|mint|good|poor|fair|nm|ex|mt|vg)";
-const GRADE_SPAN = new RegExp(`\\b${GRADER}\\s*(?:${DESCRIPTION}[ -]+)*${GRADE}(?:[ -]+(${DESCRIPTION}))?`, "gi");
+const GRADE_SPAN = new RegExp(`\\b${GRADER}\\s*(?:[-–—]\\s*)?(?:${DESCRIPTION}[ -]+)*${GRADE}(?:[ -]+(${DESCRIPTION}))?`, "gi");
 const INCLUDED_HOLDER_SUFFIX = /\s+(?:with|w\s*\/|includes?|including)\s+(?:(?:a|an|the)\s+)?(?:(?:protective|protection|magnetic|acrylic|hard|fitted|display|slab)\s+)*(?:guards?|cases?|holders?|sleeves?|top[ -]?loaders?)\s*[.!]?\s*$/i;
 const GRADED_ARTIST_SUFFIX = /\s+(?:kagemaru\s+)?himeno\s*$/i;
-const ART_DESCRIPTION = /\b(?:(?:alternate|alt)(?:[\s/-]+full)?[\s-]+art|full[\s-]+art)\b(?!['’])/gi;
+const ART_DESCRIPTION = /\b(?:(?:alternate|alt)(?:[\s/-]+full)?[\s-]+art|full[\s-]+art|(?:special[\s-]+)?illustration[\s-]+rare)\b(?!['’])/gi;
 // These release codes are publisher metadata only beside the corresponding
 // written release and an explicit collector fraction, never a promo number.
 const SWORD_SHIELD_RELEASES: [RegExp, RegExp][] = [

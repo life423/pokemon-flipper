@@ -11,6 +11,8 @@ import { explicitReprintSet, withoutReprintRelease } from "../../shared/reprint-
 import { rawConditionClaim } from "../../shared/raw-condition-claim.ts";
 import { CONDITION_NAMES } from "../../shared/conditions.ts";
 import { stripListingNameBoilerplate } from "../identity/screening-name.ts";
+import { setKey } from "../../shared/sets.ts";
+import { cachedSetNames } from "../search/set-catalog.ts";
 
 // Many sellers leave the set, number, or name out of the item details
 // but put them in the title ("CHARIZARD 1999 POKEMON BASE SET 4/102").
@@ -108,14 +110,25 @@ const cacheKey = (title: string) => `title-reading:v${READER_VERSION}:${MODEL}:$
 // Unrecognized sets and names remain unresolved for the actual photo assessment.
 const LITERAL_SETS = ["Crown Zenith Galarian Gallery", "Scarlet & Violet 151", "Neo Revelation", "Neo Discovery", "Gym Challenge", "Evolving Skies", "Brilliant Stars", "Lost Origin", "Team Rocket", "Neo Genesis", "Neo Destiny", "Gym Heroes", "Crown Zenith", "Base Set 2", "Legendary Collection", "Celebrations", "Aquapolis", "Expedition", "Skyridge", "Fossil", "Jungle", "Base Set"];
 const escapePattern = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const setIn = (title: string) => explicitReprintSet(title) ?? LITERAL_SETS.find(set => new RegExp(`\\b${escapePattern(set).replace(/ /g, "\\s+")}\\b`, "i").test(title)) ?? null;
+function literalSet(title: string, knownSetNames: readonly string[]) {
+    const explicit = explicitReprintSet(title);
+    const names = explicit ? [explicit] : [...LITERAL_SETS, ...knownSetNames].sort((a, b) => setKey(b).length - setKey(a).length);
+    for (const set of names) {
+        const key = setKey(set);
+        if (!key) continue;
+        const pattern = new RegExp(`\\b${key.split(" ").map(escapePattern).join("[^a-z0-9]+")}\\b`, "ig");
+        if (explicit || pattern.test(normalizeText(title))) return { set, pattern };
+    }
+    return null;
+}
 const cardNumberIn = (title: string) => title.match(/\b(?:[a-z]{0,5}\d{1,4}[a-z]?)\s*\/\s*(?:[a-z]{0,5}\d{1,4}[a-z]?)\b/i)?.[0].replace(/\s/g, "")
     ?? title.match(/\b(?:swsh|sm|svp|sv|xy|bw|dp|hgss|gg|tg|h)\d{1,4}[a-z]?\b/i)?.[0]
     ?? title.match(/(?:#|\b(?:card\s*(?:no\.?|number)?|no\.))\s*(\d{1,3}[a-z]?)\b/i)?.[1] ?? null;
 
-export function readTitleByRules(title: string): TitleReading {
+export function readTitleByRules(title: string, knownSetNames: readonly string[] = []): TitleReading {
     const attributes = searchAttributes(title);
-    const set = setIn(title);
+    const matchedSet = literalSet(title, knownSetNames);
+    const set = matchedSet?.set ?? null;
     const number = cardNumberIn(title);
     const language = cardLanguageStatus(title);
     const excluded = exclusionReason({ title, itemId: "local-title|0" });
@@ -126,11 +139,12 @@ export function readTitleByRules(title: string): TitleReading {
     // Only use a compact literal name after removing explicit metadata. This
     // does not claim that an unknown phrase is a canonical Pokemon identity.
     const name = normalizeText(stripListingNameBoilerplate(withoutReprintRelease(title), title))
-        .replace(set ? new RegExp(escapePattern(set).replace(/ /g, "\\s+"), "ig") : /$^/, " ")
+        .replace(matchedSet?.pattern ?? /$^/, " ")
         .replace(number ? new RegExp(escapePattern(number), "ig") : /$^/, " ")
-        .replace(/\b(?:psa|cgc|bgs|sgc|tag)\s*(?:(?:gem|mint|mt|nm|near|ex|excellent|vg|very|good|poor|fair|pristine|black|label)[ -]+){0,5}(?:10|[1-9](?:\.5)?)?\b/ig, " ")
+        .replace(/\b(?:psa|cgc|bgs|sgc|tag)\s*(?:[-–—]\s*)?(?:(?:gem|mint|mt|nm|near|ex|excellent|vg|very|good|poor|fair|pristine|black|label)[ -]+){0,5}(?:10|[1-9](?:\.5)?)?\b/ig, " ")
         .replace(/\b(?:pokemon|pok[eé]mon|tcg|cards?|english|eng|en|holo(?:graphic)?|non[ -]?holo|reverse|rare|ultra|secret|unlimited|shadowless|first edition|1st edition|wotc|vintage|raw|ungraded|graded|near mint|lightly played|moderately played|heavily played|damaged|mint|nm|lp|mp|hp|dmg|excellent|condition|collection|collectible|collectibles|promos?|with|from|the|for|please|show me|find me|looking for|i want|some|any|all)\b/ig, " ")
         .replace(/\b(?:19|20)\d{2}\b|\b\d+(?:\.\d+)?\b|[#|,;:()[\]]/g, " ")
+        .replace(/(?:^|\s)[-–—]+(?=\s|$)/g, " ")
         .replace(/\s+/g, " ").trim();
     const nameWords = name.split(" ");
     const cardName = !excluded && name && nameWords.length <= 3 && /^[a-z][a-z '.-]*$/i.test(name) && !/\b(?:would|like|best|better|higher|above|below|under|over|between|holos|deals?|search|selling|sale|lot|lots)\b/i.test(name) ? name : null;
@@ -153,7 +167,9 @@ export async function readTitleWithoutAi(title: string, signal?: AbortSignal): P
         const explicitSet = explicitReprintSet(title);
         return explicitSet ? { ...saved, set: explicitSet } : saved;
     }
-    return readTitleByRules(title);
+    const knownSetNames = await cachedSetNames();
+    signal?.throwIfAborted();
+    return readTitleByRules(title, knownSetNames);
 }
 
 // Dependencies are replaceable so batching and cancellation can be tested

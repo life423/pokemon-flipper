@@ -146,7 +146,7 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
     const purchaseFields = <>
                 <label className={styles.field}>
                     <span>Listing format</span>
-                    <select value={typeFilter} onChange={(event) => withViewTransition(() => setTypeFilter(event.target.value as TypeFilter))}>
+                    <select value={typeFilter} onChange={({ target: { value } }) => withViewTransition(() => setTypeFilter(value as TypeFilter))}>
                         <option value="FIXED_PRICE">Buy It Now</option>
                         <option value="AUCTION">Auctions ending within 12 hours</option>
                         <option value="all">Both formats</option>
@@ -154,7 +154,7 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
                 </label>
                 <label className={styles.field}>
                     <span>Card type</span>
-                    <select value={kindFilter} onChange={(event) => withViewTransition(() => setKindFilter(event.target.value as KindFilter))}>
+                    <select value={kindFilter} onChange={({ target: { value } }) => withViewTransition(() => setKindFilter(value as KindFilter))}>
                         <option value="all">Both</option>
                         <option value="raw">Raw cards</option>
                         <option value="graded">Graded cards</option>

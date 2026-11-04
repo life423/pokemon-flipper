@@ -15,7 +15,7 @@ import { compareAnalysisPriority } from "../../shared/analysis-priority.ts";
 const SOURCE_PAGE_LIMIT = 200;
 
 function literalTitleFits(listing: ListingSummary, intent: SearchIntent): boolean {
-    const reading = readTitleByRules(listing.title);
+    const reading = readTitleByRules(listing.title, intent.sets);
     return (!reading.kind || reading.kind === "SINGLE_CARD") && setMatches(reading.set, intent) &&
         (!intent.cardNumber || !reading.cardNumber || sameCardNumber(intent.cardNumber, reading.cardNumber));
 }

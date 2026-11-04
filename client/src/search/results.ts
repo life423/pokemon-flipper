@@ -7,6 +7,8 @@ import { rateDeal } from "../../../shared/money/rating.ts";
 import { compareListingEvidence, listingSignals } from "../../../shared/signals.ts";
 import { matchesListingFilters } from "../../../shared/listing-filters.ts";
 import { englishListingEligible } from "../../../shared/card-language.ts";
+import { photoReviewStatus } from "../../../shared/photo-review.ts";
+import { priceEvidenceGap } from "../../../shared/money/price-evidence.ts";
 
 export type View = ResultGroup | "all" | "new";
 
@@ -102,6 +104,33 @@ export function sortSearchResults(listings: ListingSummary[], analyses: Record<s
     };
 
     return [...listings].sort(sort === "best" ? compareBest : sort === "overlooked" ? compareOverlooked : SORTS[sort]);
+}
+
+export interface DealAlternative { listing: ListingSummary; label: "Below your targets" | "Resale not yet verified"; profit: number | null; roi: number | null }
+// The caller supplies current filtered rows and evaluations retargeted to the
+// user's controls. Alternatives never change the Deals group or start research.
+export function selectDealAlternatives(filtered: ListingSummary[], analyses: Record<string, AnalysisState>, targets: Targets, now: number): DealAlternative[] {
+    const alternatives: DealAlternative[] = [];
+    for (const listing of filtered) {
+        const evaluation = evaluationOf(analyses[listing.id]), best = evaluation?.underwriting?.best;
+        if (listing.match || listing.screen?.junk || listing.availability === "UNAVAILABLE" || listing.endTime && Date.parse(listing.endTime) <= now ||
+            evaluation?.listing.availability === "UNAVAILABLE" || evaluation?.identity?.notThisCard ||
+            evaluation && (evaluation.slab?.status === "LIKELY_FAKE" || evaluation.condition?.authenticity.concern === "LIKELY_FAKE" || photoReviewStatus(evaluation).needsYourReview)) continue;
+        const gap = priceEvidenceGap(evaluation);
+        if (evaluation?.underwriting?.verdict === "PASS" && !gap) {
+            if (best?.status === "PRICED" && Number.isFinite(best.profit) && best.profit > 0 && evaluation.researchMode !== "DEFERRED_LOW_RESALE") {
+                alternatives.push({ listing, label: "Below your targets", profit: best.profit, roi: best.roi });
+            }
+            continue;
+        }
+        if (evaluation && !gap && best?.status === "PRICED" && best.profit <= 0) continue;
+        if (listing.screen?.status !== "DROPPED" && analyses[listing.id]?.status !== "error" &&
+            (!evaluation && canAutoAnalyze(listing) || evaluation && gap && best?.status === "PRICED" && best.profit > 0)) {
+            alternatives.push({ listing, label: "Resale not yet verified", profit: null, roi: null });
+        }
+    }
+    return alternatives.sort((a, b) => Number(b.profit !== null) - Number(a.profit !== null) ||
+        (b.profit ?? 0) - (a.profit ?? 0) || compareAnalysisPriority(a.listing, b.listing, targets)).slice(0, 3);
 }
 
 export function countSearchResults({ listings, analyses, newMode, newIds, page, intent, filters }: ResultsContext & { newMode: boolean; newIds: ReadonlySet<string>; filters?: SearchFilters }) {

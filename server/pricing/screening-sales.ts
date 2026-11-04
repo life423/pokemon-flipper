@@ -27,9 +27,9 @@ const specialSlab = (title: string) => /\((?:oc|mk|mc|st|pd|of)\)|\b(?:pristine|
 const unique = (sales: Comp[]) => [...new Map(sales.map(sale => [sale.id != null ? `id:${sale.id}` : sale.listing_url ? `url:${sale.listing_url}` : `${sale.title}|${sale.sold_at}|${sale.price}`, sale])).values()];
 // Preserve a negative edition claim as metadata rather than leaving "no"
 // attached to the name after the literal reader removes "1st Edition".
-const readClaims = (title: string) => readTitleByRules(title.replace(/\b(?:no|not|without|non)[\s-]*(?:1st|first)[\s-]*ed(?:ition|it)?\b/gi, "Unlimited"));
+const readClaims = (title: string, knownSets: readonly string[] = []) => readTitleByRules(title.replace(/\b(?:no|not|without|non)[\s-]*(?:1st|first)[\s-]*ed(?:ition|it)?\b/gi, "Unlimited"), knownSets);
 function matchesSaleTarget(sale: Comp, record: CardRecord, grader: string | null, grade: string | null) {
-    const reading = readClaims(sale.title);
+    const reading = readClaims(sale.title, record.setName ? [record.setName] : []);
     const name = resolveScreeningName({ title: sale.title, claims: [reading.cardName], candidate: record.name });
     return !(reading.kind && reading.kind !== "SINGLE_CARD" || reading.language === "Other" ||
         reading.cardName && (!name || !sameCatalogName(name, record.name)) ||
@@ -136,7 +136,8 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
     return async (listing: ListingSummary, intent: SearchIntent): Promise<ScreeningSoldEvidence> => {
         signal?.throwIfAborted();
         const evidence: ScreeningSoldEvidence = { status: "UNAVAILABLE", exactScope: false, references: [], note: "The listing does not establish one exact card market for sold-price screening." };
-        const reading = readClaims(listing.title), card = listing.screen?.card;
+        const card = listing.screen?.card;
+        const reading = readClaims(listing.title, [card?.set, ...intent.sets].filter((set): set is string => Boolean(set)));
         if (reading.kind && reading.kind !== "SINGLE_CARD") return evidence;
         const claimedNames = [card?.name, reading.cardName].filter((value): value is string => Boolean(value?.trim()));
         const claimedSets = [card?.set, reading.set].filter((value): value is string => Boolean(value?.trim()));

@@ -8,9 +8,12 @@ import { StorageUnavailableError } from "../../server/storage/index.ts";
 import type { CardRecord, Comp, FetchSoldPage } from "../../server/pricing/types.ts";
 import type { ListingSummary, SearchIntent } from "../../shared/types.ts";
 import { applySoldPriceScreen } from "../../shared/money/sold-screen.ts";
-import { readTitleByRules } from "../../server/ai/title-reader.ts";
+import { readTitleByRules, readTitleWithoutAi } from "../../server/ai/title-reader.ts";
 import { screenListingWithoutAi } from "../../server/deals/screen-listing.ts";
 import { canAutoAnalyze, resultGroup } from "../../shared/analysis.ts";
+import { readSearchLocally, readSearchWithoutAi } from "../../server/search/intent.ts";
+import { findDeals } from "../../server/deals/find-deals.ts";
+import { writeCache } from "../../server/lib/cache.ts";
 
 const NOW = Date.parse("2026-11-03T12:00:00Z"), DAY = 86_400_000;
 const intent: SearchIntent = { cardName: "Charizard", sets: ["Base Set"], cardNumber: "4/102", printing: null, graded: null, titleWords: ["charizard"], source: "rules" };
@@ -95,6 +98,46 @@ test("literal modern names reach exact sold-price exclusion before buying labels
         assert.equal(resultGroup(cheap, null), "candidates", "metadata never creates a verified Deal");
         assert.equal(calls.lookup, 1); assert.equal(calls.graded.length, 1);
     }
+});
+
+test("catalog-backed modern query and title identity reach sold research before photo admission", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("catalog identity and sold-screening fixture must remain offline"));
+    const names = ["paldea evolved", "fusion strike"];
+    const wanted = readSearchLocally("Magikarp Paldea Evolved 203/193 PSA 9", names);
+    const { run, calls } = harness({ cards: [card({ name: "Magikarp", setName: "SV02: Paldea Evolved", cardNumber: "203/193" })],
+        graded: async () => three({ title: "Magikarp Paldea Evolved 203/193 Holo PSA 9", price: 400, grader: "PSA", grade: "9" }) });
+    const subject = await screenListingWithoutAi(listing({ title: "Pokemon Magikarp Paldea Evolved 203/193 Holo PSA 9", isGraded: true,
+        currentPrice: 800, shipping: 0, images: ["front", "back"] }), wanted, undefined, async value => readTitleByRules(value, names));
+    assert.equal(subject.screen!.card!.name, "magikarp"); assert.equal(subject.screen!.card!.set, "paldea evolved");
+    const evidence = await run(subject, wanted);
+    assert.equal(calls.lookup, 1); assert.equal(calls.graded.length, 1);
+    assert.equal(evidence.status, "AVAILABLE"); assert.equal(evidence.exactScope, true);
+    assert.equal(applySoldPriceScreen(subject, evidence).screen.status, "DROPPED", "an overpriced catalog-backed release needs no paid photo work");
+    assert.equal(canAutoAnalyze(applySoldPriceScreen({ ...subject, currentPrice: 200 }, evidence)), true);
+});
+
+test("normal findDeals uses cached set names in query, listing and sold-title matching without provider or photo calls", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("all external transports are prohibited in this regression"));
+    await writeCache("pokemonpricetracker:set-years", { "paldea evolved": 2023, "fusion strike": 2021 });
+    const { run, calls } = harness({ lookup: async query => {
+        assert.equal(query.set, "paldea evolved"); assert.equal(query.name, "magikarp");
+        return [card({ name: "Magikarp", setName: "SV02: Paldea Evolved", cardNumber: "203/193" })];
+    }, graded: async () => three({ title: "Magikarp Paldea Evolved 203/193 Holo PSA 9", price: 400, grader: "PSA", grade: "9" }) });
+    const page = [
+        listing({ id: "overpriced", title: "Magikarp Paldea Evolved 203/193 Holo PSA 9", isGraded: true, currentPrice: 800, shipping: 0, images: ["front", "back"] }),
+        listing({ id: "candidate", title: "Magikarp Paldea Evolved 203/193 Holo PSA 9", isGraded: true, currentPrice: 200, shipping: 0, images: ["front", "back"] }),
+        listing({ id: "wrong-set", title: "Magikarp Fusion Strike 203/193 Holo PSA 9", isGraded: true, images: ["front", "back"] }),
+    ];
+    let sourceCalls = 0;
+    const rows = await findDeals("Magikarp Paldea Evolved 203/193 PSA 9", { filters: { typeFilter: "FIXED_PRICE" } }, {
+        readIntent: readSearchWithoutAi, readTitle: readTitleWithoutAi, soldScreening: () => run,
+        search: async () => { sourceCalls++; return { listings: page, total: page.length, skipped: 0 }; },
+    });
+    assert.equal(sourceCalls, 1); assert.equal(calls.lookup, 1); assert.equal(calls.graded.length, 1);
+    assert.deepEqual(rows.map(row => row.id), ["candidate"]);
+    assert.equal(rows[0].screen!.soldEvidence!.exactScope, true);
+    assert.equal(canAutoAnalyze(rows[0]), true);
+    assert.equal(resultGroup(rows[0], null), "candidates", "literal catalog metadata does not manufacture a Deal");
 });
 
 test("modern descriptor cleanup cannot manufacture missing identity fields, printing/finish scope or ordinary qualifiers", async () => {
@@ -186,6 +229,32 @@ test("slabs research one exact grader and half grade without raw or speculative 
     assert.deepEqual([result.references[0].grader, result.references[0].grade, result.references[0].condition, result.references[0].summary.count], ["CGC", "8.5", null, 3]);
     assert.deepEqual(calls.graded, [[1, { grader: "CGC", grade: "8.5", variant: "Unlimited Holofoil" }]]);
     assert.equal(calls.raw.length, 0);
+});
+
+test("hyphen-delimited slab grades reach exact sold screening without admitting potential or qualified labels", async t => {
+    const fetch = t.mock.method(globalThis, "fetch", async () => assert.fail("title screening uses only the supplied offline source"));
+    const wanted: SearchIntent = { ...intent, cardName: "Jolteon", sets: ["Jungle"], cardNumber: "4/64" };
+    const { run, calls } = harness({ cards: [card({ name: "Jolteon", setName: "Jungle", cardNumber: "4/64" })],
+        graded: async () => three({ title: "Jolteon Jungle 4/64 Unlimited Holo PSA 8", grader: "PSA", grade: "8" }) });
+    for (const delimiter of ["- ", " - "]) {
+        const subject = await screenListingWithoutAi(listing({ title: `Jolteon Jungle 4/64 Unlimited Holo PSA${delimiter}8 with a protective case`, isGraded: true }),
+            wanted, undefined, async title => readTitleByRules(title));
+        assert.deepEqual(subject.listedAttributes, { grader: "PSA", grade: 8, finish: "HOLO" });
+        const evidence = await run(subject, wanted);
+        assert.equal(evidence.status, "AVAILABLE"); assert.equal(evidence.exactScope, true);
+        assert.deepEqual([evidence.references[0].grader, evidence.references[0].grade], ["PSA", "8"]);
+    }
+    assert.deepEqual(calls.graded, [[1, { grader: "PSA", grade: "8", variant: "Unlimited Holofoil" }]]);
+    assert.equal(calls.raw.length, 0);
+    for (const suffix of ["raw potential PSA- 10", "PSA-ready 10", "BGS 8 cross to PSA- 10", "PSA- 8 (OC)", "CGC- Pristine 10"]) {
+        const excluded = harness({ cards: [card({ name: "Jolteon", setName: "Jungle", cardNumber: "4/64" })],
+            graded: async () => assert.fail("a speculative or special label cannot authorize an ordinary slab sold scope") });
+        const evidence = await excluded.run(listing({ title: `Jolteon Jungle 4/64 Unlimited Holo ${suffix}`, isGraded: true }), wanted);
+        assert.equal(evidence.status, "UNAVAILABLE", suffix);
+        assert.equal(evidence.exactScope, false, suffix);
+        assert.equal(excluded.calls.graded.length + excluded.calls.raw.length, 0, suffix);
+    }
+    assert.equal(fetch.mock.callCount(), 0);
 });
 
 test("explicit slab titles with publisher or holder metadata reach existing overpricing exclusion", async () => {

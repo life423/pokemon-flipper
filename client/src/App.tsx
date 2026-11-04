@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { dollars, percent } from "./format";
 import { prefersReducedMotion, transitionName, withViewTransition } from "./motion";
 import type { EbayUsage, Evaluation, ListingSummary, Targets } from "./types";
 import { currentPriceEvidence } from "../../shared/pricing-freshness.ts";
@@ -37,7 +38,7 @@ import { useNow } from "./useNow";
 import { listingEvidenceKey } from "../../shared/listing-evidence.ts";
 import { SearchControls } from "./search/SearchControls";
 import type { AnalysisState } from "./analysis-state";
-import { filterSearchResults, groupSearchResults, sortSearchResults, countSearchResults, evaluationOf, type View, type SortKey, type TypeFilter, type KindFilter, type SearchPage } from "./search/results";
+import { filterSearchResults, groupSearchResults, sortSearchResults, countSearchResults, selectDealAlternatives, evaluationOf, type View, type SortKey, type TypeFilter, type KindFilter, type SearchPage } from "./search/results";
 import { ALL, AUTO_KEY, RECENT_KEY, RECENT_LIMIT, STARTER_SEARCHES, readRecentSearches, readTargets, readAutoSetting, readResultsSetting, targetText } from "./search/settings";
 import { analysisBlockPolicy, describeIntent, describeUsage, type AnalysisBlockCode } from "./search/presentation";
 import styles from "./App.module.css";
@@ -738,6 +739,7 @@ export function App() {
     );
 
     const groups = useMemo(() => groupSearchResults(filtered, analyses, includeOffers, newIds), [filtered, analyses, includeOffers, newIds]);
+    const alternatives = useMemo(() => groups.deals.length ? [] : selectDealAlternatives(filtered, analyses, targets, now), [groups.deals.length, filtered, analyses, targets, now]);
 
     const visible = useMemo(() => sortSearchResults(groups[view], analyses, sort, targets, now), [groups, view, sort, analyses, targets, now]);
 
@@ -1071,6 +1073,16 @@ export function App() {
                                     <p>{counts.dropped + (summary.priceExcluded ?? 0)} below your research/value or profit targets · {counts.mismatched} other cards, sets or criteria · {groups.review.length} need specific evidence.</p>
                                     {(summary.priceExcluded ?? 0) > 0 && <p>{summary.priceExcluded} were excluded before photo analysis. Run a new search after lowering targets or enabling offers to reconsider those listings.</p>}
                                     {counts.waiting > 0 && <p>{counts.waiting} still await assessment{analysisBlocked ? " because paid AI is paused or budget-limited" : " in Sorting"}. An unassessed card is not a confirmed deal.</p>}
+                                    {alternatives.length > 0 && <div className={styles.alternatives}>
+                                        <p><strong>Best available options</strong></p>
+                                        <ul>{alternatives.map(({ listing, label, profit, roi }) => <li key={listing.id}>
+                                            <button type="button" className={`${styles.secondary} ${styles.alternative}`} onClick={() => openPanel(listing.id)}>
+                                                <strong>{listing.title}</strong>
+                                                <span>{label} · {dollars(listing.currentPrice)} {listing.buyingOption === "AUCTION" ? "current bid" : "asking"}</span>
+                                                {profit !== null && <span>{dollars(profit)} modeled profit · {percent(roi)} ROI</span>}
+                                            </button>
+                                        </li>)}</ul>
+                                    </div>}
                                 </div>
                                 <button type="button" className={styles.secondary} onClick={() => withViewTransition(() => setView("candidates"))}>Open Sorting</button>
                             </div>
