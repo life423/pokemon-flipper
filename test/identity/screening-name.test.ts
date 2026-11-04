@@ -152,3 +152,29 @@ test("source-observed art and release descriptors reconcile old saved claims wit
         ["Rayquaza V Evolving Skies 194/203 Curious Art", ["Rayquaza V Curious Art"], "Rayquaza V"],
     ] as const) assert.notEqual(resolveScreeningName({ title, claims, candidate }), candidate, title);
 });
+
+test("anchored art abbreviations reconcile older saved name residue while retaining source identity conflicts", () => {
+    for (const [title, polluted, candidate] of [
+        ["Pokemon Gengar Vmax Fusion Strike 271/264 Secret Rare Full Alt Art PSA 9 Mint", "gengar vmax full", "Gengar VMAX"],
+        ["2021 Pokemon SWSH Fusion Strike Gengar VMAX 271/264 Alt Art Holo PSA 9", "swsh gengar vmax", "Gengar VMAX"],
+        ["PSA 9 Giratina VSTAR GG69/GG70 Crown Zenith Galarian Gallery FA Holo ENG", "giratina vstar fa", "Giratina VSTAR"],
+        ["2023 EN POKÉMON FA/PIKACHU #160/159 - CROWN ZENITH - PSA 9", "fa/pikachu", "Pikachu"],
+        ["2023 Pokemon SWSH Full Art FA Pikachu Crown Zenith 160/159 PSA 9 MINT", "fa pikachu", "Pikachu"],
+        ["Charizard ex Scarlet & Violet 151 199/165 SIR Holo PSA 9", "charizard ex sir", "Charizard ex"],
+        ["Pokemon Charizard EX Holo PSA 9 Mint 199/165 Sv: Scarlet & Violet 151", "charizard ex sv", "Charizard ex"],
+    ]) assert.equal(resolveScreeningName({ title, claims: [candidate, polluted], candidate }), candidate, title);
+    for (const [title, polluted, candidate] of [
+        ["Dark Pikachu Crown Zenith 160/159 FA PSA 9", "dark pikachu fa", "Pikachu"],
+        ["Misty's Pikachu Crown Zenith 160/159 FA PSA 9", "misty's pikachu fa", "Pikachu"],
+        ["Gengar VMAX Fusion Strike 271/264 FA PSA 9", "gengar vmax fa", "Gengar V"],
+        ["Giratina VSTAR Crown Zenith Galarian Gallery GG69/GG70 FA PSA 9", "giratina vstar fa", "Giratina V"],
+        ["Nidoran female Crown Zenith 160/159 FA PSA 9", "nidoran female fa", "Nidoran male"],
+    ]) assert.equal(resolveScreeningName({ title, claims: [candidate, polluted], candidate }), null, title);
+    for (const [title, claim] of [
+        ["Pikachu Crown Zenith FA PSA 9", "pikachu fa"],
+        ["Pikachu Crown Zenith 160/159 FA", "pikachu fa"],
+        ["Charizard ex SV 151 199/165 SIR PSA 9", "charizard ex sir"],
+        ["FA's Pikachu Crown Zenith 160/159 PSA 9", "FA's Pikachu"],
+        ["Pikachu Crown Zenith 160/159 FA Misprint PSA 9", "pikachu fa misprint"],
+    ]) assert.notEqual(resolveScreeningName({ title, claims: [claim], candidate: "Pikachu" }), "Pikachu", title);
+});

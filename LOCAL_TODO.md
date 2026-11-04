@@ -5,9 +5,29 @@ with the repository. Older entries calling it private or ignored describe the
 previous arrangement. Credentials, environment values, API payloads, paid photo
 evidence and data/ remain excluded. A separate computer handoff is deferred.
 
-Catalog/search checkpoint ecae9e9 is committed and pushed on main, including
-tracked Markdown notes. Work continues on improve/raw-resale-evidence. No
-handoff was created; preserve the unrelated .env.example deletion.
+Catalog/search ecae9e9 and raw-resale 489ebb7 are committed and pushed on main,
+including tracked Markdown notes. The next catalog-name coverage change is on
+improve/catalog-name-coverage. No handoff was created; preserve the unrelated
+.env.example deletion.
+
+## Latest cheap screening coverage — November 4
+
+- [x] Check seven new exact-slab BIN markets using normal metadata/sold HTTP
+  research, without buying labels on unsupported or negative economics. No
+  supported profitable BIN found. Preserve original accounts and daily guards.
+- [x] Clean complete Full Alt/Alternate Art and contextual FA/SIR/SV/SWSH
+  residue, including earlier saved partial names, without removing printed
+  forms, owners, qualifiers, unknown words or source exclusion evidence.
+- [x] Verify saved SQL recovery: 34 formerly unpriced descriptor rows now have
+  exact-scope price exclusions, with zero new provider or photo requests in the
+  final replay. Normal Pikachu refresh excluded 63/77 instead of 47/77, zero AI.
+- [x] Run 1,002 offline tests, both typechecks, production build and whitespace.
+- [ ] Keep genuine remaining gaps distinct from price rejection: SV151-only
+  shorthand, regrade-possible hype and unsupported grade qualifiers must not
+  silently become an ordinary card/grade. Use existing catalog context when
+  a later example makes the correction worthwhile.
+- [ ] Continue supported BIN validation and verified live competition using
+  decision-relevant evidence. A negative sample is not full-market coverage.
 
 ## Current raw-resale work — November 4
 

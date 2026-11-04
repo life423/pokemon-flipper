@@ -55,6 +55,10 @@ Read docs/architecture.md for the source map and reading order.
 - English-only current scope: exclude known foreign evidence, but unknown
   language is preliminary. Holo, reverse holo and non-holo are distinct.
   Normalize aliases/descriptors without losing printed forms, owners or numbers.
+  Full Alt/Alternate Art is listing metadata. FA/SIR/SV abbreviations require
+  observed release/full-number/graded context; unanchored abbreviations and
+  unknown words remain unresolved. Reconcile saved name residue from the
+  original descriptor span without changing source titles or exclusion checks.
 - Honor listing format, raw/graded, prices and grade/finish constraints throughout.
   After assessment, corroborated holder evidence takes precedence over eBay's
   raw/graded category. Keep query and control constraints consistent in results,

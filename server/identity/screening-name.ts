@@ -11,11 +11,12 @@ const GRADE_SPAN = new RegExp(`\\b${GRADER}\\s*(?:[-–—]\\s*)?(?:${DESCRIPTIO
 const BEFORE_GRADE_GEM = new RegExp(`\\bgem[ -]+(?:mint|mt)(?=\\s+${GRADER}\\s*(?:[-–—]\\s*)?${GRADE})`, "gi");
 const INCLUDED_HOLDER_SUFFIX = /\s+(?:with|w\s*\/|includes?|including)\s+(?:(?:a|an|the)\s+)?(?:(?:protective|protection|magnetic|acrylic|hard|fitted|display|slab)\s+)*(?:guards?|cases?|holders?|sleeves?|top[ -]?loaders?)\s*[.!]?\s*$/i;
 const GRADED_ARTIST_SUFFIX = /\s+(?:kagemaru\s+)?himeno\s*$/i;
-const ART_DESCRIPTION = /\b(?:(?:alternate|alt)(?:[\s/-]+full)?[\s-]+art|full[\s-]+art|(?:special[\s-]+)?illustration[\s-]+rare)\b(?!['’])/gi;
+const ART_DESCRIPTION = /\b(?:(?:alternate|alt)(?:[\s/-]+full)?[\s-]+art|full(?:[\s/-]+(?:alternate|alt))?[\s-]+art|(?:special[\s-]+)?illustration[\s-]+rare)\b(?!['’])(?:\s*\/\s*)?/gi;
 // These release codes are publisher metadata only beside the corresponding
 // written release and an explicit collector fraction, never a promo number.
 const SWORD_SHIELD_RELEASES: [RegExp, RegExp][] = [
     [/\bevolving\s+skies\b/i, /\bswsh07\b(?![\w.'’])/gi],
+    [/\bfusion\s+strike\b/i, /\bswsh08\b(?![\w.'’])/gi],
     [/\bbrilliant\s+stars\b/i, /\bswsh09\b(?![\w.'’])/gi],
     [/\blost\s+origin\b/i, /\bswsh11\b(?![\w.'’])/gi],
     [/\bcrown\s+zenith(?:\s+galarian\s+gallery)?\b/i, /\bswsh12\.5\b(?![\w.'’])/gi],
@@ -49,14 +50,29 @@ function removeObservedWords(value: string, match: RegExpMatchArray, title: stri
 // slab; an unanchored Guard/name fragment must never disappear.
 export function stripListingNameBoilerplate(value: string, title = value): string {
     let cleaned = value.replace(/[‘’]/g, "'").replace(BOILERPLATE, " ").replace(ART_DESCRIPTION, " ");
+    // Earlier saved readings may retain only "full" from "Full Alt Art".
+    // Remove only excess words witnessed in the original metadata span.
+    for (const match of title.matchAll(ART_DESCRIPTION)) cleaned = removeObservedWords(cleaned, match, title);
     // A complete grade descriptor may precede the grader. Remove only its
     // observed excess words, including residual "gem" in older name readings.
     for (const match of title.matchAll(BEFORE_GRADE_GEM)) cleaned = removeObservedWords(cleaned, match, title);
+    const graded = new RegExp(GRADE_SPAN.source, "i").test(title);
     if (/\b[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?\b/i.test(title)) {
         const release = SWORD_SHIELD_RELEASES.find(([set]) => set.test(title));
         if (release) cleaned = cleaned.replace(/\b(?:sword\s*(?:&|and)\s*shield|swsh)\b(?!['’])/gi, " ").replace(release[1], " ");
+        // Abbreviations require a written release and a numeric slab label.
+        // They never erase an unanchored name or a promo/partial number.
+        const scarletViolet = /\bscarlet\s*(?:&|and)?\s*violet\b/i.test(title);
+        const descriptions = graded ? [
+            ...(release || scarletViolet ? [/\bFA\b(?!['’])(?:\s*\/\s*)?/gi] : []),
+            ...(scarletViolet ? [/\bSIR\b(?!['’])(?:\s*\/\s*)?/gi, /\bSV\b(?!['’])(?=\s*:?\s*Scarlet\s*(?:&|and)?\s*Violet\b)/gi] : []),
+        ] : [];
+        for (const description of descriptions) {
+            const observed = [...title.matchAll(description)];
+            if (observed.length) cleaned = cleaned.replace(description, " ");
+            for (const match of observed) cleaned = removeObservedWords(cleaned, match, title);
+        }
     }
-    const graded = new RegExp(GRADE_SPAN.source, "i").test(title);
     const artist = graded ? title.match(GRADED_ARTIST_SUFFIX) : null;
     if (artist) cleaned = removeObservedWords(cleaned, artist, title);
     const suffix = title.match(INCLUDED_HOLDER_SUFFIX);

@@ -234,3 +234,29 @@ All 999 offline tests, both TypeScript checks, the production build and
 whitespace checks passed. Useful positive BIN validation and verified current
 competition remain next; this result does not establish profitable inventory
 or broad raw-condition accuracy.
+
+## Further metadata-only BIN checks and descriptor coverage
+
+Seven additional exact-slab markets were checked through the normal HTTP
+search/sold-screen route without requesting paid labels: Dragonite CGC 8,
+Mewtwo CGC 8, Typhlosion 18 PSA 8, Giratina GG69 PSA 9, Gengar 271 PSA 9,
+Charizard 199 PSA 9 and Pikachu 160 PSA 9. Eight source requests included correction
+of an incorrectly V-suffixed Pikachu query on the same account. The initial
+batches screened 145 listings, excluding 67 by price, using eight Browse calls
+and 50 PKMNPrices requests / 130 reported credits. Generation cost was zero. No
+supported positive-net BIN was established; unresolved rows are not treated as
+financial rejections.
+
+The sample exposed names polluted by Full Alt Art, FA, SIR and SV. Normalization
+now handles source-observed descriptors with appropriate full-number,
+release/graded context, including saved residual-only forms. Printed forms,
+owners, numbers, qualifiers and exclusion checks remain intact. A saved SQL
+replay recovered 34 formerly unpriced rows; all 34 could be excluded by their
+exact-scope prices. That replay made zero provider, image or AI requests.
+
+One intervening normal Pikachu refresh filled missing normalized cache keys on
+the original account and bought no photo work. It excluded 63 of 77 screened
+listings, compared with 47 before the fix. All 1,002 offline tests, both typechecks,
+the production build and whitespace checks pass. The two-cent default remains;
+positive fixed-price buying validation and verified live competition remain
+unfinished.

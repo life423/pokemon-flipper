@@ -5,10 +5,46 @@ with the repository. Older entries calling it private or ignored describe the
 previous arrangement. Credentials, environment values, API payloads, paid photo
 evidence and data/ remain excluded. A separate computer handoff is deferred.
 
-Catalog/search checkpoint ecae9e9 was committed, fast-forwarded to main and
-pushed; local and remote main matched. Markdown notes are tracked. Work continues
-on improve/raw-resale-evidence; no handoff was created. The pre-existing
-.env.example deletion remains unrelated and uncommitted.
+Catalog/search checkpoint ecae9e9 and raw-resale checkpoint 489ebb7 were
+committed, fast-forwarded to main and pushed. Markdown notes are tracked. The
+next catalog-name coverage change is on improve/catalog-name-coverage; no
+handoff was created. The pre-existing .env.example deletion remains unrelated
+and uncommitted.
+
+## Latest catalog coverage and fresh BIN check — November 4
+
+Seven new exact-slab markets were researched through ordinary HTTP metadata and
+sold screening: Dragonite CGC 8, Mewtwo CGC 8, Typhlosion 18 PSA 8, Giratina GG69
+PSA 9, Gengar 271 PSA 9, Charizard 199 PSA 9 and Pikachu 160 PSA 9. Eight requests
+included correction of an accidentally V-suffixed Pikachu query on the SAME
+account; no empty mismatched-name search was counted as a negative market.
+The initial batches screened 145 listings and excluded 67 by price, with eight
+Browse calls, 50 PKMN requests and 130 reported credits, zero paid generations. No supported
+positive-net BIN was established. Unknown metadata remains distinct from
+unprofitable exact-scope inventory.
+
+These checks found descriptor residue blocking cheap research. Existing name
+normalization now handles complete Full Alt/Alternate Art and source-observed
+FA/SIR/SV only with the required full-number, slab/release context. Fusion
+Strike joins the existing contextual SWSH release map. Saved residual-only
+claims reconcile without changing seller titles, real names/forms/owners,
+collector numbers, grade qualifiers or product exclusions. SV151-only and
+unanchored abbreviations remain unresolved rather than guessed.
+
+Saved SQL replay recovered 34 previously unpriced descriptor rows; all 34 were
+confident upper-price exclusions. The final replay made zero AI/preflight,
+Browse/Analytics/OAuth, PKMN or photo requests. One intervening ordinary Pikachu
+refresh filled missing normalized catalog/market cache keys on its ORIGINAL
+UUID: 77 screened, 63 excluded by price and 14 retained (previously 47 excluded
+and 30 retained), zero AI. Daily observed remaining at 21:20 UTC: eBay 4,840/5,000, PKMN 17,036/20,000,
+no depletion warnings. Those are observations, not promised future balances.
+All 1,002 offline tests, both typechecks, build and whitespace checks pass.
+
+Next useful milestone remains a supported profitable BIN, with verified live
+competition and targeted evidence when justified. Do not buy photos of these
+recovered overpriced rows, repeat this entire matrix, or raise the two-cent
+default merely to fill Deals. Promotional photos in historical galleries and
+conservative confidence/condition coverage remain later optimization work.
 
 ## Current raw-resale checkpoint — November 4
 

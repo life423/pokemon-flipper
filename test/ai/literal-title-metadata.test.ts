@@ -75,6 +75,65 @@ test("explicit art descriptors and matched Sword and Shield publisher metadata r
     }
 });
 
+test("complete art phrases and anchored slab abbreviations retain source-observed modern names", t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("literal slab metadata cleanup must remain offline"));
+    for (const [title, name, set, number] of [
+        ["Pokemon Gengar Vmax Fusion Strike 271/264 Secret Rare Full Alt Art PSA 9 Mint", "gengar vmax", "fusion strike", "271/264"],
+        ["Gengar VMAX Fusion Strike 271/264 Full Alternate Art Holo PSA 9", "gengar vmax", "fusion strike", "271/264"],
+        ["2021 Pokemon SWSH Fusion Strike Gengar VMAX 271/264 Alt Art Holo PSA 9", "gengar vmax", "fusion strike", "271/264"],
+        ["PSA 9 Giratina VSTAR GG69/GG70 Crown Zenith Galarian Gallery FA Holo ENG", "giratina vstar", "Crown Zenith Galarian Gallery", "GG69/GG70"],
+        ["2023 Pokemon SWSH Full Art FA Pikachu Crown Zenith  160/159 PSA 9 MINT", "pikachu", "Crown Zenith", "160/159"],
+        ["2023 EN POKÉMON FA/PIKACHU #160/159 - CROWN ZENITH - PSA 9", "pikachu", "Crown Zenith", "160/159"],
+        ["2023 Pokémon TCG SWSH FA/pikachu Crown Zenith PSA 9 Mint 160/159", "pikachu", "Crown Zenith", "160/159"],
+        ["2023 Pokemon Scarlet & Violet 151 - Charizard ex 199/165 SIR - PSA 9", "charizard ex", "Scarlet & Violet 151", "199/165"],
+        ["Pokemon Charizard EX Holo PSA 9 Mint 199/165 Sv: Scarlet & Violet 151", "charizard ex", "Scarlet & Violet 151", "199/165"],
+        ["Pokemon 2023 Charizard ex 199/165 PSA 9 SIR Holo Sv: Scarlet & Violet 151 EN", "charizard ex", "Scarlet & Violet 151", "199/165"],
+    ]) {
+        const reading = readTitleByRules(title, ["fusion strike"]);
+        assert.deepEqual([reading.cardName, reading.set, reading.cardNumber, reading.grader, reading.grade], [name, set, number, "PSA", "9"], title);
+    }
+    const raw = readTitleByRules("Gengar VMAX Fusion Strike 271/264 Full Alt Art Holo HP", ["fusion strike"]);
+    assert.equal(raw.cardName, "gengar vmax"); assert.equal(raw.condition, "Heavily Played");
+    assert.equal(raw.grader, null); assert.equal(raw.grade, null);
+    for (const name of ["Dark Pikachu", "Misty's Pikachu", "Pikachu ex", "Pikachu V", "Pikachu VMAX", "Pikachu VSTAR", "Nidoran female", "Nidoran male"]) {
+        assert.equal(readTitleByRules(`${name} Crown Zenith 160/159 FA Holo PSA 9`).cardName, name.toLowerCase(), name);
+    }
+});
+
+test("art abbreviations require complete release and numeric slab anchors without hiding other claims", () => {
+    for (const [title, name] of [
+        ["FA Pikachu Crown Zenith PSA 9", "pikachu"],
+        ["Pikachu FA 160/159 PSA 9", "pikachu"],
+        ["Pikachu FA Crown Zenith 160/159 PSA", "pikachu"],
+        ["Pikachu FA Crown Zenith 160/159 NM", "pikachu"],
+        ["FA's Pikachu Crown Zenith 160/159 PSA 9", "pikachu"],
+        ["Charizard ex SIR 199/165 SV 151 Holo PSA 9", "charizard ex"],
+        ["Charizard ex SV 199/165 PSA 9", "charizard ex"],
+        ["Charizard ex SIR Scarlet & Violet 151 PSA 9", "charizard ex"],
+        ["Charizard ex SIR Scarlet & Violet 151 199/165 NM", "charizard ex"],
+        ["SV's Charizard ex Scarlet & Violet 151 199/165 PSA 9", "charizard ex"],
+        ["Pikachu FA Crown Zenith 160/159 PSA 9 (OC)", "pikachu"],
+        ["Pikachu FA Crown Zenith 160/159 Misprint PSA 9", "pikachu"],
+        ["Pikachu FA Crown Zenith 160/159 raw potential PSA 10", "pikachu"],
+        ["Pikachu FA Crown Zenith 160/159 PSA-ready 10", "pikachu"],
+    ]) assert.notEqual(readTitleByRules(title).cardName, name, title);
+    for (const [title, number, name] of [
+        ["Pikachu FA Crown Zenith #160 PSA 9", "160", "pikachu"],
+        ["Charizard ex SIR Scarlet & Violet 151 #199 PSA 9", "199", "charizard ex"],
+        ["Pikachu FA Crown Zenith SWSH194 PSA 9", "SWSH194", "pikachu"],
+        ["Pikachu FA Aquapolis H28/147 PSA 9", "H28/147", "pikachu"],
+        ["Pikachu FA Aquapolis 95a/147 PSA 9", "95a/147", "pikachu"],
+    ]) {
+        const reading = readTitleByRules(title);
+        assert.equal(reading.cardNumber, number, title);
+        assert.notEqual(reading.cardName, name, title);
+    }
+    for (const wording of ["proxy", "custom card", "no card"]) {
+        const reading = readTitleByRules(`Pikachu Crown Zenith 160/159 FA Holo PSA 9 ${wording}`);
+        assert.equal(reading.kind, "NOT_A_CARD", wording); assert.equal(reading.cardName, null, wording);
+    }
+});
+
 test("art cleanup preserves printed forms, owners, unknown words and incompatible release codes", () => {
     for (const name of ["Dark Charizard", "Mega Charizard X", "M Charizard EX", "Alolan Ninetales GX", "Galarian Sirfetch'd V",
         "Blaine's Arcanine", "Misty's Gyarados", "Charizard ex", "Rayquaza VMAX", "Rayquaza VSTAR", "Unown R"]) {
