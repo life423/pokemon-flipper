@@ -52,3 +52,28 @@ test("name comparison retains gender and printed symbols while normalizing punct
     assert.equal(screeningNameKey("Unown [A]"), screeningNameKey("Unown A"));
     assert.equal(resolveScreeningName({ title: "Nidoran", claims: ["Nidoran♀", "Nidoran♂"] }), null);
 });
+
+test("source-observed accompanying holders reconcile old name fragments without erasing printed names", () => {
+    const title = "Charizard Base Set 4/102 CGC 9 with a protective holder";
+    assert.equal(resolveScreeningName({ title, claims: ["Charizard", "charizard a protective holder"], candidate: "Charizard" }), "Charizard");
+    assert.equal(resolveScreeningName({ title: "Charizard CGC 9 w/ Guard", claims: ["Charizard", "charizard w/ guard"] }), "Charizard");
+    assert.equal(resolveScreeningName({ title: "Wizards of the Coast Charizard CGC 9", claims: ["Charizard", "wizards of coast charizard"] }), "Charizard");
+    for (const claims of [["Guard Spec.", "guard spec. guard"], ["Guard Spec."]]) {
+        assert.equal(resolveScreeningName({ title: "Guard Spec. PSA 9 with Guard", claims, candidate: "Guard Spec." }), "Guard Spec.");
+    }
+    assert.equal(resolveScreeningName({ title: "Dark Charizard CGC 9 with Guard", claims: ["Charizard", "dark charizard guard"], candidate: "Charizard" }), null);
+});
+
+test("name cleanup does not remove unanchored, ungraded or unrelated holder wording", () => {
+    for (const [title, claim] of [
+        ["Charizard inspired CGC 9 with Guard", "charizard inspired guard"],
+        ["Charizard CGC 9 Guard", "charizard guard"],
+        ["Charizard with Guard", "charizard guard"],
+        ["Charizard CGC with Guard", "charizard guard"],
+        ["Charizard CGC 9 with Guard collection", "charizard guard collection"],
+        ["Guardians Rising Charizard CGC 9", "guardians rising charizard"],
+        ["Guard's Charizard CGC 9 with Guard", "guard's charizard guard"],
+    ]) {
+        assert.notEqual(resolveScreeningName({ title, claims: [claim], candidate: "Charizard" }), "Charizard", title);
+    }
+});

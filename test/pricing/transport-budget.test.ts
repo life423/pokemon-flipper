@@ -79,8 +79,11 @@ test("sharing the first page retains final pagination without extending prelimin
     });
     const source = createScreeningPriceSource();
     const preliminary = source.fetchRawComps(91150, "Unlimited Holofoil");
-    const final = fetchRawComps(91150, "Unlimited Holofoil");
+    // Establish the sponsor before the second subscriber races through its
+    // asynchronous cache read. Otherwise either stage may correctly pay for
+    // the shared first page, making the exact preliminary count nondeterministic.
     await started.promise;
+    const final = fetchRawComps(91150, "Unlimited Holofoil");
     first.resolve(response({ data: [sold(1)], pagination: { has_more: true, next_cursor: "second-page" } }));
     assert.equal((await preliminary).length, 1); assert.equal((await final).length, 2);
     assert.deepEqual(cursors, [null, "second-page"]);

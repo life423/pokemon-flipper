@@ -132,3 +132,13 @@ All **858 offline tests pass under both the existing default and explicit
 GPT-6 Luna slab configuration**, with typechecks, build and whitespace checks
 passing. Broader accuracy validation, selective stronger-review integration and
 positive-Deal validation remain pending.
+
+## November 4 extension
+
+Six additional saved PSA 5 and CGC 9 controls cost $0.0047467 (0.47467 cents).
+Core slab fields matched all six manual references; existing normalization and
+canonical identity rules resolved all six without review or a premium upgrade.
+Strict replay added no provider work and original assessments stayed unchanged.
+This still leaves other graders, half-grades and qualifiers unvalidated; defaults
+remain unchanged. See [candidate admission and validation](candidate-admission-2026-11-04.md)
+for the method, limits and related screening improvements.

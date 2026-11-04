@@ -28,7 +28,10 @@ flowchart TD
 
 1. Normal HTTP search and **Find new listings** use the bounded path in
    `find-deals.ts`: one page of up to 200 eBay results, local/cached metadata
-   exclusions and at most 50 matching metadata rows. New-inventory scans also
+   exclusions and at most 50 retained matching rows. Confident preliminary
+   price exclusions free slots for later summaries from that same 200-summary
+   window. Refill batches share one screening session and its allowance; they
+   never fetch another source page just to fill slots. New-inventory scans also
    exclude previously seen IDs. Buy It Now results prefer newly listed inventory;
    automatic auctions must fall within the fixed search-start 12-hour window.
 2. Before candidates are emitted to the browser, `price-first.ts` runs shared

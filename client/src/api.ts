@@ -57,7 +57,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export type DealsMessage =
-    | { type: "start"; total: number; found: number; count: number; skipped: number; intent: SearchIntent; mode?: "new" | "development"; deferred?: number; previouslySeen?: number }
+    | { type: "start"; total: number; found: number; count: number; skipped: number; intent: SearchIntent; mode?: "new" | "development"; deferred?: number; previouslySeen?: number; screened?: number; priceExcluded?: number }
     | { type: "listing"; listing: ListingSummary }
     | { type: "done" }
     | { type: "error"; error: string };

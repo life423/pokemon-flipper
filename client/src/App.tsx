@@ -841,9 +841,11 @@ export function App() {
     // One tap down: what eBay returned, and the counts behind the four shown.
     const progressDetails = summary && (
         <>
-            {newMode ? <p>Loaded a window of {summary.found} newest listings. Skipped {summary.previouslySeen ?? 0} already seen; selected {summary.count} unseen listings for screening.{(summary.deferred ?? 0) > 0 ? ` Another ${summary.deferred} remain in this window for a later scan.` : ""} This scan does not cover all eBay inventory.</p> : <p>
-                eBay reports {summary.total.toLocaleString()} results. Loaded {summary.found.toLocaleString()} listings and admitted {summary.count.toLocaleString()} for preliminary screening. This limited window does not cover all eBay inventory.
+            {newMode ? <p>Loaded a window of {summary.found} newest listings. Skipped {summary.previouslySeen ?? 0} already seen; retained {summary.count} unseen listings.{(summary.deferred ?? 0) > 0 ? ` Another ${summary.deferred} remain in this window for a later scan.` : ""} This scan does not cover all eBay inventory.</p> : <p>
+                eBay reports {summary.total.toLocaleString()} results. Loaded {summary.found.toLocaleString()} listings and retained {summary.count.toLocaleString()} after preliminary screening. This limited window does not cover all eBay inventory.
             </p>}
+            {summary.screened !== undefined && <p>Checked sold-price evidence for {summary.screened} listings; {summary.priceExcluded ?? 0} were above the supported buying limit and excluded before photo analysis. Missing price evidence remains in Sorting.</p>}
+            {(summary.priceExcluded ?? 0) > 0 && <p>Changing profit, ROI or offer settings updates loaded listings only. Run a new search to reconsider excluded listings with different targets.</p>}
             <p>
                 {counts.candidates} listings are eligible for AI analysis; {counts.mismatched} set aside as other cards, sets, languages or search criteria.
             </p>
@@ -1064,7 +1066,8 @@ export function App() {
                                 <div>
                                     <p><strong>No verified deals in this development batch.</strong></p>
                                     <p>Looked for {describeIntent(summary.intent)}. Admitted {summary.count} candidates from {summary.found} returned; {newMode ? newChecked : listings.length} screening results are saved. This limited batch does not cover all eBay inventory.</p>
-                                    <p>{counts.dropped} below your research/value or profit targets · {counts.mismatched} other cards, sets or criteria · {groups.review.length} need specific evidence.</p>
+                                    <p>{counts.dropped + (summary.priceExcluded ?? 0)} below your research/value or profit targets · {counts.mismatched} other cards, sets or criteria · {groups.review.length} need specific evidence.</p>
+                                    {(summary.priceExcluded ?? 0) > 0 && <p>{summary.priceExcluded} were excluded before photo analysis. Run a new search after lowering targets or enabling offers to reconsider those listings.</p>}
                                     {counts.waiting > 0 && <p>{counts.waiting} still await assessment{analysisBlocked ? " because paid AI is paused or budget-limited" : " in Sorting"}. An unassessed card is not a confirmed deal.</p>}
                                 </div>
                                 <button type="button" className={styles.secondary} onClick={() => withViewTransition(() => setView("candidates"))}>Open Sorting</button>

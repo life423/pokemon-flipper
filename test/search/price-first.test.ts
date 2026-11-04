@@ -100,8 +100,7 @@ test("an exact expensive slab is terminal for automatic work while raw grading u
     const slab = listing("slab", { title: "Charizard Base Set 4/102 Unlimited Holo PSA 8 English", isGraded: true, currentPrice: 1000 });
     const raw = listing("raw", { currentPrice: 1000 });
     const result = await findDeals("Charizard Base Set 4/102 holo", { targets }, steps([slab, raw], factory(async row => evidence(row.isGraded))));
-    const rejected = result.find(row => row.id === "slab")!;
-    assert.equal(rejected.screen?.status, "DROPPED"); assert.equal(canAutoAnalyze(rejected), false); assert.equal(resultGroup(rejected, null), null);
+    assert.deepEqual(result.map(row => row.id), ["raw"], "confident preliminary price rejections no longer fill result slots");
     const candidate = result.find(row => row.id === "raw")!;
     assert.equal(candidate.screen?.status, "UNSCREENED"); assert.equal(candidate.screen?.bestCase, null); assert.equal(canAutoAnalyze(candidate), true);
 });

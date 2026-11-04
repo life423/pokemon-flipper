@@ -7,6 +7,7 @@ import { PriceResearchBudgetError } from "../../server/pricing/research-budget.t
 import { StorageUnavailableError } from "../../server/storage/index.ts";
 import type { CardRecord, Comp } from "../../server/pricing/types.ts";
 import type { ListingSummary, SearchIntent } from "../../shared/types.ts";
+import { applySoldPriceScreen } from "../../shared/money/sold-screen.ts";
 
 const NOW = Date.parse("2026-11-03T12:00:00Z"), DAY = 86_400_000;
 const intent: SearchIntent = { cardName: "Charizard", sets: ["Base Set"], cardNumber: "4/102", printing: null, graded: null, titleWords: ["charizard"], source: "rules" };
@@ -55,6 +56,66 @@ test("slabs research one exact grader and half grade without raw or speculative 
     assert.deepEqual([result.references[0].grader, result.references[0].grade, result.references[0].condition, result.references[0].summary.count], ["CGC", "8.5", null, 3]);
     assert.deepEqual(calls.graded, [[1, { grader: "CGC", grade: "8.5", variant: "Unlimited Holofoil" }]]);
     assert.equal(calls.raw.length, 0);
+});
+
+test("explicit slab titles with publisher or holder metadata reach existing overpricing exclusion", async () => {
+    const { run, calls } = harness({ graded: async () => three({
+        title: "Charizard Base Set 4/102 Unlimited Holo CGC 9 Mint", grader: "CGC", grade: "9", price: 1950,
+    }) });
+    const subjects = [
+        listing({ title: "1999 Pokemon Base Set Unlimited Charizard Holo Card 4/102 CGC 9 Mint w/ Guard", isGraded: true, currentPrice: 2499, shipping: 0 }),
+        listing({ title: "Wizards of the Coast Pokemon Base Set Unlimited Charizard 4/102 Holo CGC 9 1999", isGraded: true, currentPrice: 5000, shipping: 10 }),
+    ].map(subject => ({ ...subject, listedAttributes: { grader: "CGC", grade: 9, finish: "HOLO" as const },
+        screen: { status: "UNSCREENED" as const, reason: "Saved title lacked a name", bestCase: null, assumed: null,
+            card: { name: null, set: "Base Set", cardNumber: "4/102", printing: "UNLIMITED" as const, printingLabel: null } } }));
+    for (const subject of subjects) {
+        const evidence = await run(subject, intent);
+        assert.equal(evidence.exactScope, true, subject.title);
+        assert.equal(evidence.references[0].summary.count, 3);
+        const screened = applySoldPriceScreen(subject, evidence);
+        assert.equal(screened.screen.status, "DROPPED"); assert.equal(screened.screen.needsAnalysis, undefined);
+        assert.ok(screened.screen.bestCase!.profit < 0);
+    }
+    assert.equal(calls.lookup, 1); assert.equal(calls.graded.length, 1); assert.equal(calls.raw.length, 0);
+});
+
+test("publisher and holder cleanup supports another exact species and grade without borrowing a missing set", async () => {
+    const wanted = { ...intent, cardName: "Vaporeon", sets: ["Jungle"], cardNumber: "12/64" };
+    const { run, calls } = harness({ cards: [card({ name: "Vaporeon", setName: "Jungle", cardNumber: "12/64" })],
+        graded: async () => three({ title: "Vaporeon Jungle 12/64 Unlimited Holo PSA 8", grader: "PSA", grade: "8" }) });
+    const subject = listing({ title: "Wizards of the Coast Vaporeon Jungle 12/64 Unlimited Holo PSA 8 with a protective case", isGraded: true, currentPrice: 1000 });
+    const exact = await run(subject, wanted);
+    assert.equal(exact.exactScope, true); assert.equal(applySoldPriceScreen(subject, exact).screen.status, "DROPPED");
+    const noSet = { ...subject, title: "Vaporeon 12/64 Unlimited Holo PSA 8 with a protective case" };
+    const preliminary = await run(noSet, wanted);
+    assert.equal(preliminary.status, "AVAILABLE"); assert.equal(preliminary.exactScope, false);
+    assert.equal(applySoldPriceScreen(noSet, preliminary).screen.status, "UNSCREENED");
+    assert.equal(calls.lookup, 1); assert.equal(calls.graded.length, 1);
+});
+
+test("holder cleanup never upgrades missing-set, special-label or mixed-printing claims to an exclusion scope", async () => {
+    const graded = async (_id: number | string, target: { grader: string; grade: string; variant: string }) => three({
+        title: `Charizard Base Set 4/102 ${target.variant.startsWith("1st") ? "1st Edition" : "Unlimited"} Holo ${target.grader} ${target.grade}`,
+        grader: target.grader, grade: target.grade, variant: target.variant,
+    });
+    const { run } = harness({ graded });
+    const noSet = listing({ title: "1999 Pokemon Unlimited Charizard Rare Holo #4/102 CGC 9", isGraded: true, currentPrice: 3200 });
+    const evidence = await run(noSet, intent);
+    assert.equal(evidence.status, "AVAILABLE"); assert.equal(evidence.exactScope, false);
+    assert.equal(applySoldPriceScreen(noSet, evidence).screen.status, "UNSCREENED");
+    for (const title of [
+        "Wizards of the Coast Charizard Base Set 4/102 Unlimited Holo PSA 8 (OC) with Guard",
+        "Wizards of the Coast Charizard Base Set 4/102 Unlimited Holo CGC Pristine 10 with Guard",
+    ]) {
+        const special = harness({ graded });
+        assert.equal((await special.run(listing({ title, isGraded: true }), intent)).status, "UNAVAILABLE");
+        assert.equal(special.calls.lookup + special.calls.graded.length, 0);
+    }
+    const mixed = harness({ cards: [card({ variants: [variant(), variant("1st Edition Holofoil", "FIRST_EDITION")] })], graded });
+    const ambiguous = listing({ title: "Wizards of the Coast Charizard Base Set 4/102 Holo CGC 9 with Guard", isGraded: true, currentPrice: 5000 });
+    const separate = await mixed.run(ambiguous, intent);
+    assert.equal(separate.exactScope, false); assert.equal(separate.references.length, 2);
+    assert.equal(applySoldPriceScreen(ambiguous, separate).screen.status, "UNSCREENED");
 });
 
 test("sold-title grade and grader contradictions cannot override the exact target through provider fields", async () => {

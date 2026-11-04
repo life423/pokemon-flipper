@@ -11,6 +11,7 @@ import { StorageUnavailableError } from "../storage/index.ts";
 import { explicitReprintSet, withoutReprintRelease } from "../../shared/reprint-release.ts";
 import { rawConditionClaim } from "../../shared/raw-condition-claim.ts";
 import { CONDITION_NAMES } from "../../shared/conditions.ts";
+import { stripListingNameBoilerplate } from "../identity/screening-name.ts";
 
 // Many sellers leave the set, number, or name out of the item details
 // but put them in the title ("CHARIZARD 1999 POKEMON BASE SET 4/102").
@@ -125,7 +126,7 @@ export function readTitleByRules(title: string): TitleReading {
     const condition = claim ? CONDITION_NAMES[claim === "MINT" ? "NEAR_MINT" : claim] : null;
     // Only use a compact literal name after removing explicit metadata. This
     // does not claim that an unknown phrase is a canonical Pokemon identity.
-    const name = normalizeText(withoutReprintRelease(title))
+    const name = normalizeText(stripListingNameBoilerplate(withoutReprintRelease(title), title))
         .replace(set ? new RegExp(escapePattern(set).replace(/ /g, "\\s+"), "ig") : /$^/, " ")
         .replace(number ? new RegExp(escapePattern(number), "ig") : /$^/, " ")
         .replace(/\b(?:psa|cgc|bgs|sgc|tag)\s*(?:(?:gem|mint|mt|nm|near|ex|excellent|vg|very|good|poor|fair|pristine|black|label)[ -]+){0,5}(?:10|[1-9](?:\.5)?)?\b/ig, " ")

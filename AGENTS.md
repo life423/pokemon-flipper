@@ -41,6 +41,9 @@ Read docs/architecture.md for the source map and reading order.
   200 eBay summaries, saved/local metadata screening, at most 50 matching rows,
   then shared sold-price research before automatic photo work. Do not revive
   retired broad discovery or a second evaluator through a diagnostic CLI.
+  Confident price exclusions free slots for later summaries in that same window;
+  refills share one screening session and its allowance. Excluded rows require
+  a new search after relaxing targets; local retargeting covers retained rows.
 - English-only current scope: exclude known foreign evidence, but unknown
   language is preliminary. Holo, reverse holo and non-holo are distinct.
   Normalize aliases/descriptors without losing printed forms, owners or numbers.
@@ -199,5 +202,9 @@ Read docs/architecture.md for the source map and reading order.
   Stopping checkpoint: 858 tests pass under default and explicit cheaper slab
   configuration; current CGC search cost 0.44524 cents and found no Deal.
   Broader validation and automatic stronger follow-ups remain unfinished.
+- docs/candidate-admission-2026-11-04.md: bounded source-page refill, literal
+  publisher/holder name cleanup and source-order ties; six more saved PSA5/CGC9
+  checks cost 0.47467 cents, with original evidence preserved and free replay.
+  Production model defaults remain unchanged; no current Deal established.
 - Dated reports retain measured scope. Git records delivery history; private
   notes retain the full strategy and implementation backlog.

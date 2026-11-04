@@ -71,6 +71,9 @@ test("Any/Any priority and exported comparison follow the real client ranking", 
     const strict = candidateAdmission(item, {}, NOW, { minProfit: 100, minRoi: 0 });
     assert.equal(easy.priority.band, 2); assert.equal(strict.priority.band, 0);
     assert.equal(compareAnalysisPriority(item, item, targets), 0);
+    const newer = listing("z-newest"), older = listing("a-older");
+    assert.deepEqual([newer, older].sort((a, b) => compareAnalysisPriority(a, b, targets)).map(row => row.id),
+        ["z-newest", "a-older"], "benchmark and browser queue retain the supplied newest/source order on equal priorities");
 });
 
 test("summary uses current server terms, recalculates verdicts and separates all loaded work from matching views", t => {

@@ -19,6 +19,7 @@ export function createNewListingDiscovery({ find = findDeals, history = searchHi
             const previous = await history.seen(query, minimum, filters);
             await find(query, { ...options,
                 newOnly: { excludeIds: [...new Set([...previous, ...knownIds])] },
+                onPriceExcluded: listing => { if (!worthScreening(listing, filters, options.asOf)) return; seen.add(listing.id); options.onPriceExcluded?.(listing); },
                 onListing: listing => { if (!worthScreening(listing, filters, options.asOf)) return; seen.add(listing.id); options.onListing?.(listing); } });
         } finally {
             try { if (seen.size) await history.remember(query, minimum, [...seen], filters); }

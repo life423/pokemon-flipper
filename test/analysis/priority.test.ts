@@ -50,14 +50,15 @@ test("lower capital breaks otherwise comparable profit and evidence ties", () =>
     assert.ok(compareAnalysisPriority(smaller, larger, any) < 0);
 });
 
-test("pending unusual prices stay unranked for auto analysis and tie ordering is deterministic with missing metadata", () => {
+test("pending unusual prices stay unranked and equal priorities preserve source order with missing metadata", () => {
     const pending = candidate("pending", { floorNet: 10000 });
     pending.screen.priceAnomaly = { referencePrice: 1000, photoChecked: false };
     assert.equal(analysisPriority(pending, any).band, 0);
     const a = { id: "a", currentPrice: 5, shipping: null, images: [], screen: { status: "UNSCREENED" } };
     const b = { ...a, id: "b" };
     assert.ok(Number.isFinite(compareAnalysisPriority(a, b, any)));
-    assert.deepEqual([b, a].sort((x, y) => compareAnalysisPriority(x, y, any)).map((value) => value.id), ["a", "b"]);
+    assert.equal(compareAnalysisPriority(a, b, any), 0);
+    assert.deepEqual([b, a].sort((x, y) => compareAnalysisPriority(x, y, any)).map((value) => value.id), ["b", "a"]);
 });
 
 test("target repricing preserves queue evidence and sorting performs no provider calls", (t) => {
