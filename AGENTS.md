@@ -1,6 +1,6 @@
 # Project memory and working agreement
 
-Updated November 4, 2026. These are current requirements. Older dated reports
+Updated November 5, 2026. These are current requirements. Older dated reports
 describe their own checkpoints; consult Git for branch and delivery state.
 
 ## Workspace and delivery
@@ -188,6 +188,11 @@ Read docs/architecture.md for the source map and reading order.
   Reject unconfirmed historical amounts. Distinguish asking references, TCGplayer
   fallback, unspecified raw sales and condition-matched sold prices. Do not merge
   printings, finishes, currencies, grades or raw conditions.
+  Reconcile duplicate source IDs through uniqueSoldComps before eligibility.
+  Provider updated_at precedence retains corrected amounts and newer retractions;
+  equal/absent revision ties prefer confirmed transaction types, then arrival
+  order. Never pick the highest price or best target fit. Unknown-amount recovery
+  requires actual final-sale provenance, not an old bid/asking snapshot or guess.
 - Prefer the 90-day graded market as soon as one valid current match exists;
   use the labeled 180-day fallback only if there are no eligible current sales.
   One or two matched sales retain LOW confidence. Raw final prices require

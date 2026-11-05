@@ -1,4 +1,4 @@
-# Shared project notes — November 4, 2026
+# Shared project notes — November 5, 2026
 
 This Markdown file is tracked at the user’s explicit request so the plan travels
 with the repository. Older entries calling it private or ignored describe the
@@ -9,6 +9,47 @@ Catalog/search ecae9e9, raw resale 489ebb7 and catalog-name coverage b123ed7
 were committed and pushed on main. Current work is on
 improve/consistent-sold-pricing. Markdown notes are tracked; no handoff was
 created. The pre-existing .env.example deletion remains unrelated/uncommitted.
+
+## Correction reuse and next BIN validation — November 5
+
+The focused code review found a real cross-label duplicate bug: final graded
+pricing retained the first source row, allowing an old unknown amount to hide
+a later confirmed correction. One pure uniqueSoldComps function in the existing
+sold-comps module now replaces four inconsistent merge implementations across
+acquisition, screening, raw and slab pricing. Provider updated_at precedence
+comes first; without revision differences, confirmed transaction types beat
+unknown snapshots, then arrival order resolves ties. Neither price nor target
+fit chooses the winner. A newer explicit retraction remains rejected. Existing
+anonymous duplicate observations stay conservative across source aliases.
+Pricing revision 14 refreshes dependent money evidence without changing paid
+photo versions. All 1,024 isolated tests, both typechecks, build and whitespace
+checks pass; shared SQL storage reports ready. No new runtime module or paid
+stage was added. Unrelated .env.example deletion remains uncommitted.
+
+The user's unknown-amount extraction idea was evaluated, not implemented as an
+automatic paid stage. All 13 saved Kangaskhan null-sale-type rows lack a verified
+alternative amount. Cached ListingDetails.price is a bid/asking snapshot; one
+sampled public item page returned an in-progress auction view, so simply reading
+its price cannot confirm a transaction. Prefer provider corrections and known
+sale types; later targeted recovery needs explicit sold-state/ID/currency/final
+amount provenance before code can accept it. PKMNPrices documents updated_since
+for corrections. No extra eBay/PKMN or paid-model request was used by this review.
+
+One new ordinary BIN/graded query, Suicune V GG38/GG70 PSA9, screened 11 of 17
+returned listings and excluded six by existing sold-price economics. Five
+retained rows remain preliminary; the two supported references have 14 recent
+sales with median $61.80. The $69.99+$6.50 candidate models a $38.48 loss under
+current costs. No label assessment was purchased. Original account
+7378e133-9c5c-4812-9b3d-935caefff780 used one Browse request, six PKMN requests,
+17 reported credits and zero AI, with no cap change or daily warning. This did
+not find the desired positive BIN. Data remains excluded under
+data/candidate-validation/2026-11-04/focused-slab-bin/.
+
+LOCAL_TODO.md is now a concise current index rather than repeated dated
+checkboxes claiming completed work is still pending. The full older list remains
+in Git, with strategy details retained here and in dated docs. The immediate
+milestone remains a genuine supported live BIN reaching Deals; prioritize that
+before the larger strategy, worker-queue and UI backlog.
 
 ## Confirmed-sale acquisition — November 4
 

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { compProblem, summarizeComps, type CompCriteria } from "../../server/pricing/sold-comps.ts";
+import { compProblem, summarizeComps, uniqueSoldComps, type CompCriteria } from "../../server/pricing/sold-comps.ts";
 import { compsForGrade } from "../../server/pricing/graded-comps.ts";
 import type { Comp, PricedCard } from "../../server/pricing/types.ts";
 import type { Identity } from "../../shared/types.ts";
@@ -12,6 +12,49 @@ const sale = (price: number, overrides: Partial<Comp> = {}): Comp => ({
     variant: "Unlimited Holofoil", grader: "PSA", grade: "7", grade_qualifier: null,
     attribution: "exact", currency: "USD", sale_type: "fixed_price", listing_url: null,
     ...overrides,
+});
+
+test("sold corrections follow provider revision and confirmation evidence rather than the highest amount", () => {
+    const known = sale(400, { id: "same-sale", updated_at: "2026-11-01T12:00:00Z" });
+    const corrected = sale(175, { id: "same-sale", updated_at: "2026-11-02T12:00:00Z", sale_type: "best_offer_accepted" });
+    const retracted = sale(9999, { id: "same-sale", updated_at: "2026-11-03T12:00:00Z", sale_type: null });
+    const undated = { ...corrected, updated_at: undefined };
+    const unknown = { ...retracted, updated_at: undefined };
+    for (const [first, second, expected] of [
+        [known, corrected, corrected], [corrected, retracted, retracted], [undated, unknown, undated],
+        [undated, { ...unknown, updated_at: "invalid-date" }, undated],
+    ] as const) {
+        assert.deepEqual(uniqueSoldComps([first, second]), [expected]);
+        assert.deepEqual(uniqueSoldComps([second, first]), [expected], "a dated correction or confirmed amount survives reversed source order");
+    }
+    assert.deepEqual(uniqueSoldComps([sale(400, { id: "tie" }), sale(175, { id: "tie" })]).map(row => row.price), [175]);
+    assert.deepEqual(uniqueSoldComps([sale(175, { id: "tie" }), sale(400, { id: "tie" })]).map(row => row.price), [400], "equally evidenced observations follow arrival order, not price");
+    const url = "https://www.ebay.com/itm/123456789012";
+    assert.equal(uniqueSoldComps([sale(400, { listing_url: url }), sale(175, { listing_url: url })])[0].price, 175);
+    const anonymous = sale(100);
+    assert.equal(uniqueSoldComps([anonymous, { ...anonymous }]).length, 1);
+    assert.equal(uniqueSoldComps([anonymous, { ...anonymous, variant: "1st Edition Holofoil" }]).length, 1, "a provider alias cannot count the same anonymous observation twice");
+    assert.equal(uniqueSoldComps([sale(100, { id: "one" }), sale(100, { id: "two" })]).length, 2);
+});
+
+test("Shadowless graded pricing retains confirmed cross-label corrections and honors newer retractions", async () => {
+    const identity: Identity = { status: "IDENTIFIED", name: "Venusaur", set: "Base Set", cardNumber: "15/102", printing: "SHADOWLESS",
+        printingLabel: "Shadowless (no 1st Edition)", finish: "HOLO", language: "English", evidence: null, reasons: [] };
+    const card: PricedCard = { source: "pkmnprices", name: "Venusaur", cardNumber: "15/102", records: [], variants:
+        ["1st Edition Holofoil", "Unlimited Holofoil"].map((name, index) => ({ name, printing: index ? "SHADOWLESS" : "FIRST_EDITION",
+            finish: "HOLO", prices: [], recordId: 1, setName: "Base Set (Shadowless)" })) };
+    const uncertain = sale(9999, { id: "corrected-sale", title: "Venusaur Base Set Shadowless 15/102 Holo PSA 7", sale_type: null });
+    const confirmed = { ...uncertain, price: 175, sale_type: "best_offer_accepted" as const };
+    for (const rows of [[uncertain, confirmed], [confirmed, uncertain]]) {
+        const result = await compsForGrade(card, identity, { grader: "PSA", grade: "7", now,
+            fetchComps: async (_id, options) => [{ ...rows[options.variant === "1st Edition Holofoil" ? 0 : 1], variant: options.variant! }] });
+        assert.equal(result.status, "PRICED"); assert.equal(result.summary?.count, 1); assert.equal(result.summary?.median, 175);
+    }
+    const result = await compsForGrade(card, identity, { grader: "PSA", grade: "7", now,
+        fetchComps: async (_id, options) => [{ ...(options.variant === "1st Edition Holofoil"
+            ? { ...confirmed, updated_at: "2026-11-01T12:00:00Z" }
+            : { ...uncertain, updated_at: "2026-11-02T12:00:00Z" }), variant: options.variant! }] });
+    assert.equal(result.status, "PRICE_UNAVAILABLE"); assert.equal(result.summary?.count, 0);
 });
 
 test("No Symbol Jungle sales cannot inflate an ordinary Jungle market, while ordinary and Base Set sales remain eligible", () => {

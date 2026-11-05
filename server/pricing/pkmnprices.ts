@@ -3,6 +3,7 @@ import { sameCardNumber, sameSetFamily, setFamily, setSearchTerm } from "../iden
 import { canonicalCatalogName, pricingSearchName, sameCatalogName } from "./search-name.ts";
 import { conditionOf } from "./raw-prices.ts";
 import { cardNumberOf, cardVariants } from "./records.ts";
+import { CONFIRMED_SALE_TYPES, uniqueSoldComps } from "./sold-comps.ts";
 import type { CardRecord, Comp, FetchComps, FetchRawComps, FetchSoldPage, LookupCards, LookupQueryCards, QueryCatalogResult, SoldPage, SoldPageSelection, SoldStream } from "./types.ts";
 import { createLimiter } from "../lib/concurrency.ts";
 import { createSharedWork } from "../lib/shared-work.ts";
@@ -400,11 +401,8 @@ async function lookupCardsFrom({ set, name, cardNumber }: Parameters<LookupCards
 
 export const lookupCards: LookupCards = query => lookupCardsFrom(query, apiGet, cachedApiGet);
 
-const uniqueSales = (sales: readonly Comp[]) => [...new Map(sales.map(sale => [sale.id ?? sale.listing_url ?? JSON.stringify(sale), sale])).values()];
-
-const CONFIRMED_SALE_TYPES = "auction,fixed_price,best_offer_accepted";
 const soldPage = (body: ApiBody, stream: SoldStream): SoldPage => ({
-    sales: uniqueSales((body.data ?? []).filter((sale: Comp) => sale.currency === "USD")),
+    sales: uniqueSoldComps((body.data ?? []).filter((sale: Comp) => sale.currency === "USD")),
     nextCursor: body.pagination?.has_more && typeof body.pagination.next_cursor === "string" && body.pagination.next_cursor
         ? body.pagination.next_cursor : null,
     stream,
@@ -420,7 +418,7 @@ async function readSoldPage(recordId: CardRecord["id"], params: URLSearchParams,
     if (stream !== undefined && stream !== "LEGACY" && stream !== "CONFIRMED") throw new Error("Unknown sold-page stream.");
     const endpoint = (mode: SoldStream, next?: string) => {
         const query = new URLSearchParams(params);
-        if (mode === "CONFIRMED") query.set("sale_type", CONFIRMED_SALE_TYPES);
+        if (mode === "CONFIRMED") query.set("sale_type", CONFIRMED_SALE_TYPES.join(","));
         if (next) query.set("cursor", next);
         return `/cards/${recordId}/listings/ebay?${query}`;
     };
@@ -440,8 +438,8 @@ async function readSoldPage(recordId: CardRecord["id"], params: URLSearchParams,
         const seen = new Set<string>();
         for (let count = 0; count < SOLD_MARKET_PAGE_LIMIT; count += 1) {
             sales.push(...page.sales);
-            const useful = stopWhen ? await stopWhen(uniqueSales(sales))
-                : sales.some(sale => CONFIRMED_SALE_TYPES.split(",").includes(sale.sale_type ?? ""));
+            const useful = stopWhen ? await stopWhen(uniqueSoldComps(sales))
+                : uniqueSoldComps(sales).some(sale => CONFIRMED_SALE_TYPES.includes(sale.sale_type ?? ""));
             // Check cancellation after an asynchronous eligibility callback too.
             signal?.throwIfAborted();
             if (useful || !sales.length && !page.nextCursor) return soldPage(first, "LEGACY");
@@ -469,7 +467,7 @@ async function collectSoldPages(recordId: CardRecord["id"], params: URLSearchPar
         seen.add(key);
         const result = await readSoldPage(recordId, params, { cursor, stream, stopWhen });
         sales.push(...result.sales);
-        const enough = stopWhen && page + 1 >= minimumPages && await stopWhen(uniqueSales(sales));
+        const enough = stopWhen && page + 1 >= minimumPages && await stopWhen(uniqueSoldComps(sales));
         getPriceResearchSignal()?.throwIfAborted();
         if (enough) break;
         if (!result.nextCursor) break;
@@ -491,7 +489,7 @@ export const fetchComps: FetchComps = async (recordId, { grader, grade, variant,
 
     if (variant) params.set("variant", variant);
 
-    return uniqueSales(await collectSoldPages(recordId, params, { stopWhen }));
+    return uniqueSoldComps(await collectSoldPages(recordId, params, { stopWhen }));
 };
 
 // Retain the first two pages of raw research candidates. Sparse markets may

@@ -97,6 +97,11 @@ flowchart TD
    90-day market even when only one valid current sale exists; the labeled
    180-day fallback applies only when no current match remains. Pricing-policy
    changes reprice saved evaluations without invalidating paid photo readings.
+   Acquisition, screening and final prices share correction-aware sold-ID
+   reconciliation in `sold-comps.ts`, before eligibility. Provider revision
+   timestamps take precedence, including newer retractions; equally revised
+   observations prefer confirmed transaction types, then arrival order. No
+   highest-price or target-fit selection is used.
    Final graded prices apply the same exact sold-title target checks as
    screening before recency selection and outlier handling. Final adapters
    share bounded cursor collection and canonical cached page URLs: slabs stop

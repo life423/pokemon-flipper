@@ -42,6 +42,7 @@ export interface Comp {
     id?: string | number;
     price: number;
     sold_at: string;
+    updated_at?: string | null;
     variant: string | null;
     title: string;
     grader: string | null;

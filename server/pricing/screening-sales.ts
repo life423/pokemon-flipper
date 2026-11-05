@@ -5,7 +5,7 @@ import { StorageUnavailableError } from "../storage/index.ts";
 import type { ListingSummary, ScreeningSoldEvidence, ScreeningSoldReference, SearchIntent } from "../../shared/types.ts";
 import type { CardRecord, Comp, FetchComps, FetchRawComps, FetchSoldPage, LookupCards, SoldPage, SoldStream } from "./types.ts";
 import { compCondition } from "./raw-comps.ts";
-import { compProblem, summarizeComps, readSoldTitleClaims, matchesSoldTarget, type CompCriteria } from "./sold-comps.ts";
+import { compProblem, summarizeComps, readSoldTitleClaims, matchesSoldTarget, uniqueSoldComps, type CompCriteria } from "./sold-comps.ts";
 import { createScreeningPriceSource, ScreeningPriceBudgetError } from "./pkmnprices.ts";
 import { PriceResearchBudgetError } from "./research-budget.ts";
 import { resolveScreeningName } from "../identity/screening-name.ts";
@@ -23,10 +23,9 @@ const DAY_MS = 86_400_000;
 const hasMatchedSales = (references: ScreeningSoldReference[]) => references.some(reference => usableSoldReference(reference, reference.grader !== null));
 const ordinarySale = (sale: Comp) => !/\blot\b|\bbundle\b|\bset of\b|\b\d+\s*(?:cards|pcs)\b|\bsigned\b|\bautograph(?:ed)?\b|\baltered\b|\bcustom\b|\bproxy\b|\breplica\b|\bmiscut\b|\bcrimp\b|\bholo\s*bleed\b|\bdouble\s*holo\b/i.test(sale.title);
 const specialSlab = (title: string) => /\((?:oc|mk|mc|st|pd|of)\)|\b(?:pristine|black label|perfect|altered|miscut|qualified|qualifier|authentic(?:ated)?)\b/i.test(title);
-const unique = (sales: Comp[]) => [...new Map(sales.map(sale => [sale.id != null ? `id:${sale.id}` : sale.listing_url ? `url:${sale.listing_url}` : `${sale.title}|${sale.sold_at}|${sale.price}`, sale])).values()];
 function marketSummaries(sales: Comp[], market: Market, grader: string | null, grade: string | null, asOf: number): ScreeningSoldReference[] {
     const { record, printing, finish } = market;
-    const eligible = unique(sales).filter(sale => sale.currency === "USD" && ordinarySale(sale) && matchesSoldTarget(sale, record, grader, grade));
+    const eligible = uniqueSoldComps(sales).filter(sale => sale.currency === "USD" && ordinarySale(sale) && matchesSoldTarget(sale, record, grader, grade));
     const base = { recordId: record.id, name: record.name, set: record.setName!, cardNumber: record.cardNumber, printing, finish };
     if (grader && grade) {
         const ordinary = eligible.filter(sale => !specialSlab(sale.title));

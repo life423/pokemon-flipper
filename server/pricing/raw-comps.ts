@@ -1,7 +1,7 @@
 import { RAW_CONDITIONS, type RawCondition } from "../../shared/conditions.ts";
 import type { CompSummary, Identity, RawPrice, RawPricing } from "../../shared/types.ts";
 import { rawPricesFor, variantFor } from "./raw-prices.ts";
-import { compProblem, matchesSoldTarget, summarizeComps } from "./sold-comps.ts";
+import { compProblem, matchesSoldTarget, summarizeComps, uniqueSoldComps } from "./sold-comps.ts";
 import type { CheckComps, Comp, FetchRawComps, PricedCard } from "./types.ts";
 import type { SoldConditionEvidence } from "../ai/sold-condition.ts";
 import { readyForPricing } from "../../shared/identity.ts";
@@ -30,7 +30,7 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
         const fetched = await fetchRawComps(variant.recordId, variant.name, assessCondition ? { stopWhen: sales => sales.some(sale =>
             eligibleSale(sale) && matchesSoldTarget(sale, { name: identity.name!, setName: variant.setName, cardNumber: identity.cardNumber })) } : undefined);
         signal?.throwIfAborted();
-        let sales = [...new Map(fetched.map(sale => [sale.id ?? sale.listing_url ?? JSON.stringify(sale), sale])).values()];
+        let sales = uniqueSoldComps(fetched);
         const sampledSoldCopies = sales.length;
         if (assessCondition) {
             const eligible = sales.filter(eligibleSale);

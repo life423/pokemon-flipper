@@ -21,6 +21,31 @@ import { jungleNoSymbolReason } from "../../shared/jungle-no-symbol.ts";
 // Shared evidence rules for raw and graded sold comparables. These functions
 // filter and summarize supplied sales without fetching prices or photos.
 
+export const CONFIRMED_SALE_TYPES: readonly string[] = ["auction", "fixed_price", "best_offer_accepted"];
+
+// A provider correction supersedes an older snapshot of the same transaction.
+// Without revision metadata, keep confirmed amounts over historical asking
+// snapshots; otherwise the latest observation wins, irrespective of its price
+// or whether it matches the card being researched. Validate eligibility after
+// merging so newer retractions/moved sales cannot resurrect older evidence.
+export function uniqueSoldComps(sales: readonly Comp[]): Comp[] {
+    const unique = new Map<string, Comp>();
+    const revision = (sale: Comp) => {
+        const timestamp = Date.parse(sale.updated_at ?? "");
+        return Number.isFinite(timestamp) ? timestamp : -Infinity;
+    };
+    for (const sale of sales) {
+        const key = sale.id != null ? `id:${sale.id}` : sale.listing_url ? `url:${sale.listing_url}`
+            : JSON.stringify([sale.title, sale.sold_at, sale.price, sale.currency ?? null, sale.grader, sale.grade]);
+        const previous = unique.get(key);
+        if (!previous || revision(sale) > revision(previous) || revision(sale) === revision(previous) &&
+            (!CONFIRMED_SALE_TYPES.includes(previous.sale_type ?? "") || CONFIRMED_SALE_TYPES.includes(sale.sale_type ?? ""))) {
+            unique.set(key, sale);
+        }
+    }
+    return [...unique.values()];
+}
+
 // Keep terminal provider provenance out of the card name, recognize the literal
 // Base (Shadowless) alias, and preserve a negative edition claim as metadata.
 // Callers retain untouched source titles for pricing exclusions and provenance.
@@ -75,7 +100,6 @@ const DAY_MS = 86400000;
 // A sale this far from the others' median is more likely a mislabeled
 // printing or a special copy than a price. Needs 3 or more sales.
 const OUTLIER_FACTOR = 2.5;
-const CONFIRMED_SALE_TYPES = ["auction", "fixed_price", "best_offer_accepted"];
 
 // PSA qualifiers (off-center, miscut, stain...) sell below a plain grade.
 const PSA_QUALIFIER = /\((oc|mk|mc|st|pd|of)\)/i;

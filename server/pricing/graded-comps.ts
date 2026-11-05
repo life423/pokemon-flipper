@@ -1,6 +1,6 @@
 import { printingLabel, readyForPricing, titleDecidesPrinting } from "../identity/card-identity.ts";
 import { canPrice, variantFor } from "./raw-prices.ts";
-import { compProblem, matchesSoldTarget, summarizeComps, type CompCriteria } from "./sold-comps.ts";
+import { compProblem, matchesSoldTarget, summarizeComps, uniqueSoldComps, type CompCriteria } from "./sold-comps.ts";
 import type { CompSummary, GradeRange, GradedPricing, Identity, SlabPricing } from "../../shared/types.ts";
 import type { CheckComps, Comp, CompTarget, FetchComps, PricedCard, PricedVariant } from "./types.ts";
 
@@ -81,22 +81,12 @@ async function fetchVariantComps(
         : [variant.name];
 
     const comps: Comp[] = [];
-    const seen = new Set<string | number>();
-
     for (const sourceLabel of sourceLabels) {
-        for (const comp of await fetchComps(variant.recordId, { grader, grade, variant: sourceLabel,
+        comps.push(...await fetchComps(variant.recordId, { grader, grade, variant: sourceLabel,
             stopWhen: sales => sales.some(sale => compProblem(sale, criteria) === null && matchesTarget(sale, target)),
-        })) {
-            const key = comp.id ?? comp.listing_url ?? `${comp.title}|${comp.sold_at}|${comp.price}`;
-
-            if (!seen.has(key)) {
-                seen.add(key);
-                comps.push(comp);
-            }
-        }
+        }));
     }
-
-    return comps;
+    return uniqueSoldComps(comps);
 }
 
 // Verified sold comps for each grade in the estimated range.
