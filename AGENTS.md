@@ -74,7 +74,10 @@ Read docs/architecture.md for the source map and reading order.
   Final pricing uses the same sold-target checks before windows/outliers and
   bounded shared page collection. Slabs stop on eligible evidence; raw keeps
   two candidate pages with sparse recovery to four per source-label lookup.
-  Page eligibility does not dispatch paid comp checks.
+  Page eligibility does not dispatch paid comp checks. New sold requests filter
+  to known transaction types. Preserve useful legacy SQL pages; old cursors are
+  cache-only, and a missing continuation restarts the filtered root within the
+  same page bound. Never mix opaque cursors or cache keys between query streams.
   It makes no AI or eBay-detail requests. Missing/deferred data stays Sorting.
   One applicable sale authorizes automatic photos with sparse confidence retained,
   retaining the focused

@@ -27,10 +27,11 @@ No handoff was created; preserve the unrelated .env.example deletion.
   creasing notes). Current raw ranking catches HP/damaged/conflicting claims,
   and cannot use details that the search summary never supplied. Do not assign
   a physical condition or add blanket keyword exclusions from these clues.
-- [ ] Evaluate PKMNPrices' documented confirmed-sale-type filter before cold
-  requests, preserving shared cache/cursor provenance and original allowances.
-  The latest CGC9 sample's 13 historical amounts all have unknown sale type;
-  fixing its two date-formatted title residues would still not establish prices.
+- [x] Use PKMNPrices' documented confirmed-sale-type filter for cold requests,
+  preserving useful old cache chains, native cursor provenance, shared pages
+  and original allowances. All 1,022 tests pass. One original CGC9 account
+  lookup returned zero confirmed sales/zero credits, no Browse/AI calls; the
+  provider coverage gap remains unpriced rather than becoming a false Deal.
 
 ## Current pricing consistency — November 4
 

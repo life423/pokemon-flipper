@@ -43,7 +43,7 @@ test("empty card-name results expire after five minutes while positive metadata 
     assert.equal((await lookupCards({ set: "Neo Discovery", name: "Umbreon", cardNumber: "13/75" })).length, 0);
     assert.equal((await lookupCards({ set: "Neo Discovery", name: "Smeargle", cardNumber: "11/75" })).length, 1);
     assert.equal(requests.length, 1, "recent empty answers and positive metadata do not waste another request");
-    const params = new URLSearchParams({ graded: "true", grader: "PSA", grade: "7", limit: "20", sort: "date_desc", period: "180d" });
+    const params = new URLSearchParams({ graded: "true", grader: "PSA", grade: "7", limit: "20", sort: "date_desc", period: "180d", sale_type: "auction,fixed_price,best_offer_accepted" });
     await put(`/cards/999997/listings/ebay?${params}`, { data: [] }, 60);
     await put(`/cards/999998/listings/ebay?${params}`, { data: [] }, 2);
     await fetchComps(999997, { grader: "PSA", grade: "7" });

@@ -3,7 +3,7 @@ import { finishClaim } from "../../shared/finish.ts";
 import { RAW_CONDITIONS } from "../../shared/conditions.ts";
 import { StorageUnavailableError } from "../storage/index.ts";
 import type { ListingSummary, ScreeningSoldEvidence, ScreeningSoldReference, SearchIntent } from "../../shared/types.ts";
-import type { CardRecord, Comp, FetchComps, FetchRawComps, FetchSoldPage, LookupCards, SoldPage } from "./types.ts";
+import type { CardRecord, Comp, FetchComps, FetchRawComps, FetchSoldPage, LookupCards, SoldPage, SoldStream } from "./types.ts";
 import { compCondition } from "./raw-comps.ts";
 import { compProblem, summarizeComps, readSoldTitleClaims, matchesSoldTarget, type CompCriteria } from "./sold-comps.ts";
 import { createScreeningPriceSource, ScreeningPriceBudgetError } from "./pkmnprices.ts";
@@ -89,24 +89,28 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
             // sparse markets. Counts use fully checked, deduplicated summaries,
             // so unrelated grades, printings and condition buckets cannot stop
             // useful recovery. Four pages total bounds even an endless cursor.
-            const pending: { variant: string; cursor?: string }[] = labels.map(variant => ({ variant }));
+            const pending: { variant: string; cursor?: string; stream?: SoldStream }[] = labels.map(variant => ({ variant }));
             const seen = new Set<string>();
             let pageCount = 0;
             while (pending.length) {
-                const { variant, cursor } = pending.shift()!;
+                const { variant, cursor, stream } = pending.shift()!;
                 if (cursor && hasMatchedSales(accepted)) continue;
                 if (pageCount >= SOLD_MARKET_PAGE_LIMIT) { issue = "BUDGET"; break; }
-                const pageKey = JSON.stringify([record.id, variant, grader, grade, cursor]);
+                // Root cache selection uses this market's eligibility predicate.
+                // Provider transport/cache sharing remains keyed by native URL.
+                const selectionScope = source.fetchSoldPage ? [printing, finish] : null;
+                const pageKey = JSON.stringify([record.id, selectionScope, variant, grader, grade, stream, cursor]);
                 if (seen.has(pageKey)) { issue = "UNAVAILABLE"; break; }
                 seen.add(pageKey);
                 try {
                     const page = await memo(pages, pageKey, async () => source.fetchSoldPage
-                        ? source.fetchSoldPage(record.id, { grader, grade, variant, ...(cursor ? { cursor } : {}) })
+                        ? source.fetchSoldPage(record.id, { grader, grade, variant, cursor, stream,
+                            stopWhen: values => hasMatchedSales(marketSummaries([...values], market, grader, grade, asOf)) })
                         : { sales: await (grader && grade ? source.fetchComps(record.id, { grader, grade, variant }) : source.fetchRawComps(record.id, variant)), nextCursor: null });
                     pageCount++;
                     sales.push(...page.sales);
                     accepted = marketSummaries(sales, market, grader, grade, asOf);
-                    if (page.nextCursor && !hasMatchedSales(accepted)) pending.push({ variant, cursor: page.nextCursor });
+                    if (page.nextCursor && !hasMatchedSales(accepted)) pending.push({ variant, cursor: page.nextCursor, stream: page.stream });
                 } catch (error) {
                     signal?.throwIfAborted();
                     if (error instanceof StorageUnavailableError || error instanceof PriceResearchBudgetError && error.reason !== "LIMIT") throw error;

@@ -3,7 +3,7 @@ import { sameCardNumber, sameSetFamily, setFamily, setSearchTerm } from "../iden
 import { canonicalCatalogName, pricingSearchName, sameCatalogName } from "./search-name.ts";
 import { conditionOf } from "./raw-prices.ts";
 import { cardNumberOf, cardVariants } from "./records.ts";
-import type { CardRecord, Comp, FetchComps, FetchRawComps, FetchSoldPage, LookupCards, LookupQueryCards, QueryCatalogResult, SoldPageSelection } from "./types.ts";
+import type { CardRecord, Comp, FetchComps, FetchRawComps, FetchSoldPage, LookupCards, LookupQueryCards, QueryCatalogResult, SoldPage, SoldPageSelection, SoldStream } from "./types.ts";
 import { createLimiter } from "../lib/concurrency.ts";
 import { createSharedWork } from "../lib/shared-work.ts";
 import { fetchJson, ProviderError } from "../lib/http.ts";
@@ -402,25 +402,79 @@ export const lookupCards: LookupCards = query => lookupCardsFrom(query, apiGet, 
 
 const uniqueSales = (sales: readonly Comp[]) => [...new Map(sales.map(sale => [sale.id ?? sale.listing_url ?? JSON.stringify(sale), sale])).values()];
 
-// Both final-price adapters reuse screening's canonical page URLs and caches.
-// Eligibility callbacks can recover sparse later pages without unbounded scans
-// or triggering another paid assessment. Legacy readers retain their two pages.
+const CONFIRMED_SALE_TYPES = "auction,fixed_price,best_offer_accepted";
+const soldPage = (body: ApiBody, stream: SoldStream): SoldPage => ({
+    sales: uniqueSales((body.data ?? []).filter((sale: Comp) => sale.currency === "USD")),
+    nextCursor: body.pagination?.has_more && typeof body.pagination.next_cursor === "string" && body.pagination.next_cursor
+        ? body.pagination.next_cursor : null,
+    stream,
+});
+
+// Opaque cursors belong to the query that produced them. Old unfiltered pages
+// remain cache-only; new requests ask for known transaction amounts. Never save
+// a filtered response under an old key or send its legacy cursor to the provider.
+async function readSoldPage(recordId: CardRecord["id"], params: URLSearchParams,
+    { cursor, stream, stopWhen }: { cursor?: string; stream?: SoldStream } & SoldPageSelection = {},
+    get = apiGet, cached = cachedApiGet, signal = getPriceResearchSignal()): Promise<SoldPage> {
+    signal?.throwIfAborted();
+    if (stream !== undefined && stream !== "LEGACY" && stream !== "CONFIRMED") throw new Error("Unknown sold-page stream.");
+    const endpoint = (mode: SoldStream, next?: string) => {
+        const query = new URLSearchParams(params);
+        if (mode === "CONFIRMED") query.set("sale_type", CONFIRMED_SALE_TYPES);
+        if (next) query.set("cursor", next);
+        return `/cards/${recordId}/listings/ebay?${query}`;
+    };
+    if (stream === "CONFIRMED") return soldPage(await get(endpoint(stream, cursor), 6), stream);
+    if (cursor) {
+        const saved = await cached(endpoint("LEGACY", cursor), 6);
+        if (saved) return soldPage(saved, "LEGACY");
+        return soldPage(await get(endpoint("CONFIRMED"), 6), "CONFIRMED");
+    }
+    const confirmed = await cached(endpoint("CONFIRMED"), 6);
+    if (confirmed) return soldPage(confirmed, "CONFIRMED");
+
+    const first = await cached(endpoint("LEGACY"), 6);
+    if (first) {
+        let page = soldPage(first, "LEGACY");
+        const sales: Comp[] = [];
+        const seen = new Set<string>();
+        for (let count = 0; count < SOLD_MARKET_PAGE_LIMIT; count += 1) {
+            sales.push(...page.sales);
+            const useful = stopWhen ? await stopWhen(uniqueSales(sales))
+                : sales.some(sale => CONFIRMED_SALE_TYPES.split(",").includes(sale.sale_type ?? ""));
+            // Check cancellation after an asynchronous eligibility callback too.
+            signal?.throwIfAborted();
+            if (useful || !sales.length && !page.nextCursor) return soldPage(first, "LEGACY");
+            if (!page.nextCursor || seen.has(page.nextCursor) || count + 1 === SOLD_MARKET_PAGE_LIMIT) break;
+            seen.add(page.nextCursor);
+            const next = await cached(endpoint("LEGACY", page.nextCursor), 6);
+            if (!next) break;
+            page = soldPage(next, "LEGACY");
+        }
+    }
+    return soldPage(await get(endpoint("CONFIRMED"), 6), "CONFIRMED");
+}
+
+// Screening and final pricing share native URLs, SQL cache and in-flight work.
+// The four-page bound still applies when a legacy cache gap restarts at root.
 async function collectSoldPages(recordId: CardRecord["id"], params: URLSearchParams, { stopWhen }: SoldPageSelection = {}, minimumPages = 1) {
     const sales: Comp[] = [];
     const seen = new Set<string>();
+    let cursor: string | undefined, stream: SoldStream | undefined;
     const limit = stopWhen ? SOLD_MARKET_PAGE_LIMIT : 2;
     for (let page = 0; page < limit; page += 1) {
         getPriceResearchSignal()?.throwIfAborted();
-        const cursor = params.get("cursor") ?? "";
-        if (seen.has(cursor)) break;
-        seen.add(cursor);
-        const body = await apiGet(`/cards/${recordId}/listings/ebay?${params}`, 6);
-        sales.push(...(body.data ?? []).filter((sale: Comp) => sale.currency === "USD"));
+        const key = JSON.stringify([stream, cursor]);
+        if (seen.has(key)) break;
+        seen.add(key);
+        const result = await readSoldPage(recordId, params, { cursor, stream, stopWhen });
+        sales.push(...result.sales);
         const enough = stopWhen && page + 1 >= minimumPages && await stopWhen(uniqueSales(sales));
         getPriceResearchSignal()?.throwIfAborted();
         if (enough) break;
-        if (!body.pagination?.has_more || !body.pagination?.next_cursor) break;
-        params.set("cursor", body.pagination.next_cursor);
+        if (!result.nextCursor) break;
+        cursor = result.nextCursor;
+        stream = result.stream;
     }
     return sales;
 }
@@ -482,21 +536,13 @@ export function createScreeningPriceSource({ signal: sourceSignal, maxRequests =
             return finish(path, response, body);
         } finally { detach(); }
     };
-    const fetchSoldPage: FetchSoldPage = async (recordId, { grader, grade, variant, cursor }) => {
+    const fetchSoldPage: FetchSoldPage = async (recordId, { grader, grade, variant, cursor, stream, stopWhen }) => {
         if (Boolean(grader) !== Boolean(grade)) throw new Error("A sold-page target requires both its grader and grade.");
-        // Keep the existing final-valuation URLs: both stages share cached
-        // first pages, cursor pages and in-flight provider requests.
+        // Keep parameter order identical to final pricing for shared cache keys.
         const params = grader && grade
             ? new URLSearchParams({ graded: "true", grader, grade, limit: "20", sort: "date_desc", period: "180d", variant })
             : new URLSearchParams({ graded: "false", period: "90d", sort: "date_desc", limit: "20", variant });
-        if (cursor) params.set("cursor", cursor);
-        const body = await get(`/cards/${recordId}/listings/ebay?${params}`, 6);
-        const sales: Comp[] = (body.data ?? []).filter((sale: Comp) => sale.currency === "USD");
-        return {
-            sales: [...new Map(sales.map(sale => [sale.id ?? sale.listing_url ?? JSON.stringify(sale), sale])).values()],
-            nextCursor: body.pagination?.has_more && typeof body.pagination.next_cursor === "string" && body.pagination.next_cursor
-                ? body.pagination.next_cursor : null,
-        };
+        return readSoldPage(recordId, params, { cursor, stream, stopWhen }, get, cached, signal);
     };
     const source: { lookupCards: LookupCards; lookupQueryCards: LookupQueryCards; fetchComps: FetchComps; fetchRawComps: FetchRawComps; fetchSoldPage: FetchSoldPage; stats(): { requests: number; limit: number } } = {
         lookupCards: query => {
@@ -510,15 +556,13 @@ export function createScreeningPriceSource({ signal: sourceSignal, maxRequests =
             if (result.complete) queryCatalogs.set(queryKey(query), structuredClone(result.cards));
             return result;
         },
-        fetchComps: async (recordId, { grader, grade, variant }) => {
-            if (variant) return (await fetchSoldPage(recordId, { grader, grade: String(grade), variant })).sales;
+        fetchComps: async (recordId, { grader, grade, variant, stopWhen }) => {
+            if (variant) return (await fetchSoldPage(recordId, { grader, grade: String(grade), variant, stopWhen })).sales;
             // Retain the optional variant's established URL for other callers.
             const params = new URLSearchParams({ graded: "true", grader, grade: String(grade), limit: "20", sort: "date_desc", period: "180d" });
-            const body = await get(`/cards/${recordId}/listings/ebay?${params}`, 6);
-            const sales: Comp[] = (body.data ?? []).filter((sale: Comp) => sale.currency === "USD");
-            return [...new Map(sales.map(sale => [sale.id ?? sale.listing_url ?? JSON.stringify(sale), sale])).values()];
+            return (await readSoldPage(recordId, params, { stopWhen }, get, cached, signal)).sales;
         },
-        fetchRawComps: async (recordId, variant) => (await fetchSoldPage(recordId, { grader: null, grade: null, variant })).sales,
+        fetchRawComps: async (recordId, variant, selection) => (await fetchSoldPage(recordId, { grader: null, grade: null, variant, ...selection })).sales,
         fetchSoldPage,
         stats: () => ({ requests, limit: requestLimit }),
     };

@@ -70,10 +70,11 @@ export type FetchComps = (
 
 // Screening chooses whether another page is useful after applying the same
 // identity, transaction and market checks used for its sold summaries.
-export interface SoldPage { sales: Comp[]; nextCursor: string | null }
+export type SoldStream = "CONFIRMED" | "LEGACY";
+export interface SoldPage { sales: Comp[]; nextCursor: string | null; stream?: SoldStream }
 export type FetchSoldPage = (
     recordId: CardRecord["id"],
-    options: { variant: string; grader: string | null; grade: string | null; cursor?: string }
+    options: { variant: string; grader: string | null; grade: string | null; cursor?: string; stream?: SoldStream } & SoldPageSelection
 ) => Promise<SoldPage>;
 
 // The card a set of comps is priced for, as the comp checker reads it.

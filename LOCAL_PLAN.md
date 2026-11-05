@@ -10,6 +10,29 @@ were committed and pushed on main. Current work is on
 improve/consistent-sold-pricing. Markdown notes are tracked; no handoff was
 created. The pre-existing .env.example deletion remains unrelated/uncommitted.
 
+## Confirmed-sale acquisition — November 4
+
+New PKMNPrices sold requests use the documented auction, fixed_price and
+best_offer_accepted filter to avoid returning historical unknown sale amounts.
+This does not relax exact identity, printing, grade, recency or transaction
+validation. Fresh filtered SQL pages take precedence, including short-lived
+empty responses. Useful original unfiltered cache chains remain readable with
+no new request allowance. Legacy cursors are cache-only; a missing continuation
+restarts at the confirmed root and never mixes opaque cursors across queries.
+Screening and final pricing share native URLs, transport sponsorship and saved
+responses; recovery retains the existing four-page bound and original ledgers.
+Selection memoization distinguishes printing-dependent legacy choices while
+the underlying provider response remains shared. No new module, model, photo
+version or financial assumption was introduced.
+
+All 1,022 isolated tests, both typechecks, build and whitespace checks pass.
+The original Kangaskhan CGC9 search account then made one filtered Unlimited
+lookup: zero rows, zero reported credits, zero Browse/photo/AI calls. The
+response saved through the normal shared SQL path. This is a provider coverage
+gap, not evidence of negative value or a supported Deal. No cap was raised and
+the profitable BIN milestone remains open. Evidence stays excluded in
+data/candidate-validation/2026-11-04/focused-slab-bin/confirmed-sales-check.json.
+
 ## Focused priority and retired-writer cleanup — November 4
 
 After 2c4c13a, continued with two narrow corrections and caller-proven deletion.

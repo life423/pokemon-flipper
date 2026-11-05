@@ -19,7 +19,7 @@ function offline(t: { after(run: () => void): void; mock: { method(...args: any[
 }
 const sold = (id: number) => ({ id, currency: "USD", title: "Offline actual-response fixture", price: 100 });
 const response = (data: unknown, credits = 1) => Response.json(data, { headers: { "x-credits-charged": String(credits), "x-credits-limit": "20000", "x-credits-remaining": "19000" } });
-const rawPath = (id: number) => `/cards/${id}/listings/ebay?${new URLSearchParams({ graded: "false", period: "90d", sort: "date_desc", limit: "20", variant: "Unlimited Holofoil" })}`;
+const rawPath = (id: number) => `/cards/${id}/listings/ebay?${new URLSearchParams({ graded: "false", period: "90d", sort: "date_desc", limit: "20", variant: "Unlimited Holofoil", sale_type: "auction,fixed_price,best_offer_accepted" })}`;
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(accept => { resolve = accept; }); return { promise, resolve }; }
 async function eventually<T>(read: () => Promise<T>, accepted: (value: T) => boolean): Promise<T> {
     for (let i = 0; i < 200; i++) { const value = await read(); if (accepted(value)) return value; await new Promise(resolve => setTimeout(resolve, 5)); }

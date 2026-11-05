@@ -28,7 +28,8 @@ const gradedPath = (id: number, grader = "PSA", grade: number | string = 8, vari
     `/cards/${id}/listings/ebay?${new URLSearchParams({ graded: "true", grader, grade: String(grade), limit: "20", sort: "date_desc", period: "180d", variant })}`;
 const rawPath = (id: number, variant = "Unlimited Holofoil") =>
     `/cards/${id}/listings/ebay?${new URLSearchParams({ graded: "false", period: "90d", sort: "date_desc", limit: "20", variant })}`;
-const sale = (id: number, currency = "USD") => ({ id, currency, title: "offline sale", price: 100 });
+const confirmedPath = (path: string) => `${path}&sale_type=auction%2Cfixed_price%2Cbest_offer_accepted`;
+const sale = (id: number, currency = "USD") => ({ id, currency, title: "offline sale", price: 100, sale_type: "fixed_price" });
 const requestPath = (input: unknown) => {
     const url = new URL(String(input)); assert.equal(url.origin, "https://api.pkmnprices.com");
     return url.pathname.replace(/^\/v1/, "") + url.search;
@@ -49,7 +50,7 @@ test("screening uses canonical first-page sold URLs, exact half grades and no cu
     const source = createScreeningPriceSource();
     assert.deepEqual(await source.fetchComps(81001, { grader: "CGC", grade: "8.5", variant: "Unlimited Holofoil" }), [sale(1)]);
     assert.deepEqual(await source.fetchRawComps(81001, "Unlimited Holofoil"), [sale(1)]);
-    assert.deepEqual(paths, [gradedPath(81001, "CGC", "8.5"), rawPath(81001)]);
+    assert.deepEqual(paths, [confirmedPath(gradedPath(81001, "CGC", "8.5")), confirmedPath(rawPath(81001))]);
     assert.deepEqual(source.stats(), { requests: 2, limit: PRICE_SCREEN_REQUEST_LIMIT });
 });
 
@@ -93,7 +94,7 @@ test("screening reuses cached final-valuation pages when the first page has no c
     const run = createSoldScreening({ now: () => clock, source: { ...source, lookupCards: async () => [record] } });
     const result = await run(subject, intent);
     assert.equal(result.status, "AVAILABLE"); assert.equal(result.exactScope, true); assert.equal(result.references[0].summary.count, 2);
-    assert.deepEqual(paths, [gradedPath(id), `${gradedPath(id)}&cursor=saved-second`]);
+    assert.deepEqual(paths, [confirmedPath(gradedPath(id)), `${confirmedPath(gradedPath(id))}&cursor=saved-second`]);
     assert.deepEqual(source.stats(), { requests: 0, limit: 0 });
 });
 
@@ -102,12 +103,12 @@ test("cursor pages use canonical half-grade and raw URLs under the same source a
     const paths: string[] = [];
     t.mock.method(globalThis, "fetch", async input => { paths.push(requestPath(input)); return Response.json({ data: [sale(paths.length)] }); });
     const source = createScreeningPriceSource({ maxRequests: 2 });
-    await source.fetchSoldPage(82202, { grader: "CGC", grade: "8.5", variant: "Unlimited Holofoil", cursor: "next graded" });
-    await source.fetchSoldPage(82202, { grader: null, grade: null, variant: "Unlimited Holofoil", cursor: "next raw" });
+    await source.fetchSoldPage(82202, { grader: "CGC", grade: "8.5", variant: "Unlimited Holofoil", stream: "CONFIRMED", cursor: "next graded" });
+    await source.fetchSoldPage(82202, { grader: null, grade: null, variant: "Unlimited Holofoil", stream: "CONFIRMED", cursor: "next raw" });
     await assert.rejects(source.fetchSoldPage(82203, { grader: null, grade: null, variant: "Unlimited Holofoil" }), ScreeningPriceBudgetError);
-    assert.deepEqual(paths, [`${gradedPath(82202, "CGC", "8.5")}&cursor=next+graded`, `${rawPath(82202)}&cursor=next+raw`]);
+    assert.deepEqual(paths, [`${confirmedPath(gradedPath(82202, "CGC", "8.5"))}&cursor=next+graded`, `${confirmedPath(rawPath(82202))}&cursor=next+raw`]);
     assert.deepEqual(source.stats(), { requests: 2, limit: 2 });
-    await source.fetchSoldPage(82202, { grader: null, grade: null, variant: "Unlimited Holofoil", cursor: "next raw" });
+    await source.fetchSoldPage(82202, { grader: null, grade: null, variant: "Unlimited Holofoil", stream: "CONFIRMED", cursor: "next raw" });
     assert.equal(paths.length, 2, "cached cursor pages remain readable after the request limit");
 });
 
@@ -333,7 +334,7 @@ test("an accepted response still saves after its final subscriber stops", async 
     response.resolve(Response.json({ data: [sale(6)] }));
     let stored: { data: unknown[] } | null = null;
     for (let attempt = 0; attempt < 100 && !stored; attempt++) {
-        await setImmediate(); stored = await readCache(`pkmnprices:${rawPath(86001)}`, 6);
+        await setImmediate(); stored = await readCache(`pkmnprices:${confirmedPath(rawPath(86001))}`, 6);
     }
     assert.deepEqual(stored?.data, [sale(6)]); assert.equal(source.stats().requests, 1);
 });

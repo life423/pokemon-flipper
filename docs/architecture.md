@@ -39,7 +39,12 @@ flowchart TD
    64 uncached PKMNPrices requests including catalog work, and adaptive reads of
    up to four 20-sale pages per requested market when the preceding pages lack
    one eligible matched sale. It stops once a scope has usable
-   observations; cached pages from final valuation can satisfy follow-up reads. SQL/file response caches and shared
+   observations; cached pages from final valuation can satisfy follow-up reads.
+   New requests select confirmed transaction types. Useful legacy unfiltered
+   pages remain cache-only with explicit cursor lineage; missing continuations
+   restart the filtered root within the same page bound. Fresh filtered empty
+   answers retain their five-minute TTL and do not resurrect older positives.
+   SQL/file response caches and shared
    catalog/market work avoid repeated requests. This stage calls neither AI nor
    eBay Browse. The retired broad-discovery and automatic pricing-recovery
    branches are no longer alternative search paths.
