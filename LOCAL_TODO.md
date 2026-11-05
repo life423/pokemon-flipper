@@ -58,6 +58,10 @@ No handoff was created; preserve the unrelated .env.example deletion.
   check and running app-shell HTTP 200 check.
 - [ ] Finish supported profitable BIN validation; retain original UUIDs/caps and
   avoid another repetitive negative search matrix. Do not inflate valuations.
+- [ ] Review explicit bare OC/MC/Error qualifier wording in sold titles across
+  screening and final graded pricing, preserving ordinary seller lot suffixes.
+  A fresh Celebi PSA9 negative sample exposed this broader title-classification
+  concern; no purchased photo findings should be invalidated to change it.
 - [ ] Add verified cheapest matching available BIN competition as a separate
   resale ceiling, reusing rows and accepted labels before new provider work.
 

@@ -33,6 +33,17 @@ gap, not evidence of negative value or a supported Deal. No cap was raised and
 the profitable BIN milestone remains open. Evidence stays excluded in
 data/candidate-validation/2026-11-04/focused-slab-bin/confirmed-sales-check.json.
 
+A fresh Celebi V 245/264 PSA9 BIN query then used one Browse request and five
+PKMN requests/22 reported credits, zero AI. Of 17 screened rows, 11 were excluded
+by existing sold-price economics; six remained. Twenty recent transactions
+supported a $99.205 median; unresolved printing scopes stayed separate. The
+$90 candidate plus assumed shipping still models a $28.76 loss. No label
+assessment was purchased on these unsupported economics. Original account:
+ef60a6c7-2f89-4b02-b391-9d0c3adf44aa. This is a negative inventory sample, not a
+complete-market conclusion or a confirmed Deal. Bare OC/Error sold-title wording
+also warrants a later qualifier review; do not silently treat it as an ordinary
+slab or relax exact matching to make results appear.
+
 ## Focused priority and retired-writer cleanup — November 4
 
 After 2c4c13a, continued with two narrow corrections and caller-proven deletion.
