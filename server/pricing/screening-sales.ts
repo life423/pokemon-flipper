@@ -132,7 +132,7 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
         const claimedNumbers = [card?.cardNumber, reading.cardNumber].filter((value): value is string => Boolean(value?.trim()));
         if (claimedSets.some(value => !sameSetFamily(value, claimedSets[0]) && !sameSetFamily(claimedSets[0], value)) ||
             claimedNumbers.some(value => !sameCardNumber(value, claimedNumbers[0]))) return evidence;
-        const resolvedName = resolveScreeningName({ title: listing.title, claims: claimedNames, candidate: intent.cardName });
+        const resolvedName = resolveScreeningName({ title: listing.title, claims: claimedNames, candidate: intent.cardName, set: claimedSets[0] });
         if (claimedNames.length && !resolvedName) return evidence;
         const name = resolvedName ?? intent.cardName;
         const set = claimedSets[0] ?? (intent.sets.length === 1 ? intent.sets[0] : null);

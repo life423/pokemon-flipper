@@ -62,6 +62,9 @@ Read docs/architecture.md for the source map and reading order.
   observed release/full-number/graded context; unanchored abbreviations and
   unknown words remain unresolved. Reconcile saved name residue from the
   original descriptor span without changing source titles or exclusion checks.
+  Recognized parenthetical catalog rarity labels do not erase printed Shining
+  names. Sun & Moon era wording requires an observed phrase, full number,
+  numeric slab grade and separate written release; bare/unknown words remain.
 - Honor listing format, raw/graded, prices and grade/finish constraints throughout.
   After assessment, corroborated holder evidence takes precedence over eBay's
   raw/graded category. Keep query and control constraints consistent in results,

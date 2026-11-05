@@ -102,6 +102,10 @@ flowchart TD
    timestamps take precedence, including newer retractions; equally revised
    observations prefer confirmed transaction types, then arrival order. No
    highest-price or target-fit selection is used.
+   Catalog comparison removes only recognized descriptive suffixes, preserving
+   printed names/forms. Observed publisher-era wording can be cleaned with a
+   separate written release, full number and numeric slab grade; this permits
+   exact price screening without substituting a requested identity for evidence.
    Final graded prices apply the same exact sold-title target checks as
    screening before recency selection and outlier handling. Final adapters
    share bounded cursor collection and canonical cached page URLs: slabs stop

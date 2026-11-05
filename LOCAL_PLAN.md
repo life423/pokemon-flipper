@@ -10,6 +10,46 @@ were committed and pushed on main. Current work is on
 improve/consistent-sold-pricing. Markdown notes are tracked; no handoff was
 created. The pre-existing .env.example deletion remains unrelated/uncommitted.
 
+## Catalog recovery and economical candidate checks — November 5
+
+A focused normal BIN/graded search for Mewtwo GX 78/73 PSA9 returned 25
+listings, initially all without a pricing market. Existing SQL catalog data
+contained Mewtwo GX (Secret Shining); the shared name matcher rejected its
+parenthetical descriptor before fetching prices. The existing descriptor rule
+now recognizes that precise suffix while preserving printed Shining forms,
+owners, bare unknown wording and exact set/collector-number checks.
+
+The same original search then obtained 16 matched PSA9 transactions and excluded
+15 overpriced listings through the normal price screen. Six more ordinary
+titles retained Sun & Moon publisher wording as a name, preventing exact scope.
+The existing name cleaner now removes an observed era phrase only with a full
+collector fraction, numeric slab grade and separately written specific release;
+both callers pass their existing set context. Base Sun & Moon, missing anchors,
+joined unknown words, reversed phrases and printed Shining remain distinct.
+
+A provider-blocked replay through production price screening now excludes 21 of
+the original 25 listings, with zero new provider, photo, preflight or generation
+calls. Four residual/qualified/missing-set rows remain unresolved. No candidate
+is claimed as a Deal; even the cheapest ordinary slab loses money under the
+observed median and current costs. The two normal metadata passes share their
+original search ID: two Browse requests, six PKMN requests/22 reported credits,
+zero paid AI. Responses are saved through the shared SQL path.
+
+Separately, current-term checks of two cheap saved Entei leads used two Browse
+requests and no paid AI. Original photos show Promo 34 despite titles claiming
+Neo Revelation 6/64. Three other saved candidate fronts show the same mismatch.
+These are manual triage observations, not accepted app assessments; no item-ID
+exceptions, fake-card conclusions or changed market values were added. Private
+reports/photos remain excluded under data/candidate-validation/2026-11-05/.
+
+All 1,033 isolated tests, typechecks, production build and whitespace checks
+pass. Independent review caught an overly broad joined-word match; tightening
+the observed phrase and adding counterexamples corrected it before completion.
+No new runtime files, model/prompt changes, photo/valuation version changes or
+budget increases. The genuine profitable BIN milestone remains open. Resolve
+remaining identity residue from evidence, not by removing arbitrary words or
+purchasing more opinions about the same unsupported candidates.
+
 ## Raw sold-copy selection correction — November 5
 
 The Arcanine review exposed a selection bias: an older profitable sale could be

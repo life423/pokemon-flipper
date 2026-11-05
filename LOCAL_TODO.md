@@ -62,6 +62,10 @@ provider payloads, photos and data/ stay excluded. No computer handoff is pendin
 
 ## Pricing accuracy and economical evidence recovery
 
+- [x] Recover catalog pricing for observed parenthetical Secret Shining labels
+  without erasing printed Shining forms. Anchored Sun & Moon publisher metadata
+  now reaches exact sold screening. The saved 25-row Mewtwo replay excludes 21
+  overpriced rows with zero provider calls; full 1,033 isolated tests pass.
 - [x] Explicit query printing/finish narrows research when seller claims omit
   them, without turning requested identity into confirmed metadata. Broad
   queries retain plausible scopes. Cached intent/keywords cannot silently add
@@ -111,6 +115,8 @@ provider payloads, photos and data/ stay excluded. No computer handoff is pendin
   Holo, reverse holo and non-holo must remain distinct throughout.
 - [ ] Resolve demonstrated residual descriptors using real catalog context;
   preserve unknown words, explicit release conflicts and grading qualifiers.
+  Remaining examples include seller-title Secret Shining residue and MewTube;
+  the catalog suffix and anchored Sun & Moon era are already corrected.
 - [ ] Improve whole-gallery sampling, front/back versus close-up coverage,
   stamp/copyright/set-symbol/reprint recognition and false obstruction/language
   warnings. Preserve actual reviewed photo numbers and prior paid evidence.

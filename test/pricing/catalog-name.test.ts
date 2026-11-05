@@ -16,6 +16,7 @@ test("saved real-shape catalog records survive descriptor-only differences in bo
         { setId: 503, set: "Evolving Skies", query: "Leafeon V", term: "leafeon v", item: detail(17178, "Leafeon V (Alternate Full Art)", "167", "203", "Evolving Skies") },
         { setId: 633, set: "Fusion Strike", query: "Mew VMAX", term: "mew vmax", item: detail(34436, "Mew VMAX (Alternate Art Secret)", "269", "264", "SWSH08: Fusion Strike") },
         { setId: 606, set: "Vivid Voltage", query: "Pikachu VMAX", term: "pikachu vmax", item: detail(27943, "Pikachu VMAX (Secret)", "188", "185", "SWSH04: Vivid Voltage") },
+        { setId: 529, set: "Shining Legends", query: "Mewtwo GX", term: "mewtwo gx", item: detail(19490, "Mewtwo GX (Secret Shining)", "78", "73", "Shining Legends") },
     ];
     for (const { setId, set, term, item } of fixtures) {
         await writeCache(`pkmnprices:${setsPath(set)}`, { data: [{ id: setId, name: set }] });

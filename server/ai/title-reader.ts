@@ -138,7 +138,7 @@ export function readTitleByRules(title: string, knownSetNames: readonly string[]
     const condition = claim ? CONDITION_NAMES[claim === "MINT" ? "NEAR_MINT" : claim] : null;
     // Only use a compact literal name after removing explicit metadata. This
     // does not claim that an unknown phrase is a canonical Pokemon identity.
-    const name = normalizeText(stripListingNameBoilerplate(withoutReprintRelease(title), title))
+    const name = normalizeText(stripListingNameBoilerplate(withoutReprintRelease(title), title, set))
         .replace(matchedSet?.pattern ?? /$^/, " ")
         .replace(number ? new RegExp(escapePattern(number), "ig") : /$^/, " ")
         .replace(/\b(?:psa|cgc|bgs|sgc|tag)\s*(?:[-–—]\s*)?(?:(?:gem|mint|mt|nm|near|ex|excellent|vg|very|good|poor|fair|pristine|black|label)[ -]+){0,5}(?:10|[1-9](?:\.5)?)?\b/ig, " ")

@@ -7,7 +7,7 @@ const DESCRIPTIVE_SUFFIX = /(?:^|\s)(?:(?:(?:reverse|rev|non)\s*)?(?:holo(?:grap
 // PKMNPrices appends these rarity/artwork labels to numbered modern cards.
 // Require the parenthetical catalog suffix: an unbracketed Secret or other
 // unknown wording may belong to the printed name and must stay distinct.
-const CATALOG_RARITY_SUFFIX = /\s+\((?:(?:alternate|alt)(?:\s+full)?\s+art\s+)?secret\)\s*$/i;
+const CATALOG_RARITY_SUFFIX = /\s+\((?:(?:(?:alternate|alt)(?:\s+full)?\s+art\s+)?secret|secret\s+shining)\)\s*$/i;
 
 export function canonicalCatalogName(value: unknown): string {
     let name = normalizeText(String(value ?? "").replace(CATALOG_RARITY_SUFFIX, "").replace(/[‘’]/g, "'")

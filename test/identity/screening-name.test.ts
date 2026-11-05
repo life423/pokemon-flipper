@@ -194,3 +194,27 @@ test("observed Cosmos Holo metadata needs a full number and written catalog rele
         assert.equal(resolveScreeningName({ title: source, claims: [name, `${name} cosmos`], candidate: "Lugia", set: "Neo Genesis" }), name, source);
     }
 });
+
+test("Sun and Moon era metadata requires a separate written release, full number and slab grade", () => {
+    for (const era of ["Sun & Moon", "Sun and Moon", "Sun Moon"]) {
+        const title = `2017 Pokemon ${era} Shining Legends Mewtwo GX 78/73 PSA 9`;
+        assert.equal(readTitleByRules(title, ["Shining Legends"]).cardName, "mewtwo gx");
+        assert.equal(resolveScreeningName({ title, set: "Shining Legends", claims: ["mewtwo gx", "sun moon mewtwo gx"], candidate: "Mewtwo GX" }), "Mewtwo GX");
+    }
+    for (const [title, set] of [
+        ["Sun & Moon Mewtwo GX 78/73 PSA 9", "Shining Legends"],
+        ["Sun & Moon Shining Legends Mewtwo GX #78 PSA 9", "Shining Legends"],
+        ["Sun & Moon Shining Legends Mewtwo GX 78/73 raw", "Shining Legends"],
+        ["Sun & Moon Shining Legends Mewtwo GX 78/73 PSA", "Shining Legends"],
+        ["Sun & Moon Mewtwo GX 78/73 PSA 9", "Sun & Moon"],
+        ["Moon & Sun Shining Legends Mewtwo GX 78/73 PSA 9", "Shining Legends"],
+    ]) assert.notEqual(resolveScreeningName({ title, set, claims: ["sun moon mewtwo gx"], candidate: "Mewtwo GX" }), "Mewtwo GX", title);
+    const title = "Sun & Moon Shining Legends Shining Mewtwo 78/73 PSA 9";
+    assert.equal(readTitleByRules(title, ["Shining Legends"]).cardName, "shining mewtwo");
+    assert.equal(resolveScreeningName({ title: title + " Curious", set: "Shining Legends", claims: ["sun moon shining mewtwo curious"], candidate: "Mewtwo" }), "shining mewtwo curious");
+    for (const word of ["SunMoon", "SunandMoon", "Sun andMoon", "Sunand Moon", "Moon's Sun"]) {
+        const source = `${word} Shining Legends Mewtwo GX 78/73 PSA 9`;
+        assert.notEqual(readTitleByRules(source, ["Shining Legends"]).cardName, "mewtwo gx");
+        assert.notEqual(resolveScreeningName({ title: source, set: "Shining Legends", claims: [`${word} Mewtwo GX`], candidate: "Mewtwo GX" }), "Mewtwo GX");
+    }
+});

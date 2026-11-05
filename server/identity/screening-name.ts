@@ -64,6 +64,15 @@ export function stripListingNameBoilerplate(value: string, title = value, set?: 
         // occurrence belonging to the card's printed name.
         const releaseWords = set ? setKey(set).split(" ").filter(Boolean) : [];
         const writtenRelease = releaseWords.length ? new RegExp(`\\b${releaseWords.join("[^a-z0-9]+")}\\b`, "i") : null;
+        // A graded, fully numbered card beside a separate written release can
+        // carry its publisher era as metadata. The base Sun & Moon release and
+        // unanchored words must not be shortened into a requested card name.
+        const sunMoon = /\bsun(?:\s*&\s*|\s+and\s+|\s+)moon\b(?!['’])/gi;
+        const eraSpans = [...title.matchAll(sunMoon)];
+        if (eraSpans.length && graded && writtenRelease?.test(title) && !new RegExp(sunMoon.source, "i").test(set ?? "")) {
+            cleaned = cleaned.replace(sunMoon, " ");
+            for (const match of eraSpans) cleaned = removeObservedWords(cleaned, match, title);
+        }
         if (writtenRelease?.test(title)) for (const match of title.matchAll(/\bcosmos[ -]+holo(?:graphic|foil)?\b/gi)) {
             cleaned = removeObservedWords(cleaned, match, title);
         }

@@ -82,12 +82,13 @@ test("literal modern names reach exact sold-price exclusion before buying labels
         ["Rayquaza V", "Evolving Skies", "194/203", "Pokemon 2021 SWSH Evolving Skies Rayquaza V #194/203 PSA 9 MINT"],
         ["Rayquaza V", "Evolving Skies", "194/203", "Pokemon Rayquaza V (Alternate Full Art) 194/203 SWSH07:Evolving Skies Holo PSA 9"],
         ["Giratina V", "Lost Origin", "186/196", "Pokemon Sword & Shield Giratina V Lost Origin 186/196 Alt/Full Art Holo PSA 9"],
+        ["Mewtwo GX", "Shining Legends", "78/73", "2017 POKEMON SUN & Moon - Shining Legends - MEWTWO GX - #78/73 PSA 9"],
     ]) {
         const wanted: SearchIntent = { ...intent, cardName: name, sets: [set], cardNumber: number, titleWords: [name.split(" ")[0].toLowerCase()] };
         const { run, calls } = harness({ cards: [card({ name: `${name} (Alternate Full Art)`, setName: set, cardNumber: number })],
             graded: async () => three({ title: `${name} ${set} ${number} Unlimited Holo PSA 9`, price: 400, grader: "PSA", grade: "9" }) });
         const subject = await screenListingWithoutAi(listing({ title, isGraded: true, currentPrice: 800, shipping: 0, images: ["front", "back"] }),
-            wanted, undefined, async value => readTitleByRules(value));
+            wanted, undefined, async value => readTitleByRules(value, [set]));
         assert.equal(subject.screen!.card!.name, name.toLowerCase(), title);
         const evidence = await run(subject, wanted);
         assert.equal(evidence.exactScope, true, title);
