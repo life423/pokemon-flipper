@@ -58,6 +58,12 @@ provider payloads, photos and data/ stay excluded. No computer handoff is pendin
 
 ## Pricing accuracy and economical evidence recovery
 
+- [x] Explicit query printing/finish narrows research when seller claims omit
+  them, without turning requested identity into confirmed metadata. Broad
+  queries retain plausible scopes. Cached intent/keywords cannot silently add
+  an edition or substitute holo/reverse/non-holo. Saved 50-row Fossil replay
+  removes 25 incorrect positive priorities with zero provider calls. All 1,028
+  isolated tests, typechecks and build pass; paid photo records are unchanged.
 - [x] Use one correction-aware duplicate-sale rule across acquisition,
   screening, raw and slab pricing. Honor provider revision timestamps and newer
   retractions; do not choose the highest amount or best target fit. Pricing

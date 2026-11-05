@@ -10,6 +10,41 @@ were committed and pushed on main. Current work is on
 improve/consistent-sold-pricing. Markdown notes are tracked; no handoff was
 created. The pre-existing .env.example deletion remains unrelated/uncommitted.
 
+## Query-scoped research correction — November 5
+
+A live Unlimited Fossil holo PSA8 scan exposed avoidable premium-market work:
+25 retained listings ranked positively only against unrequested First Edition
+sales. Existing sold screening now restricts missing seller printing/finish
+claims to explicit query research. This does not confirm physical identity or
+authorize an exclusion from query assumptions. Broad searches retain plausible
+markets, actual claims remain unchanged, and local retargeting retains the same
+narrowed references. Existing cached-intent cleaning also rejects guessed
+printing and conflicting finish/printing discovery keywords using shared parsers.
+No new runtime module, paid stage, prompt/model change or budget change was added.
+
+Cache-only production replay of all 50 saved Fossil rows removes all 25 borrowed
+positive priorities and all out-of-query printing references. It uses zero
+provider, photo, preflight or generation calls. Independent review found no
+blocking concerns; all 1,028 isolated tests, typechecks and production build pass.
+This corrects wasted prioritization; it does not itself establish a real Deal.
+
+Metadata-only Fossil and Crown Zenith scans used one Browse request each,
+62/64 PKMN requests and 156/237 reported credits respectively, with zero AI.
+Crown Zenith left useful markets deferred. A targeted Melony GG64 PSA10 follow-up
+used one Browse and three PKMN requests/six reported credits; all three returned
+listings were excluded by existing economics, before photo spending. A very
+specific raw Arcanine query returned no rows and spent no AI. A shorter query
+with the actual raw-card control returned 149 summaries and retained 50, all
+with preliminary sold references. That distinct search used one Browse request,
+four PKMN requests/24 reported credits and zero AI; it did not reset an earlier
+account. Seller-condition buckets are research context, not proof of any live
+copy's condition. The next step is to select one credible low-priced raw copy,
+verify current terms/photos under its original search account, and complete
+condition-matched resale evidence before checking its final Deals category.
+No profitable BIN is claimed.
+Private reports remain excluded under data/candidate-validation/ and
+data/search-benchmarks/. The unrelated .env.example deletion remains unstaged.
+
 ## Correction reuse and next BIN validation — November 5
 
 The focused code review found a real cross-label duplicate bug: final graded

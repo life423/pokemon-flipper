@@ -163,15 +163,20 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
             if (!matches.length || new Set(identities).size !== matches.length) return evidence;
             const markets = new Map<string, Market>();
             let unknownVariant = false;
+            let queryScoped = false;
             for (const record of matches) for (const variant of record.variants) {
                 if (!isPrinting(variant.printing) || !FINISHES.includes(variant.finish)) { unknownVariant = true; continue; }
                 if (printing && variant.printing !== printing || finish && variant.finish !== finish) continue;
+                // Missing seller claims do not authorize research into variants
+                // outside an explicit query. This narrows work, not identity.
+                if (!printing && intent.printing && variant.printing !== intent.printing ||
+                    !finish && intent.finish && variant.finish !== intent.finish) { queryScoped = true; continue; }
                 const key = JSON.stringify([record.id, variant.printing, variant.finish]);
                 const market = markets.get(key) ?? { record, printing: variant.printing, finish: variant.finish as Finish, labels: [] };
                 market.labels.push(variant.name); markets.set(key, market);
             }
             if (!markets.size) return evidence;
-            evidence.exactScope = !intentOnly && markets.size === 1 && (!unknownVariant || Boolean(printing && finish));
+            evidence.exactScope = !intentOnly && !queryScoped && markets.size === 1 && (!unknownVariant || Boolean(printing && finish));
             for (const market of markets.values()) {
                 const result = await marketReferences(market, grader, grade);
                 evidence.references.push(...result.references);
@@ -182,7 +187,9 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
                 ? listing.isGraded ? "Recent matched sold amounts for the listed exact grader and grade; the photographed label is not yet verified."
                     : "Recent matched raw sold amounts stay in separate seller-condition buckets. Unstated-condition sales provide market context only, never a condition-specific resale value or grade. These references do not assess this listing's condition or grading upside."
                 : "No usable recent matched sale supports the requested market. Missing evidence remains visible without inventing a price.";
-            if (!evidence.exactScope) evidence.note += " Listing claims do not settle one market; possible printings and finishes remain separate.";
+            if (!evidence.exactScope) evidence.note += queryScoped
+                ? " Search criteria narrow this research; photos have not confirmed the requested printing or finish."
+                : " Listing claims do not settle one market; possible printings and finishes remain separate.";
             return structuredClone(evidence);
         } catch (error) {
             signal?.throwIfAborted();

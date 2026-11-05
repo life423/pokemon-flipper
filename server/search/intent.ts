@@ -4,6 +4,7 @@ import { normalizeText } from "../ebay/filters.ts";
 import { isPrinting, normalizeWords, printingClaimFromText } from "../identity/card-identity.ts";
 import type { SearchIntent } from "../../shared/types.ts";
 import { explicitCriteria, fallbackKeywords } from "../../shared/search-criteria.ts";
+import { finishClaim } from "../../shared/finish.ts";
 import { readTitleByRules } from "../ai/title-reader.ts";
 import { StorageUnavailableError } from "../storage/index.ts";
 import { cachedSetNames } from "./set-catalog.ts";
@@ -112,6 +113,10 @@ export function cleanReading(reading: Reading, search: string): SearchIntent {
     const titleWords = (reading.titleWords ?? []).map((word) => normalizeText(word).trim())
         .filter((word) => word && explicitlyTyped(word) && !/^(cards?|holo|graded|better|psa|cgc|bgs|sgc|tag)$/.test(word)).slice(0, 2);
     const explicit = explicitCriteria(search);
+    const printing = printingClaimFromText(search);
+    const keywords = typeof reading.keywords === "string" && reading.keywords.trim() ? reading.keywords.trim().slice(0, 300) : fallbackKeywords(search);
+    const keywordPrinting = printingClaimFromText(keywords);
+    const keywordFinish = finishClaim(keywords);
     const grader = explicit.grader ?? (reading.grader && explicitlyTyped(reading.grader) ? reading.grader : null);
     const validGrade = (value: unknown): value is number => typeof value === "number" && value >= 1 && value <= 10 && Number.isInteger(value * 2);
     const withoutCardNumbers = search.replace(/\b\d{1,3}\s*\/\s*\d{1,3}\b/g, "");
@@ -126,13 +131,16 @@ export function cleanReading(reading: Reading, search: string): SearchIntent {
         // A saved model interpretation is not a catalog authority. Retain
         // only the number actually typed, including partial/promo numbers.
         cardNumber: readTitleByRules(search).cardNumber?.toUpperCase() ?? null,
-        printing: isPrinting(reading.printing) ? reading.printing : null,
+        // Cached model guesses must not add or replace a printing constraint.
+        printing: isPrinting(printing) ? printing : null,
         graded,
         grader,
         minGrade,
         maxGrade,
         finish: explicit.finish ?? null,
-        keywords: typeof reading.keywords === "string" && reading.keywords.trim() ? reading.keywords.trim().slice(0, 300) : fallbackKeywords(search),
+        // Saved discovery words cannot add a different printing or finish.
+        keywords: (keywordPrinting === "NOT_STATED" || keywordPrinting === printing) &&
+            (keywordFinish === "NOT_STATED" || keywordFinish === explicit.finish) ? keywords : fallbackKeywords(search),
         titleWords,
         source: "ai",
     };

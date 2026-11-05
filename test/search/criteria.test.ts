@@ -74,6 +74,41 @@ test("AI cleaning preserves explicit constraints and never requires filler words
     assert.equal(marketplaceQuery(query, read), "aquapolis holo PSA");
 });
 
+test("saved model printing guesses cannot narrow or override the requested printing", () => {
+    const cases = [
+        { search: "Pokemon Fossil holo PSA 8", savedPrinting: "FIRST_EDITION", savedKeywords: "Fossil 1st Edition holo PSA", expected: null, expectedKeywords: "pokemon fossil holo" },
+        { search: "Pokemon Fossil Unlimited holo PSA 8", savedPrinting: "FIRST_EDITION", savedKeywords: "Fossil 1st Edition holo PSA", expected: "UNLIMITED", expectedKeywords: "pokemon fossil unlimited holo" },
+        { search: "Pokemon Fossil 1st Edition holo PSA 8", savedPrinting: "UNLIMITED", savedKeywords: "Fossil Unlimited holo PSA", expected: "FIRST_EDITION", expectedKeywords: "pokemon fossil 1st edition holo" },
+        { search: "Pokemon Fossil First Edition Unlimited holo PSA 8", savedPrinting: "FIRST_EDITION", savedKeywords: "Fossil 1st Edition holo PSA", expected: null, expectedKeywords: "pokemon fossil first edition unlimited holo" },
+    ] as const;
+    for (const { search, savedPrinting, savedKeywords, expected, expectedKeywords } of cases) {
+        const saved = { ...readSearchByRules(search), printing: savedPrinting, keywords: savedKeywords };
+        const cleaned = cleanReading(saved, search);
+        assert.equal(cleaned.printing, expected, search);
+        assert.equal(cleaned.keywords, expectedKeywords, search);
+        assert.equal(marketplaceQuery(search, cleaned), `${expectedKeywords} PSA 8`, search);
+        assert.equal(readSearchLocally(search).printing, expected, search);
+    }
+    const explicitFirst = cleanReading({ ...intent(), printing: "FIRST_EDITION", keywords: "Fossil 1st Edition holo PSA" }, "Pokemon Fossil 1st Edition holo PSA 8");
+    assert.equal(explicitFirst.printing, "FIRST_EDITION");
+    assert.equal(explicitFirst.keywords, "Fossil 1st Edition holo PSA", "matching compact keywords remain reusable");
+});
+
+test("saved discovery keywords cannot substitute or add a finish constraint", () => {
+    for (const [requested, expected] of [["holo", "HOLO"], ["reverse holo", "REVERSE_HOLO"], ["non-holo", "NON_HOLO"], ["", null], ["holo non-holo", null]] as const) {
+        const search = `Dark Blastoise Team Rocket ${requested}`.trim();
+        for (const savedFinish of ["holo", "reverse holo", "non-holo"]) {
+            const savedKeywords = `Dark Blastoise Team Rocket ${savedFinish}`;
+            const read = cleanReading({ ...readSearchByRules(search), keywords: savedKeywords }, search);
+            assert.equal(read.finish, expected, search);
+            assert.equal(read.keywords, savedFinish === requested ? savedKeywords : search.toLowerCase());
+            assert.equal(marketplaceQuery(search, read), search.toLowerCase());
+        }
+    }
+    const read = cleanReading({ ...intent(), keywords: "Aquapolis PSA" }, query);
+    assert.equal(read.keywords, "Aquapolis PSA", "compatible keywords without a finish remain reusable");
+});
+
 test("natural language reading can represent spelled-out grades while plain queries stay unconstrained", () => {
     const read = cleanReading({ ...intent(), minGrade: 7, maxGrade: 10 }, "Aquapolis holo graded seven or higher by PSA");
     assert.deepEqual([read.minGrade, read.maxGrade], [7, 10]);

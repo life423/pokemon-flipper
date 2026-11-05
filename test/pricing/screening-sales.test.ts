@@ -8,6 +8,8 @@ import { StorageUnavailableError } from "../../server/storage/index.ts";
 import type { CardRecord, Comp, FetchSoldPage } from "../../server/pricing/types.ts";
 import type { ListingSummary, SearchIntent } from "../../shared/types.ts";
 import { applySoldPriceScreen } from "../../shared/money/sold-screen.ts";
+import { retargetScreen } from "../../shared/money/targets.ts";
+import { analysisPriority } from "../../shared/analysis-priority.ts";
 import { readTitleByRules, readTitleWithoutAi } from "../../server/ai/title-reader.ts";
 import { screenListingWithoutAi } from "../../server/deals/screen-listing.ts";
 import { canAutoAnalyze, resultGroup } from "../../shared/analysis.ts";
@@ -376,7 +378,7 @@ test("missing or conflicting certified grades and special labels do not borrow r
 test("unstated editions retain all plausible catalog printings rather than defaulting to Unlimited", async () => {
     const { run, calls } = harness({ cards: [card({ variants: [variant(), variant("1st Edition Holofoil", "FIRST_EDITION")] })],
         raw: async (_id, label) => three({ title: `Charizard Base Set 4/102 ${label.startsWith("1st") ? "1st Edition" : "Unlimited"} Holo NM`, variant: label, price: label.startsWith("1st") ? 1000 : 100 }) });
-    const result = await run(listing({ title: "Charizard Base Set 4/102 Holo" }), { ...intent, printing: "FIRST_EDITION" });
+    const result = await run(listing({ title: "Charizard Base Set 4/102 Holo" }), intent);
     assert.equal(result.status, "AVAILABLE"); assert.equal(result.exactScope, false);
     assert.deepEqual(result.references.map(reference => [reference.printing, reference.summary.median]), [["UNLIMITED", 100], ["FIRST_EDITION", 1000]]);
     assert.equal(calls.raw.length, 2);
@@ -386,11 +388,43 @@ test("holo and reverse holo stay separate and an unstated finish cannot silently
     const options = { cards: [card({ variants: [variant(), variant("Unlimited Reverse Holofoil", "UNLIMITED", "REVERSE_HOLO")] })],
         raw: async (_id: number | string, label: string) => three({ title: `Charizard Base Set 4/102 Unlimited ${label.includes("Reverse") ? "Reverse Holo" : "Holo"} NM`, variant: label }) };
     const unknown = harness(options);
-    const result = await unknown.run(listing({ title: "Charizard Base Set 4/102 Unlimited" }), { ...intent, finish: "HOLO" });
+    const result = await unknown.run(listing({ title: "Charizard Base Set 4/102 Unlimited" }), intent);
     assert.equal(result.exactScope, false); assert.deepEqual(result.references.map(reference => reference.finish), ["HOLO", "REVERSE_HOLO"]);
     const holo = harness(options);
     const exact = await holo.run(listing(), intent);
     assert.equal(exact.exactScope, true); assert.equal(exact.references.length, 1); assert.equal(holo.calls.raw.length, 1);
+});
+
+test("explicit edition research cannot borrow another printing's profitable price or become observed identity", async () => {
+    for (const printing of ["UNLIMITED", "FIRST_EDITION"] as const) {
+        const { run, calls } = harness({ cards: [card({ variants: [variant(), variant("1st Edition Holofoil", "FIRST_EDITION")] })],
+            graded: async (_id, options) => three({ title: `Charizard Base Set 4/102 ${options.variant.startsWith("1st") ? "1st Edition" : "Unlimited"} Holo PSA 8`,
+                variant: options.variant, grader: "PSA", grade: "8", price: options.variant.startsWith("1st") ? 1000 : 100 }) });
+        const subject = listing({ title: "Charizard Base Set 4/102 Holo PSA 8", isGraded: true, currentPrice: 200 });
+        const original = structuredClone(subject);
+        const evidence = await run(subject, { ...intent, printing });
+        assert.deepEqual(evidence.references.map(reference => reference.printing), [printing]);
+        assert.equal(calls.graded.length, 1, "the unrequested source label must not consume provider allowance");
+        assert.equal(evidence.exactScope, false, "requested edition is not observed seller or photo evidence");
+        assert.deepEqual(subject, original);
+        const screened = applySoldPriceScreen(subject, evidence, { targets: { minProfit: 0, minRoi: 0 } });
+        assert.equal(analysisPriority(screened, { minProfit: 0, minRoi: 0 }).band, printing === "UNLIMITED" ? 0 : 3);
+        const retargeted = retargetScreen(screened.screen, 200, { minProfit: 0, minRoi: 0 });
+        assert.deepEqual(retargeted.soldEvidence?.references.map(reference => reference.printing), [printing], "local retargeting cannot restore out-of-query markets");
+    }
+});
+
+test("an explicit finish narrows missing listing finish without upgrading research to confirmed metadata", async () => {
+    for (const finish of ["HOLO", "REVERSE_HOLO"] as const) {
+        const { run, calls } = harness({ cards: [card({ variants: [variant(), variant("Unlimited Reverse Holofoil", "UNLIMITED", "REVERSE_HOLO")] })],
+            raw: async (_id, label) => three({ title: `Charizard Base Set 4/102 Unlimited ${label.includes("Reverse") ? "Reverse Holo" : "Holo"} NM`, variant: label }) });
+        const result = await run(listing({ title: "Charizard Base Set 4/102 Unlimited" }), { ...intent, finish });
+        assert.deepEqual(result.references.map(reference => reference.finish), [finish]);
+        assert.equal(calls.raw.length, 1); assert.equal(result.exactScope, false);
+    }
+    const sole = harness();
+    const result = await sole.run(listing({ title: "Charizard Base Set 4/102 Unlimited" }), { ...intent, finish: "HOLO" });
+    assert.equal(result.exactScope, true, "a redundant query constraint does not erase an already unique catalog scope");
 });
 
 test("split Shadowless catalog labels share source pages while sale titles settle separate printing summaries", async () => {

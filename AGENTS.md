@@ -52,6 +52,9 @@ Read docs/architecture.md for the source map and reading order.
   Ambiguous or incomplete catalogs retain the original intent. Derived numbers
   filter locally without adding a required eBay keyword; numberless titles stay
   eligible. Cached model guesses cannot replace an untyped collector number.
+  Cached guesses/keywords also cannot add an edition or conflicting finish.
+  Explicit printing/finish narrows missing-claim sold research without becoming
+  observed identity; broad queries retain their plausible markets.
 - English-only current scope: exclude known foreign evidence, but unknown
   language is preliminary. Holo, reverse holo and non-holo are distinct.
   Normalize aliases/descriptors without losing printed forms, owners or numbers.
