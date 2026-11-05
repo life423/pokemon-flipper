@@ -19,6 +19,7 @@ import { gradedPricesFor, compsForGrade } from "../pricing/graded-comps.ts";
 import { rawPricesWithSales, compCondition } from "../pricing/raw-comps.ts";
 import { rawPricesFor } from "../pricing/raw-prices.ts";
 import { matchesSoldTarget } from "../pricing/sold-comps.ts";
+import type { Comp } from "../pricing/types.ts";
 import { loadSaved, reusableRecord, photoFingerprint } from "./store.ts";
 import { applyPhotoCheckRules, applyConditionRules, getGradingMode, hasCloseUps } from "./rules.ts";
 import { underwrite, GRADERS, netFromSale, pathNumbers } from "../../shared/money/underwriting.ts";
@@ -359,18 +360,23 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                         if (condition.creases === "SUSPECTED" || condition.authenticity.concern !== "NONE_SEEN") return null;
                         const shipping = listing.shipping ?? MONEY_CONFIG.buying.assumedShippingWhenUnknown;
                         const pending = sales.filter(sale => sold.status(sale, identity) === "UNREVIEWED" &&
-                            matchesSoldTarget(sale, { name: identity.name!, setName: identity.set, cardNumber: identity.cardNumber })).filter(sale => {
+                            matchesSoldTarget(sale, { name: identity.name!, setName: identity.set, cardNumber: identity.cardNumber }));
+                        const couldCoverCosts = (sale: Comp) => {
                             if (listing.price === null || !Number.isFinite(sale.price) || sale.price <= 0) return false;
                             const net = netFromSale(sale.price, "raw", MONEY_CONFIG.selling);
                             return pathNumbers({ expectedNet: net, downsideNet: net, fixedCosts: 0, shipping, price: listing.price },
                                 { ...MONEY_CONFIG, targets: { minProfit: 0, minRoi: 0 } }).profit > 0;
-                        });
+                        };
                         // Seller condition is a research clue, never the accepted
                         // category. Avoid buying a review of a known different
                         // category while an economically relevant like-for-like
                         // comparison is available.
                         const claimed = pending.filter(sale => compCondition(sale.title) === condition.rawCondition);
-                        const candidates = claimed.length ? claimed : pending.filter(sale => compCondition(sale.title) === null);
+                        const unspecified = pending.filter(sale => compCondition(sale.title) === null);
+                        // Prices gate useful work for a cohort, not which sale
+                        // gets reviewed. A newer losing sale must not be skipped
+                        // in favor of an older sale that supports a purchase.
+                        const candidates = claimed.some(couldCoverCosts) ? claimed : unspecified.some(couldCoverCosts) ? unspecified : [];
                         const sale = candidates.sort((a, b) => Date.parse(b.sold_at) - Date.parse(a.sold_at))[0];
                         if (!sale) return null;
                         const evidence = await guarded(() => sold.acquire(sale, identity, signal));

@@ -10,6 +10,62 @@ were committed and pushed on main. Current work is on
 improve/consistent-sold-pricing. Markdown notes are tracked; no handoff was
 created. The pre-existing .env.example deletion remains unrelated/uncommitted.
 
+## Raw sold-copy selection correction — November 5
+
+The Arcanine review exposed a selection bias: an older profitable sale could be
+reviewed while a newer losing sale in the same seller-condition cohort was
+skipped. The existing evaluator now uses economics only to decide whether a
+condition cohort merits one check, then selects its newest unreviewed sale
+independently of individual profit. The same rule covers unspecified-condition
+sales. Seller clues remain research context; physical acceptance still decides
+which condition bucket receives a transaction.
+
+Two regressions retain newer losing sales and prove their accepted amounts lead
+to a completed PASS rather than a favorable replacement or a manual hold. The
+full 1,032 isolated tests, both typechecks and production build pass. No new
+runtime module, model/prompt, paid stage, accepted photo key, valuation revision
+or allowance change was added. Validation made no live provider calls. Keep
+pricing revision 14 so reusable paid work is not needlessly invalidated.
+
+This fixes selection within a research cohort, not whole-market sampling or the
+missing accepted LP comparison in the saved Arcanine valuation. That result
+stays reusable; buying another opinion just to create a Deal is not validation.
+The genuine profitable BIN milestone remains open.
+
+## Arcanine end-to-end validation stopping point — November 5
+
+The user's instruction was to follow the single-listing plan until it reaches
+a real blocker. Three low-priced saved raw candidates received current-term
+checks under original search 6b5ccf0d-facf-4316-a605-80c8d55db954. Condition
+additionalInfo is structured category context, not verified physical damage;
+the second candidate's original photos visibly show large creases. No new
+production source or evaluator was introduced.
+
+Item 327393272267 remains active at $55.99 plus $5.50 shipping. The normal HTTP
+evaluator reused existing live-card photo findings: English Unlimited Gym
+Challenge Blaine's Arcanine, Lightly Played, no numeric grade supported. One
+bounded sold-copy review cost $0.0032264 (0.32264 cents) and remains in SQL.
+Its $100 seller-titled LP+ comparison was assessed MP/MEDIUM, so it supplies no
+accepted LP resale price. The TCGplayer fallback is explicitly reference-only;
+neither its negative scenario nor seller-title LP medians are a verified eBay
+valuation. The real result is CANT_PRICE / Sorting, zero manual-review holds,
+zero Deals. The budget did not stop this case.
+
+Saved-result replay through the existing evaluator and UI result selectors
+preserved the same photo findings/category, used savedEvaluation and incurred
+zero generation, preflight, photo, Browse or PKMN requests. The original budget
+remains $0.02 with one settled attempt and no unresolved holds. Diagnostic files
+and photos stay excluded under data/candidate-validation/2026-11-05/.
+
+Stop at the missing condition-matched-price evidence rather than purchase a
+sequence of favorable comparisons. Existing acquisition chooses a profitable
+possible sale, then matching seller-condition clue, then newest date; it does
+not sort by highest price. However a future fresh valuation could select the
+$133.75 sale while skipping a newer $79.95 sale that would not cover costs.
+That is a selected sample, not an unbiased LP-market estimate. Review that
+selection/uncertainty before extending acquisition; no bug, confidence-policy
+change or additional paid probe is claimed here.
+
 ## Data-provider headroom and best-available idea — November 5
 
 The user explicitly authorizes more useful eBay/PKMNPrices work and identifies

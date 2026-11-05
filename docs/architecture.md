@@ -109,10 +109,12 @@ flowchart TD
    window, with sparse recovery up to four pages per source-label lookup.
    Page eligibility performs no paid comp checks; final comp checks run once.
    Raw resale first reads accepted sold-copy condition observations. When no
-   suitable match exists, the evaluator may select one recent confirmed sale
-   whose amount could support positive net resale at the current purchase terms.
-   Positive-net source transactions are selected before seller-condition clues
-   prioritize research; those clues never supply the accepted category.
+   suitable match exists, a same-condition seller-clue cohort merits research
+   when any sale could cover the current purchase costs; otherwise consider the
+   unspecified-condition cohort on the same basis. Select the newest unreviewed
+   sale within that cohort, including a sale that cannot cover costs. Individual
+   profitability must not choose the comparison. Seller clues never supply the
+   accepted category, and one selected observation is not a whole-market sample.
    One compact historical assessment checks at most six source photos,
    with a 1,100-token output limit, under the original search allowance. It has
    no retry, corroboration or next-copy loop. Suspected structural damage or

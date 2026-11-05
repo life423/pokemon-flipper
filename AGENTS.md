@@ -99,9 +99,12 @@ Read docs/architecture.md for the source map and reading order.
   Actual photographed holder/grader/grade determines resale, not seller category.
   A compact request finding raw does not buy another raw assessment automatically.
   BGS/TAG resale is separate from configured PSA/CGC submission services.
-- Raw resale reads accepted historical photo-condition evidence first. If a
-  confirmed recent transaction could support positive net resale at current
-  terms, one relevant unreviewed sold copy may receive one compact assessment
+- Raw resale reads accepted historical photo-condition evidence first. A
+  same-condition seller-clue cohort, or otherwise an unspecified-condition
+  cohort, merits research if any confirmed sale could cover current costs.
+  Select its newest unreviewed sale regardless of that individual sale's profit;
+  never skip a newer losing sale to obtain a favorable comparison. One copy
+  may receive one compact assessment
   of up to six photos (1,100 output tokens, no retries or second opinion).
   This shares the original search's AI/Browse allowances. Suspected structural
   damage or authenticity uncertainty in the live copy prevents new sold-photo

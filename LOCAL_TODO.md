@@ -21,6 +21,10 @@ provider payloads, photos and data/ stay excluded. No computer handoff is pendin
 - [ ] Measure where promising inventory is lost: eligibility, missing prices,
   unresolved physical evidence, actual negative margin or a budget/queue stop.
   Keep genuine missing evidence separate from rejection.
+- [x] Complete one saved Arcanine candidate through current terms, reused photo
+  assessment, one sold-copy review and a provider-blocked replay. It remains
+  Sorting/CANT_PRICE because the reviewed LP+ sale supplies no accepted LP price;
+  it is not a verified Deal. New AI cost 0.32264 cents; replay adds zero calls.
 
 ## Working foundations to preserve
 
@@ -77,6 +81,15 @@ provider payloads, photos and data/ stay excluded. No computer handoff is pendin
   matches, verified active competition, then explicitly estimated alternatives
   if useful. Adjacent-grade/similar-card ratios need provenance, uncertainty and
   validation; estimates must not silently become confirmed sold evidence.
+- [x] Remove individual-profit selection from raw sold-copy acquisition. Gate
+  useful research by condition cohort, then review its newest unreviewed sale
+  even if that sale loses money. Accepted losing evidence completes a rejection;
+  no favorable replacement is purchased. All 1,032 isolated tests pass, with
+  saved photo keys, valuation version and spending limits unchanged.
+- [ ] Evaluate remaining raw-comp sampling uncertainty: seller-clue cohorts and
+  one accepted observation are not an unbiased condition market. Preserve
+  reviewed negatives and original charges; avoid repeating fresh valuations
+  until a favorable comparison creates a Deal.
 - [ ] Investigate targeted recovery of unknown transaction amounts only when it
   can change a candidate decision. Prefer provider corrections; use AI extraction
   only when a source establishes sold state, listing ID, currency and actual

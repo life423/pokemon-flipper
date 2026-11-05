@@ -226,20 +226,26 @@ test("a fresh raw resale acquires one relevant sold copy and reuses its photo ev
     assert.equal(calls.assessed, 1, "equivalent live photos also remain reusable");
 });
 
-test("raw sold research filters positive net before preferring seller condition clues and attempts only one copy", async t => {
+test("raw sold research gates condition cohorts but selects by recency independently of profit and attempts only one copy", async t => {
     t.mock.method(globalThis, "fetch", () => assert.fail("sold-research ordering must use mocked providers only"));
     const sale = (id: string, claim: string, price: number, daysAgo: number, name = "Venusaur", number = "15/102"): Comp => ({
         id, title: `${name} Base Set ${number} Unlimited Holo ${claim}`.trim(), price,
         sold_at: new Date(now - daysAgo * 86400000).toISOString(), variant: "Holofoil", currency: "USD", attribution: "exact",
         sale_type: "fixed_price", listing_url: null, grader: null, grade: null, grade_qualifier: null,
     });
-    const scenarios: { name: string; sales: Comp[]; expected: string | null; reviewed?: string[];
+    const scenarios: { name: string; sales: Comp[]; expected: string | null; reviewed?: string[]; profitable?: boolean;
         finding: "LIGHTLY_PLAYED" | "MODERATELY_PLAYED" | null }[] = [
         { name: "an irrelevant LP price cannot block a profitable unspecified sale",
             sales: [sale("cheap-lp", "LP", 70, 1), sale("unspecified", "", 200, 2)], expected: "unspecified", finding: "LIGHTLY_PLAYED" },
         { name: "prefer the newest profitable LP clue over newer unspecified or wrong-card sales",
             sales: [sale("older-lp", "LP", 180, 4), sale("newer-lp", "LP", 190, 3), sale("unspecified", "", 250, 2),
                 sale("wrong-card", "LP", 999, 1, "Charizard", "4/102")], expected: "newer-lp", finding: null },
+        { name: "an older profitable LP sale cannot displace a newer losing LP sale",
+            sales: [sale("older-lp", "LP", 200, 4), sale("newer-lp", "LP", 70, 3), sale("unspecified", "", 250, 2)],
+            expected: "newer-lp", finding: "LIGHTLY_PLAYED", profitable: false },
+        { name: "an unspecified cohort also retains its newest losing sale",
+            sales: [sale("cheap-lp", "LP", 70, 1), sale("older-unspecified", "", 200, 4), sale("newer-unspecified", "", 70, 3)],
+            expected: "newer-unspecified", finding: "LIGHTLY_PLAYED", profitable: false },
         { name: "reviewed LP evidence cannot block the newest unreviewed unspecified candidate",
             sales: [sale("reviewed-lp", "LP", 250, 1), sale("older-unspecified", "", 220, 3), sale("newer-unspecified", "", 200, 2)],
             reviewed: ["reviewed-lp"], expected: "newer-unspecified", finding: "LIGHTLY_PLAYED" },
@@ -273,7 +279,15 @@ test("raw sold research filters positive net before preferring seller condition 
         const lp = result.rawPricing?.prices?.find(quote => quote.condition === "LIGHTLY_PLAYED");
         assert.equal(lp?.basis, scenario.finding === "LIGHTLY_PLAYED" ? "EBAY_SOLD" : "TCGPLAYER",
             "only accepted physical LP evidence establishes an LP sold price");
-        if (scenario.finding === "LIGHTLY_PLAYED") assert.ok((result.underwriting?.best?.profit ?? 0) > 0);
+        if (scenario.finding === "LIGHTLY_PLAYED") {
+            assert.equal(lp?.price, scenario.sales.find(source => source.id === scenario.expected)!.price, "the selected sale's actual amount must survive pricing");
+            assert.equal(lp?.comps?.confidence, "LOW");
+            assert.equal((result.underwriting?.best?.profit ?? 0) > 0, scenario.profitable ?? true);
+            if (scenario.profitable === false) {
+                assert.equal(result.underwriting?.verdict, "PASS", "accepted losing evidence completes valuation rather than seeking a favorable replacement");
+                assert.equal(resultGroup({ ...details(), currentPrice: 100, isGraded: false }, result), null);
+            }
+        }
         else assert.equal(result.underwriting?.verdict, "CANT_PRICE");
     });
 });
