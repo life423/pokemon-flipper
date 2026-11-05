@@ -12,8 +12,8 @@ import type { PricingResearchUsage } from "../../shared/pricing-usage.ts";
 
 // New searches receive more research headroom. A stored search keeps the
 // allowance under which its requests were reserved, including exhausted IDs.
-export const PRICE_RESEARCH_LIMIT = 128;
-const LEGACY_PRICE_RESEARCH_LIMIT = 64;
+export const PRICE_RESEARCH_LIMIT = 256;
+const STORED_PRICE_RESEARCH_LIMITS = new Set([64, 128, PRICE_RESEARCH_LIMIT]);
 type FailureReason = "LIMIT" | "SCOPE" | "ACCOUNT" | "STORAGE" | "LOCK" | "STATE";
 export class PriceResearchBudgetError extends Error {
     readonly code = "PRICE_RESEARCH_BUDGET";
@@ -37,7 +37,7 @@ interface Attempt {
     headers: Record<string, number>;
     rows: number | null;
 }
-interface Ledger { version: 1; searchId: string; limit: typeof PRICE_RESEARCH_LIMIT | typeof LEGACY_PRICE_RESEARCH_LIMIT; attempts: Attempt[] }
+interface Ledger { version: 1; searchId: string; limit: number; attempts: Attempt[] }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HASH = /^[a-f0-9]{64}$/;
 const LISTING = /^[a-zA-Z0-9_|:-]{1,200}$/;
@@ -122,7 +122,7 @@ export function createPriceResearchBudget({ directory, now = Date.now, providerK
         }
         const ledger = value as Ledger | null;
         if (!ledger || Object.keys(ledger).some(key => !["version", "searchId", "limit", "attempts"].includes(key)) || ledger.version !== 1 || ledger.searchId !== id ||
-            ledger.limit !== PRICE_RESEARCH_LIMIT && ledger.limit !== LEGACY_PRICE_RESEARCH_LIMIT || !Array.isArray(ledger.attempts) ||
+            !STORED_PRICE_RESEARCH_LIMITS.has(ledger.limit) || !Array.isArray(ledger.attempts) ||
             ledger.attempts.length > ledger.limit || !ledger.attempts.every(validAttempt) || new Set(ledger.attempts.map(attempt => attempt.id.toLowerCase())).size !== ledger.attempts.length ||
             !Number.isSafeInteger(ledger.attempts.reduce((sum, attempt) => sum + (attempt.headers["x-credits-charged"] ?? 0), 0)))
             throw new PriceResearchBudgetError("The price-research accounting is invalid. Its evidence was kept and no new provider request was authorized.", "STATE");

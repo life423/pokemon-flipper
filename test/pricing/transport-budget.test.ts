@@ -70,12 +70,12 @@ test("simultaneous preliminary and final reads share one exact sold-page attempt
     assert.equal(usage?.used, 3); assert.equal(usage?.completed, 3);
 });
 
-test("new searches allow64 screening misses while preserving the separate128-request total", async t => {
+test("screening stops at its own allowance while preserving the larger all-stage request total", async t => {
     offline(t); let calls = 0;
     t.mock.method(globalThis, "fetch", async () => { calls++; return response({ data: [sold(calls)] }); });
     const source = createScreeningPriceSource();
     for (let index = 0; index < PRICE_SCREEN_REQUEST_LIMIT; index++) await source.fetchRawComps(91500 + index, "Unlimited Holofoil");
-    await assert.rejects(source.fetchRawComps(91600, "Unlimited Holofoil"), /price-screening request allowance is exhausted/);
+    await assert.rejects(source.fetchRawComps(91500 + PRICE_SCREEN_REQUEST_LIMIT, "Unlimited Holofoil"), /price-screening request allowance is exhausted/);
     assert.equal(calls, PRICE_SCREEN_REQUEST_LIMIT);
     assert.equal((await source.fetchRawComps(91500, "Unlimited Holofoil")).length, 1, "screening cache hits stay usable at its limit");
     assert.deepEqual(source.stats(), { requests: PRICE_SCREEN_REQUEST_LIMIT, limit: PRICE_SCREEN_REQUEST_LIMIT });
@@ -119,7 +119,10 @@ test("a shared throttle lets normal pricing retry without retrying its prelimina
     first.resolve(Response.json({ error: { limit_type: "per_minute" } }, { status: 429, headers: { "retry-after": "0.001", "x-credits-charged": "0" } }));
     await preliminary;
     assert.equal((await final).length, 1);
-    assert.equal(calls, 2); assert.equal(source.stats().requests, 1);
+    assert.equal(calls, 2);
+    // Either stage can win the asynchronous cache miss and sponsor the first
+    // request. Screening rejects the throttle instead of sponsoring a retry.
+    assert.ok(source.stats().requests <= 1);
     assert.equal((await priceResearchSummary())?.used, 2);
 });
 

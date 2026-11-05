@@ -7,7 +7,7 @@ export const CHEAP_FIRST_EDITION_BASE_SET_LIMIT = 10;
 export const DEVELOPMENT_SEARCH_LIMIT = 50;
 // Preliminary price requests share the larger all-stage per-search allowance.
 // This controls runaway/rate pressure; provider credits are not dollar costs.
-export const PRICE_SCREEN_REQUEST_LIMIT = 64;
+export const PRICE_SCREEN_REQUEST_LIMIT = 128;
 // Sparse sold markets can follow cursors to the same bound in screening and
 // final pricing. Finding an eligible source stops further paging sooner.
 export const SOLD_MARKET_PAGE_LIMIT = 4;

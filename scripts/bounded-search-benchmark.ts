@@ -26,8 +26,8 @@ const live = command.mode !== "replay";
 const previous = command.mode === "live" ? null : JSON.parse(await fs.readFile(path.resolve(command.file), "utf8"));
 if (previous && (!Array.isArray(previous.listings) || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(previous.searchId) ||
     typeof previous.query !== "string" || !previous.query.trim() || previous.query.length > 300 || !previous.summary?.intent ||
-    previous.settings?.aiCapUsd !== 0.02 || ![25, BENCHMARK_TRANSPORT_LIMITS.ebayBrowse].includes(previous.settings?.browseCap) ||
-    ![64, BENCHMARK_TRANSPORT_LIMITS.prices].includes(previous.settings?.priceTransportsDiagnosticCap))) {
+    previous.settings?.aiCapUsd !== 0.02 || ![25, 50, BENCHMARK_TRANSPORT_LIMITS.ebayBrowse].includes(previous.settings?.browseCap) ||
+    ![64, 128, BENCHMARK_TRANSPORT_LIMITS.prices].includes(previous.settings?.priceTransportsDiagnosticCap))) {
     throw new Error("Resume/replay requires an original bounded-search report, its search ID, query, intent and unchanged limits.");
 }
 const searchId: string = previous?.searchId ?? randomUUID();

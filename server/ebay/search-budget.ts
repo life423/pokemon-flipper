@@ -9,8 +9,8 @@ import { withFileLease } from "../lib/file-lease.ts";
 import { getAiUsageContext } from "../ai/usage-context.ts";
 import { EbayBudgetError } from "./daily-budget.ts";
 
-export const EBAY_SEARCH_BROWSE_LIMIT = 50;
-const STORED_SEARCH_BROWSE_LIMITS = new Set([25, EBAY_SEARCH_BROWSE_LIMIT]);
+export const EBAY_SEARCH_BROWSE_LIMIT = 100;
+const STORED_SEARCH_BROWSE_LIMITS = new Set([25, 50, EBAY_SEARCH_BROWSE_LIMIT]);
 const VALID_ID = /^[a-zA-Z0-9_-]{1,80}$/;
 interface Ledger { version: 1; searchId: string; limit: number; used: number }
 export class EbaySearchBudgetError extends EbayBudgetError {}

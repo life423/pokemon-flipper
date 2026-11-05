@@ -21,7 +21,7 @@ async function temporary(t: TestContext) {
 }
 const isLimit = (error: unknown) => error instanceof PriceResearchBudgetError && error.reason === "LIMIT" && error.code === "PRICE_RESEARCH_BUDGET" && !error.retryable;
 
-test("new searches have128 durable attempts across instances/restarts/dates while read-only checks and cached work consume none", async t => {
+test("new searches share their durable allowance across instances/restarts/dates while read-only checks and cached work consume none", async t => {
     const directory = await temporary(t), searchId = randomUUID();
     const a = createPriceResearchBudget({ directory }), b = createPriceResearchBudget({ directory });
     await a.assertAvailable(searchId); await a.summary(searchId);
@@ -40,7 +40,7 @@ test("new searches have128 durable attempts across instances/restarts/dates whil
     assert.equal((await a.summary(other))?.remaining, PRICE_RESEARCH_LIMIT - 1); assert.equal((await a.summary(searchId))?.used, PRICE_RESEARCH_LIMIT);
 });
 
-test("independent processes cannot authorize a129th request under the same new UUID", async t => {
+test("independent processes cannot exceed the same search's request allowance", async t => {
     const directory = await temporary(t), searchId = randomUUID();
     const source = `import {createPriceResearchBudget} from './server/pricing/research-budget.ts';
         const b=createPriceResearchBudget({directory:process.env.PRICE_TEST_DIRECTORY});
@@ -53,26 +53,26 @@ test("independent processes cannot authorize a129th request under the same new U
     assert.equal((await createPriceResearchBudget({ directory }).summary(searchId))?.remaining, 0);
 });
 
-test("existing64-request searches retain their stored allowance and every attempt across reopening and late settlement", async t => {
+for (const limit of [64, 128]) test(`existing ${limit}-request searches retain every attempt across reopening and late settlement`, async t => {
     const directory = await temporary(t), searchId = randomUUID(), budget = createPriceResearchBudget({ directory });
     const completed = await budget.reserve("/cards/legacy-complete", { searchId });
     await completed.complete(Response.json({}, { headers: { "x-credits-charged": "3" } }), { data: [{}, {}] });
     const unresolved = await budget.reserve("/cards/legacy-unknown", { searchId }); await unresolved.unresolved();
     const pending = await budget.reserve("/cards/legacy-pending", { searchId });
     const file = fileFor(directory, searchId), original = JSON.parse(await fs.readFile(file, "utf8"));
-    original.limit = 64;
+    original.limit = limit;
     await fs.writeFile(file, JSON.stringify(original));
     const before = await fs.readFile(file, "utf8"), reopened = createPriceResearchBudget({ directory, now: () => Date.now() + 30 * 86400000 });
-    assert.deepEqual(await reopened.summary(searchId), { searchId, limit: 64, used: 3, remaining: 61, completed: 1, pending: 1, unresolved: 1,
+    assert.deepEqual(await reopened.summary(searchId), { searchId, limit, used: 3, remaining: limit - 3, completed: 1, pending: 1, unresolved: 1,
         reportedCredits: 3, unreportedCreditAttempts: 2, returnedRows: 2, unreportedRowAttempts: 2, provider: null });
     assert.equal(await fs.readFile(file, "utf8"), before, "reading a legacy ledger never migrates its limit or counters");
     await reopened.reserve("/cards/legacy-next", { searchId });
     const after = JSON.parse(await fs.readFile(file, "utf8"));
-    assert.equal(after.limit, 64); assert.equal(after.attempts.length, 4);
+    assert.equal(after.limit, limit); assert.equal(after.attempts.length, 4);
     assert.deepEqual(after.attempts.slice(0, 3), original.attempts, "new research must preserve every earlier accepted, pending and unknown attempt");
     await pending.complete(Response.json({}, { headers: { "x-credits-charged": "1" } }), { data: [] });
     const settled = await reopened.summary(searchId);
-    assert.equal(settled?.limit, 64); assert.equal(settled?.used, 4); assert.equal(settled?.remaining, 60);
+    assert.equal(settled?.limit, limit); assert.equal(settled?.used, 4); assert.equal(settled?.remaining, limit - 4);
     assert.equal(settled?.completed, 2); assert.equal(settled?.reportedCredits, 4);
     const freshId = randomUUID();
     await reopened.reserve("/cards/new-search", { searchId: freshId });
@@ -80,18 +80,18 @@ test("existing64-request searches retain their stored allowance and every attemp
     assert.equal((await reopened.summary(freshId))?.remaining, PRICE_RESEARCH_LIMIT - 1);
 });
 
-test("an exhausted legacy64-request ledger stays exhausted and rejects counters above its stored limit", async t => {
+for (const limit of [64, 128]) test(`an exhausted legacy ${limit}-request ledger stays exhausted and rejects counters above its stored limit`, async t => {
     const directory = await temporary(t), searchId = randomUUID(), budget = createPriceResearchBudget({ directory });
     await budget.reserve("/cards/legacy", { searchId });
     const file = fileFor(directory, searchId), ledger = JSON.parse(await fs.readFile(file, "utf8"));
-    ledger.limit = 64;
-    ledger.attempts = Array.from({ length: 64 }, () => ({ ...ledger.attempts[0], id: randomUUID() }));
+    ledger.limit = limit;
+    ledger.attempts = Array.from({ length: limit }, () => ({ ...ledger.attempts[0], id: randomUUID() }));
     await fs.writeFile(file, JSON.stringify(ledger));
     const before = await fs.readFile(file, "utf8"), reopened = createPriceResearchBudget({ directory });
     const summary = await reopened.summary(searchId);
-    assert.equal(summary?.limit, 64); assert.equal(summary?.used, 64); assert.equal(summary?.remaining, 0);
-    await assert.rejects(reopened.assertAvailable(searchId), error => isLimit(error) && /64-request/.test((error as Error).message));
-    await assert.rejects(reopened.reserve("/cards/one-more", { searchId }), error => isLimit(error) && /64-request/.test((error as Error).message));
+    assert.equal(summary?.limit, limit); assert.equal(summary?.used, limit); assert.equal(summary?.remaining, 0);
+    await assert.rejects(reopened.assertAvailable(searchId), error => isLimit(error) && (error as Error).message.includes(`${limit}-request`));
+    await assert.rejects(reopened.reserve("/cards/one-more", { searchId }), error => isLimit(error) && (error as Error).message.includes(`${limit}-request`));
     assert.equal(await fs.readFile(file, "utf8"), before, "a larger new-search default cannot reopen an exhausted legacy ID");
     ledger.attempts.push({ ...ledger.attempts[0], id: randomUUID() });
     await fs.writeFile(file, JSON.stringify(ledger));

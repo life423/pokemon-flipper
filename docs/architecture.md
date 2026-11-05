@@ -36,7 +36,7 @@ flowchart TD
    automatic auctions must fall within the fixed search-start 12-hour window.
 2. Before candidates are emitted to the browser, `price-first.ts` runs shared
    sold research with at most four candidates in flight. Its source permits
-   64 uncached PKMNPrices requests including catalog work, and adaptive reads of
+   128 uncached PKMNPrices requests including catalog work, and adaptive reads of
    up to four 20-sale pages per requested market when the preceding pages lack
    one eligible matched sale. It stops once a scope has usable
    observations; cached pages from final valuation can satisfy follow-up reads.
@@ -65,7 +65,7 @@ flowchart TD
    Base Set lead priced at $10 or less. The browser considers eligible loaded
    rows with two assessments in flight, reuses saved evidence first and shares
    the persistent $0.02 AI cap. Fifty metadata rows do not imply fifty paid
-   assessments. All nested Browse work shares the separate 50-request ceiling for new searches
+   assessments. All nested Browse work shares the separate 100-request ceiling for new searches
    per search and account-wide daily quota protection.
 5. A direct listing link resolves only that listing. Shortlist load/save uses
    stored snapshots; selected refresh checks current eBay terms without starting
@@ -135,7 +135,7 @@ All paths below are relative to the repository root.
 | Query interpretation and criteria | `server/search/intent.ts`, `server/search/relevance.ts`, `shared/search-criteria.ts` | Seller keywords and requested slab grades are not verified photo evidence. |
 | Local metadata screening | `server/deals/screen-listing.ts` | Saved/local readings only, without new AI or listing-detail calls. `prescreen.ts` remains behind the compatibility pricing-retry endpoint, not normal admission. |
 | Sold-price-first admission | `server/deals/price-first.ts`, `server/pricing/screening-sales.ts`, `shared/money/sold-screen.ts` | Shared matched sold references precede browser emission; public observations stay separate from private fee/target calculations and verified photo identity. |
-| Screening price transport | `server/pricing/pkmnprices.ts` (`createScreeningPriceSource`) | Cache first, 64 uncached requests including catalog work within the all-stage 128-request new-search allowance, adaptive sparse-market recovery up to four 20-sale pages; no AI/Browse calls or automatic retry loop. |
+| Screening price transport | `server/pricing/pkmnprices.ts` (`createScreeningPriceSource`) | Cache first, 128 uncached requests including catalog work within the all-stage 256-request new-search allowance, adaptive sparse-market recovery up to four 20-sale pages; no AI/Browse calls or automatic retry loop. |
 | All-stage price accounting | `server/pricing/research-budget.ts`, `shared/pricing-usage.ts` | Per-search durable reservations before transport; actual credits from provider headers, cached responses remain in SQL/file storage. |
 | Direct links and shortlist | `server/listings/resolve.ts`, `server/shortlist/service.ts`, `server/shortlist/store.ts` | Isolated listing lookup, durable snapshots and targeted refresh. |
 | Advisory assessment planning | `server/analysis/bounded-plan.ts` | Stable original RAW selection/key plus compact SLAB_LABEL plan; seller metadata chooses request scope, never the physical holder or final certified grade. |
@@ -204,16 +204,16 @@ normal searches now offer working retries or automatic price recovery.
 - **Offers remain conditional:** an unaccepted Best Offer is separate from a
   deal at asking price. Preserve the maximum 10% discount and explicit amount.
   The app does not submit bids, offers or seller messages automatically.
-- **Requests stay bounded:** the sold-screen source's 64-request sublimit
+- **Requests stay bounded:** the sold-screen source's 128-request sublimit
   includes uncached catalog calls; final valuation and retries share one durable
-  128-request allowance per new search UUID. Old 64-request price ledgers and
-  25-request Browse ledgers preserve their original limits and counters.
+  256-request allowance per new search UUID. Old 64/128-request price ledgers and
+  25/50-request Browse ledgers preserve their original limits and counters.
   Failed/unknown attempts remain counted;
   credits come from provider response headers, independently of request counts.
   Cached response reads consume neither. The ledger is local to the configured
   key and does not establish provider-wide accounting across key rotation or
   independent replicas. It does not replace the persistent two-cent AI
-  cap or the 50 actual Browse requests per new search. `server/ebay/api.ts` reserves
+  cap or the 100 actual Browse requests per new search. `server/ebay/api.ts` reserves
   Browse calls through `usage.ts` and `daily-budget.ts`; optional work preserves
   the daily reserve. Cached reads do not consume Browse calls. Cancellation
   blocks later dispatch while accepted responses finish saving for reuse.

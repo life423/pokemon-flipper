@@ -6,8 +6,9 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { ROOT } from "../../server/lib/paths.ts";
+import { EBAY_SEARCH_BROWSE_LIMIT } from "../../server/ebay/search-budget.ts";
 
-test("HTTP middleware carries a new search's50-call cap despite an expired obsolete global ledger", async t => {
+test(`HTTP middleware carries a new search's ${EBAY_SEARCH_BROWSE_LIMIT}-call cap despite an expired obsolete global ledger`, async t => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "pokemon-http-search-cap-"));
     t.after(() => fs.rm(directory, { recursive: true, force: true }));
     const source = `
@@ -15,6 +16,7 @@ test("HTTP middleware carries a new search's50-call cap despite an expired obsol
         import http from 'node:http';
         import fs from 'node:fs/promises';
         import path from 'node:path';
+        import {EBAY_SEARCH_BROWSE_LIMIT} from './server/ebay/search-budget.ts';
         const oldFile=path.join(process.env.POKEMON_FLIPPER_DATA_DIR,'ebay-development-budget.json');
         const oldLedger={version:1,limit:25,used:23,requireRenewal:true,expiresAt:'2020-01-01T00:00:00.000Z'};
         await fs.writeFile(oldFile,JSON.stringify(oldLedger));
@@ -47,22 +49,23 @@ test("HTTP middleware carries a new search's50-call cap despite an expired obsol
             const noId=await request('POST','/api/listings/resolve',undefined,{input:'123456780001'});
             assert.equal(noId.status,503);assert.match(noId.body.error,/valid search ID/);
             assert.equal(noId.body.retryable,false);assert.equal(oauth,0);assert.equal(browse,0);
-            for(let n=0;n<50;n++){
-                const result=await request('POST','/api/listings/resolve','http-search-one',{input:String(123456780001+n)});
+            const itemIdBase=123456780001;
+            for(let n=0;n<EBAY_SEARCH_BROWSE_LIMIT;n++){
+                const result=await request('POST','/api/listings/resolve','http-search-one',{input:String(itemIdBase+n)});
                 assert.equal(result.status,200,JSON.stringify(result.body));
             }
-            const blocked=await request('POST','/api/listings/resolve','http-search-one',{input:'123456780099'});
-            assert.equal(blocked.status,503);assert.match(blocked.body.error,/50-request.*cap/);
-            assert.equal(blocked.body.retryable,false);assert.equal(blocked.body.code,'EBAY_BUDGET');assert.equal(browse,50);
+            const blocked=await request('POST','/api/listings/resolve','http-search-one',{input:String(itemIdBase+EBAY_SEARCH_BROWSE_LIMIT)});
+            assert.equal(blocked.status,503);assert.match(blocked.body.error,new RegExp(EBAY_SEARCH_BROWSE_LIMIT+'-request.*cap'));
+            assert.equal(blocked.body.retryable,false);assert.equal(blocked.body.code,'EBAY_BUDGET');assert.equal(browse,EBAY_SEARCH_BROWSE_LIMIT);
             const first=await request('GET','/api/ebay-usage','http-search-one');
-            assert.deepEqual(first.body.searchBudget,{searchId:'http-search-one',limit:50,used:50,remaining:0});
-            const next=await request('POST','/api/listings/resolve','http-search-two',{input:'123456780100'});
-            assert.equal(next.status,200);assert.equal(browse,51);
+            assert.deepEqual(first.body.searchBudget,{searchId:'http-search-one',limit:EBAY_SEARCH_BROWSE_LIMIT,used:EBAY_SEARCH_BROWSE_LIMIT,remaining:0});
+            const next=await request('POST','/api/listings/resolve','http-search-two',{input:String(itemIdBase+EBAY_SEARCH_BROWSE_LIMIT+1)});
+            assert.equal(next.status,200);assert.equal(browse,EBAY_SEARCH_BROWSE_LIMIT+1);
             const second=await request('GET','/api/ebay-usage','http-search-two');
-            assert.deepEqual(second.body.searchBudget,{searchId:'http-search-two',limit:50,used:1,remaining:49});
-            assert.equal(second.body.limit,5000);assert.equal(second.body.used,51);
+            assert.deepEqual(second.body.searchBudget,{searchId:'http-search-two',limit:EBAY_SEARCH_BROWSE_LIMIT,used:1,remaining:EBAY_SEARCH_BROWSE_LIMIT-1});
+            assert.equal(second.body.limit,5000);assert.equal(second.body.used,EBAY_SEARCH_BROWSE_LIMIT+1);
             assert.deepEqual(JSON.parse(await fs.readFile(oldFile,'utf8')),oldLedger);
-            assert.deepEqual({browse,oauth,analytics},{browse:51,oauth:1,analytics:1});
+            assert.deepEqual({browse,oauth,analytics},{browse:EBAY_SEARCH_BROWSE_LIMIT+1,oauth:1,analytics:1});
             console.log('HTTP_CAP_RESULT '+JSON.stringify({browse,oauth,analytics}));
         }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
     `;
@@ -73,5 +76,5 @@ test("HTTP middleware carries a new search's50-call cap despite an expired obsol
     });
     const marker = output.stdout.split("\n").find(line => line.startsWith("HTTP_CAP_RESULT "));
     assert.ok(marker, output.stdout);
-    assert.deepEqual(JSON.parse(marker.slice("HTTP_CAP_RESULT ".length)), { browse: 51, oauth: 1, analytics: 1 });
+    assert.deepEqual(JSON.parse(marker.slice("HTTP_CAP_RESULT ".length)), { browse: EBAY_SEARCH_BROWSE_LIMIT + 1, oauth: 1, analytics: 1 });
 });

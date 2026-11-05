@@ -70,7 +70,7 @@ Read docs/architecture.md for the source map and reading order.
   Automatic auctions must end within the search window's next 12 hours.
   Minimum Buy It Now price does not exclude low auction starts. Widening a
   server-side filter requires an explicit rerun, never paid work while typing.
-- Sold screening shares catalog/market work across rows: four workers, 64
+- Sold screening shares catalog/market work across rows: four workers, 128
   uncached PKMNPrices requests including catalog work. Sparse markets may follow
   up to four 20-sale pages, stopping once one eligible matched sale supports a
   scope; cached final-valuation pages are reused.
@@ -126,14 +126,14 @@ Read docs/architecture.md for the source map and reading order.
   to finish useful analysis. Keep the default at $0.02, report an actual increase
   and its spending, and preserve existing charges/holds. This fallback has not
   been used. Prefer a free catalog/local resolution before additional text AI.
-- New searches allow **50 actual eBay Browse requests per search**, separate from daily
+- New searches allow **100 actual eBay Browse requests per search**, separate from daily
   account quota/reserve. Retries, nested calls and restarts retain spent counts.
   Cache hits, OAuth and Analytics are separate. The old expiring development
-  ledger is historical, not a daily app limit. Existing 25-request ledgers retain
+  ledger is historical, not a daily app limit. Existing 25/50-request ledgers retain
   their stored limits and counts; opening an old search never resets it.
 - The two-cent cap does not cover PKMNPrices credits or eBay quota. Screening
-  permits 64 uncached requests; final valuation and retries share one persistent
-  **128-request PKMNPrices allowance per new search UUID**. Existing 64-request
+  permits 128 uncached requests; final valuation and retries share one persistent
+  **256-request PKMNPrices allowance per new search UUID**. Existing 64/128-request
   ledgers remain usable with their original limits and counts. Cache hits cost no new
   request; failed/unknown attempts remain counted across restarts/days. Actual
   credits are read from provider headers separately from returned rows and USD.
@@ -143,7 +143,7 @@ Read docs/architecture.md for the source map and reading order.
   Price-only deferral stays Sorting while accepted photos and completed prices
   remain reusable; a supported profitable route can still reach Deals.
   The user authorizes broader PKMNPrices research as needed within reason.
-  Treat 64/128 as tunable runaway safeguards, not desired consumption or a reason
+  Treat 128/256 as tunable runaway safeguards, not desired consumption or a reason
   to starve useful comparisons. Raise them when measured useful work is deferred
   and provider capacity supports it; preserve rate limits and shared cache reuse.
 - Daily usage warnings appear outside the drawer at <=20% remaining or >=5% of

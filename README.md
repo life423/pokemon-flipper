@@ -2,7 +2,7 @@
 
 Find eBay Pokémon card listings worth flipping, priced to the exact printing, with a max bid for every one.
 
-Search for a card or inspect a listing link. The app checks identity, price evidence and estimated costs before presenting a purchase limit. Current HTTP searches admit up to **50 matching metadata rows**, with a persistent **$0.02 AI cap** and **25 Browse-request cap per search**. Displayed listings and paid assessments have separate limits.
+Search for a card or inspect a listing link. The app checks identity, price evidence and estimated costs before presenting a purchase limit. Current HTTP searches admit up to **50 matching metadata rows**, with a persistent **$0.02 AI cap** and **100 Browse-request cap per new search**. Displayed listings and paid assessments have separate limits.
 
 > **The question it answers:** *At this price, is this card worth buying to resell?*
 

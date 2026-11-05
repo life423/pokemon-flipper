@@ -27,8 +27,8 @@ provider payloads, photos and data/ stay excluded. No computer handoff is pendin
 - [x] Shared Azure SQL Basic provider/assessment caches; persistent per-search
   OpenAI and provider request accounting; exact input/output reservations;
   cancellation and accepted-response saving.
-- [x] Default $0.02 generation cap per search UUID, 50 actual eBay Browse
-  requests per new search, 64 uncached screening/128 all-stage PKMN requests.
+- [x] Default $0.02 generation cap per search UUID, 100 actual eBay Browse
+  requests per new search, 128 uncached screening/256 all-stage PKMN requests.
   Existing ledgers retain their limits and spent/unknown counts. PKMN's 20,000
   daily credits and eBay's daily quota are separate from AI dollars. Daily
   depletion warnings exist. Up to $0.10 AI is authorized only if desperately
@@ -126,6 +126,11 @@ provider payloads, photos and data/ stay excluded. No computer handoff is pendin
 
 ## Auctions, liquidity and strategy
 
+- [ ] Rank the best currently available matching purchases within the disclosed
+  search coverage when a verified profitable flip is unavailable. Distinguish current after-cost value from
+  speculative upside, using sourced trends, liquidity, competition and holding
+  time to explain an outlook. Do not use a forecast to relabel a loss as a
+  verified Deal. This idea is saved for later, not implemented in the cap change.
 - [ ] Forecast closing ranges using matching sold auctions and available bid/watch
   evidence, separately from a profitable maximum snipe. Missing watchers remain
   unknown; distant cheap opening bids prove no opportunity.

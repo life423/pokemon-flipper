@@ -10,6 +10,29 @@ were committed and pushed on main. Current work is on
 improve/consistent-sold-pricing. Markdown notes are tracked; no handoff was
 created. The pre-existing .env.example deletion remains unrelated/uncommitted.
 
+## Data-provider headroom and best-available idea — November 5
+
+The user explicitly authorizes more useful eBay/PKMNPrices work and identifies
+AI cost optimization as the main financial concern. New search defaults are
+100 Browse requests, 128 preliminary price requests and 256 all-stage price
+requests. The observed Crown Zenith screening deferrals justify more price
+headroom; eBay headroom supports later detail verification. These are ceilings,
+not consumption targets. Existing 25/50 Browse and 64/128 price ledgers retain
+their original counters and limits. Daily quota protection, rate limits,
+SQL response reuse, warnings, row counts and the $0.02 AI cap remain intact.
+No new paid stage or automatic reanalysis is introduced.
+
+All 1,030 isolated tests, typechecks, production build and whitespace checks
+pass. Legacy partial/exhausted ledgers and original diagnostic caps remain
+covered. Validation used mocked providers and added no real provider or AI calls.
+
+Saved for later: show the best available purchase separately from a verified
+profitable flip. Explain current net economics and an independently sourced
+market outlook, including trend, liquidity, competition and holding time.
+A prediction is uncertain and cannot replace current transaction evidence or
+justify calling a currently losing purchase a verified Deal. This feature is
+not implemented now; the immediate original-account BIN validation remains next.
+
 ## Query-scoped research correction — November 5
 
 A live Unlimited Fossil holo PSA8 scan exposed avoidable premium-market work:
