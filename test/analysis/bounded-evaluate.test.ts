@@ -15,6 +15,7 @@ import { createShortlistStore } from "../../server/shortlist/store.ts";
 import { createShortlistService } from "../../server/shortlist/service.ts";
 import { photoReviewStatus } from "../../shared/photo-review.ts";
 import { resultGroup } from "../../shared/analysis.ts";
+import { groupSearchResults } from "../../client/src/search/results.ts";
 import { retargetEvaluation } from "../../shared/money/targets.ts";
 import { seedRawSoldCopies } from "../fixtures/raw-sold-copies.ts";
 import { createSoldConditionAcquirer, type SoldConditionReading } from "../../server/ai/sold-condition.ts";
@@ -185,7 +186,7 @@ test("one bounded raw assessment produces priced outcomes without historical pho
 
 test("an exact overpriced slab stops after its front photo and reuses that reading after a price drop", async t => {
     t.mock.method(globalThis, "fetch", () => assert.fail("staged assessment regression must use mocked providers only"));
-    const listing = details({ price: 950, shipping: 4, bestOffer: false, condition: "Graded",
+    const listing = details({ price: 450, shipping: 4, bestOffer: false, condition: "Graded",
         retrievedAt: new Date(now - 1000).toISOString(),
         aspects: { ...details().aspects, "Professional Grader": "PSA", Grade: "8" } });
     const batches: number[][] = [];
@@ -200,10 +201,17 @@ test("an exact overpriced slab stops after its front photo and reuses that readi
             authenticityEvidence: [], concerns: [] };
         answer.photoCheck.images.forEach((image, index) => { image.view = photos[index].number === 1 ? "FRONT" : "BACK"; });
         return { result: answer, usage: { inputTokens: 500, outputTokens: 300 } };
-    }, fetchRawComps: async () => assert.fail("a verified slab never needs raw resale research") });
+    }, fetchRawComps: async () => assert.fail("a verified slab never needs raw resale research"),
+    fetchComps: async (_id, { grader, grade }) => [260, 275, 280, 650, 1200].map((price, index) => ({
+        id: `slab-${index}`, title: `Venusaur Base Set 15/102 Holo ${grader} ${grade}`,
+        price, sold_at: new Date(now - (index + 1) * 86400000).toISOString(), variant: "Holofoil", currency: "USD",
+        attribution: "exact", sale_type: "fixed_price", listing_url: null, grader, grade: String(grade), grade_qualifier: null,
+    })) });
     const targets = { minProfit: 0, minRoi: 0 };
     const expensive = await evaluate(listing.id, { automatic: true, targets });
-    assert.deepEqual(batches, [[1]], "the back cannot change the loss at the current price");
+    assert.deepEqual(batches, [[1]], "a single high sale cannot justify another photo");
+    assert.equal(expensive.slabPricing?.summary?.high, 650, "the highest retained amount would have made it look viable");
+    assert.equal(expensive.slabPricing?.summary?.dropped["price far from the other sales"], 1);
     assert.deepEqual(expensive.photoCheck?.images.map(image => image.number), [1]);
     assert.equal(expensive.listing.photosAnalyzed, 1);
     assert.equal(expensive.frontPhotoStop, "SLAB_PRICE");
@@ -284,9 +292,82 @@ test("a clean rear cannot erase a severe front mark or supply a conflicting high
     assert.equal(result.condition?.rawCondition, "DAMAGED");
     assert.equal(result.condition?.gradeRange, null);
     assert.deepEqual(result.condition?.surface.observations, [observation]);
-    assert.equal(calls.comps, 0, "the contradictory rear grade must not trigger graded price research");
+    assert.equal(calls.comps, 1, "the first plausible grade reference is enough to inspect the back; the contradictory rear range is never priced");
     assert.equal(result.underwriting?.verdict, "PASS");
     assert.equal(result.underwriting?.best?.priceCondition, "DAMAGED");
+});
+
+test("visible material front wear with losing matched markets skips the remaining photos", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("staged assessment regression must use mocked providers only"));
+    for (const defect of ["crease", "black marker", "holo scratches"] as const) {
+        const listing = details({ price: 750, bestOffer: true, images: [photo(1), photo(2)],
+            retrievedAt: new Date(now - 1000).toISOString() });
+        const category = defect === "holo scratches" ? "HEAVILY_PLAYED" : "DAMAGED";
+        const batches: number[][] = [];
+        let sales: Comp[] = [];
+        const { evaluate, cache, calls } = harness({ details: async () => listing, fetchRawComps: async () => sales,
+            assess: async (_listing, photos) => {
+                batches.push(photos.map(photo => photo.number));
+                const answer = reading(1);
+                if (photos[0].number === 1) {
+                    answer.condition!.rawCondition = defect === "crease" ? "MODERATELY_PLAYED" : category;
+                    answer.condition!.creases = defect === "crease" ? "PRESENT" : "NONE_SEEN";
+                    answer.condition!.surface = { visibility: "CLEAR", severity: "SEVERE", observations: [`Visible ${defect} on the lower front artwork.`] };
+                } else {
+                    answer.photoCheck.images[0].view = "BACK";
+                    answer.condition!.rawCondition = category;
+                    answer.condition!.gradeRange = null;
+                }
+                return { result: answer, usage: { inputTokens: 500, outputTokens: 300 } };
+            },
+        });
+        sales = seedRawSoldCopies(cache, listing, category, 45, now);
+        const targets = { minProfit: 0, minRoi: 0 };
+        const loss = await evaluate(listing.id, { automatic: true, targets });
+        assert.deepEqual(batches, [[1]], defect);
+        assert.equal(calls.comps, 2);
+        assert.equal(loss.frontPhotoStop, "RAW_PRICE");
+        assert.equal(loss.underwriting?.verdict, "PASS");
+        assert.ok((loss.underwriting?.best?.profit ?? 0) < 0);
+        assert.equal(loss.underwriting?.best?.priceCondition, category);
+        assert.equal(photoReviewStatus(loss).needsYourReview, false);
+        assert.equal(loss.condition?.gradeRange, null);
+        const summary = { ...listing, currentPrice: listing.price, isGraded: false };
+        const groups = groupSearchResults([summary], { [listing.id]: { status: "done", evaluation: loss, evidenceKey: "" } }, true, new Set());
+        assert.deepEqual(groups.losses, [summary]);
+        assert.equal(groups.offers.length + groups.deals.length + groups.review.length, 0);
+        listing.price = 350;
+        const repriced = retargetEvaluation({ ...loss, listing: { ...loss.listing, price: listing.price } }, targets);
+        assert.equal(repriced.underwriting?.verdict, "CANT_PRICE", "a realistic offer reopens a front-only loss");
+        await evaluate(listing.id, { automatic: true, targets });
+        assert.deepEqual(batches, [[1], [2]], "reopens without sending the first photo again");
+    }
+});
+
+test("a denied optional front comparison cannot discredit the later complete raw valuation", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("staged assessment regression must use mocked providers only"));
+    const listing = details({ price: 750, bestOffer: false, images: [photo(1), photo(2)], retrievedAt: new Date(now - 1000).toISOString() });
+    const answer = reading(1);
+    answer.condition!.rawCondition = "DAMAGED";
+    answer.condition!.creases = "PRESENT";
+    answer.condition!.gradeRange = null;
+    let rawReads = 0, sold: Comp[] = [];
+    const { evaluate, cache } = harness({
+        details: async () => listing,
+        assess: async (_listing, photos) => {
+            const result = structuredClone(answer);
+            if (photos[0].number === 2) result.photoCheck.images[0].view = "BACK";
+            return { result, usage: { inputTokens: 500, outputTokens: 300 } };
+        },
+        fetchRawComps: async () => { rawReads++; return sold; },
+        fetchComps: async () => { throw new PriceResearchBudgetError("Optional reference not available.", "LIMIT"); },
+    });
+    sold = seedRawSoldCopies(cache, listing, "DAMAGED", 45, now);
+    const evaluated = await evaluate(listing.id, { automatic: true });
+    assert.equal(evaluated.listing.photosAnalyzed, 2);
+    assert.equal(rawReads, 1, "reuse the already verified exact raw market");
+    assert.equal(evaluated.pricingDeferred, undefined);
+    assert.equal(evaluated.underwriting?.verdict, "PASS");
 });
 
 test("a saved combined assessment bypasses both photo stages", async () => {
@@ -508,6 +589,37 @@ test("raw sold-photo work stops when no remaining comp can meet targets and resu
     assert.equal(relaxed.rawPricing?.soldPhotoDeferred, undefined);
     assert.equal(soldReads, 1);
     assert.equal(liveReads, 1, "reconsidering the price evidence reuses the live copy's photo reading");
+});
+
+test("a newly verified Best Offer reopens an economically relevant raw sold-photo check", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("offer deferral should use mocked providers only"));
+    const listing = details({ price: 100, shipping: 5.96, retrievedAt: new Date(now - 1000).toISOString() });
+    const live = reading();
+    live.condition!.rawCondition = "LIGHTLY_PLAYED";
+    live.condition!.gradeRange = null;
+    let liveReads = 0, soldReads = 0;
+    const sale: Comp = { id: "lp", title: "Venusaur Base Set 15/102 Unlimited Holo LP", price: 125,
+        sold_at: new Date(now - 86400000).toISOString(), variant: "Holofoil", currency: "USD", attribution: "exact",
+        sale_type: "fixed_price", listing_url: null, grader: null, grade: null, grade_qualifier: null };
+    const { evaluate } = harness({
+        details: async () => ({ ...listing }),
+        assess: async () => { liveReads++; return { result: live, usage: { inputTokens: 700, outputTokens: 450 } }; },
+        fetchRawComps: async () => [sale],
+        soldCondition: () => ({ usage: [], read: async () => null, status: () => "UNREVIEWED",
+            acquire: async () => { soldReads++; return { condition: "LIGHTLY_PLAYED", evidence: ["Accepted physical wear evidence."], photoCount: 4 }; } }),
+    });
+    const blocked = await evaluate(listing.id);
+    assert.equal(blocked.rawPricing?.soldPhotoDeferred?.price, 100);
+    assert.equal(soldReads, 0);
+    listing.bestOffer = true;
+    const offersDisabled = await evaluate(listing.id, { includeOffers: false });
+    assert.equal(offersDisabled.rawPricing?.soldPhotoDeferred?.price, 100);
+    assert.equal(soldReads, 0);
+    const checked = await evaluate(listing.id);
+    assert.equal(checked.rawPricing?.status, "PRICED");
+    assert.equal(checked.underwriting?.verdict, "PASS", "the actual asking price still loses money");
+    assert.equal(soldReads, 1);
+    assert.equal(liveReads, 1);
 });
 
 test("catalog-corroborated photos correct stale seller fields without repurchasing the accepted reading or restoring a generic mismatch hold", async () => {

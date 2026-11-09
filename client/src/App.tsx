@@ -15,6 +15,7 @@ import { withFreshListing } from "../../shared/fresh-listing.ts";
 import { looksLikeListingLink, parseListingLink } from "../../shared/listing-link.ts";
 import { withResolvedCriteria } from "../../shared/search-criteria.ts";
 import { applyPricingRetry, PRICING_RETRY_LIMIT } from "../../shared/pricing-retries.ts";
+import { MAX_OFFER_DISCOUNT_PERCENT } from "../../shared/money/cents.ts";
 import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.ts";
 import { evaluateListing, fetchEbayUsage, fetchSetYears, reviewListingPhotos, streamDeals, streamNewDeals, fetchShortlist, saveListing, removeSavedListing, updateSavedListing, refreshSavedListings, resolveListingLink, retryPricingBatch, saveSearchDiagnostic, type DealsMessage } from "./api";
 import type { ShortlistEntry } from "../../shared/shortlist.ts";
@@ -226,7 +227,7 @@ export function App() {
     pricingAnalyses.current = rawAnalyses;
     const [analysisOutcomes, setAnalysisOutcomes] = useState<boolean[]>([]);
     const [includeOffers, setIncludeOffers] = useState(() => {
-        try { return localStorage.getItem("includeOffers") === "1"; } catch { return false; }
+        try { return localStorage.getItem("includeOffers") !== "0"; } catch { return true; }
     });
     const availableViews: View[] = [...(newMode ? ["new" as const] : []), ...VIEWS.filter((key) => key !== "offers" || includeOffers)];
     function changeIncludeOffers(enabled: boolean) {
@@ -413,7 +414,7 @@ export function App() {
         };
 
         try {
-            const evaluation = await evaluateListing(listing, { fresh, automatic, targets, signal: controller.signal, searchRunId: searchRunId.current });
+            const evaluation = await evaluateListing(listing, { fresh, automatic, includeOffers, targets, signal: controller.signal, searchRunId: searchRunId.current });
             controller.signal.throwIfAborted();
             if (stillCurrent()) {
                 const current = latestListings.current.get(listing.id) ?? listing;
@@ -484,7 +485,7 @@ export function App() {
                 void runAnalysis(current, pending.fresh, pending.automatic, pending.scope);
             }
         }
-    }, [loadShortlist, refreshUsage, targets]);
+    }, [includeOffers, loadShortlist, refreshUsage, targets]);
 
     const runPhotoReview = useCallback(async (listing: ListingSummary, evaluation: Evaluation) => {
         if (!englishListingEligible(listing, evaluation)) return;
@@ -815,7 +816,7 @@ export function App() {
                   ? `No deals yet. ${counts.waiting} ${counts.waiting === 1 ? "candidate hasn't" : "candidates haven't"} been analyzed: see Sorting.`
                   : "No deals in this search at the current prices.",
         candidates: "No cards are waiting to be sorted or assessed.",
-        offers: "No offer opportunities within 10% of asking. Seller acceptance is never assumed.",
+        offers: `No offer opportunities within ${MAX_OFFER_DISCOUNT_PERCENT}% of asking. Seller acceptance is unknown.`,
         review: "Nothing needs review.",
         losses: "No completed assessments show a supported loss at the asking price or current bid.",
         all: "No listings match the filters.",
@@ -1031,14 +1032,14 @@ export function App() {
                     </div>}
                     {page === "shortlist" ? <ShortlistView entries={shortlistForDisplay} loading={shortlistLoading} error={shortlistError} refreshing={refreshingSaved} refreshErrors={refreshErrors}
                         onRetry={() => void loadShortlist()} onRefresh={refreshSaved} onRemove={removeSaved} onUpdate={updateSaved} now={now}
-                        renderCard={(entry) => <DealCard listing={entry.listing} analysis={analyses[entry.id]} selected={entry.id === selectedId} now={now} years={setYearsByKey} targets={targets} minGrade={minGrade} photoReviewState={photoReviews[entry.id]}
+                        renderCard={(entry) => <DealCard listing={entry.listing} analysis={analyses[entry.id]} selected={entry.id === selectedId} now={now} years={setYearsByKey} targets={targets} includeOffers={includeOffers} minGrade={minGrade} photoReviewState={photoReviews[entry.id]}
                             onOpen={() => openResult(entry.listing)} />} /> : page === "listing" ? <section className={styles.linkEvaluation} aria-labelledby="link-evaluation-heading">
                         <h2 id="link-evaluation-heading">Listing evaluation</h2>
                         {linkStatus === "loading" && <div className={styles.linkLoading} role="status"><p>Reading the listing from eBay…</p><button type="button" className={styles.secondary} onClick={() => { cancelLink(); if (!directListing) setPage("search"); }}>Cancel</button></div>}
                         {linkStatus === "error" && <p role="alert" className={styles.warning}>{linkError}{directListing ? " Your previous listing is still shown below." : ""}</p>}
                         {directListing && linkStatus !== "loading" && !directLanguageEligible && <EnglishOnlyNotice />}
                         {directListing && linkStatus !== "loading" && directLanguageEligible && <div className={styles.directCard}><DealCard listing={directListing} analysis={analyses[directListing.id]} selected={directListing.id === selectedId}
-                            now={now} years={setYearsByKey} targets={targets} minGrade={0} photoReviewState={photoReviews[directListing.id]}
+                            now={now} years={setYearsByKey} targets={targets} includeOffers={includeOffers} minGrade={0} photoReviewState={photoReviews[directListing.id]}
                             saved={shortlist.some((entry) => entry.id === directListing.id)} saving={savingIds.has(directListing.id)} onSave={() => void toggleSaved(directListing)}
                             onOpen={() => openPanel(directListing.id)} /></div>}
                         {!directListing && linkStatus === "idle" && <p>Paste an eBay listing link above, then choose Evaluate listing.</p>}
@@ -1186,6 +1187,7 @@ export function App() {
                                 years={setYearsByKey}
                                 minGrade={minGrade}
                                 targets={targets}
+                                includeOffers={includeOffers}
                                 selected={listing.id === selectedId}
                                 now={now}
                                 onOpen={() => openResult(listing)}
@@ -1201,6 +1203,7 @@ export function App() {
                         closing={panelClosing}
                         minGrade={page === "listing" ? 0 : minGrade}
                         targets={targets}
+                        includeOffers={includeOffers}
                         analysis={analyses[selected.id]}
                         now={now}
                         onClose={close}

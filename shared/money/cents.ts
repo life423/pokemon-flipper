@@ -35,6 +35,16 @@ export function money(value: number): number {
     return cents(value) / 100;
 }
 
+export const MAX_OFFER_DISCOUNT_PERCENT = 15;
+
+// Round up to a cent so a fractional-cent discount never exceeds the limit.
+export function minimumOfferPrice(asking: number): number {
+    const askingCents = cents(asking);
+    if (!Number.isSafeInteger(askingCents) || askingCents <= 0) return NaN;
+    const retainedPercent = BigInt(100 - MAX_OFFER_DISCOUNT_PERCENT);
+    return Number((BigInt(askingCents) * retainedPercent + 99n) / 100n) / 100;
+}
+
 export function taxedCents(taxable: number, rate: number): number {
     const ratio = decimal(rate);
     if (!Number.isSafeInteger(taxable) || taxable < 0 || !ratio || rate < 0) return NaN;

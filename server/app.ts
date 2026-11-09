@@ -9,7 +9,6 @@ import { searchDeals } from "./deals/search.ts";
 import { evaluateBoundedListing } from "./analysis/bounded-evaluate.ts";
 import { EbayError } from "./ebay/api.ts";
 import { ebayUsage, EbayBudgetError } from "./ebay/usage.ts";
-import { writeOfferNote } from "./ai/offer-note.ts";
 import type { CurrentState } from "./analysis/types.ts";
 import { MONEY_CONFIG } from "../shared/money/config.ts";
 import { ProviderError } from "./lib/http.ts";
@@ -213,23 +212,6 @@ app.post("/api/deals/new", async (req, res) => {
     res.end();
 });
 
-// A friendly note to send with a Best Offer.
-app.post("/api/offer-note", async (req, res) => {
-    const title = typeof req.body?.title === "string" ? req.body.title.slice(0, 200) : "";
-
-    if (!title) {
-        res.status(400).json({ error: "A listing title is needed" });
-        return;
-    }
-
-    try {
-        res.json({ note: await writeOfferNote(title) });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: "Couldn't write a note" });
-    }
-});
-
 // How much of today's eBay allowance is left.
 app.get("/api/ebay-usage", async (req, res) => {
     res.json(await ebayUsage());
@@ -282,6 +264,7 @@ app.post("/api/listings/:id/evaluate", async (req, res) => {
         const current = currentState(req.body);
         const evaluation = await evaluateBoundedListing(req.params.id, {
             automatic: req.query.auto === "1",
+            includeOffers: req.query.offers !== "0",
             targets: searchTargets(req),
             current: req.query.refreshTerms === "1" || req.query.fresh === "1" ? null : current,
             signal: stopped.signal,

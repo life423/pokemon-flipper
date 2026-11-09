@@ -4,7 +4,6 @@ import { photoEvidence } from "../../../../shared/photo-evidence.ts";
 import { resaleActivity, matchedSoldActivity } from "../../../../shared/liquidity.ts";
 import { GradingComparison } from "../GradingComparison";
 import { PathCard } from "./FinancialDecision";
-import { OfferSection } from "./OfferSection";
 import { ListingEvidenceSection, ListingSection, IdentitySection, SlabSection, ConditionSection, PhotosSection } from "./EvidenceSections";
 import { PricesSection } from "./PricingSections";
 import { Notes, Pairs, Section } from "./primitives";
@@ -54,7 +53,6 @@ export function AnalysisDetails({
             )}
 
             <ListingEvidenceSection listing={listing} evaluation={evaluation} />
-            <OfferSection listing={listing} evaluation={evaluation} />
             <Section title="Resale activity">
                 <p>{activity.label}</p>
                 <p className={styles.small}>{activity.detail}</p>
@@ -89,7 +87,7 @@ export function AnalysisDetails({
                         : "The initial analysis reused saved AI assessments."}
                 </p>
                 {priceEvidenceGap(evaluation) ? <p className={styles.small}>Price evidence is incomplete. Saved photo findings can be reused when matched sales become available.</p> : <button type="button" className={styles.secondary} onClick={onReanalyze} disabled={reviewing}>
-                    {evaluation.frontPhotoStop === "SLAB_PRICE" && evaluation.underwriting?.verdict === "CANT_PRICE" ? "Check remaining photos (paid)"
+                    {(evaluation.frontPhotoStop === "SLAB_PRICE" || evaluation.frontPhotoStop === "RAW_PRICE") && evaluation.underwriting?.verdict === "CANT_PRICE" ? "Check remaining photos (paid)"
                         : evaluation.researchMode && evaluation.researchMode !== "FULL" ? "Run full research (paid; reuse photos)" : "Reanalyze full listing (paid)"}
                 </button>}
             </footer>

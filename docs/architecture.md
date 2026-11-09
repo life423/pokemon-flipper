@@ -257,8 +257,20 @@ normal searches now offer working retries or automatic price recovery.
   weights are assumptions, not measured odds. An upper grade bound is a
   possibility, not the likely outcome or a certified grade.
 - **Offers remain conditional:** an unaccepted Best Offer is separate from a
-  deal at asking price. Preserve the maximum 10% discount and explicit amount.
-  The app does not submit bids, offers or seller messages automatically.
+  deal at asking price. The search includes Best Offers by default. A qualifying
+  opening is at most 15% below the item price. The purchase calculation keeps the
+  listing’s shipping, tax and user targets. The card shows the opening, the
+  private walk-away price and a copyable draft. Drafts use the calculated amount
+  and card name, so they need no AI request. The app does not submit bids,
+  offers or seller messages automatically.
+  For negotiation, use these practices when applicable. Compare exact sold
+  copies, check competing Buy It Now listings, set a private walk-away price,
+  open at a specific amount, keep the tone friendly, cite only verified
+  evidence, invite a counter, keep the transaction on eBay, concede in small
+  steps within the limit, and wait or walk away if the terms fail. The draft
+  stays short and keeps the buyer’s private numbers out of the message.
+  [Harvard Program on Negotiation](https://www.pon.harvard.edu/daily/negotiation-skills-daily/top-10-negotiation-skills/)
+  [eBay Best Offer](https://www.ebay.com/help/buying/bidding-buying-help/making-best-offer?id=4019)
 - **Requests stay bounded:** the sold-screen source's 128-request sublimit
   includes uncached catalog calls; final valuation and retries share one durable
   256-request allowance per new search UUID. Old 64/128-request price ledgers and

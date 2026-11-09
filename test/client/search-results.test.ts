@@ -563,7 +563,7 @@ test("empty Deals shows a realistic offer's conditional outcome only when offers
     assert.deepEqual(others, []);
     assert.equal(alternative.listing.id, offer.id);
     assert.equal(alternative.label, "Best Offer");
-    assert.equal(alternative.offerPrice, 90);
+    assert.equal(alternative.offerPrice, 85);
     assert.ok(alternative.profit! > 0 && alternative.roi! > 0);
     assert.deepEqual(groupSearchResults(rows, analyses, true, new Set()).deals, []);
 });

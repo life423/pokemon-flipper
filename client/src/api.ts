@@ -156,17 +156,6 @@ export function refreshSavedListings(ids: string[], searchRunId?: string): Promi
     return request("/api/shortlist/refresh", { method: "POST", headers: { "Content-Type": "application/json", ...searchHeaders(searchRunId) }, body: JSON.stringify({ ids }) });
 }
 
-// A friendly note to send with a Best Offer, written fresh each time.
-export async function writeOfferNote(title: string): Promise<string> {
-    const { note } = await request<{ note: string }>("/api/offer-note", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title }),
-    });
-
-    return note;
-}
-
 // How much of today's eBay allowance is left, or null if eBay won't say.
 export function fetchEbayUsage(searchRunId?: string): Promise<EbayUsage | null> {
     return request("/api/ebay-usage", searchRunId ? { headers: searchHeaders(searchRunId) } : undefined);
@@ -176,12 +165,13 @@ export function fetchEbayUsage(searchRunId?: string): Promise<EbayUsage | null> 
 // after that. fresh refreshes listing terms while compatible photos are reused.
 // The listing's current price, bid, and end time go along, so the server
 // can use its saved details instead of asking eBay again.
-export async function evaluateListing(listing: ListingSummary, { fresh = false, signal, searchRunId = crypto.randomUUID(), automatic = false, targets }: { targets?: Targets; fresh?: boolean; signal?: AbortSignal; searchRunId?: string; automatic?: boolean } = {}): Promise<Evaluation> {
+export async function evaluateListing(listing: ListingSummary, { fresh = false, signal, searchRunId = crypto.randomUUID(), automatic = false, includeOffers = true, targets }: { targets?: Targets; fresh?: boolean; signal?: AbortSignal; searchRunId?: string; automatic?: boolean; includeOffers?: boolean } = {}): Promise<Evaluation> {
     for (let attempt = 0; ; attempt++) {
         signal?.throwIfAborted();
         const refreshQuery = fresh ? attempt === 0 ? "?fresh=1" : "?refreshTerms=1" : "";
         const query = new URLSearchParams(refreshQuery);
         if (automatic) query.set("auto", "1");
+        if (!includeOffers) query.set("offers", "0");
         if (targets) { query.set("profit", String(targets.minProfit)); query.set("roi", String(targets.minRoi)); }
         try { return await request(`/api/listings/${encodeURIComponent(listing.id)}/evaluate?${query}`, {
         method: "POST",

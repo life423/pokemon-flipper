@@ -50,6 +50,13 @@ export const TrendIcon = (props: IconProps) => (
     </Icon>
 );
 
+export const TrendDownIcon = (props: IconProps) => (
+    <Icon {...props}>
+        <path d="m3 7 6 6 4-4 8 8" />
+        <path d="M15 17h6v-6" />
+    </Icon>
+);
+
 export const ReviewIcon = (props: IconProps) => (
     <Icon {...props}>
         <path d="M7 3h7l5 5v13H7Z" />

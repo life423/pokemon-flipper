@@ -3,7 +3,7 @@ import { sameCardNumber } from "../card-number.ts";
 import { MONEY_CONFIG, type BuyingConfig, type GradingConfig, type MoneyConfig, type SellingConfig } from "./config.ts";
 import { RAW_CONDITIONS, isRawCondition } from "../conditions.ts";
 import { dollars, round2 } from "../format.ts";
-import { cents, meetsMoneyTargets, money, sellingFeeCents, taxedCents } from "./cents.ts";
+import { cents, meetsMoneyTargets, minimumOfferPrice, money, sellingFeeCents, taxedCents } from "./cents.ts";
 import { isRawSoldPrice, referencePriceReason, unsupportedVariantReason } from "./price-evidence.ts";
 import { soldMarketPrice } from "../sold-evidence.ts";
 import type {
@@ -45,7 +45,7 @@ export interface UnderwritingInput {
     listing: { price: number | null; shipping: number | null; availability?: string; title?: string;
         buyingOption?: Evaluation["listing"]["buyingOption"]; bestOffer?: boolean };
     identity: Identity | null;
-    condition: Pick<Condition, "rawCondition" | "gradeRange" | "authenticity"> & Partial<Pick<Condition, "creases">> | null;
+    condition: Pick<Condition, "rawCondition" | "gradeRange" | "authenticity"> & Partial<Pick<Condition, "creases" | "confidence" | "surface">> | null;
     rawPricing?: RawPricing | null;
     gradedPricing?: Partial<Record<Grader, GradedPricing>> | null;
     slab?: Pick<Slab, "status" | "grader" | "grade" | "reasons" | "concerns"> & Partial<Pick<Slab, "labelText">> | null;
@@ -397,32 +397,80 @@ function matchesSlabSummary(summary: CompSummary, slab: NonNullable<Underwriting
             Number.isFinite(Number(summary.grade)) && Number.isFinite(Number(slab.grade)) && Number(summary.grade) === Number(slab.grade));
 }
 
-// A front can rule out resale as a certified grade. It cannot authorize a
-// purchase, substitute for a raw grade estimate, or turn thin comps into a loss.
-export function frontSlabLoss(input: UnderwritingInput, config: MoneyConfig = MONEY_CONFIG): boolean {
-    const { listing, identity, photoCheck, slab, slabPricing } = input;
-    const { price, shipping } = listing;
-    if (input.pricingDeferred || listing.availability !== "ACTIVE" || listing.buyingOption !== "FIXED_PRICE" || listing.bestOffer ||
-        price === null || shipping === null || !Number.isFinite(price) || !Number.isFinite(shipping) || price <= 0 || shipping < 0 ||
-        !identity || !readyForPricing(identity) || identity.notThisCard || unsupportedVariantReason(input) || slab?.status !== "OK" ||
-        !slab.labelText?.trim() || slabPricing?.status !== "PRICED" || slabPricing.printing !== identity.printing) return false;
+function frontLossCost(input: UnderwritingInput, config: MoneyConfig): number {
+    const { listing, identity, photoCheck } = input;
+    const { price } = listing;
+    const shipping = listing.shipping ?? 0;
+    if (input.pricingDeferred || listing.availability !== "ACTIVE" || listing.buyingOption !== "FIXED_PRICE" || typeof listing.bestOffer !== "boolean" ||
+        price === null || !Number.isFinite(price) || !Number.isFinite(shipping) || price <= 0 || shipping < 0 ||
+        !identity || !readyForPricing(identity) || identity.notThisCard || unsupportedVariantReason(input)) return NaN;
 
     const card = photoCheck?.cardIdentity, front = photoCheck?.images[0];
-    if (photoCheck?.cardCount !== "ONE" || photoCheck.holder !== "GRADED_SLAB" || !photoCheck.slab?.present ||
+    if (photoCheck?.cardCount !== "ONE" || photoCheck.cardMatch?.verdict === "MISMATCH" ||
         photoCheck.images.length !== 1 || !front || front.view !== "FRONT" || !front.usable || front.isStockImage || front.obscuresCondition ||
         card?.confidence !== "HIGH" || !card.name || !card.set || !card.evidence.length ||
-        !sameCardNumber(card.cardNumber, identity.cardNumber) || card.finish !== identity.finish || card.finish === "UNKNOWN") return false;
+        !sameCardNumber(card.cardNumber, identity.cardNumber) || card.finish !== identity.finish || card.finish === "UNKNOWN") return NaN;
+    return acquisitionCost(listing.bestOffer ? minimumOfferPrice(price) : price, shipping, config.buying);
+}
 
-    const summary = slabPricing.summary;
-    if (!summary || !matchesSlabSummary(summary, slab) || summary.windowDays !== 90 || !Number.isInteger(summary.count) ||
-        summary.count < 3 || !["MEDIUM", "HIGH"].includes(summary.confidence) || summary.high === null ||
-        !Number.isFinite(summary.high) || summary.high <= 0 || summary.sales.length < 3 || !summary.sales.some(sale => sale.price === summary.high) ||
-        soldMarketPrice(summary) === null ||
-        summary.dropped["price far from the other sales"]) return false;
+// Keep an optimistic price supported by at least two sales and never go below
+// the current market estimate. An isolated high sale cannot set the price alone.
+function supportedSaleHigh(summary: CompSummary | null | undefined): number | null {
+    if (!summary || summary.windowDays !== 90 || !Number.isInteger(summary.count) ||
+        summary.count < 3 || !["MEDIUM", "HIGH"].includes(summary.confidence)) return null;
+    const estimate = soldMarketPrice(summary);
+    const prices = summary.sales.map(sale => sale.price).filter(price => Number.isFinite(price) && price > 0).sort((a, b) => b - a);
+    return estimate !== null && prices.length >= 3 ? Math.max(estimate, prices[1]) : null;
+}
 
-    const net = netFromSale(summary.high, "graded", config.selling);
-    const cost = acquisitionCost(price, shipping, config.buying);
-    return Number.isFinite(net) && Number.isFinite(cost) && net < cost;
+// A first photo can support a rejection only. A purchase needs the ordinary
+// assessment and can never be authorized by this check.
+export function frontSlabLoss(input: UnderwritingInput, config: MoneyConfig = MONEY_CONFIG): boolean {
+    const { identity, photoCheck, slab, slabPricing } = input;
+    if (photoCheck?.holder !== "GRADED_SLAB" || !photoCheck.slab?.present || slab?.status !== "OK" ||
+        !slab.labelText?.trim() || slabPricing?.status !== "PRICED" || slabPricing.printing !== identity?.printing ||
+        !slabPricing.summary || !matchesSlabSummary(slabPricing.summary, slab)) return false;
+    const price = supportedSaleHigh(slabPricing.summary);
+    return price !== null && netFromSale(price, "graded", config.selling) < frontLossCost(input, config);
+}
+
+export function materialFrontWear(condition: UnderwritingInput["condition"]): "DAMAGED" | "HEAVILY_PLAYED" | null {
+    if (!condition || condition.authenticity.concern !== "NONE_SEEN") return null;
+    if (condition.creases === "PRESENT") return "DAMAGED";
+    const surface = condition.surface;
+    if (condition.confidence === undefined || condition.confidence === "LOW" || surface?.visibility !== "CLEAR" || surface.severity !== "SEVERE" ||
+        !surface.observations.length) return null;
+    return condition.rawCondition === "DAMAGED" || condition.rawCondition === "HEAVILY_PLAYED" ? condition.rawCondition : null;
+}
+
+// The comparison grade is deliberately generous for material front wear. Its
+// sale proceeds are tested without subtracting a grading fee. Missing or
+// promising grade evidence keeps the remaining photos eligible.
+export const FRONT_WEAR_GRADE_REFERENCE = 8;
+
+export function frontRawResaleLoss(input: UnderwritingInput, config: MoneyConfig = MONEY_CONFIG): boolean {
+    const { condition, rawPricing, identity, photoCheck } = input;
+    const wear = materialFrontWear(condition);
+    if (!wear || !photoCheck || !["NONE", "SLEEVE", "TOPLOADER"].includes(photoCheck.holder) || input.slab || condition?.gradeRange ||
+        rawPricing?.status !== "PRICED" || rawPricing.conditionEvidence !== "AI_PHOTOS" ||
+        rawPricing.printing !== identity?.printing || rawPricing.finish !== identity?.finish) return false;
+    const exact = rawPricing.prices?.find(entry => entry.condition === wear && isRawSoldPrice(entry));
+    if (!exact?.comps || exact.comps.grader !== "RAW" || exact.comps.grade !== wear) return false;
+    const price = supportedSaleHigh(exact.comps);
+    return price !== null && netFromSale(Math.max(price, exact.price), "raw", config.selling) < frontLossCost(input, config);
+}
+
+export function frontWearGradeLoses(input: UnderwritingInput, grader: Grader, config: MoneyConfig = MONEY_CONFIG): boolean {
+    const reference = input.gradedPricing?.[grader];
+    if (reference?.status !== "PRICED" || reference.printing !== input.identity?.printing ||
+        !reference.variant || reference.variant !== input.rawPricing?.variant) return false;
+    const price = supportedSaleHigh(reference.byGrade?.find(summary =>
+        summary.grader === grader && Number(summary.grade) === FRONT_WEAR_GRADE_REFERENCE));
+    return price !== null && netFromSale(price, "graded", config.selling) < frontLossCost(input, config);
+}
+
+function frontRawLoss(input: UnderwritingInput, config: MoneyConfig): boolean {
+    return frontRawResaleLoss(input, config) && GRADERS.every(grader => frontWearGradeLoses(input, grader, config));
 }
 
 // Path 3: a graded card, resold as is.
@@ -615,15 +663,19 @@ function underwriteBase(input: UnderwritingInput, config: MoneyConfig): Underwri
 
 export function underwrite(input: UnderwritingInput, config: MoneyConfig = MONEY_CONFIG): Underwriting {
     const frontOnlySlab = input.frontPhotoStop === "SLAB_PRICE" && input.listing.availability !== "UNAVAILABLE";
-    if (frontOnlySlab && !frontSlabLoss(input, config)) {
+    const frontOnlyRaw = input.frontPhotoStop === "RAW_PRICE" && input.listing.availability !== "UNAVAILABLE";
+    if (frontOnlySlab && !frontSlabLoss(input, config) || frontOnlyRaw && !frontRawLoss(input, config)) {
         return verdict("CANT_PRICE", ["The front-only price check no longer rules out a deal. Review the remaining photos before buying."]);
     }
     const result = underwriteBase(input, config);
-    if (frontOnlySlab && result.verdict.startsWith("BUY")) {
+    if ((frontOnlySlab || frontOnlyRaw) && result.verdict.startsWith("BUY")) {
         return verdict("CANT_PRICE", ["Review the remaining photos before buying."]);
     }
     if (frontOnlySlab && result.verdict === "PASS" && result.best) {
-        result.reasons.unshift("Even the highest recent matched sale falls below the total purchase cost after fees and shipping.");
+        result.reasons.unshift("Even an upper price supported by recent matched sales falls below the purchase cost after fees and shipping.");
+    }
+    if (frontOnlyRaw && result.verdict === "PASS" && result.best) {
+        result.reasons.unshift("The front shows material wear. Matched raw sales and generous graded comparisons project a loss after fees and shipping.");
     }
     // Keep the observed condition and price scenarios, but an unresolved
     // structural flaw cannot support purchase advice under any local targets.

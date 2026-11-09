@@ -85,7 +85,7 @@ export const assessBoundedListing = (listing: ListingDetails, photos: readonly B
         request.step = "Front photo assessment";
         request.maxOutputTokens = mode === "SLAB_LABEL" ? 1100 : 1400;
         request.prompt += `
-This is the first listing photo only. Check whether it actually shows a usable front. Focus on readable identity, printing, any slab label, and clearly visible material defects or authenticity concerns. Do not assume it is the front or guess what the back looks like. Leave the numeric grade range null. Keep each observation short and specific.`;
+This is the first listing photo only. Check whether it actually shows a usable front. Focus on readable identity, printing, any slab label, and clearly visible material defects or authenticity concerns. A confirmed crease or permanent ink mark supports DAMAGED; extensive visible holo scratching supports HEAVILY_PLAYED when no structural damage is apparent. Cite the location of the wear. Keep readable physical damage separate from glare, a shadow or hidden details. Do not assume it is the front or guess what the back looks like. Leave the numeric grade range null. Keep each observation short and specific.`;
     } else if (stage?.kind === "remainder") {
         request.step = "Remaining listing photos";
         request.prompt += `

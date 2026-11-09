@@ -286,9 +286,10 @@ Read docs/architecture.md for the source map and reading order.
   max-scenario grading tiers, minimum modeled net downside and exact slab grades.
 - Potential-grade filters use the upper bound, explicitly not a likely/certified
   outcome. Existing slabs use their actual label grade.
-- Best Offers are opt-in, conditional and at most **10% below asking**; show the
-  amount. Unaccepted offers are not Deals. No automatic buys, bids, offers or
-  seller messages are authorized.
+- Best Offer search is enabled by default, with an opt-out. Conditional
+  openings are at most **15% below asking**. Show the opening and the buyer’s
+  private limit separately. Unaccepted offers are not Deals. No automatic buys,
+  bids, offers or seller messages are authorized.
 - Show price, costs, profit/loss, ROI and safe limit for the same purchase/winning
   price. Avoid mental subtraction or treating graded resale as a raw-auction
   closing forecast. Missing evidence stays unknown, not a fabricated estimate.

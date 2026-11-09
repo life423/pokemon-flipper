@@ -4,11 +4,12 @@ import type { AiUsageDay } from "../../../shared/ai-usage.ts";
 import type { ResultGroups, View, SortKey, SearchFilters, TypeFilter, KindFilter } from "./results";
 import { ALL, AUTO_OPTIONS, RESULT_OPTIONS } from "./settings";
 import { DEVELOPMENT_SEARCH_LIMIT } from "../../../shared/research-policy.ts";
+import { MAX_OFFER_DISCOUNT_PERCENT } from "../../../shared/money/cents.ts";
 import { describeUsage } from "./presentation";
 import { withViewTransition } from "../motion";
 import { Drawer } from "../components/Drawer";
 import { Dropdown } from "../components/Dropdown";
-import { ClockIcon, CloseIcon, DollarIcon, GridIcon, ReviewIcon, SparkleIcon, TagIcon, TrendIcon } from "../components/Icons";
+import { ClockIcon, CloseIcon, DollarIcon, GridIcon, ReviewIcon, SparkleIcon, TagIcon, TrendDownIcon, TrendIcon } from "../components/Icons";
 import { TargetFields, TargetMenu, type TargetInputProps } from "./TargetFields";
 import styles from "../App.module.css";
 
@@ -52,7 +53,7 @@ const VIEW_ICONS: Record<View, ReactNode> = {
     offers: <DollarIcon />,
     candidates: <ClockIcon />,
     review: <ReviewIcon />,
-    losses: <TrendIcon />,
+    losses: <TrendDownIcon />,
     all: <GridIcon />,
 };
 
@@ -218,7 +219,7 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
                 </div>
 
                 <div className={`${styles.searchPreferences} ${styles.wideOnly}`}>
-                    <label className={styles.offerToggle} title="Include opportunities requiring an unaccepted offer, at most 10% below asking">
+                    <label className={styles.offerToggle} title={`Include opportunities that need seller acceptance, up to ${MAX_OFFER_DISCOUNT_PERCENT}% below asking`}>
                         <span>Include Best Offers</span>
                         <input type="checkbox" role="switch" aria-label="Include Best Offer opportunities" checked={includeOffers} onChange={(event) => changeIncludeOffers(event.target.checked)} />
                     </label>
@@ -316,7 +317,7 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
                 <section className={styles.drawerSection}>
                     <h3>Each search</h3>
                     <label className={styles.offerToggle}>
-                        <span>Include deals requiring a Best Offer<small>Offers at most 10% below asking. Acceptance is unknown.</small></span>
+                        <span>Include deals requiring a Best Offer<small>Up to {MAX_OFFER_DISCOUNT_PERCENT}% below asking. The seller would need to accept.</small></span>
                         <input type="checkbox" role="switch" checked={includeOffers} onChange={(event) => changeIncludeOffers(event.target.checked)} />
                     </label>
                     <label className={styles.field}>

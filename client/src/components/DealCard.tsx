@@ -4,7 +4,7 @@ import { canRetryPricing } from "../../../shared/pricing-retries.ts";
 import type { ListingSummary, Targets } from "../types";
 import { dollars, timeLeft, name } from "../format";
 import { ceilingLabel } from "../../../shared/format.ts";
-import { numbersAtOffer, offerFor, offerWorthMaking } from "../../../shared/money/offer.ts";
+import { numbersAtOffer, offerFor } from "../../../shared/money/offer.ts";
 import { MONEY_CONFIG } from "../../../shared/money/config.ts";
 import { auctionDecision, returnText } from "../../../shared/card-presentation.ts";
 import { yearOf } from "../../../shared/sets.ts";
@@ -20,6 +20,8 @@ import { claimedCondition, CONDITION_NAMES } from "../../../shared/conditions.ts
 import { isResearchDeferred, photoReviewStatus } from "../../../shared/photo-review.ts";
 import { SoldPriceScreening } from "./SoldPriceScreening";
 import { isRawSoldPrice, priceEvidenceGap } from "../../../shared/money/price-evidence.ts";
+import { resultGroup } from "../../../shared/analysis.ts";
+import { SellerOfferDraft } from "./analysis/OfferSection";
 import { soldEstimateBasis } from "./analysis/PricingSections";
 
 interface Props {
@@ -34,6 +36,7 @@ interface Props {
     years: Record<string, number>;
     minGrade?: number;
     targets?: Targets;
+    includeOffers: boolean;
     photoReviewState?: DeeperReviewState;
     saved?: boolean;
     saving?: boolean;
@@ -44,7 +47,7 @@ const LISTED_DATE = new Intl.DateTimeFormat(undefined, { year: "numeric", month:
 const signed = (value: number) => `${value < 0 ? "−" : "+"}${dollars(Math.abs(value))}`;
 const dateOf = (value: string | null | undefined) => typeof value === "string" && Number.isFinite(Date.parse(value)) ? new Date(value) : null;
 
-export function DealCard({ listing, analysis, assessmentNote, selected, now, onOpen, years, index = 0, transitionName, minGrade = 0, targets = MONEY_CONFIG.targets, photoReviewState, saved, saving, onSave }: Props) {
+export function DealCard({ listing, analysis, assessmentNote, selected, now, onOpen, years, index = 0, transitionName, minGrade = 0, targets = MONEY_CONFIG.targets, includeOffers, photoReviewState, saved, saving, onSave }: Props) {
     const evaluation = analysis?.status === "done" ? analysis.evaluation : null;
     const priceGap = priceEvidenceGap(evaluation);
     const deferred = Boolean(priceGap) || isResearchDeferred(evaluation);
@@ -58,8 +61,7 @@ export function DealCard({ listing, analysis, assessmentNote, selected, now, onO
     const decision = auction && evaluation ? auctionDecision(evaluation, targets, now) : null;
     const screen = listing.screen;
     const pricePending = !evaluation && screen?.priceAnomaly && !screen.priceAnomaly.photoChecked;
-    const plan = offerFor(listing, best?.maxBid);
-    const offer = !deferred && verdict === "PASS" && offerWorthMaking(plan) ? plan : null;
+    const offer = includeOffers && resultGroup(listing, evaluation, true) === "offers" ? offerFor(listing, best?.maxBid) : null;
     const offerNumbers = offer && best ? numbersAtOffer(best, offer) : null;
     const evidence = evaluation ? photoEvidence(evaluation, minGrade) : null;
     const mistakes = currentSellerMistakes(listing, evaluation);
@@ -124,7 +126,8 @@ export function DealCard({ listing, analysis, assessmentNote, selected, now, onO
                 : `Shipping not quoted · ${dollars(MONEY_CONFIG.buying.assumedShippingWhenUnknown)} assumed in estimates` : listing.shipping === 0 ? "Free shipping" : `${dollars(listing.shipping)} shipping`}</p>
         </>}
         {pricePending && <p className={styles.notice}>Unusually low price. Awaiting photo verification.</p>}
-        {offer && offerNumbers && <p className={styles.notice}>Offer {dollars(offer.offer)} · est. profit {signed(offerNumbers.profit)} if accepted. Acceptance is unknown.</p>}
+        {offer && offerNumbers && <p className={styles.notice}>Open at {dollars(offer.offer)} · walk away above {dollars(offer.walkAway)} · est. profit {signed(offerNumbers.profit)} if accepted.</p>}
+        {offer && <div className={styles.offerDraft}><SellerOfferDraft key={offer.offer} cardName={card?.name} plan={offer} /></div>}
         {mistakes[0] && <p className={styles.note}>{mistakes[0].detail}</p>}
         {!priceGap && best?.path === "RAW" && <p className={styles.note}>Estimated resale {dollars(best.salePrice)} · {name(best.priceCondition ?? "UNKNOWN")} · {soldEstimateBasis(rawPrice?.comps)}.</p>}
         {best?.path === "GRADED_RESALE" && evaluation?.slabPricing?.activeReference && !evaluation.slabPricing.summary?.count && <p className={styles.note}>Resale target {dollars(best.salePrice)} · below photo-checked Buy It Now competition.</p>}

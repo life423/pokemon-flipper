@@ -63,6 +63,42 @@ test("a completed low-confidence AI review is distinguished from pending and pre
     assert.equal(photoReviewStatus(null, { screen: { evidence: { mainPhoto: "MATCH" } } } as never).title, "AI preliminary photo check only");
 });
 
+test("an inconclusive Base Set printing review distinguishes the recognized card from the unresolved marks", () => {
+    const evaluation = cardEvaluation();
+    const generic = "The photos don't clearly show which printing this is.";
+    const conflict = "The title and item details disagree about the printing.";
+    evaluation.identity!.status = "NEEDS_REVIEW";
+    evaluation.identity!.reasons = [generic, conflict];
+    evaluation.photoCheck!.cardIdentity = { name: "Mewtwo", set: "Base Set", cardNumber: "10/102", language: "English", finish: "HOLO",
+        confidence: "HIGH", evidence: ["The English text and 10/102 are visible."] };
+    evaluation.photoCheck!.printingMarks = { artBoxShadow: "CANT_TELL", firstEditionStamp: "CANT_TELL" };
+    const status = photoReviewStatus(evaluation);
+    assert.equal(status.needsYourReview, true);
+    assert.ok(status.reasons.includes("The photo review identified the card. That review could not confirm the shadow along the artwork border or the First Edition stamp."));
+    assert.ok(status.reasons.includes(conflict));
+    assert.ok(!status.reasons.includes(generic));
+    assert.deepEqual(evaluation.identity!.reasons, [generic, conflict]);
+});
+
+test("a previously skipped photo set can be completed without asking for manual review", () => {
+    const evaluation = cardEvaluation();
+    evaluation.photoCheck!.images = evaluation.photoCheck!.images.slice(0, 1);
+    const reason = "This offer might work at the changed listing terms. The rest of the photos are pending.";
+    evaluation.underwriting = { verdict: "CANT_PRICE", reasons: [reason], best: null, paths: [], assumptions: [] };
+    for (const stop of ["SLAB_PRICE", "RAW_PRICE"] as const) {
+        evaluation.frontPhotoStop = stop;
+        const status = photoReviewStatus(evaluation);
+        assert.equal(status.title, "Front photo checked");
+        assert.equal(status.checked, 1);
+        assert.equal(status.needsYourReview, false);
+        assert.deepEqual(status.reasons, []);
+        assert.ok(status.photoNotes.includes(reason));
+        assert.ok(status.photoNotes.includes("The remaining listing photos have not been checked."));
+    }
+    evaluation.deeperPhotoReview = deep("NEW_CONCERN");
+    assert.equal(photoReviewStatus(evaluation).needsYourReview, true);
+});
+
 test("targeted photo selection includes every usable view while excluding duplicates and stock", () => {
     const e = cardEvaluation(); const check = e.photoCheck!; check.cardCount = "ONE";
     const urls = Array.from({ length: 15 }, (_, i) => `https://i.ebayimg.com/images/g/${i}/s-l225.jpg`);

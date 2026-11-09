@@ -53,10 +53,15 @@ export function photoReviewStatus(evaluation: Evaluation | null, listing?: Listi
     const newConcerns = deeperPhotoConcerns(evaluation);
     const reasons = [...newConcerns];
     const photoNotes = photoIssueNotes(check);
-    if (evaluation.frontPhotoStop && evaluation.underwriting?.verdict === "PASS" && !newConcerns.length) {
-        return { title: "Assessment stopped after the front photo", confidence, checked: check.images.length,
+    const stop = evaluation.frontPhotoStop;
+    const verdict = evaluation.underwriting?.verdict;
+    const stopped = stop && verdict === "PASS";
+    const pending = (stop === "SLAB_PRICE" || stop === "RAW_PRICE") && verdict === "CANT_PRICE";
+    if ((stopped || pending) && !newConcerns.length) {
+        if (pending) photoNotes.push("The remaining listing photos have not been checked.");
+        return { title: stopped ? "Assessment stopped after the front photo" : "Front photo checked", confidence, checked: check.images.length,
             total: evaluation.listing.photosInListing, reviewedAt: evaluation.answeredAt,
-            reasons: [], photoNotes: [...new Set([...evaluation.underwriting.reasons, ...photoNotes])], needsYourReview: false };
+            reasons: [], photoNotes: [...new Set([...(evaluation.underwriting?.reasons ?? []), ...photoNotes])], needsYourReview: false };
     }
     // A readable, accepted label can have informational seller-data notes.
     // The slab validator retains material label/case/authenticity conflicts as
@@ -101,9 +106,17 @@ export function photoReviewStatus(evaluation: Evaluation | null, listing?: Listi
         photoNotes.push(...evaluation.modeReasons.map(reason => `Assessment note: ${reason}`));
     }
     const concerns = reasons.length > 0;
+    const printingMarks = check.printingMarks;
+    const unclearPrintingMarks = evaluation.identity?.status === "NEEDS_REVIEW" && check.cardIdentity?.confidence === "HIGH" &&
+        printingMarks?.artBoxShadow === "CANT_TELL" && printingMarks.firstEditionStamp === "CANT_TELL";
+    // Saved assessments already contain this generic reason. Explain what the
+    // model could read without modifying their accepted photo evidence.
+    const displayReasons = unclearPrintingMarks ? reasons.map(reason => reason === "The photos don't clearly show which printing this is."
+        ? "The photo review identified the card. That review could not confirm the shadow along the artwork border or the First Edition stamp."
+        : reason) : reasons;
     return { title: evaluation.frontPhotoStop ? "Front photo checked" : deferred && !evaluation.condition ? "AI identity check complete" : "AI photo review complete", confidence, checked: check.images.length,
         total: evaluation.listing.photosInListing, reviewedAt: evaluation.answeredAt,
-        reasons: [...new Set(reasons)], photoNotes: [...new Set(photoNotes)], needsYourReview: concerns };
+        reasons: [...new Set(displayReasons)], photoNotes: [...new Set(photoNotes)], needsYourReview: concerns };
 }
 
 export function isResearchDeferred(evaluation: Evaluation | null): boolean {

@@ -19,17 +19,18 @@ import { lookupCards, fetchComps, fetchRawComps } from "../pricing/pkmnprices.ts
 import { gradedPricesFor, compsForGrade } from "../pricing/graded-comps.ts";
 import { rawPricesWithSales, compCondition } from "../pricing/raw-comps.ts";
 import { matchesSoldTarget } from "../pricing/sold-comps.ts";
-import type { Comp } from "../pricing/types.ts";
+import type { Comp, PricedCard } from "../pricing/types.ts";
 import { loadSaved, reusableRecord, photoFingerprint } from "./store.ts";
 import { applyPhotoCheckRules, applyConditionRules, getGradingMode, hasCloseUps } from "./rules.ts";
-import { underwrite, frontSlabLoss, GRADERS, netFromSale, pathNumbers } from "../../shared/money/underwriting.ts";
+import { underwrite, frontRawResaleLoss, frontSlabLoss, frontWearGradeLoses, materialFrontWear, FRONT_WEAR_GRADE_REFERENCE, GRADERS, netFromSale, pathNumbers } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { rateDeal } from "../../shared/money/rating.ts";
 import { cardLanguageStatus, EnglishOnlyError } from "../../shared/card-language.ts";
 import { listingEvidenceKey } from "../../shared/listing-evidence.ts";
 import { currentPriceEvidence, PRICING_VERSION } from "../../shared/pricing-freshness.ts";
 import { unsupportedVariantReason, withoutUnsupportedRawPrices, withoutUnsupportedVariantPrices } from "../../shared/money/price-evidence.ts";
-import { RAW_CONDITIONS } from "../../shared/conditions.ts";
+import { minimumOfferPrice } from "../../shared/money/cents.ts";
+import { isRawCondition, RAW_CONDITIONS } from "../../shared/conditions.ts";
 import { withinAutomaticAuctionWindow } from "../../shared/listing-filters.ts";
 import type { Evaluation, Targets } from "../../shared/types.ts";
 import type { Usage } from "./types.ts";
@@ -42,7 +43,7 @@ import { getAiUsageContext, withAiUsageContext, type AiUsageContext } from "../a
 
 const CACHE_HOURS = 24 * 365 * 10;
 interface SavedBoundedReading extends BoundedReading { version: string; answeredAt: string; usage: Usage }
-export interface BoundedOptions { automatic?: boolean; targets?: Targets; signal?: AbortSignal; current?: import("./types.ts").CurrentState | null }
+export interface BoundedOptions { automatic?: boolean; includeOffers?: boolean; targets?: Targets; signal?: AbortSignal; current?: import("./types.ts").CurrentState | null }
 
 const hasStrings = (value: unknown): value is string[] => Array.isArray(value) && value.length <= 8 && value.every(note => typeof note === "string" && note.length <= 1200);
 function invalidReading(): never { throw new StorageUnavailableError("The bounded photo assessment is incomplete or invalid. Saved evidence was kept; no automatic replacement assessment was authorized."); }
@@ -156,13 +157,14 @@ function combinePhotoReadings(front: BoundedReading, rest: BoundedReading): Boun
         if (firstAlerts.length && authenticity.concern === "NONE_SEEN") authenticity.concern = "POSSIBLE";
     }
     const priorCondition = front.condition;
-    if (priorCondition && check.holder !== "GRADED_SLAB" && (priorCondition.creases === "PRESENT" ||
-        priorCondition.rawCondition === "DAMAGED" && priorCondition.confidence === "HIGH" &&
-        priorCondition.surface.severity === "SEVERE" && priorCondition.surface.observations.length > 0)) {
+    const wear = materialFrontWear(priorCondition);
+    if (priorCondition && wear && !primary.obscuresCondition && check.holder !== "GRADED_SLAB") {
         result.condition ??= structuredClone(priorCondition);
-        if (result.condition.rawCondition !== "DAMAGED") result.condition.gradeRange = null;
+        if (!isRawCondition(result.condition.rawCondition) || RAW_CONDITIONS.indexOf(result.condition.rawCondition) < RAW_CONDITIONS.indexOf(wear)) {
+            result.condition.gradeRange = null;
+            result.condition.rawCondition = wear;
+        }
         if (priorCondition.creases === "PRESENT") result.condition.creases = "PRESENT";
-        result.condition.rawCondition = "DAMAGED";
         if (priorCondition.surface.severity === "SEVERE") result.condition.surface = structuredClone(priorCondition.surface);
     }
     return result;
@@ -196,7 +198,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
     type ReadingConsumer = { needed: () => boolean; context: AiUsageContext };
     const neededReadings = new Map<string, Set<ReadingConsumer>>();
     const privateEvaluations = createPrivateEvaluationStore({ cached: deps.cached, save: deps.save });
-    return (itemId: string, options: BoundedOptions = {}): Promise<Evaluation> => share(JSON.stringify([getAiUsageContext().searchId ?? null, itemId, options.current ?? null, options.automatic ?? false, options.targets ?? null]), signal => withPriceResearchSignal(signal, async () => {
+    return (itemId: string, options: BoundedOptions = {}): Promise<Evaluation> => share(JSON.stringify([getAiUsageContext().searchId ?? null, itemId, options.current ?? null, options.automatic ?? false, options.includeOffers !== false, options.targets ?? null]), signal => withPriceResearchSignal(signal, async () => {
         signal.throwIfAborted();
         const details = await deps.details(itemId, { ...(!options.current ? { maxAgeHours: 0 } : {}), expectedPhotos: options.current?.images, expectedTitle: options.current?.title });
         const listing = options.current ? { ...details, price: options.current.price ?? details.price, shipping: options.current.shipping ?? details.shipping,
@@ -218,9 +220,13 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         // item specifics. Re-run identity with accepted photos when they change.
         const matchesPrintingClaim = (saved: Evaluation) => printingClaimFromAspects(saved.listing.aspects) === printingClaim;
         const money = { ...MONEY_CONFIG, targets: options.targets ?? MONEY_CONFIG.targets };
+        const verifiedFixedPriceTerms = () => details.price === listing.price && details.shipping === listing.shipping &&
+            hasFreshStampTerms({ ...evaluation.listing, shipping: listing.shipping ?? 0 }, deps.now());
+        const verifiedOfferPrice = () => options.includeOffers !== false && listing.bestOffer === true && verifiedFixedPriceTerms() && listing.price !== null
+            ? minimumOfferPrice(listing.price) : null;
         const canReuseRawResearch = (saved: Evaluation) => {
             const deferred = saved.rawPricing?.soldPhotoDeferred;
-            return !deferred || ((listing.price ?? Infinity) >= deferred.price &&
+            return !deferred || ((verifiedOfferPrice() ?? listing.price ?? Infinity) >= deferred.price &&
                 (listing.shipping ?? MONEY_CONFIG.buying.assumedShippingWhenUnknown) >= deferred.shipping &&
                 money.targets.minProfit >= deferred.targets.minProfit && money.targets.minRoi >= deferred.targets.minRoi);
         };
@@ -306,11 +312,109 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         let frontSlabPrices: { key: string; prices: NonNullable<Evaluation["slabPricing"]> } | undefined;
         const slabPriceKey = (identity: NonNullable<Evaluation["identity"]>, slab: NonNullable<Evaluation["slab"]>) =>
             JSON.stringify([identity.name, identity.set, identity.cardNumber, identity.printing, identity.finish, slab.grader, slab.grade]);
+        let hardFailure: Error | null = null;
+        let priceLimits = 0;
+        const deferPrices = () => {
+            evaluation.pricingDeferred ??= { provider: "PKMNPRICES", note: "This search's price-research allowance is exhausted. Accepted photos and completed prices are retained; unfinished resale routes are not priced." };
+        };
+        const guarded = async <T>(work: () => Promise<T>, markDeferred = true): Promise<T> => {
+            signal.throwIfAborted();
+            try { return await withPriceResearchSignal(signal, work); }
+            catch (error) {
+                if (error instanceof PriceResearchBudgetError) {
+                    if (error.reason === "LIMIT") {
+                        if (markDeferred) { priceLimits++; deferPrices(); }
+                    }
+                    else hardFailure = error;
+                } else { const stop = stopFailure(error); if (stop) hardFailure = stop; }
+                throw error;
+            }
+        };
+        // An optional front check can give up without marking later, possibly
+        // cached pricing as deferred. Other provider and storage stops apply.
+        const peek = <T>(work: () => Promise<T>): Promise<T> => guarded(work, false);
+        const unavailable = (error: unknown) => {
+            const stop = stopFailure(error);
+            if (stop) throw stop;
+            if (error instanceof PriceResearchBudgetError && error.reason !== "LIMIT") throw error;
+            return { status: "PRICE_UNAVAILABLE" as const, reason: evaluation.pricingDeferred?.note ?? "Matching market evidence is currently unavailable. Saved photo evidence is retained." };
+        };
+        const rawPriceKey = (identity: NonNullable<Evaluation["identity"]>) =>
+            JSON.stringify([identity.name, identity.set, identity.cardNumber, identity.printing, identity.finish, evaluation.condition?.rawCondition]);
+        let frontRawPrices: { key: string; prices: NonNullable<Evaluation["rawPricing"]> } | undefined;
+        const priceRaw = async (identity: NonNullable<Evaluation["identity"]>, card: PricedCard | null,
+            { allowSoldPhoto, rawOnly = false }: { allowSoldPhoto: boolean; rawOnly?: boolean }) => {
+            const condition = evaluation.condition;
+            const prices: Pick<Evaluation, "rawPricing" | "gradedPricing"> = { rawPricing: null, gradedPricing: null };
+            if (!condition || condition.rawCondition === "UNKNOWN" && !condition.gradeRange) return prices;
+            const inspect = rawOnly ? peek : guarded;
+            if (frontRawPrices?.key === rawPriceKey(identity)) prices.rawPricing = frontRawPrices.prices;
+            else if (condition.rawCondition !== "UNKNOWN") {
+                const sold = deps.soldCondition({ condition: condition.rawCondition, loadDetails: (...args) => inspect(() => deps.details(...args)),
+                    cached: deps.cached, save: deps.save, now: deps.now });
+                const beforeRaw = priceLimits;
+                let soldPhotoDeferred: NonNullable<Evaluation["rawPricing"]>["soldPhotoDeferred"];
+                const raw = await rawPricesWithSales(card, identity, {
+                    fetchRawComps: (...args) => inspect(() => deps.fetchRawComps(...args)), signal, now: deps.now(), requestedCondition: condition.rawCondition,
+                    assessCondition: (sale, target) => inspect(() => sold.read(sale, target, signal)),
+                    conditionStatus: sold.status,
+                    acquireCondition: allowSoldPhoto ? async sales => {
+                        // Resolving another copy's resale price cannot settle
+                        // this copy's suspected structural damage or authenticity.
+                        if (condition.creases === "SUSPECTED" || condition.authenticity.concern !== "NONE_SEEN") return null;
+                        const shipping = listing.shipping ?? MONEY_CONFIG.buying.assumedShippingWhenUnknown;
+                        const pending = sales.filter(sale => sold.status(sale, identity) === "UNREVIEWED" &&
+                            matchesSoldTarget(sale, { name: identity.name!, setName: identity.set, cardNumber: identity.cardNumber }));
+                        const price = verifiedOfferPrice() ?? listing.price;
+                        if (price === null) return null;
+                        const meetsTargets = (sale: Comp) => {
+                            if (!Number.isFinite(sale.price) || sale.price <= 0) return false;
+                            const net = netFromSale(sale.price, "raw", MONEY_CONFIG.selling);
+                            return pathNumbers({ expectedNet: net, fixedCosts: 0, shipping, price }, money).clears;
+                        };
+                        // Seller condition is a research clue, never the accepted
+                        // category. Avoid buying a review of a known different
+                        // category while an economically relevant like-for-like
+                        // comparison is available.
+                        const claimed = pending.filter(sale => compCondition(sale.title) === condition.rawCondition);
+                        const unspecified = pending.filter(sale => compCondition(sale.title) === null);
+                        // Prices gate useful work for a cohort, not which sale
+                        // gets reviewed. A newer losing sale must not be skipped
+                        // in favor of an older sale that supports a purchase.
+                        const candidates = claimed.some(meetsTargets) ? claimed : unspecified.some(meetsTargets) ? unspecified : [];
+                        const sale = candidates.sort((a, b) => Date.parse(b.sold_at) - Date.parse(a.sold_at))[0];
+                        if (!sale) {
+                            if (claimed.length || unspecified.length) soldPhotoDeferred = { price, shipping, targets: money.targets };
+                            return null;
+                        }
+                        const evidence = await guarded(() => sold.acquire(sale, identity, signal));
+                        return evidence ? { sale, evidence } : null;
+                    } : undefined,
+                });
+                evaluation.usage.push(...sold.usage.map(usage => ({ step: "soldConditionAssessment", ...usage })));
+                if (soldPhotoDeferred) {
+                    raw.soldPhotoDeferred = soldPhotoDeferred;
+                    raw.evidenceNote = `${raw.evidenceNote} A new sold-photo check was skipped because none of the remaining relevant sale amounts could meet the profit and return targets at these purchase terms.`;
+                }
+                prices.rawPricing = priceLimits > beforeRaw ? { status: "PRICE_UNAVAILABLE", reason: evaluation.pricingDeferred!.note } : raw;
+            }
+            if (hardFailure) throw hardFailure;
+            if (!rawOnly) {
+                prices.gradedPricing = {};
+                for (const grader of GRADERS) try {
+                    prices.gradedPricing[grader] = await gradedPricesFor(card, identity, condition.gradeRange, { grader, now: deps.now(),
+                        fetchComps: (...args) => guarded(() => deps.fetchComps(...args)), cachedChecks: (...args) => guarded(() => deps.compChecks(...args)) });
+                } catch (error) { prices.gradedPricing[grader] = unavailable(error); }
+            }
+            return prices;
+        };
+
         async function finishAfterFront(): Promise<boolean> {
             const check = evaluation.photoCheck!;
             const [view] = check.images;
             const card = check.cardIdentity;
-            if (check.cardCount !== "ONE" || view.view !== "FRONT" || !view.usable || view.isStockImage || view.obscuresCondition ||
+            if (check.cardCount !== "ONE" || check.cardMatch?.verdict === "MISMATCH" ||
+                view.view !== "FRONT" || !view.usable || view.isStockImage || view.obscuresCondition ||
                 card?.confidence !== "HIGH" || !card.name || !card.set || !card.cardNumber || !card.evidence.length) return false;
             if (cardLanguageStatus("", [card.language]) === "OTHER") throw new EnglishOnlyError();
             if (cardLanguageStatus("", [card.language]) !== "ENGLISH") return false;
@@ -318,26 +422,48 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             const authenticity = evaluation.condition?.authenticity;
             const rawFake = authenticity?.concern === "LIKELY_FAKE" &&
                 new Set(authenticity.observations?.filter(item => item.judgment === "SUSPICIOUS").map(item => item.feature)).size >= 2;
-            const termsAllowLossCheck = () => details.bestOffer === false && details.price === listing.price &&
-                details.shipping === listing.shipping && hasFreshStampTerms(evaluation.listing, deps.now());
+            const termsAllowLossCheck = () => typeof details.bestOffer === "boolean" && verifiedFixedPriceTerms();
             const priceSlab = slab?.status === "OK" && termsAllowLossCheck();
-            if (!rawFake && !priceSlab) return false;
+            const wear = !slab && ["NONE", "SLEEVE", "TOPLOADER"].includes(check.holder) && termsAllowLossCheck()
+                ? materialFrontWear(evaluation.condition) : null;
+            if (!rawFake && !priceSlab && !wear) return false;
             try {
                 signal.throwIfAborted();
-                const identified = await deps.identify(listing, check, { lookupCards: deps.lookup, readTitle: readTitleByRules });
+                const identified = await deps.identify(listing, check, { lookupCards: query => peek(() => deps.lookup(query)), readTitle: readTitleByRules });
                 signal.throwIfAborted();
+                if (hardFailure) throw hardFailure;
                 if (!readyForPricing(identified.identity) || identified.identity.notThisCard) return false;
                 const draft = { ...evaluation, identity: identified.identity, slab };
                 if (priceSlab && slab && !unsupportedVariantReason(draft)) {
                     draft.slabPricing = await compsForGrade(identified.card, identified.identity, { grader: slab.grader!, grade: slab.grade!,
-                        fetchComps: deps.fetchComps, cachedChecks: deps.compChecks, now: deps.now() });
+                        fetchComps: (...args) => peek(() => deps.fetchComps(...args)), cachedChecks: (...args) => peek(() => deps.compChecks(...args)), now: deps.now() });
                     signal.throwIfAborted();
                     frontSlabPrices = { key: slabPriceKey(identified.identity, slab), prices: draft.slabPricing };
                     if (!termsAllowLossCheck() || !frontSlabLoss(draft)) return false;
                     draft.frontPhotoStop = "SLAB_PRICE";
                     draft.pricesCheckedAt = new Date(deps.now()).toISOString();
-                    draft.modeReasons.push("The front label and recent matched sales show a loss at the asking price, even using the highest matched sale.");
+                    draft.modeReasons.push("The front label and recent matched sales show a loss after purchase and resale costs.");
                     draft.gradeStatus = "CERTIFIED_SLAB";
+                } else if (wear && draft.condition && !unsupportedVariantReason(draft)) {
+                    draft.condition = evaluation.condition = { ...draft.condition, rawCondition: wear };
+                    const { rawPricing } = await priceRaw(identified.identity, identified.card, { allowSoldPhoto: false, rawOnly: true });
+                    draft.rawPricing = rawPricing;
+                    if (rawPricing?.prices?.some(entry => entry.condition === evaluation.condition?.rawCondition)) {
+                        frontRawPrices = { key: rawPriceKey(identified.identity), prices: rawPricing };
+                    }
+                    if (!termsAllowLossCheck() || !frontRawResaleLoss(draft)) return false;
+                    const grade = FRONT_WEAR_GRADE_REFERENCE;
+                    draft.gradedPricing = {};
+                    for (const grader of GRADERS) {
+                        signal.throwIfAborted();
+                        draft.gradedPricing[grader] = await gradedPricesFor(identified.card, identified.identity, { low: grade, high: grade, likely: grade },
+                            { grader, now: deps.now(), fetchComps: (...args) => peek(() => deps.fetchComps(...args)),
+                                cachedChecks: (...args) => peek(() => deps.compChecks(...args)) });
+                        if (!termsAllowLossCheck() || !frontWearGradeLoses(draft, grader)) return false;
+                    }
+                    draft.frontPhotoStop = "RAW_PRICE";
+                    draft.pricesCheckedAt = new Date(deps.now()).toISOString();
+                    draft.gradeStatus = "RAW_CONDITION_ONLY";
                 } else if (!slab && rawFake && draft.condition && underwrite(draft).verdict === "PASS") {
                     draft.frontPhotoStop = "AUTHENTICITY";
                     draft.modeReasons.push("The first photo showed multiple specific signs of a counterfeit card.");
@@ -493,22 +619,6 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         const card = check.cardIdentity;
         const aspects = { ...listing.aspects };
         if (card?.confidence === "HIGH") for (const [field, value] of [["Card Name", card.name], ["Set", card.set], ["Card Number", card.cardNumber], ["Language", card.language], ["Finish", card.finish === "UNKNOWN" ? null : card.finish]]) if (value && !aspects[field!]) aspects[field!] = value;
-        let hardFailure: Error | null = null;
-        let priceLimits = 0;
-        const deferPrices = () => {
-            evaluation.pricingDeferred ??= { provider: "PKMNPRICES", note: "This search's price-research allowance is exhausted. Accepted photos and completed prices are retained; unfinished resale routes are not priced." };
-        };
-        const guarded = async <T>(work: () => Promise<T>): Promise<T> => {
-            signal.throwIfAborted();
-            try { return await withPriceResearchSignal(signal, work); }
-            catch (error) {
-                if (error instanceof PriceResearchBudgetError) {
-                    if (error.reason === "LIMIT") { priceLimits++; deferPrices(); }
-                    else hardFailure = error;
-                } else { const stop = stopFailure(error); if (stop) hardFailure = stop; }
-                throw error;
-            }
-        };
         const identify = (reading: typeof check) => deps.identify({ ...listing, aspects }, reading, { lookupCards: query => guarded(() => deps.lookup(query)), readTitle: readTitleByRules,
             ...(legacyResolution?.confirmation ? { photoIdentity: legacyResolution.confirmation } : {}) });
         const identified = await identify(check);
@@ -531,76 +641,6 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             evaluation.identity.status = "NEEDS_REVIEW";
             evaluation.identity.reasons.push("The bounded photos do not establish the exact English card identity. Seller wording alone cannot confirm it.");
         }
-        const unavailable = (error: unknown) => {
-            const stop = stopFailure(error);
-            if (stop) throw stop;
-            if (error instanceof PriceResearchBudgetError && error.reason !== "LIMIT") throw error;
-            return { status: "PRICE_UNAVAILABLE" as const, reason: evaluation.pricingDeferred?.note ?? "Matching market evidence is currently unavailable. Saved photo evidence is retained." };
-        };
-        const priceRaw = async (identity: NonNullable<Evaluation["identity"]>, card: typeof identified.card, allowSoldPhoto: boolean) => {
-            const condition = evaluation.condition;
-            const prices: Pick<Evaluation, "rawPricing" | "gradedPricing"> = { rawPricing: null, gradedPricing: null };
-            if (!condition || condition.rawCondition === "UNKNOWN" && !condition.gradeRange) return prices;
-            if (condition.rawCondition !== "UNKNOWN") {
-                const sold = deps.soldCondition({ condition: condition.rawCondition, loadDetails: (...args) => guarded(() => deps.details(...args)),
-                    cached: deps.cached, save: deps.save, now: deps.now });
-                const beforeRaw = priceLimits;
-                let soldPhotoDeferred: NonNullable<Evaluation["rawPricing"]>["soldPhotoDeferred"];
-                const raw = await rawPricesWithSales(card, identity, {
-                    fetchRawComps: (...args) => guarded(() => deps.fetchRawComps(...args)), signal, now: deps.now(), requestedCondition: condition.rawCondition,
-                    assessCondition: (sale, target) => guarded(() => sold.read(sale, target, signal)),
-                    conditionStatus: sold.status,
-                    acquireCondition: allowSoldPhoto ? async sales => {
-                        // Resolving another copy's resale price cannot settle
-                        // this copy's suspected structural damage or authenticity.
-                        if (condition.creases === "SUSPECTED" || condition.authenticity.concern !== "NONE_SEEN") return null;
-                        const shipping = listing.shipping ?? MONEY_CONFIG.buying.assumedShippingWhenUnknown;
-                        const pending = sales.filter(sale => sold.status(sale, identity) === "UNREVIEWED" &&
-                            matchesSoldTarget(sale, { name: identity.name!, setName: identity.set, cardNumber: identity.cardNumber }));
-                        const price = listing.price;
-                        if (price === null) return null;
-                        const meetsTargets = (sale: Comp) => {
-                            if (!Number.isFinite(sale.price) || sale.price <= 0) return false;
-                            const net = netFromSale(sale.price, "raw", MONEY_CONFIG.selling);
-                            return pathNumbers({ expectedNet: net, fixedCosts: 0, shipping, price }, money).clears;
-                        };
-                        // Seller condition is a research clue, never the accepted
-                        // category. Avoid buying a review of a known different
-                        // category while an economically relevant like-for-like
-                        // comparison is available.
-                        const claimed = pending.filter(sale => compCondition(sale.title) === condition.rawCondition);
-                        const unspecified = pending.filter(sale => compCondition(sale.title) === null);
-                        // Prices gate useful work for a cohort, not which sale
-                        // gets reviewed. A newer losing sale must not be skipped
-                        // in favor of an older sale that supports a purchase.
-                        const candidates = claimed.some(meetsTargets) ? claimed : unspecified.some(meetsTargets) ? unspecified : [];
-                        const sale = candidates.sort((a, b) => Date.parse(b.sold_at) - Date.parse(a.sold_at))[0];
-                        if (!sale) {
-                            if (claimed.length || unspecified.length) soldPhotoDeferred = { price, shipping, targets: money.targets };
-                            return null;
-                        }
-                        const evidence = await guarded(() => sold.acquire(sale, identity, signal));
-                        return evidence ? { sale, evidence } : null;
-                    } : undefined,
-                });
-                evaluation.usage.push(...sold.usage.map(usage => ({ step: "soldConditionAssessment", ...usage })));
-                if (soldPhotoDeferred) {
-                    raw.soldPhotoDeferred = soldPhotoDeferred;
-                    raw.evidenceNote = `${raw.evidenceNote} A new sold-photo check was skipped because none of the remaining relevant sale amounts could meet the profit and return targets at these purchase terms.`;
-                }
-                prices.rawPricing = priceLimits > beforeRaw ? { status: "PRICE_UNAVAILABLE", reason: evaluation.pricingDeferred!.note } : raw;
-            }
-            if (hardFailure) throw hardFailure;
-            if (evaluation.condition) {
-                prices.gradedPricing = {};
-                for (const grader of GRADERS) try {
-                    prices.gradedPricing[grader] = await gradedPricesFor(card, identity, evaluation.condition.gradeRange, { grader, now: deps.now(),
-                        fetchComps: (...args) => guarded(() => deps.fetchComps(...args)), cachedChecks: (...args) => guarded(() => deps.compChecks(...args)) });
-                } catch (error) { prices.gradedPricing[grader] = unavailable(error); }
-            }
-            return prices;
-        };
-
         // The optional crop can settle an unknown stamp only when two exact,
         // independently priced alternatives lead to opposite buying decisions.
         // Do not use unverified browser price/shipping overrides for this gate.
@@ -610,7 +650,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             try {
                 const decision = await findStampDecision(evaluation, {
                     targets: money.targets, now: deps.now(), identify, signal,
-                    price: (identity, card) => priceRaw(identity, card, false),
+                    price: (identity, card) => priceRaw(identity, card, { allowSoldPhoto: false }),
                 });
                 if (hardFailure) throw hardFailure;
                 if (decision && !evaluation.pricingDeferred && hasFreshStampTerms(evaluation.listing, deps.now())) {
@@ -657,7 +697,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             } catch (error) { evaluation.slabPricing = unavailable(error); }
         } else {
             if (!evaluation.condition || evaluation.condition.rawCondition === "UNKNOWN" && !evaluation.condition.gradeRange) return finish();
-            Object.assign(evaluation, await priceRaw(identity, identified.card, true));
+            Object.assign(evaluation, await priceRaw(identity, identified.card, { allowSoldPhoto: true }));
         }
         signal.throwIfAborted();
         evaluation.pricesCheckedAt = new Date(deps.now()).toISOString();

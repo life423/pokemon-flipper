@@ -28,6 +28,19 @@ test("actual targets change the queue priority; profitable below-target raw resa
     assert.ok(compareAnalysisPriority(grade, raw, targets) < 0);
 });
 
+test("a realistic Best Offer ranks ahead of listings that cannot meet the same targets", () => {
+    const listing = candidate("offer", { path: "GRADED_RESALE", price: 100, net: 105, shipping: 5 });
+    listing.bestOffer = true;
+    const offer = { ...listing, screen: { ...listing.screen, requiresOffer: true } };
+    assert.equal(analysisPriority(listing, any).band, 0);
+    assert.equal(analysisPriority(offer, any).band, 1);
+    assert.match(analysisPriority(offer, any).reason, /if the seller accepts/);
+    assert.ok(compareAnalysisPriority(offer, listing, any) < 0);
+    assert.equal(analysisPriority({ ...offer, bestOffer: false }, any).band, 0);
+    assert.equal(analysisPriority({ ...offer, buyingOption: "AUCTION" }, any).band, 0);
+    assert.equal(analysisPriority(offer, { minProfit: 10, minRoi: 0 }).band, 0);
+});
+
 test("unknown purchase shipping uses the normal ranking assumption while quoted zero and source money stay unchanged", () => {
     for (const path of ["RAW", "GRADE", "GRADED_RESALE"]) {
         const quoted = candidate("quoted-zero", { path, price: 120, net: 132.65, fixed: 0, shipping: 0 });

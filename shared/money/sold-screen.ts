@@ -3,7 +3,7 @@ import type { ListingSummary, Screen, ScreeningSoldEvidence, ScreeningSoldRefere
 import { MONEY_CONFIG, type MoneyConfig } from "./config.ts";
 import { offerPlan, offerWorthMaking } from "./offer.ts";
 import { bestPath, gradingTier, netFromSale, pathNumbers } from "./underwriting.ts";
-import { cents } from "./cents.ts";
+import { cents, MAX_OFFER_DISCOUNT_PERCENT } from "./cents.ts";
 import { hasExactSoldScope, soldMarketPrice, usableSoldReference } from "../sold-evidence.ts";
 
 type SoldScreenListing = Pick<ListingSummary, "currentPrice" | "shipping" | "isGraded" | "buyingOption" | "bestOffer" | "screen">;
@@ -174,7 +174,7 @@ export function applySoldPriceScreen<T extends SoldScreenListing>(
         screen.needsAnalysis = undefined;
         screen.reason = "The price is outside the verification buffer based on the upper recent matched sold price after purchase and sale costs.";
     } else screen.reason = screen.requiresOffer
-        ? "Preliminary opportunity only if the seller accepts an offer within 10% of asking; photos and the slab label still need confirmation."
+        ? `Preliminary opportunity if the seller accepts an offer up to ${MAX_OFFER_DISCOUNT_PERCENT}% below asking. The slab label still needs photo confirmation.`
         : upper.clears ? "The upper recent matched sold price leaves possible room; this is preliminary and the slab label still needs confirmation."
         : `The price is within ${VERIFICATION_BUFFER_PERCENT}% above the preliminary limit. It misses your targets at this price and is eligible for slab verification.`;
     return finish();

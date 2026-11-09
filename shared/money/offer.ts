@@ -1,6 +1,7 @@
 import { dollars, percent } from "../format.ts";
 import { pathNumbers } from "./underwriting.ts";
 import { MONEY_CONFIG } from "./config.ts";
+import { MAX_OFFER_DISCOUNT_PERCENT, minimumOfferPrice } from "./cents.ts";
 import type { PricedPath } from "../types.ts";
 
 // What to offer on a Buy It Now that accepts Best Offer. The max price
@@ -9,10 +10,6 @@ import type { PricedPath } from "../types.ts";
 // Opening offer on a listing that's already a deal at its asking price.
 const OPENING_DISCOUNT = 0.1;
 
-// Discovery policy, not a prediction of what a seller will accept.
-// Larger discounts require a price drop before being shown as opportunities.
-const MAX_OFFER_DISCOUNT = 0.1;
-
 export interface OfferPlan {
     // What to offer, rounded to a number that reads as deliberate.
     offer: number;
@@ -20,7 +17,7 @@ export interface OfferPlan {
     walkAway: number;
     // Paying the full asking price would still clear your targets.
     clearsAtAsking: boolean;
-    // More than 10% under asking: outside our offer-discovery cutoff.
+    // The purchase limit falls outside the offer discovery range.
     requiresPriceDrop: boolean;
 }
 
@@ -34,20 +31,19 @@ export function roundOffer(amount: number): number {
 export function offerPlan(asking: number, maxPrice: number): OfferPlan | null {
     if (!Number.isFinite(asking) || !Number.isFinite(maxPrice) || maxPrice <= 0 || asking <= 0) return null;
 
-    const clearsAtAsking = asking <= maxPrice;
-    const minimumOffer = Math.ceil((asking * (1 - MAX_OFFER_DISCOUNT) - 1e-9) * 100) / 100;
-    const rounded = roundOffer(clearsAtAsking ? asking * (1 - OPENING_DISCOUNT) : maxPrice);
-    // Keep rounding from turning a permitted discount into a lowball.
-    const offer = maxPrice >= minimumOffer ? Math.max(minimumOffer, rounded) : rounded;
+    const walkAway = Math.floor((maxPrice + 1e-9) * 100) / 100;
+    const minimumOffer = minimumOfferPrice(asking);
+    if (!Number.isFinite(minimumOffer) || walkAway <= 0) return null;
+    const clearsAtAsking = asking <= walkAway;
+    const requiresPriceDrop = walkAway < minimumOffer;
+    // A whole-dollar opening is easy to submit. Use the cent-level floor
+    // when rounding up would exceed the purchase limit or lose the discount.
+    const roundedOpening = Math.ceil(minimumOffer);
+    const offer = clearsAtAsking ? Math.max(minimumOffer, roundOffer(asking * (1 - OPENING_DISCOUNT)))
+        : requiresPriceDrop ? walkAway
+        : roundedOpening <= walkAway && roundedOpening < asking ? roundedOpening : minimumOffer;
 
-    if (offer <= 0) return null;
-
-    return {
-        offer,
-        walkAway: Math.floor((maxPrice + 1e-9) * 100) / 100,
-        clearsAtAsking,
-        requiresPriceDrop: offer + 1e-9 < asking * (1 - MAX_OFFER_DISCOUNT),
-    };
+    return offer < asking ? { offer, walkAway, clearsAtAsking, requiresPriceDrop } : null;
 }
 
 // One plain sentence for the page.
@@ -61,8 +57,8 @@ export function describeOffer(plan: OfferPlan, asking: number): string {
     const base = `Offer ${dollars(plan.offer)}, ${under} under asking, within your price limit.`;
 
     return plan.requiresPriceDrop
-        ? `Your limit is ${dollars(plan.walkAway)}, ${under} below asking. This is outside the 10% offer-discovery cutoff; wait for a price drop. Seller acceptance is unknown.`
-        : `${base} Seller acceptance is unknown; this is only an opportunity if they agree.`;
+        ? `Your limit is ${dollars(plan.walkAway)}, ${under} below asking. That is outside the ${MAX_OFFER_DISCOUNT_PERCENT}% offer range. Wait for a price drop.`
+        : `${base} The seller would need to accept it.`;
 }
 
 export function numbersAtOffer(path: PricedPath, plan: OfferPlan) {

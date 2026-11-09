@@ -8,6 +8,7 @@ import { PhotoGallery } from "./PhotoGallery";
 import { PhotoReview, type DeeperReviewState } from "./PhotoReview";
 import { SoldPriceScreening } from "./SoldPriceScreening";
 import { AnalysisDetails } from "./analysis/AnalysisDetails";
+import { OfferSection } from "./analysis/OfferSection";
 import { FinancialDecision } from "./analysis/FinancialDecision";
 import styles from "./DetailPanel.module.css";
 
@@ -21,6 +22,7 @@ interface Props {
     onAnalyze: (fresh: boolean) => void;
     minGrade?: number;
     targets?: Targets;
+    includeOffers: boolean;
     photoReviewState?: DeeperReviewState;
     onPhotoReview: () => void;
     onSave?: () => void;
@@ -28,7 +30,7 @@ interface Props {
     saving?: boolean;
 }
 
-export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closing = false, minGrade = 0, targets = MONEY_CONFIG.targets, photoReviewState, onPhotoReview, onSave, saved, saving }: Props) {
+export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closing = false, minGrade = 0, targets = MONEY_CONFIG.targets, includeOffers, photoReviewState, onPhotoReview, onSave, saved, saving }: Props) {
     const unavailable = listing.availability === "UNAVAILABLE" || Boolean(listing.endTime && Date.parse(listing.endTime) <= now);
     // A new listing opens at the top of the panel.
     const panel = useRef<HTMLElement>(null);
@@ -61,6 +63,7 @@ export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closin
                 {analysis?.status !== "done" && <SoldPriceScreening listing={listing} />}
 
                 {analysis?.status === "done" && <FinancialDecision evaluation={analysis.evaluation} targets={targets} now={now} />}
+                {includeOffers && !unavailable && analysis?.status === "done" && <OfferSection listing={listing} evaluation={analysis.evaluation} />}
                 <PhotoReview listing={listing} evaluation={analysis?.status === "done" ? analysis.evaluation : null}
                     phase={analysis?.status === "loading" || analysis?.status === "error" ? analysis.status : undefined}
                     state={photoReviewState} onReview={unavailable ? undefined : onPhotoReview} />

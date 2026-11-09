@@ -93,6 +93,11 @@ Mew ex replay.
   and repeatable scratches. The only positive preliminary comparison assumed
   Near Mint. Update the raw prompt's instructions for the actual frame edges
   and repeatable surface marks. Reuse existing paid photo answers unchanged.
+- [x] Trace the $80 Unlimited Mewtwo with six reviewed photos. The saved
+  assessment recognized the English Base Set holo and marked both printing
+  clues inconclusive. Explain that distinction on saved results. Reserve
+  further artwork-edge review for listings where resolving printing can
+  change the purchase decision.
 - [x] Run the raw `Blastoise Base Set 2/102 Holo` Buy It Now query at Any/Any.
   It resolved the original set, retained 50 from 199 unique summaries and
   completed 35 photo checks. The test runner stopped the queue after 230 seconds
@@ -178,7 +183,7 @@ Mew ex replay.
   labels and other estimates stay out of the raw price. A supported lower
   condition can establish a conservative profitable route.
 - [x] Audited cents-based money calculations, tax-inclusive fee bases, target
-  limits, realistic optional offers within 10% of asking, and price-only versus
+  limits, realistic optional offers within 15% of asking, and price-only versus
   physical-review states. No automatic purchase, bid, offer or seller message.
 - [x] Long-shot code/hidden-find buckets retired; All matching, Sorting and
   honest paused states retained. Prominent eBay action, default-open gallery,

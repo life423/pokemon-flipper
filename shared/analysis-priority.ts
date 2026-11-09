@@ -1,4 +1,5 @@
 import { MONEY_CONFIG } from "./money/config.ts";
+import { offerFor, offerWorthMaking } from "./money/offer.ts";
 import { pathNumbers } from "./money/underwriting.ts";
 import type { ListingSummary, Targets } from "./types.ts";
 import { rawMarketContext, type RawMarketContext } from "./raw-market-context.ts";
@@ -63,6 +64,10 @@ export function analysisPriority(listing: ListingSummary, targets: Targets = MON
     const plausiblePaths = money.paths.filter(path => !path.rawCondition || !seller?.claim || conditionGap(seller.claim, path.rawCondition) >= 0);
     const ranked = plausiblePaths.map((path): AnalysisPriority => {
         const expected = pathNumbers({ expectedNet: path.expectedNet, fixedCosts: path.fixedCosts, shipping, price }, config);
+        const offer = !expected.clears && screen?.requiresOffer ? offerFor(listing, expected.maxBid) : null;
+        const atOffer = offerWorthMaking(offer)
+            ? pathNumbers({ expectedNet: path.expectedNet, fixedCosts: path.fixedCosts, shipping, price: offer.offer }, config)
+            : null;
         const samples = path.compCount ?? 0;
         const compSupport = samples >= 3 && ["HIGH", "MEDIUM", "LOW"].includes(path.compConfidence ?? "")
             ? (path.compConfidence === "HIGH" ? 2 : path.compConfidence === "MEDIUM" ? 1 : 0) + (samples >= 10 ? 2 : 1)
@@ -71,11 +76,12 @@ export function analysisPriority(listing: ListingSummary, targets: Targets = MON
         const floorNet = path.path === "RAW" && !listing.isGraded && money.rawFloorNet !== undefined ? Math.min(money.rawFloorNet, path.expectedNet)
             : path.path === "GRADED_RESALE" && samples >= 3 && ["HIGH", "MEDIUM"].includes(path.compConfidence ?? "") ? path.downsideNet : undefined;
         const conservative = floorNet === undefined ? null : pathNumbers({ expectedNet: floorNet, fixedCosts: path.fixedCosts, shipping, price }, config);
-        const band = conservative?.clears ? 3 : asIs && expected.clears ? 2 : expected.clears ? 1 : 0;
+        const band = conservative?.clears ? 3 : asIs && expected.clears ? 2 : expected.clears || atOffer?.clears ? 1 : 0;
         return { band, evidence: photoSupport + compSupport, rawMarketContext: context, rawResearchCaution, contextPriority: band === 0 && unknown.contextPriority,
-            conservativeProfit: conservative?.profit ?? null, expectedProfit: expected.profit, investment: expected.cost,
+            conservativeProfit: conservative?.profit ?? null, expectedProfit: atOffer?.profit ?? expected.profit, investment: atOffer?.cost ?? expected.cost,
             reason: cautionReason ?? (band === 3 ? "Targets fit a lower resale estimate; full photo verification is still required."
                 : band === 2 ? "As-is resale estimate meets targets; photos must confirm the card and condition."
+                : atOffer?.clears ? "A potential Best Offer could meet targets if the seller accepts."
                 : band === 1 ? "Profit depends on the grading estimate; photo assessment comes next."
                 : unknown.reason) };
     });

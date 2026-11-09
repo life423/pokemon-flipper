@@ -98,22 +98,22 @@ test("unknown purchase shipping cannot cause a false exclusion", () => {
     assert.match(result.assumed!, /shipping is unknown; \$0/);
 });
 
-test("conditional offers are opt-in, limited to ten percent, and never apply to auctions", () => {
+test("conditional offers honor the setting, reach fifteen percent below asking, and never apply to auctions", () => {
     const noFees = { ...config, targets: { minProfit: 0, minRoi: 0 }, selling: { ...config.selling, finalValueRate: 0,
         finalValueRateAboveLimit: 0, perOrderFee: 0, perOrderFeeSmall: 0, shipping: { raw: 0, graded: 0 } } };
     const original = reference();
     const source = evidence([reference({ summary: { ...original.summary, median: 90, low: 80, high: 100 } })]);
-    const terms = listing({ currentPrice: 110, shipping: 0, bestOffer: true });
+    const terms = listing({ currentPrice: 116, shipping: 0, bestOffer: true });
     const optedOut = applySoldPriceScreen(terms, source, { config: noFees }).screen;
-    assert.equal(optedOut.status, "CANDIDATE");
+    assert.equal(optedOut.status, "DROPPED");
     assert.equal(optedOut.requiresOffer, false);
     const offered = applySoldPriceScreen(terms, source, { config: noFees, includeOffers: true }).screen;
     assert.equal(offered.status, "CANDIDATE");
     assert.equal(offered.requiresOffer, true);
-    assert.match(offered.reason!, /only if the seller accepts/);
-    for (const outsideOfferPolicy of [{ ...terms, currentPrice: 112 }, { ...terms, buyingOption: "AUCTION" as const }]) {
+    assert.match(offered.reason!, /if the seller accepts/);
+    for (const outsideOfferPolicy of [{ ...terms, currentPrice: 118 }, { ...terms, buyingOption: "AUCTION" as const }, { ...terms, bestOffer: false }]) {
         const screened = applySoldPriceScreen(outsideOfferPolicy, source, { config: noFees, includeOffers: true }).screen;
-        assert.equal(screened.status, "CANDIDATE");
+        assert.equal(screened.status, "DROPPED");
         assert.equal(screened.requiresOffer, false);
     }
 });

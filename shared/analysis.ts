@@ -66,6 +66,9 @@ export type ResultGroup = "deals" | "offers" | "candidates" | "review";
 
 export function resultGroup(listing: ListingSummary, evaluation: Evaluation | null, includeOffers = false, analysisFailed = false): ResultGroup | null {
     const verdict = evaluation?.underwriting?.verdict;
+    if ((evaluation?.frontPhotoStop === "SLAB_PRICE" || evaluation?.frontPhotoStop === "RAW_PRICE") && verdict === "CANT_PRICE") {
+        return photoReviewStatus(evaluation).needsYourReview ? "review" : "candidates";
+    }
     if (evaluation && evaluation.listing?.availability !== "UNAVAILABLE" && priceEvidenceGap(evaluation)) {
         return photoReviewStatus(evaluation).needsYourReview ? "review" : "candidates";
     }
@@ -95,7 +98,6 @@ export function resultGroup(listing: ListingSummary, evaluation: Evaluation | nu
     }
     if (evaluation?.researchMode === "DEFERRED_LOW_RESALE") return photoReviewStatus(evaluation).needsYourReview ? "review" : null;
     if (verdict?.startsWith("BUY")) return "deals";
-    if (evaluation?.frontPhotoStop === "SLAB_PRICE" && verdict === "CANT_PRICE") return "candidates";
     if (verdict === "NEEDS_REVIEW" || verdict === "CANT_PRICE") return "review";
     if (evaluation && !verdict) return "review";
     // An incomplete check is unresolved, never a priced rejection or a queued analysis.
