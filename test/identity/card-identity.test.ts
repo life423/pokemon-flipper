@@ -483,6 +483,8 @@ test("visible artwork shadow settles ordinary English Base Set Mewtwo with an un
     for (const [title, reprintMark] of [
         [listing.title, photos.printingMarks.reprintMark],
         ["Mewtwo 10/102 HOLO Rare Base Set Unlimited Vintage WoTC Pokémon TCG 1999", "No visible Base Set 2 or Pikachu anniversary mark in supplied front views"],
+        [listing.title, "No Base Set 2 symbol or anniversary/reprint stamp is visibly present in supplied views."],
+        [listing.title, "No Pikachu anniversary stamp or Base Set 2 mark is visible; artwork shadow is visible along the lower/right artwork frame."],
     ]) {
         const result = await identifyCard({ ...listing, title }, { ...photos, printingMarks: { ...photos.printingMarks, reprintMark } },
             { lookupCards: lookup(record) });
@@ -498,6 +500,7 @@ test("visible artwork shadow settles ordinary English Base Set Mewtwo with an un
         ["wrong printing claim", value => { value.listing.title += " 1st Edition"; }],
         ["reprint mark", value => { value.photos.printingMarks.reprintMark = "BASE_SET_2"; }],
         ["ambiguous mark", value => { value.photos.printingMarks.reprintMark = "No visible Base Set 2 symbol; another mark may be present."; }],
+        ["limited reprint area", value => { value.photos.printingMarks.reprintMark = "No Base Set 2 symbol or anniversary/reprint stamp is visibly present in supplied views; lower-right area is cropped."; }],
         ["stock front", value => { value.photos.images[0].isStockImage = true; }],
         ["Machamp", value => {
             value.listing.title = "Machamp 8/102 Base Set Holo";

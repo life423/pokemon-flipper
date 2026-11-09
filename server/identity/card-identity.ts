@@ -554,14 +554,14 @@ export function reprintShown(mark: string | null | undefined, setName: unknown):
 }
 
 const baseSet2Mark = "base set 2 (?:mark|symbol)";
-const anniversaryMark = "(?:pikachu anniversary|anniversary pikachu|anniversary/pikachu reprint) (?:mark|logo|stamp|symbol)";
+const anniversaryMark = "(?:pikachu anniversary|anniversary pikachu|anniversary/pikachu reprint|anniversary/reprint) (?:mark|logo|stamp|symbol)";
 const reprintMarks = [
     `base set 2(?: (?:mark|symbol))? or (?:visible )?${anniversaryMark}`,
     `${anniversaryMark} or (?:visible )?${baseSet2Mark}`,
     "(?:anniversary or other )?reprint (?:mark|logo|stamp|symbol)s?",
 ].join("|");
 const noVisibleReprint = new RegExp(
-    `^(?:no (?:${reprintMarks}) (?:is |are )?(?:visible|seen|present)|no visible (?:${reprintMarks}))` +
+    `^(?:no (?:${reprintMarks}) (?:(?:is |are )?(?:visible|seen|present)|is visibly present)|no visible (?:${reprintMarks}))` +
     "(?: in (?:the )?(?:supplied )?(?:front )?(?:views?|images?|photos?))?$"
 );
 
@@ -573,6 +573,7 @@ export function reprintMarksRuledOut(mark: string | undefined, set: string): boo
     if (!noVisibleReprint.test(observation)) return false;
     if (qualifiers.length === 0) return true;
     return qualifiers.length === 1 && (
+        (set === "base set" && /^artwork shadow is visible along the (?:lower\/right|right|lower) artwork frame$/.test(qualifiers[0]!)) ||
         (set === "neo discovery" && qualifiers[0] === "base set 2 mark not applicable/seen") ||
         (set === "team rocket" && qualifiers[0] === "those marks are not applicable evidence for this team rocket card")
     );

@@ -93,6 +93,21 @@ Mew ex replay.
   and repeatable scratches. The only positive preliminary comparison assumed
   Near Mint. Update the raw prompt's instructions for the actual frame edges
   and repeatable surface marks. Reuse existing paid photo answers unchanged.
+- [x] Run the raw `Blastoise Base Set 2/102 Holo` Buy It Now query at Any/Any.
+  It resolved the original set, retained 50 from 199 unique summaries and
+  completed 35 photo checks. The test runner stopped the queue after 230 seconds
+  with seven waiting and no Deals or automatic report. The settled search cost
+  was $0.0832618 for 24 new photo requests, with 25 Browse and 17 PKMNPrices
+  requests. Inspected all 35 saved outcomes without provider calls. Two listings
+  had a positive shadow reading blocked by the phrasing of the negative reprint
+  observation. Both now resolve to Unlimited from saved evidence, and cases
+  where the reprint area was cropped still require evidence.
+- [ ] Audit the raw Blastoise stops before spending on another full run. Separate
+  genuine printing conflicts from photo errors, preserve explicit anniversary
+  marks even when the model does not mark the entire listing a mismatch, and
+  explain why available raw sales cannot price the assessed condition. Check
+  why a $649.99 asking price reached paid photos while preserving credible
+  raw-to-grade upside and separate printing markets.
 - [ ] Add a replay covering listings excluded before the retained batch, using
   their own decisions and evidence versions instead of inferring why they stopped.
 - [ ] Keep a provider-mocked regression through the search stream and
