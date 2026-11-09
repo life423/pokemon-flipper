@@ -2,7 +2,7 @@
 
 Find eBay Pokémon card listings worth flipping, priced to the exact printing, with a max bid for every one.
 
-Search for a card or inspect a listing link. The app checks identity, price evidence and estimated costs before presenting a purchase limit. New browser profiles start with Any profit and Any ROI. A Deal still requires positive net profit. Current HTTP searches admit up to **50 matching metadata rows**, with a persistent AI cap of up to **$0.25 per search** and **100 Browse-request cap per new search**. Displayed listings and paid assessments have separate limits.
+Search for a card or inspect a listing link. The app checks identity, price evidence and estimated costs before presenting a purchase limit. New browser profiles start with Any profit and Any ROI. A Deal still requires positive net profit. Current HTTP searches admit up to **50 matching metadata rows**, with a **100 Browse-request cap per new search**. The local operator can run AI with or without a dollar ceiling, and the app records spending in both modes.
 
 > **The question it answers:** *At this price, is this card worth buying to resell?*
 
@@ -228,7 +228,7 @@ eBay fees, sales tax, shipping costs, PSA and CGC service levels, and default ta
 
 Completed browser searches automatically save their retained listing decisions
 and, when there are listings to review, request one short text review under a
-separate AI allowance of up to $0.25. Suggestions and their listing references
+separate AI usage account. Suggestions and their listing references
 are saved locally in `data/search-diagnostics/index.json` for Codex to verify
 against the code and cached evidence. The newest 50 searches are kept for up to
 30 days. The review sends only decision codes, counts and anonymous examples.
@@ -277,20 +277,22 @@ Everything is TypeScript. The server runs through [tsx](https://tsx.is), and the
 - Ordinary searches are saved for 10 minutes; newest-inventory searches use a one-minute cache. Listing details are saved for a week and checked against the current title/photo snapshot before reuse. A saved detail response does not prove current availability indefinitely.
 - Repricing a completed analysis, filtering loaded results and sorting make no
   eBay requests. Lower targets can qualify additional automatic analyses within
-  the current AI budget. Widening the minimum Buy It Now price requires an explicit
+  the current search account. Widening the minimum Buy It Now price requires an explicit
   **Rerun search** to include previously excluded listings.
 - Development searches start with one page of up to 200 results, apply free
   exclusions, and retain at most 50 matching metadata rows across both passes.
   Displaying these rows makes no AI or listing-detail calls. Automatic assessment reuses
-  saved evidence and spends only within the separate search budgets; the loaded
-  sample does not establish complete eBay coverage.
+  saved evidence and tracks spending in the search account. The loaded sample
+  covers a subset of eBay inventory.
 - Each Browse request reserves a call at the transport boundary. A ledger shared by local instances of the same eBay account reconciles provider usage without resetting spent calls. Optional lookups preserve the last 10%; no Browse request is sent after exhaustion. Cached evidence remains usable. Provider reset times determine the reset; without a reported reset, accounting conservatively uses a 24-hour window.
 
 eBay raises the limit through its free [Application Growth Check](https://developer.ebay.com/grow/application-growth-check).
 
-**OpenAI.** A persistent guard at the SDK transport boundary enforces a maximum
-of **$0.25 per search** across concurrent stages, retries and process restarts.
-Existing search accounts keep their original limits, spending and reservations.
+**OpenAI.** The local operator can configure a ceiling of up to **$0.25 per
+search** or enable uncapped spending. The transport records generation
+reservations and confirmed costs across concurrent stages, retries and
+restarts in both modes. When a ceiling is restored, existing accounts keep
+their original limits, spending and reservations.
 Paid processing is operator-controlled. Fresh installations, missing or invalid
 controls/ledgers and unsupported model or cache pricing fail closed; starting
 the app does not enable spending or reset a search allowance.
@@ -387,7 +389,7 @@ sync. Back up these files along with the rest of `data/`. For isolated tests,
 [implementation and verification](docs/shortlist-discovery-2026-10-29.md).
 
 **Direct links.** Each deliberate link submission checks current eBay details,
-then reuses those details for bounded analysis under its capped search ID. Matching saved title/photo
+then reuses those details for bounded analysis under its search ID. Matching saved title/photo
 assessments avoid another AI charge. Invalid links and unsupported variations
 make no provider request; obvious non-single-card listings, unavailable listings
 and missing photos stop before analysis. See [supported inputs and live checks](docs/listing-links-2026-10-30.md).
@@ -469,9 +471,9 @@ boundaries and the regressions added for their failure cases:
 | --- | --- |
 | Dispatch and cancellation | Stop/disconnect blocks queued titles, photos, pricing, comparisons and retries; accepted paid answers finish saving. |
 | Reuse and concurrency | Same evidence shares work; canceled/restarted consumers wait for saved results; successful and unresolved answers do not expire into automatic repurchases. |
-| Candidate selection | Source/known filters precede paid work; auctions use a fixed search-start 12-hour window and expire before later stages. The historical batch restriction has since been replaced by the current 50-row metadata admission and budget-bounded automatic queue. |
+| Candidate selection | Source/known filters precede paid work; auctions use a fixed search-start 12-hour window and expire before later stages. The historical batch restriction has since been replaced by the current 50-row metadata admission and eligibility-based automatic queue. |
 | Evidence and messages | Exact identity/finish gates reject unusable comparisons; numbered close-up notes cannot masquerade as listing-wide missing coverage; deliberate deferrals do not create false deals or routine review tasks. |
-| Cost and quota | Persistent, cross-process reservations enforce the per-search AI ceiling; unknown costs and missing/corrupt accounting block dispatch; Browse has a separate 100-request ceiling for new searches and account-wide daily protection. |
+| Cost and quota | Persistent, cross-process reservations track AI spending and enforce any configured ceiling; unknown costs and missing/corrupt accounting block dispatch; Browse has a separate 100-request ceiling for new searches and account-wide daily protection. |
 | Lifecycle and outcomes | Changed filters stop old-scope work; target/price changes recheck hypothetical upside; manual upgrades reuse photo work; Sorting and Deals reflect actual assessment state. |
 | Attribution and isolation | Search UUIDs, task/model/tier, usage/cache writes and request hashes are logged without prompts or credentials; tests use temporary data and explicit offline transport mocks. |
 

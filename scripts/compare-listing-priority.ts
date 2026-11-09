@@ -74,7 +74,9 @@ export async function compareListingPriority(args = process.argv.slice(2)) {
         if (live) await assertSqlStorageReady();
         report.budgetBefore = await aiSpending.summary(searchId);
         if (report.budgetBefore.attempts < 1) throw new Error("The original paid search account must already exist; no replacement allowance is authorized.");
-        if (live && report.budgetBefore.capUsd > recordedAiCap) throw new Error("The current cap exceeds the original report allowance.");
+        if (live && (report.budgetBefore.capUsd === null || report.budgetBefore.capUsd > recordedAiCap)) {
+            throw new Error("Live comparison requires an active cap within the original report allowance.");
+        }
         // Stop cancels dispatch through the transport wrapper above. Keep this
         // consumer attached so an accepted answer finishes saving before SQL
         // closes, exactly as in the saved-photo comparison diagnostic.

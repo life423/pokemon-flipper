@@ -54,7 +54,7 @@ flowchart TD
    eBay Browse. After sold research, automatic photo searches can make one
    bounded text call for tied Buy It Now candidates. Explicit seller disclosures
    can move a row later within that tie without changing its eligibility or price.
-   Both text calls share the search's $0.25 AI ceiling with photos. The retired broad-discovery and automatic pricing-recovery
+   Both text calls and photo checks use the same search accounting. The retired broad-discovery and automatic pricing-recovery
    branches are no longer alternative search paths.
 3. Exact slab grader, grade, printing and finish scopes stay separate. Medians
    rank candidates; one or more matched sales within 90 days in one
@@ -77,9 +77,9 @@ flowchart TD
    Missing/deferred evidence stays in Sorting without an automatic paid
    request, except the existing focused-review exception for a raw First Edition
    Base Set lead priced at $10 or less. The browser considers eligible loaded
-   rows with two assessments in flight, reuses saved evidence first and shares
-   the persistent AI cap of up to $0.25 per search. Fifty metadata rows do not imply fifty paid
-   assessments. All nested Browse work shares the separate 100-request ceiling for new searches
+   rows with two assessments in flight and reuses saved evidence first. The
+   local operator can run with or without a dollar ceiling. Every request is
+   recorded against its search account. All nested Browse work shares the separate 100-request ceiling for new searches
    per search and account-wide daily quota protection.
 5. A direct listing link resolves only that listing. Shortlist load/save uses
    stored snapshots; selected refresh checks current eBay terms without starting
@@ -279,8 +279,8 @@ normal searches now offer working retries or automatic price recovery.
   credits come from provider response headers, independently of request counts.
   Cached response reads consume neither. The ledger is local to the configured
   key and does not establish provider-wide accounting across key rotation or
-  independent replicas. It does not replace the persistent per-search AI
-  cap or the 100 actual Browse requests per new search. `server/ebay/api.ts` reserves
+  independent replicas. AI accounting and the 100 actual Browse requests per
+  new search are tracked separately. `server/ebay/api.ts` reserves
   Browse calls through `usage.ts` and `daily-budget.ts`; optional work preserves
   the daily reserve. Cached reads do not consume Browse calls. Cancellation
   blocks later dispatch while accepted responses finish saving for reuse.

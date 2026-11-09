@@ -110,7 +110,7 @@ export async function compareSavedModels(args = process.argv.slice(2)) {
     const acceptedBefore = new Map<string, string>();
     const acceptedPresence = new Map<string, boolean>();
     const searchIds = [...new Set(manifest.cases.map(item => item.originalSearchId))];
-    const snapshot = async () => Object.fromEntries(await Promise.all(searchIds.map(async id => [id, await aiSpending.summary(id)])));
+    const snapshot = async () => Object.fromEntries(await Promise.all(searchIds.map(async id => [id, await aiSpending.summary(id)] as const)));
     async function checkpoint() {
         report.transport = observer.snapshot();
         await fs.writeFile(path.join(directory, "report.json"), JSON.stringify(report, null, 2) + "\n");
@@ -188,6 +188,9 @@ export async function compareSavedModels(args = process.argv.slice(2)) {
         if (live && storageBackend() !== "azure-sql") throw new Error("Live comparisons require Azure SQL dispatch claims; file storage is not supported.");
         if (live) await assertSqlStorageReady();
         const budgets = await snapshot(); report.budgetsBefore = budgets;
+        if (live && Object.values(budgets).some(budget => budget.capUsd === null)) {
+            throw new Error("Live comparisons require capped original search accounts.");
+        }
         const histories = new Map<string, Record<string, unknown>[]>(), historyChecks: Record<string, unknown>[] = [];
         for (const item of manifest.cases) {
             if (budgets[item.originalSearchId].attempts < 1) throw new Error("The original paid search account is missing; a comparison cannot create a replacement allowance.");

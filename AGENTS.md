@@ -30,8 +30,8 @@ When improving search, read the latest completed automatic review in
 the review as a proposal, verify its cited listing IDs against saved evidence
 and code, and replay the relevant decisions before changing provider policy.
 The user wants this work to proceed without routine input. The app runs one
-short text review per completed search with retained listings, with a separate
-AI allowance of up to $0.25. Keep reports and listing evidence out of commits.
+short text review per completed search with retained listings and tracks its
+AI usage separately. Keep reports and listing evidence out of commits.
 
 Prioritize raw resale, existing slab resale and raw-to-grade equally. Fresh
 underpriced Buy It Now listings and supported auction snipe limits are key.
@@ -133,7 +133,7 @@ Read docs/architecture.md for the source map and reading order.
   stop there. A clearly corroborated counterfeit or foreign front can also
   stop. Raw wear or missing back detail alone cannot establish a financial
   rejection. Otherwise send only the remaining selected views, together with
-  the first observations. Both stages share the existing search cap and cache
+  the first observations. Both stages share search accounting and cache
   independently. Complete older readings remain reusable.
 - Raw assessment covers at most six selected photos. Compact slab-label
   assessment covers the first two unique photos and null condition.
@@ -167,14 +167,13 @@ Read docs/architecture.md for the source map and reading order.
 
 ## Spending, storage and reuse
 
-- Preserve the persistent **$0.25 OpenAI generation ceiling per search ID**.
-  Automatic/explicit follow-ups and nested stages share the ID and guard.
-  Exact final-input preflight, maximum input/output reservation and unknown-charge
-  holds are required. Invalid state/config fails closed. Cache hits do not reset
-  the allowance; brainstorming is not authorization to raise it.
-- The user explicitly raised the cap for new search accounts to $0.25 on
-  November 9. Preserve the limits, charges and holds of existing accounts.
-  Prefer saved/local interpretation. A bounded text request may remove
+- The user authorized uncapped OpenAI spending for this installation on
+  November 9. Automatic searches work through all eligible assessments.
+  Track spend, attempts and unresolved charges by search ID across nested
+  stages. Preserve exact input preflight, cancellation, output bounds and
+  saved evidence. Fresh installations start paused. If a cap is restored,
+  existing accounts retain their recorded ceilings, spending and holds.
+- Prefer saved/local interpretation. A bounded text request may remove
   remaining conversational phrasing while preserving literal criteria. After
   sold screening, one bounded text request can reorder tied Buy It Now photo
   candidates when automatic photos are on. Neither request changes pricing

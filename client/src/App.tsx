@@ -897,7 +897,7 @@ export function App() {
             <p>
                 {counts.candidates} listings are eligible for AI analysis; {counts.mismatched} set aside as other cards, sets, languages or search criteria.
             </p>
-            <p>Development searches show up to {DEVELOPMENT_SEARCH_LIMIT} matching listings. Automatic photo work uses the remaining AI budget; saved assessments and prices are reused.</p>
+            <p>Development searches show up to {DEVELOPMENT_SEARCH_LIMIT} matching listings. Automatic photo checks reuse saved assessments and prices.</p>
         </>
     );
 
@@ -1159,7 +1159,7 @@ export function App() {
                         ))}
 
                     {view === "all" && visible.length > 0 && <p className={styles.discoveryNote}>
-                        {visible.length} matching {visible.length === 1 ? "listing" : "listings"} in the loaded results, including passes and unfinished assessments. Known wrong cards and junk are excluded. {filtered.filter((listing) => evaluationOf(analyses[listing.id])?.photoCheck).length} AI photo reviews complete; other cards remain preliminary. Each development scan admits at most {DEVELOPMENT_SEARCH_LIMIT} matching listings; the number fully assessed depends on saved evidence and the AI budget for this search.
+                        {visible.length} matching {visible.length === 1 ? "listing" : "listings"} in the loaded results, including passes and unfinished assessments. Known wrong cards and junk are excluded. {filtered.filter((listing) => evaluationOf(analyses[listing.id])?.photoCheck).length} AI photo reviews complete. Other cards remain preliminary. Each development scan admits at most {DEVELOPMENT_SEARCH_LIMIT} matching listings.
                     </p>}
                     {view === "losses" && visible.length > 0 && <p className={styles.discoveryNote}>
                         Completed assessments with an estimated net loss at the asking price or current bid.

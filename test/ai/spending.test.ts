@@ -65,6 +65,32 @@ test("raising the cap to twenty-five cents preserves existing search limits and 
     assert.equal(budget.committedUsd, 0.241);
 });
 
+test("uncapped searches keep recording charges beyond the former ceiling and can be capped again", async () => {
+    const { directory, guard, context } = await fixture(0.10);
+    const request = { ...body, model: "gpt-5.6-terra", max_output_tokens: 5000 };
+    await guard.reserve(request, context);
+    await assert.rejects(guard.reserve(request, context), denied("AI_BUDGET"));
+    await guard.configure({ paused: false, perSearchCapUsd: null });
+
+    const restarted = createAiSpendingGuard({ directory, preflight: proof });
+    const fresh = { searchId: randomUUID() };
+    for (let i = 0; i < 5; i++) {
+        await restarted.reserve(request, context);
+        await restarted.reserve(request, fresh);
+    }
+    const budget = await restarted.summary(context.searchId);
+    assert.equal(budget.capUsd, null);
+    assert.equal(budget.remainingUsd, null);
+    assert.equal(budget.heldUsd, 0.3615);
+    assert.equal((await restarted.summary(fresh.searchId)).heldUsd, 0.30125);
+
+    await guard.configure({ paused: false, perSearchCapUsd: 0.25 });
+    assert.equal((await restarted.summary(context.searchId)).capUsd, 0.10);
+    assert.equal((await restarted.summary(fresh.searchId)).capUsd, 0.25);
+    await assert.rejects(restarted.reserve(request, context), denied("AI_BUDGET"));
+    await assert.rejects(restarted.reserve(request, fresh), denied("AI_BUDGET"));
+});
+
 test("unknown billing retains its hold; complete known usage reconciles once without losing restart safety", async () => {
     const { directory, guard, context } = await fixture(0.0002);
     const reservation = await guard.reserve(body, context);

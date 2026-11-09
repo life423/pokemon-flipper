@@ -67,7 +67,7 @@ Mew ex replay.
   Of 50 retained rows, 31 lacked usable sold evidence and 19 were assessed.
 - [x] Save the completed search's retained listing decisions, funnel totals,
   provider usage and original search ID. Run one automatic text review with
-  its own allowance of up to $0.25 and save numbered listing references for
+  separate usage accounting and save numbered listing references for
   Codex. Keep up to 50 recent scans for 30 days.
 - [x] Use the automatic review on a live Crown Zenith Gallery PSA 9 search.
   Of 151 screened, 103 were excluded on price and 48 remained. The 19 priced
@@ -160,9 +160,10 @@ Mew ex replay.
 - [x] Shared Azure SQL Basic provider/assessment caches; persistent per-search
   OpenAI and provider request accounting; exact input/output reservations;
   cancellation and accepted-response saving.
-- [x] $0.25 generation cap for new search accounts, 100 actual eBay Browse
-  requests per new search, 128 uncached screening/256 all-stage PKMN requests.
-  Existing ledgers retain their limits and spent/unknown counts. PKMN's 20,000
+- [x] Local AI spending runs uncapped with usage recorded. The queue checks all
+  eligible listings in automatic mode. Maintain 100 actual eBay Browse requests
+  per new search and 128 uncached screening/256 all-stage PKMN requests.
+  Provider ledgers retain their limits and spent/unknown counts. PKMN's 20,000
   daily credits and eBay's daily quota are separate from AI dollars. Daily
   depletion warnings exist. Fresh installs still require operator setup.
 - [x] Up to 200 source summaries per discovery pass and 50 retained matching

@@ -155,7 +155,7 @@ export function createAiSpendingGuard({ directory = DATA_DIR, preflight }: Optio
         // or recreate a missing ledger. Production is initialized paused.
         async configure(update: { paused: boolean; perSearchCapUsd: number | null; pauseReason?: string }) {
             return locked(async () => {
-                if (!update.paused || update.perSearchCapUsd !== null) capInNanoUsd(update.perSearchCapUsd);
+                if (update.perSearchCapUsd !== null) capInNanoUsd(update.perSearchCapUsd);
                 const old = await control();
                 const stored = old?.ledgerId ? await ledger(old) : await readJson(ledgerFile);
                 const book: Ledger = stored ? validateLedger(stored, stored.id) : { version: 1, id: randomUUID(), searches: {} };
@@ -174,24 +174,28 @@ export function createAiSpendingGuard({ directory = DATA_DIR, preflight }: Optio
             }
             const validateRequest = (settings: Control, book: Ledger) => {
                 if (settings.paused) throw new AiSpendingError("AI_PAUSED", settings.pauseReason ?? "Paid AI is paused locally. Saved results remain available.");
-                const cap = capInNanoUsd(settings.perSearchCapUsd);
-                if (!context.searchId || !UUID.test(context.searchId)) return fail("Paid AI needs a valid search ID so every request is charged to a capped search.");
-                const account = book.searches[context.searchId] ?? { capNanoUsd: cap, heldNanoUsd: 0, attempts: [] };
-                account.capNanoUsd = Math.min(account.capNanoUsd, cap);
+                const cap = settings.perSearchCapUsd === null ? null : capInNanoUsd(settings.perSearchCapUsd);
+                if (!context.searchId || !UUID.test(context.searchId)) return fail("Paid AI needs a valid search ID so every request is recorded against its search.");
+                // Keep the original ceiling so restoring a cap never resets prior spend.
+                const account = book.searches[context.searchId] ?? {
+                    capNanoUsd: cap ?? capInNanoUsd(AI_SEARCH_HARD_CAP_USD), heldNanoUsd: 0, attempts: [],
+                };
+                if (cap !== null) account.capNanoUsd = Math.min(account.capNanoUsd, cap);
+                const remaining = cap === null ? Infinity : account.capNanoUsd - account.heldNanoUsd;
                 const rates = typeof body?.model === "string" && Object.hasOwn(RATES, body.model) ? RATES[body.model] : null;
                 if (!rates || body.service_tier !== "default") return fail("Paid AI is blocked because the requested model or service tier has no verified spending bound.");
                 if (!verifiedCacheOptions(body)) return fail("Paid AI requires verified 30-minute cache options with no legacy retention or policy overrides.");
                 if (body.tools?.length || body.previous_response_id || body.conversation || body.stream || body.background) return fail("Paid AI cannot bound tool, conversation or streaming charges for this request.");
                 if (!count(body.max_output_tokens) || body.max_output_tokens === 0) return fail("Paid AI needs a bounded maximum output before dispatch.");
                 const minimum = body.max_output_tokens * rates.output;
-                if (!count(minimum) || minimum > account.capNanoUsd - account.heldNanoUsd) return fail("This request's maximum output alone exceeds the search's remaining AI budget. No paid request was sent.");
+                if (!count(minimum) || minimum > remaining) return fail("This request's maximum output alone exceeds the search's remaining AI budget. No paid request was sent.");
                 const immutableInput = typeof body.input === "string" || Array.isArray(body.input) && body.input.every((item: any) =>
                     item && (!item.type || item.type === "message") && Object.keys(item).every(key => ["type", "role", "content"].includes(key)) &&
                     (typeof item.content === "string" || Array.isArray(item.content) && item.content.every((part: any) =>
                         part?.type === "input_text" && typeof part.text === "string" && Object.keys(part).every(key => ["type", "text"].includes(key)) ||
                         part?.type === "input_image" && typeof part.image_url === "string" && part.image_url.startsWith("data:image/") && Object.keys(part).every(key => ["type", "image_url", "detail"].includes(key)))));
                 if (!immutableInput) return fail("Paid AI cannot prove an input bound for mutable image URLs or unsupported input items. Exact immutable-input preflight is required.");
-                return { account, rates, minimum };
+                return { account, rates, minimum, remaining };
             };
             // Validate cheap rejection rules before counting. The remote count
             // never holds the local spending lock; independent searches continue.
@@ -209,16 +213,17 @@ export function createAiSpendingGuard({ directory = DATA_DIR, preflight }: Optio
                 if (settings.ledgerId !== initial.ledgerId || aiInputHash(body) !== inputHash) return fail("The AI request or spending ledger changed during input counting.");
                 const book = await ledger(settings);
                 // Re-read all concurrent reservations, lower caps and pauses.
-                const { account, rates, minimum } = validateRequest(settings, book);
+                const { account, rates, minimum, remaining } = validateRequest(settings, book);
                 const amount = proof.inputTokens * Math.max(rates.input, rates.write) + minimum;
-                if (!count(amount) || amount > account.capNanoUsd - account.heldNanoUsd) return fail("This request would exceed the search's remaining AI budget. No paid request was sent.");
+                if (!count(account.heldNanoUsd + amount)) return fail("Paid AI cannot record the cost of this request. No paid request was sent.");
+                if (amount > remaining) return fail("This request would exceed the search's remaining AI budget. No paid request was sent.");
                 const attempt: Attempt = { id: randomUUID(), inputHash, model: body.model, createdAt: new Date().toISOString(),
                     maxInputTokens: proof.inputTokens, maxOutputTokens: body.max_output_tokens, reservedNanoUsd: amount, heldNanoUsd: amount, state: "RESERVED" };
                 account.heldNanoUsd += amount; account.attempts.push(attempt); book.searches[context.searchId!] = account;
                 await durableJson(ledgerFile, book);
                 const latest = await control();
                 if (!latest || latest.paused) throw new AiSpendingError("AI_PAUSED", "Paid AI was paused before dispatch. The conservative reservation was retained.");
-                if (capInNanoUsd(latest.perSearchCapUsd) < account.heldNanoUsd) return fail("The search cap was lowered before dispatch. Its conservative reservation was retained.");
+                if (latest.perSearchCapUsd !== null && capInNanoUsd(latest.perSearchCapUsd) < account.heldNanoUsd) return fail("The search cap was lowered before dispatch. Its conservative reservation was retained.");
                 signal?.throwIfAborted();
                 return { ledgerId: book.id, searchId: context.searchId!, attemptId: attempt.id };
             });

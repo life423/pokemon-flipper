@@ -18,8 +18,9 @@ const dollars = (value: unknown) => typeof value === "number" && Number.isFinite
 export function summarizeSearchDiagnostic(report: unknown, searchId: string, supplemental: unknown = []) {
     const source = record(report), search = record(source.search), usage = record(source.usage);
     const budget = record(usage.budget), cap = dollars(budget.capUsd);
+    const validCap = budget.capUsd === null || cap !== null && cap > 0 && cap <= AI_SEARCH_HARD_CAP_USD;
     if (!SEARCH_ID.test(searchId) || source.searchId !== searchId || budget.searchId !== searchId ||
-        cap === null || cap <= 0 || cap > AI_SEARCH_HARD_CAP_USD || !Array.isArray(source.rows) || !Array.isArray(source.deals) ||
+        !validCap || !Array.isArray(source.rows) || !Array.isArray(source.deals) ||
         !source.assessments || typeof source.assessments !== "object" || Array.isArray(source.assessments)) {
         throw new Error("Provide a saved search diagnostic with its matching original search UUID and recorded AI cap.");
     }
@@ -80,7 +81,8 @@ export async function reviewSearchDiagnostic(args = process.argv.slice(2)) {
     try {
         if (storageBackend() !== "azure-sql") throw new Error("Live diagnostic reviews require the app's shared SQL dispatch protection.");
         const budgetBefore = await aiSpending.summary(searchId);
-        if (budgetBefore.attempts < 1 || budgetBefore.capUsd === null || budgetBefore.capUsd > evidence.providerUsage.originalSearchAiCapUsd) {
+        const originalCap = evidence.providerUsage.originalSearchAiCapUsd;
+        if (budgetBefore.attempts < 1 || originalCap === null || budgetBefore.capUsd === null || budgetBefore.capUsd > originalCap) {
             throw new Error("Live review requires an existing paid search account within the original recorded allowance.");
         }
         const reviewed = await runSearchDiagnosticReview({ searchId, budgetSearchId: searchId, evidence });
