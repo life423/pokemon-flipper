@@ -64,6 +64,8 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
     const step = STEP_OF[phase];
     const aiState = phase === "stopped" ? "stopped" : phase === "error" ? "idle" : phase === "paused" || ai.paused ? "paused" : ai.analyzing > 0 ? "working" : "idle";
     const completed = Math.max(0, ai.done - ai.failed);
+    const loaded = `${checked.toLocaleString()} ${checked === 1 ? "listing" : "listings"} loaded`;
+    const assessed = `${completed.toLocaleString()} ${completed === 1 ? "assessment" : "assessments"} completed`;
     const aiStatus = aiState === "stopped" ? "AI analysis stopped"
         : aiState === "paused" ? "AI analysis paused"
         : aiState === "working" ? `AI assessing ${ai.analyzing.toLocaleString()} ${ai.analyzing === 1 ? "card" : "cards"}`
@@ -101,7 +103,7 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
         phase === "error"
             ? (error ?? "Something went wrong.")
             : phase === "done"
-              ? `${checked.toLocaleString()} listing and photo checks for \u201c${query}\u201d`
+              ? `${loaded} · ${assessed} for “${query}”`
               : phase === "stopped"
                 ? `Stopped after ${checked.toLocaleString()} of ${(total ?? checked).toLocaleString()} checks. Results so far stay below.`
                 : phase === "paused" ? `New checks are stopped for “${query}”. Results checked so far stay below.`
@@ -115,7 +117,7 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
             : phase === "finding"
               ? "Finding listings..."
             : phase === "done"
-              ? `${checked.toLocaleString()} checks completed`
+              ? loaded
               : `${checked.toLocaleString()} of ${(total ?? 0).toLocaleString()} checks completed`;
 
     // What's happening right now, in a few words.
@@ -140,7 +142,7 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
             ? (error ?? "Search failed")
             : [
                   phase === "done" ? "" : percentText,
-                  phase === "done" ? `${checked.toLocaleString()} checks` : `${checked.toLocaleString()}/${(total ?? 0).toLocaleString()} checked`,
+                  phase === "done" ? `${loaded} · ${assessed}` : `${checked.toLocaleString()}/${(total ?? 0).toLocaleString()} checked`,
                   `${stats.deals} ${stats.deals === 1 ? "deal" : "deals"} found`,
               ]
                   .filter(Boolean)

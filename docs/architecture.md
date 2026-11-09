@@ -10,9 +10,10 @@ small compatibility readers preserve already-paid evidence.
 
 ```mermaid
 flowchart TD
-    S[Search or Find new listings] --> F[One eBay page, deduplicate and apply local filters]
+    S[Search or Find new listings] --> Q0[Local query parsing with optional text assistance]
+    Q0 --> F[One eBay page, deduplicate and apply local filters]
     F --> P0[Bounded PKMNPrices sold research, cache first]
-    P0 --> G[Rank preliminary rows and gate automatic assessment]
+    P0 --> G[Rank candidates with optional listing text tie-break]
     L[Direct eBay link] --> R[Resolve one listing]
     Q[Shortlist] --> K[Load saved snapshot or refresh selected IDs]
     G --> A[Client queues eligible photo analysis within budget]
@@ -27,7 +28,9 @@ flowchart TD
 ```
 
 1. Normal HTTP search and **Find new listings** use the bounded path in
-   `find-deals.ts`: one page of up to 200 eBay results, local/cached metadata
+   `find-deals.ts`. Query parsing uses saved and local rules first. A short
+   text request can clean up phrasing the rules leave behind while preserving
+   explicit card criteria. The scan uses one page of up to 200 eBay results, local/cached metadata
    exclusions and at most 50 retained matching rows. Confident preliminary
    price exclusions free slots for later summaries from that same 200-summary
    window. Refill batches share one screening session and its allowance; they
@@ -46,7 +49,10 @@ flowchart TD
    answers retain their five-minute TTL and do not resurrect older positives.
    SQL/file response caches and shared
    catalog/market work avoid repeated requests. This stage calls neither AI nor
-   eBay Browse. The retired broad-discovery and automatic pricing-recovery
+   eBay Browse. After sold research, automatic photo searches can make one
+   bounded text call for tied Buy It Now candidates. Explicit seller disclosures
+   can move a row later within that tie without changing its eligibility or price.
+   Both text calls share the search's $0.10 AI ceiling with photos. The retired broad-discovery and automatic pricing-recovery
    branches are no longer alternative search paths.
 3. Exact slab grader, grade, printing and finish scopes stay separate. Medians
    rank candidates; one or more matched sales within 90 days in one
@@ -135,6 +141,12 @@ flowchart TD
    with a 1,100-token output limit, under the original search allowance. It has
    no retry, corroboration or next-copy loop. Suspected structural damage or
    authenticity uncertainty in the live copy prevents this new paid stage.
+   An unresolved First Edition stamp on a supported raw Buy It Now listing can
+   receive one automatic native-resolution crop check. It needs a fresh
+   verified quote and exact sold evidence that makes one printing a buy and
+   the other a pass at the current targets. The comparison can reuse accepted
+   sold-copy observations. The crop uses the original search's AI budget and
+   the observed mark is saved separately from the price decision.
    One physically accepted condition match may price a route at LOW confidence;
    missing/unaccepted matches retain labeled reference-only quotes.
 10. Shared result rules and client selectors determine the visible groups. Card

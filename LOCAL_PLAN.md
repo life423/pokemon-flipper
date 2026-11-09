@@ -5,10 +5,10 @@ with the repository. Older entries calling it private or ignored describe the
 previous arrangement. Credentials, environment values, API payloads, paid photo
 evidence and data/ remain excluded. A separate computer handoff is deferred.
 
-Catalog/search ecae9e9, raw resale 489ebb7 and catalog-name coverage b123ed7
-were committed and pushed on main. Current work is on
-improve/consistent-sold-pricing. Markdown notes are tracked; no handoff was
-created. The pre-existing .env.example deletion remains unrelated/uncommitted.
+The active checklist lives in [LOCAL_TODO.md](LOCAL_TODO.md). The
+[November 8 deal-search audit](docs/deal-search-audit-2026-11-08.md) records
+the user-supplied audit and coverage patch, the 50-row Blastoise reconstruction,
+and the live and saved Mew ex results. See Git for delivery history.
 
 ## Live Buy It Now validation — November 8
 
@@ -81,8 +81,9 @@ and Galarian Gallery controls. Both token counting and generation returned HTTP
 Replay reused the answer with no provider call. This was a controlled
 experiment with supplied candidates. It did not measure the app's ability to
 retrieve candidate pools for nicknames, live search recall, or saved photo calls.
-The model remains outside production discovery. Delivered-price language such
-as "under $350 shipped" still needs its own constraint.
+This catalog-selection experiment remains separate from production. Production
+has a narrower, bounded text cleanup for unresolved phrasing. Delivered-price
+language such as "under $350 shipped" still needs its own constraint.
 
 ## Market-led slab searches and partial-number recovery — November 5
 

@@ -73,6 +73,10 @@ test("AI assessment progress is visible throughout searching and respects pause,
         assert.ok(!expanded.includes('inert=""'));
         assert.match(status(expanded)[2], /AI assessing 3 cards/);
         assert.match(expanded, /Results appear as each assessment finishes/);
+        const finished = render({ phase: "done", checked: 50, total: 50,
+            ai: { done: 1, target: 1, analyzing: 0, waiting: 0, failed: 0 },
+            stats: { junk: 0, dropped: 0, unchecked: 49, deals: 0 } });
+        assert.match(finished, /50 listings loaded · 1 assessment completed/);
         const expandedPause = render({ phase: "paused", checked: 2, total: 3, ai: { ...defaults.ai, paused: true } });
         assert.match(expandedPause, /New checks are stopped/);
         assert.match(expandedPause, /New AI assessments are paused/);

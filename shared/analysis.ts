@@ -8,25 +8,55 @@ import { observedCardKind } from "./photo-evidence.ts";
 import { priceEvidenceGap } from "./money/price-evidence.ts";
 import { missingTextureReason } from "./grade-qualifier.ts";
 
-// Automatic analysis and its progress counts use the same eligibility rule.
-export function canAutoAnalyze(listing: ListingSummary): boolean {
-    if (!withinAutomaticAuctionWindow(listing) || !listing.images.length || listing.availability === "UNAVAILABLE" || listing.screen?.junk || missingTextureReason(listing.title) ||
-        listing.currentPrice === null || !Number.isFinite(listing.currentPrice) || listing.currentPrice < 0 || listing.currentPrice > AUTOMATIC_PRICE_CEILING ||
-        ["CONFIG", "CREDITS"].includes(listing.screen?.pricingIssue?.kind ?? "")) return false;
-    const soldEvidence = listing.screen?.soldEvidence;
-    if (soldEvidence) {
-        // The new bounded workflow must finish sold-price screening before
-        // identity/photo gaps or discovery hints can buy an assessment.
-        if (listing.screen!.status === "DROPPED") return false;
-        if (soldEvidence.status !== "AVAILABLE" && !listing.screen!.gradingLead && listing.screen!.focusedReview !== "CHEAP_FIRST_EDITION_BASE_SET") return false;
+export type AutoAnalysisBlockReason =
+    | "OUTSIDE_AUCTION_WINDOW"
+    | "NO_IMAGES"
+    | "UNAVAILABLE"
+    | "JUNK"
+    | "UNSUPPORTED_TEXTURE"
+    | "INVALID_PRICE"
+    | "PRICE_ABOVE_CEILING"
+    | "PRICING_CONFIG"
+    | "PRICING_CREDITS"
+    | "SCREEN_DROPPED"
+    | "SOLD_EVIDENCE_MISSING"
+    | "SOLD_EVIDENCE_DEFERRED"
+    | "CRITERIA_MISMATCH"
+    | "NO_ANALYSIS_CANDIDATE";
+
+// Report the first gate that blocks the same automatic work the queue admits.
+export function autoAnalysisBlockReason(listing: ListingSummary, now = Date.now()): AutoAnalysisBlockReason | null {
+    if (!withinAutomaticAuctionWindow(listing, now)) return "OUTSIDE_AUCTION_WINDOW";
+    if (!listing.images.length) return "NO_IMAGES";
+    if (listing.availability === "UNAVAILABLE") return "UNAVAILABLE";
+    if (listing.screen?.junk) return "JUNK";
+    if (missingTextureReason(listing.title)) return "UNSUPPORTED_TEXTURE";
+    if (listing.currentPrice === null || !Number.isFinite(listing.currentPrice) || listing.currentPrice < 0) return "INVALID_PRICE";
+    if (listing.currentPrice > AUTOMATIC_PRICE_CEILING) return "PRICE_ABOVE_CEILING";
+
+    const screen = listing.screen;
+    const pricingIssue = screen?.pricingIssue?.kind;
+    if (pricingIssue === "CONFIG") return "PRICING_CONFIG";
+    if (pricingIssue === "CREDITS") return "PRICING_CREDITS";
+    if (screen?.soldEvidence) {
+        // The bounded workflow requires sold screening or a supported exception.
+        if (screen.status === "DROPPED") return "SCREEN_DROPPED";
+        if (screen.soldEvidence.status !== "AVAILABLE" && !screen.gradingLead && screen.focusedReview !== "CHEAP_FIRST_EDITION_BASE_SET") {
+            return screen.soldEvidence.status === "DEFERRED" ? "SOLD_EVIDENCE_DEFERRED" : "SOLD_EVIDENCE_MISSING";
+        }
     }
-    const temporaryPrice = ["TEMPORARY", "RATE_LIMIT"].includes(listing.screen?.pricingIssue?.kind ?? "");
-    const resolvable = Boolean(listing.screen?.status === "UNSCREENED" && (listing.screen.needsAnalysis || temporaryPrice));
-    const unusualPrice = Boolean(listing.screen?.priceAnomaly && listing.screen.status === "UNSCREENED");
-    // Price-first screening narrows automatic paid work. Explicit discovery
-    // evidence can reopen a listing; manual analysis remains available.
-    return (!listing.match || listing.match === "UNCONFIRMED_CRITERIA" && resolvable) &&
-        (listing.screen?.status === "CANDIDATE" || Boolean(listing.mistakes?.length) || resolvable || unusualPrice);
+
+    const temporaryPrice = pricingIssue === "TEMPORARY" || pricingIssue === "RATE_LIMIT";
+    const resolvable = screen?.status === "UNSCREENED" && (screen.needsAnalysis || temporaryPrice);
+    const unusualPrice = screen?.status === "UNSCREENED" && screen.priceAnomaly;
+    if (listing.match && (listing.match !== "UNCONFIRMED_CRITERIA" || !resolvable)) return "CRITERIA_MISMATCH";
+    // Older screens can still reopen when there is explicit discovery evidence.
+    if (screen?.status === "CANDIDATE" || listing.mistakes?.length || resolvable || unusualPrice) return null;
+    return screen?.status === "DROPPED" ? "SCREEN_DROPPED" : "NO_ANALYSIS_CANDIDATE";
+}
+
+export function canAutoAnalyze(listing: ListingSummary): boolean {
+    return autoAnalysisBlockReason(listing) === null;
 }
 
 export type ResultGroup = "deals" | "offers" | "candidates" | "review";

@@ -378,6 +378,73 @@ test("slabs research one exact grader and half grade without raw or speculative 
     assert.equal(calls.raw.length, 0);
 });
 
+test("numbered listings reuse exact sold markets when saved names include seller condition or subgrade notes", async () => {
+    const wanted = { ...intent, cardName: "Blastoise", cardNumber: "2/102" };
+    const title = "Blastoise 2/102 Base Set Unlimited Holo";
+    const { run, calls } = harness({
+        cards: [card({ name: "Blastoise", cardNumber: "2/102" })],
+        raw: async () => [sale({ title: `${title} NM` })],
+        graded: async () => [sale({ title: `${title} CGC 9`, grader: "CGC", grade: "9" })],
+    });
+    for (const [suffix, savedName, isGraded] of [
+        ["NM CLEAN", "blastoise clean", false],
+        ["CGC 9 with Sub Grades", "blastoise sub grades", true],
+    ] as const) {
+        const subject = listing({ title: `${title} ${suffix}`, isGraded, images: ["front", "back"],
+            screen: { status: "UNSCREENED", card: { name: savedName, set: "Base Set", cardNumber: "2/102", printing: "UNLIMITED" } } });
+        const evidence = await run(subject, wanted);
+        assert.equal(evidence.exactScope, true, suffix);
+        assert.deepEqual(evidence.references.map(({ printing, grader, grade }) => [printing, grader, grade]),
+            [["UNLIMITED", isGraded ? "CGC" : null, isGraded ? "9" : null]]);
+        assert.equal(canAutoAnalyze(applySoldPriceScreen(subject, evidence)), true);
+    }
+    assert.equal(calls.lookup, 1, "both listings reuse the canonical card lookup");
+    assert.equal(calls.raw.length, 1);
+    assert.deepEqual(calls.graded, [[1, { grader: "CGC", grade: "9", variant: "Unlimited Holofoil" }]]);
+
+    for (const [different, isGraded] of [
+        [`Clean ${title} NM Clean`, false],
+        [`${title} Clean`, false],
+        [`${title} PSA 9 with Sub Grades`, true],
+        [`${title} CGC 9 with Sub Grades Miscut`, true],
+        [`${title.replace("Base Set", "Base Set 2")} CGC 9 with Sub Grades`, true],
+        [`${title.replace("Unlimited", "Shadowless")} CGC 9 with Sub Grades`, true],
+    ] as const) {
+        assert.deepEqual((await run(listing({ title: different, isGraded }), wanted)).references, [], different);
+    }
+    assert.equal(calls.raw.length + calls.graded.length, 2, "mismatches cannot start sold-market research");
+});
+
+test("Paldean Fates slab abbreviations reuse exact sold evidence without absorbing other identity words", async () => {
+    const wanted = { ...intent, cardName: "Mew ex", sets: ["Paldean Fates"], cardNumber: "232/091" };
+    const { run, calls } = harness({
+        cards: [card({ name: "Mew ex", setName: "SV: Paldean Fates", cardNumber: "232/091", variants: [variant("Holofoil")] })],
+        graded: async () => [sale({ title: "Mew ex Paldean Fates 232/091 Holo PSA 9", variant: "Holofoil", grader: "PSA", grade: "9", price: 750 })],
+    });
+    const title = "SV Mew ex Paldean Fates 232/091 SIR FA Holo PSA 9";
+    const subject = listing({ title, isGraded: true, currentPrice: 800,
+        screen: { status: "UNSCREENED", card: { name: "sv mew ex sir fa", set: "Paldean Fates", cardNumber: "232/091", printing: "UNKNOWN" } } });
+    const evidence = await run(subject, wanted);
+    assert.equal(evidence.exactScope, true);
+    assert.deepEqual(evidence.references.map(({ grader, grade, finish, printing }) => [grader, grade, finish, printing]),
+        [["PSA", "9", "HOLO", "UNLIMITED"]]);
+    assert.equal(applySoldPriceScreen(subject, evidence).screen.status, "DROPPED");
+
+    for (const different of [
+        title.replace("Mew ex", "Bubble Mew ex"),
+        title.replace("232/091", "#232"),
+        title.replace("Paldean Fates ", ""),
+        title.replace("Holo", "Reverse Holo"),
+        title.replace("Holo", "First Edition Holo"),
+        title.replace("PSA 9", ""),
+    ]) {
+        const graded = different.endsWith("PSA 9");
+        assert.deepEqual((await run({ ...subject, title: different, isGraded: graded }, wanted)).references, [], different);
+    }
+    assert.equal(calls.graded.length, 1);
+    assert.equal(calls.raw.length, 0);
+});
+
 test("hyphen-delimited slab grades reach exact sold screening without admitting potential or qualified labels", async t => {
     const fetch = t.mock.method(globalThis, "fetch", async () => assert.fail("title screening uses only the supplied offline source"));
     const wanted: SearchIntent = { ...intent, cardName: "Jolteon", sets: ["Jungle"], cardNumber: "4/64" };

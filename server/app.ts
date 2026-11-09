@@ -165,7 +165,7 @@ app.post("/api/deals/new", async (req, res) => {
         const query = typeof req.body?.query === "string" ? req.body.query.trim() : "";
         const known: unknown = req.body?.knownIds ?? [];
         if (!query || query.length > 300 || !Array.isArray(known) || known.length > 500 || known.some((id) => typeof id !== "string" || id.length > 120)) throw new Error("A search and up to 500 known listing IDs are required.");
-        await discoverNewListings(query, { signal: controller.signal, filters: readListingFilters(req.query), targets: searchTargets(req), includeOffers: req.query.offers === "1", minPrice: Math.max(0, Number(req.query.min) || 0),
+        await discoverNewListings(query, { signal: controller.signal, filters: readListingFilters(req.query), targets: searchTargets(req), includeOffers: req.query.offers === "1", automaticPhotos: req.query.autoPhotos === "1", minPrice: Math.max(0, Number(req.query.min) || 0),
             onStart: (summary) => send({ type: "start", ...summary }), onListing: (listing) => send({ type: "listing", listing }) }, known as string[]);
         send({ type: "done" });
     } catch (error) { if (!controller.signal.aborted) send({ type: "error", error: (error as Error).message }); }
@@ -212,6 +212,7 @@ app.get("/api/deals", async (req, res) => {
             filters: readListingFilters(req.query),
             targets: searchTargets(req),
             includeOffers: req.query.offers === "1",
+            automaticPhotos: req.query.autoPhotos === "1",
             minPrice: Number(req.query.min) || 0,
             onStart: (summary) => send({ type: "start", ...summary }),
             onListing: (listing) => { seen.add(listing.id); send({ type: "listing", listing }); },
@@ -238,6 +239,7 @@ app.post("/api/listings/:id/evaluate", async (req, res) => {
         const current = currentState(req.body);
         const evaluation = await evaluateBoundedListing(req.params.id, {
             automatic: req.query.auto === "1",
+            targets: searchTargets(req),
             current: req.query.refreshTerms === "1" || req.query.fresh === "1" ? null : current,
             signal: stopped.signal,
         });

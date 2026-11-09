@@ -30,16 +30,18 @@ import { currentPriceEvidence, PRICING_VERSION } from "../../shared/pricing-fres
 import { unsupportedVariantReason, withoutUnsupportedRawPrices, withoutUnsupportedVariantPrices } from "../../shared/money/price-evidence.ts";
 import { RAW_CONDITIONS } from "../../shared/conditions.ts";
 import { withinAutomaticAuctionWindow } from "../../shared/listing-filters.ts";
-import type { Evaluation } from "../../shared/types.ts";
+import type { Evaluation, Targets } from "../../shared/types.ts";
 import type { Usage } from "./types.ts";
 import { createPrivateEvaluationStore, evaluationContextKey } from "./private-evaluation.ts";
+import { findStampDecision, hasFreshStampTerms, stampCandidate, STAMP_TERMS_MAX_AGE_MS } from "./stamp-decision.ts";
+import { readStampCrop } from "./stamp-reading.ts";
 import { reconcileIdentityReadings } from "./resolve-evidence.ts";
 import { assertPriceResearchAvailable, PriceResearchBudgetError, withPriceResearchSignal } from "../pricing/research-budget.ts";
 import { getAiUsageContext, withAiUsageContext, type AiUsageContext } from "../ai/usage-context.ts";
 
 const CACHE_HOURS = 24 * 365 * 10;
 interface SavedBoundedReading extends BoundedReading { version: string; answeredAt: string; usage: Usage }
-export interface BoundedOptions { automatic?: boolean; signal?: AbortSignal; current?: import("./types.ts").CurrentState | null }
+export interface BoundedOptions { automatic?: boolean; targets?: Targets; signal?: AbortSignal; current?: import("./types.ts").CurrentState | null }
 
 const hasStrings = (value: unknown): value is string[] => Array.isArray(value) && value.length <= 8 && value.every(note => typeof note === "string" && note.length <= 1200);
 function invalidReading(): never { throw new StorageUnavailableError("The bounded photo assessment is incomplete or invalid. Saved evidence was kept; no automatic replacement assessment was authorized."); }
@@ -78,9 +80,15 @@ interface Dependencies {
     assess: typeof assessBoundedListing; identify: typeof identifyCard; lookup: typeof lookupCards; fetchComps: typeof fetchComps; fetchRawComps: typeof fetchRawComps;
     compChecks: typeof cachedCompChecks; now: () => number; assertPriceAvailable: typeof assertPriceResearchAvailable;
     soldCondition: typeof createSoldConditionAcquirer;
+    stamp: typeof readStampCrop;
 }
 function stopFailure(error: unknown) { return aiSpendingFailure(error) ?? storageFailure(error); }
 class CandidateOutsideWindow extends Error {}
+
+function stampNote(stamp: NonNullable<Evaluation["focusedStamp"]>): string {
+    return stamp.result === "CANT_TELL" ? `The focused check of photo ${stamp.photoNumber} could not read the First Edition stamp area.`
+        : `Focused check of photo ${stamp.photoNumber}: First Edition stamp ${stamp.result === "VISIBLE" ? "visible" : "absent"}.`;
+}
 
 // Reapply deterministic label rules to paid evidence rather than purchasing
 // the photos again when a seller-metadata policy changes.
@@ -97,13 +105,13 @@ function recheckSavedSlab(evaluation: Evaluation, aspects: Record<string, string
 export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
     const deps: Dependencies = { details: getListingDetails, saved: loadSaved, cached: readCache, save: writeCache, assess: assessBoundedListing, identify: identifyCard,
         lookup: lookupCards, fetchComps, fetchRawComps, compChecks: cachedCompChecks, now: Date.now, assertPriceAvailable: assertPriceResearchAvailable,
-        soldCondition: createSoldConditionAcquirer, ...overrides };
+        soldCondition: createSoldConditionAcquirer, stamp: readStampCrop, ...overrides };
     const share = createSharedWork();
     const shareReading = createSharedWork();
     type ReadingConsumer = { needed: () => boolean; context: AiUsageContext };
     const neededReadings = new Map<string, Set<ReadingConsumer>>();
     const privateEvaluations = createPrivateEvaluationStore({ cached: deps.cached, save: deps.save });
-    return (itemId: string, options: BoundedOptions = {}): Promise<Evaluation> => share(JSON.stringify([getAiUsageContext().searchId ?? null, itemId, options.current ?? null, options.automatic ?? false]), signal => withPriceResearchSignal(signal, async () => {
+    return (itemId: string, options: BoundedOptions = {}): Promise<Evaluation> => share(JSON.stringify([getAiUsageContext().searchId ?? null, itemId, options.current ?? null, options.automatic ?? false, options.targets ?? null]), signal => withPriceResearchSignal(signal, async () => {
         signal.throwIfAborted();
         const details = await deps.details(itemId, { ...(!options.current ? { maxAgeHours: 0 } : {}), expectedPhotos: options.current?.images, expectedTitle: options.current?.title });
         const listing = options.current ? { ...details, price: options.current.price ?? details.price, shipping: options.current.shipping ?? details.shipping,
@@ -177,9 +185,11 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             correctedShared = shared;
             return true;
         };
+        const retryableStamp = (saved: Evaluation) => !saved.focusedStamp && Boolean(stampCandidate(saved)) &&
+            hasFreshStampTerms(evaluation.listing, deps.now());
         const latest = legacy?.latestEvaluation?.evaluation;
         const revisedLatest = latest ? recheckSavedSlab(latest, listing.aspects) : null;
-        if (latest && matchesPrintingClaim(latest) && !latest.pricingDeferred && !revisedLatest!.needsPricing && legacy?.latestEvaluation?.evidenceKey === listingEvidenceKey({ title: listing.title, images: listing.images }) && currentPriceEvidence(latest, deps.now()) && !await hasNewerSharedReading(latest)) {
+        if (latest && !retryableStamp(latest) && matchesPrintingClaim(latest) && !latest.pricingDeferred && !revisedLatest!.needsPricing && legacy?.latestEvaluation?.evidenceKey === listingEvidenceKey({ title: listing.title, images: listing.images }) && currentPriceEvidence(latest, deps.now()) && !await hasNewerSharedReading(latest)) {
             if (cardLanguageStatus(listing.title, [latest.identity?.language, latest.photoCheck?.cardIdentity?.language]) === "OTHER") throw new EnglishOnlyError();
             const reused = withoutUnsupportedRawPrices(withoutUnsupportedVariantPrices(revisedLatest!.evaluation));
             reused.listing = { ...reused.listing, ...evaluation.listing, photosAnalyzed: latest.listing.photosAnalyzed };
@@ -189,7 +199,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         }
         const remembered = await privateEvaluations.load(itemId);
         const revisedRemembered = remembered ? recheckSavedSlab(remembered.evaluation, listing.aspects) : null;
-        if (remembered?.contextKey === privateContext.contextKey &&
+        if (remembered?.contextKey === privateContext.contextKey && !retryableStamp(remembered.evaluation) &&
             matchesPrintingClaim(remembered.evaluation) && !remembered.evaluation.pricingDeferred && !revisedRemembered!.needsPricing && (remembered.evaluation.assessmentVersion === ANALYSIS_VERSION || plans.some(plan => plan.version === remembered.evaluation.assessmentVersion)) && currentPriceEvidence(remembered.evaluation, deps.now()) && !await hasNewerSharedReading(remembered.evaluation)) {
             const reused = withoutUnsupportedRawPrices(withoutUnsupportedVariantPrices(revisedRemembered!.evaluation));
             if (cardLanguageStatus(listing.title, [reused.identity?.language, reused.photoCheck?.cardIdentity?.language]) === "OTHER") throw new EnglishOnlyError();
@@ -273,10 +283,23 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             evaluation.assessmentVersion = answer.plan.version;
             evaluation.conditionVersion = answer.plan.conditionVersion;
             evaluation.answeredAt = answeredAt; evaluation.listing.photosAnalyzed = sourcePhotos.length;
-            evaluation.modeReasons.push(`One bounded ${answer.plan.mode === "SLAB_LABEL" ? "slab identity and label check" : "raw identity and condition assessment"} checked listing photos ${sourcePhotos.map(photo => photo.number).join(", ")} of ${listing.images.length}. Unselected photos were not assessed; no second opinion was purchased.`);
+            evaluation.modeReasons.push(`One bounded ${answer.plan.mode === "SLAB_LABEL" ? "slab identity and label check" : "raw identity and condition assessment"} checked listing photos ${sourcePhotos.map(photo => photo.number).join(", ")} of ${listing.images.length}. Unselected photos were not assessed.`);
             if (answer.plan.mode === "SLAB_LABEL" && reading.photoCheck.holder !== "GRADED_SLAB") evaluation.modeReasons.push("The seller's graded-card claim was not confirmed. Raw condition was not assessed by this label-only check; no second paid assessment was started automatically.");
         }
         const check = evaluation.photoCheck!;
+        // Reuse the focused observation when purchase terms or pricing age
+        // require a fresh valuation of the same accepted photo assessment.
+        const previousStamp = remembered?.evaluation.focusedStamp;
+        if (previousStamp && remembered.contextKey === privateContext.contextKey &&
+            remembered.evaluation.assessmentVersion === evaluation.assessmentVersion && remembered.evaluation.answeredAt === evaluation.answeredAt &&
+            check.printingMarks?.firstEditionStamp === "CANT_TELL" && ["VISIBLE", "NOT_PRESENT", "CANT_TELL"].includes(previousStamp.result) &&
+            check.images.some(image => image.number === previousStamp.photoNumber && image.view === "FRONT" && image.usable && !image.isStockImage)) {
+            evaluation.focusedStamp = previousStamp;
+            check.printingMarks.firstEditionStamp = previousStamp.result;
+            check.printingMarks.evidence = [...(check.printingMarks.evidence ?? []), stampNote(previousStamp)];
+            evaluation.reusedSteps.push("focusedEditionStamp");
+            evaluation.modeReasons.push(stampNote(previousStamp));
+        }
         if (cardLanguageStatus(listing.title, [listing.aspects.Language, check.cardIdentity?.language]) === "OTHER") throw new EnglishOnlyError();
         const mode = getGradingMode(check);
         evaluation.gradingMode = mode.mode; evaluation.modeReasons.push(...mode.reasons);
@@ -314,8 +337,9 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                 throw error;
             }
         };
-        const identified = await deps.identify({ ...listing, aspects }, check, { lookupCards: query => guarded(() => deps.lookup(query)),
+        const identify = (reading: typeof check) => deps.identify({ ...listing, aspects }, reading, { lookupCards: query => guarded(() => deps.lookup(query)),
             ...(legacyResolution?.confirmation ? { photoIdentity: legacyResolution.confirmation } : {}) });
+        const identified = await identify(check);
         if (hardFailure) throw hardFailure;
         evaluation.identity = identified.identity;
         if (priceLimits && identified.lookupFailed) evaluation.pricingDeferred!.identityLookupPending = true;
@@ -335,32 +359,24 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             evaluation.identity.status = "NEEDS_REVIEW";
             evaluation.identity.reasons.push("The bounded photos do not establish the exact English card identity. Seller wording alone cannot confirm it.");
         }
-        if (check.cardCount !== "ONE" || !readyForPricing(evaluation.identity)) return finish();
-        if (unsupportedVariantReason(evaluation)) return finish();
-        const identity = evaluation.identity;
         const unavailable = (error: unknown) => {
             const stop = stopFailure(error);
             if (stop) throw stop;
             if (error instanceof PriceResearchBudgetError && error.reason !== "LIMIT") throw error;
             return { status: "PRICE_UNAVAILABLE" as const, reason: evaluation.pricingDeferred?.note ?? "Matching market evidence is currently unavailable. Saved photo evidence is retained." };
         };
-        if (check.holder === "GRADED_SLAB") {
-            const slab = evaluation.slab;
-            if (slab?.status === "OK") try {
-                evaluation.slabPricing = await compsForGrade(identified.card, identity, { grader: slab.grader!, grade: slab.grade!,
-                    fetchComps: (...args) => guarded(() => deps.fetchComps(...args)), cachedChecks: (...args) => guarded(() => deps.compChecks(...args)) });
-            } catch (error) { evaluation.slabPricing = unavailable(error); }
-        } else {
+        const priceRaw = async (identity: NonNullable<Evaluation["identity"]>, card: typeof identified.card, allowSoldPhoto: boolean) => {
             const condition = evaluation.condition;
-            if (!condition || condition.rawCondition === "UNKNOWN" && !condition.gradeRange) return finish();
+            const prices: Pick<Evaluation, "rawPricing" | "gradedPricing"> = { rawPricing: null, gradedPricing: null };
+            if (!condition || condition.rawCondition === "UNKNOWN" && !condition.gradeRange) return prices;
             if (condition.rawCondition !== "UNKNOWN") {
                 const sold = deps.soldCondition({ condition: condition.rawCondition, loadDetails: (...args) => guarded(() => deps.details(...args)),
                     cached: deps.cached, save: deps.save, now: deps.now });
                 const beforeRaw = priceLimits;
-                const raw = await rawPricesWithSales(identified.card, identity, {
+                const raw = await rawPricesWithSales(card, identity, {
                     fetchRawComps: (...args) => guarded(() => deps.fetchRawComps(...args)), signal, now: deps.now(), requestedCondition: condition.rawCondition,
                     assessCondition: (sale, target) => guarded(() => sold.read(sale, target, signal)),
-                    acquireCondition: async sales => {
+                    acquireCondition: allowSoldPhoto ? async sales => {
                         // Resolving another copy's resale price cannot settle
                         // this copy's suspected structural damage or authenticity.
                         if (condition.creases === "SUSPECTED" || condition.authenticity.concern !== "NONE_SEEN") return null;
@@ -387,19 +403,78 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                         if (!sale) return null;
                         const evidence = await guarded(() => sold.acquire(sale, identity, signal));
                         return evidence ? { sale, evidence } : null;
-                    },
+                    } : undefined,
                 });
                 evaluation.usage.push(...sold.usage.map(usage => ({ step: "soldConditionAssessment", ...usage })));
-                evaluation.rawPricing = priceLimits > beforeRaw ? { status: "PRICE_UNAVAILABLE", reason: evaluation.pricingDeferred!.note } : raw;
+                prices.rawPricing = priceLimits > beforeRaw ? { status: "PRICE_UNAVAILABLE", reason: evaluation.pricingDeferred!.note } : raw;
             }
             if (hardFailure) throw hardFailure;
             if (evaluation.condition) {
-                evaluation.gradedPricing = {};
+                prices.gradedPricing = {};
                 for (const grader of GRADERS) try {
-                    evaluation.gradedPricing[grader] = await gradedPricesFor(identified.card, identity, evaluation.condition.gradeRange, { grader, now: deps.now(),
+                    prices.gradedPricing[grader] = await gradedPricesFor(card, identity, evaluation.condition.gradeRange, { grader, now: deps.now(),
                         fetchComps: (...args) => guarded(() => deps.fetchComps(...args)), cachedChecks: (...args) => guarded(() => deps.compChecks(...args)) });
-                } catch (error) { evaluation.gradedPricing[grader] = unavailable(error); }
+                } catch (error) { prices.gradedPricing[grader] = unavailable(error); }
             }
+            return prices;
+        };
+
+        // The optional crop can settle an unknown stamp only when two exact,
+        // independently priced alternatives lead to opposite buying decisions.
+        // Do not use unverified browser price/shipping overrides for this gate.
+        if (!readyForPricing(evaluation.identity)) {
+            if (evaluation.focusedStamp || !stampCandidate(evaluation) || details.price !== listing.price || details.shipping !== listing.shipping ||
+                !hasFreshStampTerms(evaluation.listing, deps.now())) return finish();
+            try {
+                const decision = await findStampDecision(evaluation, {
+                    targets: options.targets ?? MONEY_CONFIG.targets, now: deps.now(), identify, signal,
+                    price: (identity, card) => priceRaw(identity, card, false),
+                });
+                if (hardFailure) throw hardFailure;
+                if (decision && !evaluation.pricingDeferred && hasFreshStampTerms(evaluation.listing, deps.now())) {
+                    const deadline = Math.min(Date.parse(evaluation.listing.termsCheckedAt!) + STAMP_TERMS_MAX_AGE_MS,
+                        evaluation.listing.endTime ? Date.parse(evaluation.listing.endTime) : Infinity);
+                    const answer = await deps.stamp(evaluation.listing, check,
+                        AbortSignal.any([signal, AbortSignal.timeout(Math.max(0, deadline - deps.now()))]));
+                    signal.throwIfAborted();
+                    if (answer) {
+                        if (answer.reused) evaluation.reusedSteps.push("focusedEditionStamp");
+                        else evaluation.usage.push({ step: "focusedEditionStamp", ...answer.usage });
+                        if (hasFreshStampTerms(evaluation.listing, deps.now())) {
+                            evaluation.focusedStamp = { result: answer.result, ...answer.source };
+                            const note = stampNote(evaluation.focusedStamp);
+                            evaluation.modeReasons.push(note);
+                            if (answer.result !== "CANT_TELL") {
+                                const selected = decision[answer.result];
+                                selected.check.printingMarks!.evidence = [...(selected.check.printingMarks!.evidence ?? []), note];
+                                selected.identity.evidence!.photoNotes = [...(selected.identity.evidence!.photoNotes ?? []), note];
+                                Object.assign(evaluation, { photoCheck: selected.check, identity: selected.identity,
+                                    rawPricing: selected.rawPricing, gradedPricing: selected.gradedPricing, pricesCheckedAt: new Date(deps.now()).toISOString() });
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                signal.throwIfAborted();
+                const failure = hardFailure ?? storageFailure(error);
+                if (failure) throw failure;
+                if (error instanceof PriceResearchBudgetError && error.reason !== "LIMIT") throw error;
+                // A denied reservation, failed crop or unavailable comparison
+                // leaves the original unresolved assessment available.
+            }
+            return finish();
+        }
+        if (unsupportedVariantReason(evaluation)) return finish();
+        const identity = evaluation.identity;
+        if (check.holder === "GRADED_SLAB") {
+            const slab = evaluation.slab;
+            if (slab?.status === "OK") try {
+                evaluation.slabPricing = await compsForGrade(identified.card, identity, { grader: slab.grader!, grade: slab.grade!,
+                    fetchComps: (...args) => guarded(() => deps.fetchComps(...args)), cachedChecks: (...args) => guarded(() => deps.compChecks(...args)) });
+            } catch (error) { evaluation.slabPricing = unavailable(error); }
+        } else {
+            if (!evaluation.condition || evaluation.condition.rawCondition === "UNKNOWN" && !evaluation.condition.gradeRange) return finish();
+            Object.assign(evaluation, await priceRaw(identity, identified.card, true));
         }
         signal.throwIfAborted();
         evaluation.pricesCheckedAt = new Date(deps.now()).toISOString();

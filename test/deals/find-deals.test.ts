@@ -2,11 +2,12 @@ import "../fixtures/isolated-data.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { findDeals } from "../../server/deals/find-deals.ts";
+import { prioritizeListingText } from "../../server/deals/listing-text-priority.ts";
 import { screenListingWithoutAi } from "../../server/deals/screen-listing.ts";
 import { readTitleByRules } from "../../server/ai/title-reader.ts";
 import { readSearchLocally } from "../../server/search/intent.ts";
 import { canAutoAnalyze } from "../../shared/analysis.ts";
-import { analysisPriority } from "../../shared/analysis-priority.ts";
+import { analysisPriority, compareAnalysisPriority } from "../../shared/analysis-priority.ts";
 import { sellerConditionClues } from "../../shared/raw-condition-claim.ts";
 import { EnglishOnlyError } from "../../shared/card-language.ts";
 import { offlineSearchSteps } from "../fixtures/search-steps.ts";
@@ -104,4 +105,39 @@ test("metadata preserves unknown shipping and a real zero quote as different inp
         assert.equal(result.shipping, shipping);
         assert.equal(result.screen?.money, undefined, "metadata cannot invent an investment or safe bid");
     }
+});
+
+test("text screening reorders equally ranked photo candidates without changing eligibility or evidence", async () => {
+    const row = (id: string, extra: Partial<ListingSummary> = {}) => listing(undefined, {
+        id, screen: { status: "CANDIDATE", card: null, bestCase: null, assumed: null }, ...extra,
+    });
+    const disclosed = row("disclosed", { conditionNotes: ["Card has a peeled layer."] });
+    const normal = row("normal");
+    const stronger = row("stronger", { images: ["a", "b", "c", "d"] });
+    const ordered = [stronger, disclosed, normal];
+    let requests = 0;
+    const ranked = await prioritizeListingText(ordered, undefined, undefined, async ({ request, validate }) => {
+        requests++;
+        assert.equal(request.photos.length, 0);
+        assert.match(request.prompt, /peeled layer/);
+        return { result: validate({ later: [1] }), key: "fake", reused: false, answeredAt: "", usage: { inputTokens: 0, outputTokens: 0 } };
+    });
+    assert.equal(requests, 1);
+    assert.deepEqual(ranked.map(row => row.id), ["stronger", "normal", "disclosed"]);
+    assert.deepEqual([...ranked].sort(compareAnalysisPriority), ranked, "the browser's stable sort retains the text tie-break");
+    assert.equal(ranked[2], disclosed);
+    assert.ok(ranked.every(canAutoAnalyze));
+
+    const fallback = await prioritizeListingText(ordered, undefined, undefined, async ({ validate }) => {
+        validate({ later: [99] });
+        return assert.fail("out-of-range model row must be rejected");
+    });
+    assert.equal(fallback, ordered);
+    assert.equal(await prioritizeListingText([stronger, normal], undefined, undefined,
+        async () => assert.fail("unequal candidates do not spend on text")).then(rows => rows[0]), stronger);
+});
+
+test("the search skips listing text screening when automatic photos are off", async () => {
+    const steps = offlineSearchSteps([listing()], { prioritizeText: async () => assert.fail("no automatic photo queue to prioritize") });
+    assert.equal((await findDeals("Charizard Base Set holo", { automaticPhotos: false }, steps)).length, 1);
 });

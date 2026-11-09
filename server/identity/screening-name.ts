@@ -97,8 +97,14 @@ export function stripListingNameBoilerplate(value: string, title = value, set?: 
             cleaned = cleaned.replace(sunMoon, " ");
             for (const match of eraSpans) cleaned = removeObservedWords(cleaned, match, title);
         }
-        if (writtenRelease?.test(title)) for (const match of title.matchAll(/\bcosmos[ -]+holo(?:graphic|foil)?\b/gi)) {
-            cleaned = removeObservedWords(cleaned, match, title);
+        if (writtenRelease?.test(title)) {
+            // A trailing seller condition or slab-label note belongs to the
+            // listing, while another occurrence may be part of the card name.
+            const metadata = [/\bcosmos[ -]+holo(?:graphic|foil)?\b/gi];
+            const grader = graded ? searchAttributes(title).grader : null;
+            if (!graded) metadata.push(/\b(?:nm|near[ -]+mint)\s+clean\s*[.!]?\s*$/gi);
+            if (grader === "CGC" || grader === "BGS") metadata.push(/\bwith\s+sub[ -]?grades\s*[.!]?\s*$/gi);
+            for (const pattern of metadata) for (const match of title.matchAll(pattern)) cleaned = removeObservedWords(cleaned, match, title);
         }
         // A full GG collector fraction, numeric slab grade and written release
         // anchor these observed metadata spans. Reconcile only excess source
@@ -114,9 +120,11 @@ export function stripListingNameBoilerplate(value: string, title = value, set?: 
         // Abbreviations require a written release and a numeric slab label.
         // They never erase an unanchored name or a promo/partial number.
         const scarletViolet = /\bscarlet\s*(?:&|and)?\s*violet\b/i.test(title);
+        const paldeanFates = setKey(set ?? "") === "paldean fates" && writtenRelease?.test(title);
         const descriptions = graded ? [
             ...(release || scarletViolet ? [/\bFA\b(?!['’])(?:\s*\/\s*)?/gi] : []),
             ...(scarletViolet ? [/\bSIR\b(?!['’])(?:\s*\/\s*)?/gi, /\bSV\b(?!['’])(?=\s*:?\s*Scarlet\s*(?:&|and)?\s*Violet\b)/gi] : []),
+            ...(paldeanFates ? [/\b(?:SV|SIR|FA)\b(?!['’])(?:\s*\/\s*)?/g] : []),
         ] : [];
         for (const description of descriptions) {
             const observed = [...title.matchAll(description)];

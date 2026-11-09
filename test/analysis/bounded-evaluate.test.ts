@@ -5,6 +5,7 @@ import { ANALYSIS_VERSION, CONDITION_VERSION } from "../../server/analysis/legac
 import { photoFingerprint } from "../../server/analysis/store.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
 import { AiSpendingError } from "../../server/ai/spending.ts";
+import { PriceResearchBudgetError } from "../../server/pricing/research-budget.ts";
 import { EnglishOnlyError } from "../../shared/card-language.ts";
 import { cardEvaluation, salesSummary } from "../fixtures/card-evaluation.ts";
 import { PRICING_VERSION } from "../../shared/pricing-freshness.ts";
@@ -971,4 +972,78 @@ test("readable cached slab labels resolve seller-certificate-only holds without 
         assert.equal(revised.underwriting?.verdict, "BUY_GRADED");
         assert.equal(photoReviewStatus(revised).needsYourReview, false, "generic certificate notes must not reintroduce a manual hold");
     }
+});
+
+test("an eligible stamp crop changes the real evaluator's verdict and survives a reprice", async () => {
+    const item = details({
+        title: "Venusaur Base Set 15/102 1st Edition Holo English",
+        price: 80, retrievedAt: new Date(now).toISOString(),
+    });
+    const report = reading();
+    report.condition!.gradeRange = null;
+    report.condition!.rawCondition = "LIGHTLY_PLAYED";
+    report.photoCheck.printingMarks = { firstEditionStamp: "CANT_TELL", artBoxShadow: "ABSENT", reprintMark: "NONE_SEEN", evidence: [] };
+    let stampCalls = 0, originalCalls = 0;
+    let priceFailure: Error | null = null, stampFailure: Error | null = null;
+    const { evaluate } = harness({
+        details: async () => item,
+        assess: async () => { originalCalls++; return { result: report, usage: { inputTokens: 900, outputTokens: 300 } }; },
+        lookup: async () => [{ ...card, setName: "Base Set (Shadowless)",
+            variants: [
+                { name: "1st Edition Holofoil", printing: "FIRST_EDITION", finish: "HOLO" },
+                { name: "Unlimited Holofoil", printing: "SHADOWLESS", finish: "HOLO" },
+            ] }],
+        fetchRawComps: async (_id, variant) => {
+            if (priceFailure) throw priceFailure;
+            const first = /1st edition/i.test(variant ?? "");
+            return [{ id: first ? "first" : "shadowless", title: `Venusaur Base Set 15/102 ${first ? "1st Edition" : "Shadowless"} Holo LP`,
+                price: first ? 220 : 70, sold_at: new Date(now - 86400000).toISOString(),
+                variant: first ? "1st Edition Holofoil" : "Unlimited Holofoil", currency: "USD", attribution: "exact",
+                sale_type: "fixed_price", listing_url: "https://www.ebay.com/itm/223456789012", grader: null, grade: null, grade_qualifier: null }];
+        },
+        soldCondition: () => ({
+            usage: [], status: () => "REVIEWED",
+            read: async () => ({ condition: "LIGHTLY_PLAYED", evidence: ["Accepted physical wear evidence."], photoCount: 4 }),
+            acquire: async () => assert.fail("stamp scenarios must not buy sold-copy assessments"),
+        }),
+        stamp: async () => {
+            stampCalls++;
+            if (stampFailure) throw stampFailure;
+            return { result: "VISIBLE", reused: false, key: "fixture", answeredAt: new Date(now).toISOString(),
+                usage: { inputTokens: 100, outputTokens: 10 },
+                source: { photoNumber: 1, sourceSha256: "a".repeat(64), box: { left: 90, top: 90, width: 200, height: 140 } } };
+        },
+    });
+    const highTarget = await evaluate(item.id, { targets: { minProfit: 1000, minRoi: 0 } });
+    assert.equal(highTarget.underwriting?.verdict, "NEEDS_REVIEW");
+
+    priceFailure = new PriceResearchBudgetError("Price accounting is invalid.", "STATE");
+    await assert.rejects(evaluate(item.id), error => error === priceFailure);
+    priceFailure = new PriceResearchBudgetError("Price research allowance reached.", "LIMIT");
+    assert.equal((await evaluate(item.id)).pricingDeferred?.provider, "PKMNPRICES");
+    assert.equal(stampCalls, 0);
+    priceFailure = null;
+
+    const storageError = new StorageUnavailableError("Focused stamp evidence could not be read.");
+    stampFailure = new Error("Wrapped crop error", { cause: storageError });
+    await assert.rejects(evaluate(item.id), error => error === storageError);
+    stampFailure = new AiSpendingError("AI_BUDGET", "The optional stamp request could not be reserved.");
+    const denied = await evaluate(item.id);
+    assert.equal(denied.underwriting?.verdict, "NEEDS_REVIEW");
+    assert.equal(denied.focusedStamp, undefined);
+    stampFailure = null;
+
+    const result = await evaluate(item.id);
+    assert.equal(result.focusedStamp?.result, "VISIBLE");
+    assert.equal(result.identity?.printing, "FIRST_EDITION");
+    assert.equal(result.underwriting?.verdict, "BUY_RAW");
+    assert.equal(stampCalls, 3);
+    assert.equal(originalCalls, 1);
+    assert.equal(report.photoCheck.printingMarks.firstEditionStamp, "CANT_TELL");
+    item.price = 300;
+    const repriced = await evaluate(item.id);
+    assert.equal(repriced.identity?.printing, "FIRST_EDITION");
+    assert.equal(repriced.underwriting?.verdict, "PASS");
+    assert.equal(stampCalls, 3);
+    assert.equal(originalCalls, 1);
 });

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canAutoAnalyze, resultGroup } from "../../shared/analysis.ts";
+import { autoAnalysisBlockReason, canAutoAnalyze, resultGroup } from "../../shared/analysis.ts";
 import { withResolvedCriteria } from "../../shared/search-criteria.ts";
 import { readSearchByRules } from "../../server/search/intent.ts";
 import { compareAnalysisPriority } from "../../shared/analysis-priority.ts";
@@ -13,7 +13,7 @@ test("resolvable identity/finish/label gaps queue analysis without overriding ex
     assert.equal(resultGroup(listing, null), "candidates");
     assert.equal(canAutoAnalyze({ ...listing, images: [] }), false);
     assert.equal(canAutoAnalyze({ ...listing, match: "OTHER_GRADE" }), false);
-    assert.equal(canAutoAnalyze({ ...listing, screen: { ...listing.screen!, pricingIssue: { kind: "CONFIG", retryAt: null } } }), false);
+    assert.equal(autoAnalysisBlockReason({ ...listing, screen: { ...listing.screen!, pricingIssue: { kind: "CONFIG", retryAt: null } } }), "PRICING_CONFIG");
     const cheap: ListingSummary = { ...listing, match: undefined, screen: { ...listing.screen!, needsAnalysis: undefined, priceAnomaly: { referencePrice: 1000, photoChecked: false } } };
     assert.equal(canAutoAnalyze(cheap), true, "an unusually low price calls for immediate AI verification, not delayed discovery");
     assert.equal(resultGroup(cheap, null), "candidates");
@@ -41,7 +41,7 @@ test("price-first rejection defers automatic work while temporary gaps and verif
     assert.equal(canAutoAnalyze({ ...listing, images: [] }), false);
     assert.equal(canAutoAnalyze({ ...listing, availability: "UNAVAILABLE" }), false);
     assert.equal(canAutoAnalyze({ ...promising, currentPrice: 223_200 }), false);
-    assert.equal(canAutoAnalyze({ ...temporary, screen: { ...temporary.screen, pricingIssue: { kind: "CREDITS", retryAt: null } } }), false);
+    assert.equal(autoAnalysisBlockReason({ ...temporary, screen: { ...temporary.screen, pricingIssue: { kind: "CREDITS", retryAt: null } } }), "PRICING_CREDITS");
     const assessed = cardEvaluation(); assessed.underwriting!.verdict = "PASS";
     assert.equal(resultGroup(listing, assessed), null, "AI eligibility cannot turn an analyzed rejection into a Deal");
 });
@@ -55,10 +55,11 @@ test("new sold-price screening keeps missing or deferred evidence in Sorting wit
     for (const status of ["UNAVAILABLE", "DEFERRED"] as const) {
         listing.screen!.soldEvidence = { status, exactScope: false, references: [], note: "Awaiting matching market data." };
         assert.equal(canAutoAnalyze(listing), false, "identity gaps, seller mistakes, unusual prices and temporary retries cannot bypass the sold-data gate");
+        assert.equal(autoAnalysisBlockReason(listing), status === "DEFERRED" ? "SOLD_EVIDENCE_DEFERRED" : "SOLD_EVIDENCE_MISSING");
         assert.equal(resultGroup(listing, null), "candidates");
         assert.equal(resultGroup(listing, null, false, true), "review", "an explicit failed assessment remains distinct from unavailable prices");
         const exception = { ...listing, screen: { ...listing.screen!, focusedReview: "CHEAP_FIRST_EDITION_BASE_SET" as const } };
-        assert.equal(canAutoAnalyze(exception), true, "the explicit cheap first-edition research exception remains available");
+        assert.equal(autoAnalysisBlockReason(exception), null, "the explicit cheap first-edition research exception remains available");
         assert.equal(canAutoAnalyze({ ...exception, images: [] }), false);
         assert.equal(canAutoAnalyze({ ...exception, match: "OTHER_CARD" }), false);
         const completed = cardEvaluation(); completed.underwriting!.verdict = "BUY_RAW";

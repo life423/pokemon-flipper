@@ -551,6 +551,12 @@ export interface Evaluation {
     marketActivity?: MarketActivity;
     photoReviewKey?: string;
     deeperPhotoReview?: DeeperPhotoReview;
+    focusedStamp?: {
+        result: "VISIBLE" | "NOT_PRESENT" | "CANT_TELL";
+        photoNumber: number;
+        box: { left: number; top: number; width: number; height: number };
+        sourceSha256: string;
+    };
     listing: {
         listedAt?: string | null;
         createdAt?: string | null;

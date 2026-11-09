@@ -117,16 +117,16 @@ async function streamLines<T extends { type: string }>(
 
 export function streamDeals(
     query: string,
-    { maxResults, minPrice, signal, targets, includeOffers = false, filters, searchRunId }: { maxResults: number; minPrice: number; signal?: AbortSignal; targets?: Targets; includeOffers?: boolean; filters?: ListingFilters; searchRunId?: string },
+    { maxResults, minPrice, signal, targets, includeOffers = false, automaticPhotos = true, filters, searchRunId }: { maxResults: number; minPrice: number; signal?: AbortSignal; targets?: Targets; includeOffers?: boolean; automaticPhotos?: boolean; filters?: ListingFilters; searchRunId?: string },
     onMessage: (message: DealsMessage) => void
 ): Promise<void> {
     const criteria = targets ? `&profit=${targets.minProfit}&roi=${targets.minRoi}` : "";
-    return streamLines(`/api/deals?q=${encodeURIComponent(query)}&max=${maxResults}&min=${minPrice}${criteria}&offers=${includeOffers ? 1 : 0}${filterQuery(filters)}`, onMessage, signal,
+    return streamLines(`/api/deals?q=${encodeURIComponent(query)}&max=${maxResults}&min=${minPrice}${criteria}&offers=${includeOffers ? 1 : 0}&autoPhotos=${automaticPhotos ? 1 : 0}${filterQuery(filters)}`, onMessage, signal,
         { headers: searchHeaders(searchRunId) });
 }
 
-export function streamNewDeals(query: string, options: { minPrice: number; signal?: AbortSignal; targets: Targets; includeOffers: boolean; knownIds: string[]; filters?: ListingFilters; searchRunId?: string }, onMessage: (message: DealsMessage) => void): Promise<void> {
-    return streamLines(`/api/deals/new?min=${options.minPrice}&profit=${options.targets.minProfit}&roi=${options.targets.minRoi}&offers=${options.includeOffers ? 1 : 0}${filterQuery(options.filters)}`, onMessage, options.signal,
+export function streamNewDeals(query: string, options: { minPrice: number; signal?: AbortSignal; targets: Targets; includeOffers: boolean; automaticPhotos?: boolean; knownIds: string[]; filters?: ListingFilters; searchRunId?: string }, onMessage: (message: DealsMessage) => void): Promise<void> {
+    return streamLines(`/api/deals/new?min=${options.minPrice}&profit=${options.targets.minProfit}&roi=${options.targets.minRoi}&offers=${options.includeOffers ? 1 : 0}&autoPhotos=${options.automaticPhotos === false ? 0 : 1}${filterQuery(options.filters)}`, onMessage, options.signal,
         { method: "POST", headers: { "Content-Type": "application/json", ...searchHeaders(options.searchRunId) }, body: JSON.stringify({ query, knownIds: options.knownIds.slice(-500) }) });
 }
 
@@ -166,12 +166,14 @@ export function fetchEbayUsage(searchRunId?: string): Promise<EbayUsage | null> 
 // after that. fresh refreshes listing terms while compatible photos are reused.
 // The listing's current price, bid, and end time go along, so the server
 // can use its saved details instead of asking eBay again.
-export async function evaluateListing(listing: ListingSummary, { fresh = false, signal, searchRunId = crypto.randomUUID(), automatic = false }: { fresh?: boolean; signal?: AbortSignal; searchRunId?: string; automatic?: boolean } = {}): Promise<Evaluation> {
+export async function evaluateListing(listing: ListingSummary, { fresh = false, signal, searchRunId = crypto.randomUUID(), automatic = false, targets }: { targets?: Targets; fresh?: boolean; signal?: AbortSignal; searchRunId?: string; automatic?: boolean } = {}): Promise<Evaluation> {
     for (let attempt = 0; ; attempt++) {
         signal?.throwIfAborted();
         const refreshQuery = fresh ? attempt === 0 ? "?fresh=1" : "?refreshTerms=1" : "";
-        const query = automatic ? `${refreshQuery}${refreshQuery ? "&" : "?"}auto=1` : refreshQuery;
-        try { return await request(`/api/listings/${encodeURIComponent(listing.id)}/evaluate${query}`, {
+        const query = new URLSearchParams(refreshQuery);
+        if (automatic) query.set("auto", "1");
+        if (targets) { query.set("profit", String(targets.minProfit)); query.set("roi", String(targets.minRoi)); }
+        try { return await request(`/api/listings/${encodeURIComponent(listing.id)}/evaluate?${query}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...searchHeaders(searchRunId) },
         signal,

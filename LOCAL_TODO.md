@@ -40,6 +40,36 @@ provider payloads, photos and data/ stay excluded. No computer handoff is pendin
   hold, and reopened free. No production second source or model change added.
   These diagnostics do not complete the verified BIN milestone above.
 
+## Deal debugging and remaining audit fixes
+
+The [November 8 search audit](docs/deal-search-audit-2026-11-08.md) preserves
+the PDF findings, the 50-row reconstruction, the browser checks and the live
+Mew ex replay.
+
+- [x] Explain skipped retained listings with the queue's own reason and report
+  loaded listings and completed assessments separately. Reconstruct the
+  original Blastoise search from surviving evidence and record 12 unknown rows.
+- [x] Exercise a profitable, losing and blocked Buy It Now fixture through
+  the real browser queue with mocked endpoints. Run one live Mew ex search.
+  It reached zero Deals. The saved replay recovered 28 additional price
+  exclusions before photos.
+- [ ] Persist a small per-search diagnostic record and link it to versioned
+  replay inputs with bounded retention. Preserve the original search account,
+  row decisions, phase counts, provider outcomes and remaining budgets.
+- [ ] Keep a provider-mocked regression through the search stream and
+  evaluation endpoints for supported profit, loss and mixed stop reasons.
+- [ ] Fix the confirmed `Base Set 2/102` ambiguity in both the shared reprint
+  reader and the literal title reader. Preserve real Base Set 2 titles.
+- [ ] Resolve remaining market identity examples using exact catalog evidence.
+  Start with `Bubble Mew`, `Special Illustration`, and `Contender`.
+  Keep an open question about cached evidence after a deferred market in a
+  multi-market search. A local fixture reproduces order dependence, while
+  the Blastoise and Mew replays did not implicate it.
+- [ ] Document local reproduction and refresh the tracked environment template
+  to match port 3017 and current settings. Preserve the loopback API boundary.
+- [ ] Complete the bounded price-only retry below, then validate a verified
+  profitable live Buy It Now listing through Deals using a targeted search.
+
 ## Working foundations to preserve
 
 - [x] Default to Any profit and Any ROI while requiring positive net profit.
@@ -133,10 +163,10 @@ provider payloads, photos and data/ stay excluded. No computer handoff is pendin
 - [x] Run a single bounded text check on saved catalog candidates. It identified
   Moonbreon, abstained on the sleepy Mew description, and left both broad
   controls open. Cost $0.0001202 with a free replay.
-- [ ] Validate catalog candidate retrieval for nicknames/descriptions before any
-  automatic text check. Preserve typed filters and broad searches. Measure
-  correct listings reached and photo calls avoided. Treat delivered-price
-  phrases as separate constraints.
+- [ ] Validate catalog candidate retrieval for nicknames and descriptions.
+  The current bounded text assistance only cleans up phrasing. Preserve typed
+  filters and broad searches, measure correct listings reached and photo calls
+  avoided, and treat delivered-price phrases as separate constraints.
 - [ ] Review bare OC/MC/Error qualifier wording consistently across sold
   screening and final pricing, while preserving ordinary seller lot suffixes.
 - [ ] Finish bounded sparse-market recovery: exact recent sales, labeled older
@@ -194,14 +224,14 @@ provider payloads, photos and data/ stay excluded. No computer handoff is pendin
   against accuracy, latency and total useful-result cost. Existing text-ranking
   and cheaper-label pilots do not establish net savings. Reuse accepted findings
   and necessary original pixels instead of repeating entire assessments.
+- [ ] Verify the focused edition-stamp path on a suitable real listing with a
+  verified current quote and exact sold evidence for both possible printings.
+  The mocked decision flip passes. The saved live gate check skipped the crop.
 - [ ] Persist reusable source-linked observations/crop regions with model/schema
   versions and correction provenance for later targeted follow-ups.
 - [ ] Reduce routine manual holds. Automatic correction of seller metadata must
   rely on corroborated physical identity; material authenticity/holder conflicts
   remain explicit. A missing market price belongs in Sorting.
-- [ ] Investigate the explicitly deferred early-completion case: 50 loaded,
-  one assessment, 49 incomplete and substantial budget remaining. Trace actual
-  eligibility/queue/terminal reasons; do not spend merely to exhaust the cap.
 
 ## Auctions, liquidity and strategy
 

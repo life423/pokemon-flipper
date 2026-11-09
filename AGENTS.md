@@ -114,7 +114,9 @@ Read docs/architecture.md for the source map and reading order.
   missing seller edition specifics invalidate financial reuse, including
   shortlist refresh/resave, while accepted paid photo answers remain reusable.
 - The browser queues eligible assessments, at most two in flight. Fifty metadata
-  rows do not promise fifty paid assessments. Reuse saved evidence first.
+  rows can include work blocked before paid assessment. Reuse saved evidence
+  first. Keep per-listing reasons tied to the queue's eligibility checks and
+  count loaded listings separately from completed assessments.
 - Raw requests combine identity/condition across at most six selected photos.
   Compact slab-label requests use the first two unique photos and null condition.
   Slab model selection has a separate optional override; defaults are unchanged.
@@ -122,6 +124,10 @@ Read docs/architecture.md for the source map and reading order.
   Actual photographed holder/grader/grade determines resale, not seller category.
   A compact request finding raw does not buy another raw assessment automatically.
   BGS/TAG resale is separate from configured PSA/CGC submission services.
+- An unresolved First Edition stamp can use one original-image crop on a
+  supported raw Buy It Now listing when verified current terms and two exact
+  pricing outcomes establish that the stamp can change the decision. Keep
+  the original accepted evidence and share the search's spending ceiling.
 - Raw resale reads accepted historical photo-condition evidence first. A
   same-condition seller-clue cohort, or otherwise an unspecified-condition
   cohort, merits research if any confirmed sale could cover current costs.
@@ -150,7 +156,11 @@ Read docs/architecture.md for the source map and reading order.
   the allowance; brainstorming is not authorization to raise it.
 - The user explicitly raised the cap for new search accounts to $0.10 on
   November 8. Preserve the limits, charges and holds of existing accounts.
-  Prefer a free catalog/local resolution before additional text AI.
+  Prefer saved/local interpretation. A bounded text request may remove
+  remaining conversational phrasing while preserving literal criteria. After
+  sold screening, one bounded text request can reorder tied Buy It Now photo
+  candidates when automatic photos are on. Neither request changes pricing
+  or verification requirements.
 - New searches allow **100 actual eBay Browse requests per search**, separate from daily
   account quota/reserve. Retries, nested calls and restarts retain spent counts.
   Cache hits, OAuth and Analytics are separate. The old expiring development
@@ -278,12 +288,15 @@ Read docs/architecture.md for the source map and reading order.
 - Run npm test, npm run typecheck, npm run build and git diff --check.
   npm test uses temporary POKEMON_FLIPPER_DATA_DIR/file storage. Direct test
   invocations need equivalent isolation; mocks must never touch real ledgers.
-- Keep explicitly deferred early-completion and false front/language reports,
-  large UI redesign, model changes and positive-deal validation in the private
-  backlog unless newly requested. The roadmap is broader than immediate steps.
+- Keep the remaining admission, price-retry, false front/language, UI, model and
+  live deal validation work in the tracked checklist. A durable search record
+  needs versioned replay inputs and recorded outcomes under the original UUID.
 
 ## Reference checkpoints
 
+- docs/deal-search-audit-2026-11-08.md: the supplied audit, reconstructed
+  Blastoise outcomes, mocked browser verification, live Mew ex results and
+  cache-only follow-up.
 - docs/financial-calculation-audit-2026-11-03.md and its fee-source companion:
   cents-correct math and remaining fee/holding assumptions.
 - docs/price-first-screening-2026-11-03.md and

@@ -5,7 +5,7 @@ import type { EbayUsage, Evaluation, ListingSummary, Targets } from "./types";
 import { currentPriceEvidence } from "../../shared/pricing-freshness.ts";
 import type { AiUsageDay } from "../../shared/ai-usage.ts";
 import { fetchAiUsage, ApiRequestError } from "./api";
-import { analysisConcurrency, canAutoAnalyze } from "../../shared/analysis.ts";
+import { analysisConcurrency } from "../../shared/analysis.ts";
 import { matchesListingFilters } from "../../shared/listing-filters.ts";
 import { englishListingEligible } from "../../shared/card-language.ts";
 import type { ListingFilters } from "../../shared/listing-filters.ts";
@@ -41,6 +41,7 @@ import type { AnalysisState } from "./analysis-state";
 import { filterSearchResults, groupSearchResults, sortSearchResults, countSearchResults, selectDealAlternatives, evaluationOf, type View, type SortKey, type TypeFilter, type KindFilter, type SearchPage } from "./search/results";
 import { ALL, AUTO_KEY, RECENT_KEY, RECENT_LIMIT, STARTER_SEARCHES, readRecentSearches, readTargets, readAutoSetting, readResultsSetting, targetText } from "./search/settings";
 import { analysisBlockPolicy, describeIntent, describeUsage, type AnalysisBlockCode } from "./search/presentation";
+import { automaticListingBlock, describeListingBlock } from "./search/analysis-admission";
 import styles from "./App.module.css";
 
 // The views, in order, and what each is called everywhere it appears.
@@ -169,7 +170,7 @@ export function App() {
         }
     }
     const [submittedFilters, setSubmittedFilters] = useState<ListingFilters | null>(null);
-    const currentFilters: ListingFilters = { typeFilter, kindFilter, minPrice: Math.max(0, Number(minPrice) || 0), maxPrice: maxPrice === "" ? undefined : Number(maxPrice) };
+    const currentFilters: ListingFilters = useMemo(() => ({ typeFilter, kindFilter, minPrice: Math.max(0, Number(minPrice) || 0), maxPrice: maxPrice === "" ? undefined : Number(maxPrice) }), [typeFilter, kindFilter, minPrice, maxPrice]);
     const analysisSelection = useRef({ page, filters: currentFilters, graded: summary?.intent.graded });
     analysisSelection.current = { page, filters: currentFilters, graded: summary?.intent.graded };
     const filterScopeChanged = submittedFilters !== null && JSON.stringify(currentFilters) !== JSON.stringify(submittedFilters);
@@ -373,12 +374,12 @@ export function App() {
     useEffect(() => {
         if (page !== "search") return;
         for (const listing of listings) {
-            if (!matchesListingFilters(listing, { typeFilter, kindFilter, maxPrice: maxPrice === "" ? undefined : Number(maxPrice), minPrice: Number(minPrice) || 0 }, languageEvaluations.current.get(listing.id), summary?.intent.graded)) {
+            if (!matchesListingFilters(listing, currentFilters, languageEvaluations.current.get(listing.id), summary?.intent.graded)) {
                 pendingAnalyses.current.delete(listing.id);
                 analysisControllers.current.get(listing.id)?.abort();
             }
         }
-    }, [listings, analyses, page, typeFilter, kindFilter, maxPrice, minPrice, summary]);
+    }, [listings, analyses, page, currentFilters, summary]);
 
     const runAnalysis = useCallback(async (listing: ListingSummary, fresh = false, automatic = false, scope: SearchPage = analysisSelection.current.page): Promise<void> => {
         const current = latestListings.current.get(listing.id) ?? listing;
@@ -409,7 +410,7 @@ export function App() {
         };
 
         try {
-            const evaluation = await evaluateListing(listing, { fresh, automatic, signal: controller.signal, searchRunId: searchRunId.current });
+            const evaluation = await evaluateListing(listing, { fresh, automatic, targets, signal: controller.signal, searchRunId: searchRunId.current });
             controller.signal.throwIfAborted();
             if (stillCurrent()) {
                 const current = latestListings.current.get(listing.id) ?? listing;
@@ -480,7 +481,7 @@ export function App() {
                 void runAnalysis(current, pending.fresh, pending.automatic, pending.scope);
             }
         }
-    }, [loadShortlist, refreshUsage]);
+    }, [loadShortlist, refreshUsage, targets]);
 
     const runPhotoReview = useCallback(async (listing: ListingSummary, evaluation: Evaluation) => {
         if (!englishListingEligible(listing, evaluation)) return;
@@ -662,8 +663,8 @@ export function App() {
                 }
             };
             const filters = { typeFilter, kindFilter, maxPrice: maxPrice === "" ? undefined : Number(maxPrice) };
-            if (onlyNew) await streamNewDeals(text, { minPrice: Math.max(0, Number(minPrice) || 0), signal: controller.signal, targets, includeOffers, filters, searchRunId: searchRunId.current, knownIds: rawListings.map((listing) => listing.id) }, receive);
-            else await streamDeals(text, { maxResults: resultsSetting, minPrice: Number(minPrice) || 0, signal: controller.signal, targets, includeOffers, filters, searchRunId: searchRunId.current }, receive);
+            if (onlyNew) await streamNewDeals(text, { minPrice: Math.max(0, Number(minPrice) || 0), signal: controller.signal, targets, includeOffers, automaticPhotos: autoSetting !== 0, filters, searchRunId: searchRunId.current, knownIds: rawListings.map((listing) => listing.id) }, receive);
+            else await streamDeals(text, { maxResults: resultsSetting, minPrice: Number(minPrice) || 0, signal: controller.signal, targets, includeOffers, automaticPhotos: autoSetting !== 0, filters, searchRunId: searchRunId.current }, receive);
 
             if (searchId.current === id) setSearchStatus("done");
             refreshUsage();
@@ -688,6 +689,10 @@ export function App() {
         setSearchStatus("done");
     }
 
+    const listingBlock = useCallback((listing: ListingSummary, asOf?: number) => automaticListingBlock(
+        listing, currentFilters, languageEvaluations.current.get(listing.id), summary?.intent.graded, newMode ? newIds : null, asOf,
+    ), [currentFilters, summary?.intent.graded, newMode, newIds]);
+
     // Promising candidates go first, up to the shared concurrency ceiling and
     // the user's selected full-analysis setting.
     useEffect(() => {
@@ -697,12 +702,7 @@ export function App() {
         if (remaining <= 0) return;
 
         const waiting = listings
-            .filter(listing => englishListingEligible(listing, languageEvaluations.current.get(listing.id)))
-            .filter(listing => matchesListingFilters(listing, { typeFilter, kindFilter, maxPrice: maxPrice === "" ? undefined : Number(maxPrice), minPrice: Number(minPrice) || 0 }, languageEvaluations.current.get(listing.id), summary?.intent.graded))
-            // Resolve metadata and unusual prices as they arrive too. Auction
-            // likelihood affects presentation and priority, not permission to
-            // inspect the actual card within the user's analysis budget.
-            .filter((listing) => (!newMode || newIds.has(listing.id)) && canAutoAnalyze(listing) && !analyses[listing.id] &&
+            .filter((listing) => !listingBlock(listing) && !analyses[listing.id] &&
                 !activeAnalyses.current.has(listing.id) && !activePhotoReviews.current.has(listing.id))
             .sort((a, b) => compareAnalysisPriority(a, b, targets));
         let free = Math.min(BOUNDED_AUTO_CONCURRENCY, analysisConcurrency(waiting.length + running, analysisOutcomes)) - running;
@@ -715,7 +715,7 @@ export function App() {
             remaining -= 1;
             void runAnalysis(listing, false, true);
         }
-    }, [listings, analyses, budget, runAnalysis, analysisOutcomes, targets, photoReviews, page, newMode, newIds, typeFilter, kindFilter, maxPrice, minPrice, summary]);
+    }, [listings, analyses, budget, runAnalysis, analysisOutcomes, targets, photoReviews, page, listingBlock]);
 
     function changeAutoSetting(value: number) {
         setAutoSetting(value);
@@ -775,6 +775,23 @@ export function App() {
         setSelectedId(id);
     };
     const budgetLeft = budget - autoQueued.current.size;
+    const analysisHold = needsWiderSearch ? "Search filters changed. Run a new search to continue."
+        : stopped ? "Search stopped"
+        : analysisBlocked ? analysisBlockPolicy(analysisBlockCode).title
+        : budgetLeft <= 0 ? autoSetting === 0 ? "Automatic assessment is off" : "Automatic assessment count limit reached"
+        : null;
+    const skipped = new Map<string, { label: string; detail?: string | null }>();
+    if (page === "search") for (const listing of listings) {
+        const state = analyses[listing.id];
+        if (state?.status === "error") {
+            skipped.set(listing.id, { label: "Assessment failed", detail: state.message });
+            continue;
+        }
+        if (state || activeAnalyses.current.has(listing.id) || activePhotoReviews.current.has(listing.id)) continue;
+        const block = listingBlock(listing);
+        if (block) skipped.set(listing.id, describeListingBlock(listing, block));
+        else if (analysisHold) skipped.set(listing.id, { label: analysisHold });
+    }
 
     const emptyText: Record<View, string> = {
         new: "No unseen listings in this newest-listing window match the current filters. Your earlier results remain in the other views.",
@@ -1023,6 +1040,14 @@ export function App() {
                             details={progressDetails}
                         />
                     )}
+                    {skipped.size > 0 && <details className={styles.skippedListings}>
+                        <summary>Why listings weren’t assessed ({skipped.size})</summary>
+                        <p>Reasons for listings retained by this search. Search details above count listings screened out before they were loaded.</p>
+                        <ul>{listings.map(listing => {
+                            const reason = skipped.get(listing.id);
+                            return reason && <li key={listing.id}><strong>{listing.title}</strong><span>{reason.label}{reason.detail ? ` · ${reason.detail}` : ""}</span></li>;
+                        })}</ul>
+                    </details>}
                     {searchStatus !== "idle" && <PricingRetries listings={filtered} reviewCount={groups.review.length} searching={searchStatus === "checking"} analyzed={new Set(Object.entries(analyses).filter(([, analysis]) => analysis.status === "done" || analysis.status === "loading").map(([id]) => id))}
                         busy={pricingBusy} note={pricingNote} onRetry={(tickets) => void retryPrices(tickets)} onCancel={cancelPricing} />}
                     {newMode && <p className={styles.discoveryNote}>Loaded one window of up to 200 newest listings and admitted at most {DEVELOPMENT_SEARCH_LIMIT} unseen candidates for screening. Earlier results stay in All matching; this is a limited development batch.</p>}
@@ -1114,6 +1139,7 @@ export function App() {
                                 // The first screenfuls glide when you sort or filter.
                                 transitionName={index < 24 ? transitionName(listing.id) : undefined}
                                 analysis={analyses[listing.id]}
+                                assessmentNote={skipped.get(listing.id)?.label}
                                 photoReviewState={photoReviews[listing.id]}
                                 saved={shortlist.some((entry) => entry.id === listing.id)}
                                 saving={savingIds.has(listing.id)}

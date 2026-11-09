@@ -1,5 +1,5 @@
 import { searchListings } from "../ebay/listings.ts";
-import { readSearchWithoutAi } from "../search/intent.ts";
+import { readSearchWithAi } from "../search/query-assistance.ts";
 import { cardMismatch, gradingMatches, titleMatches, setMatches } from "../search/relevance.ts";
 import { readTitleByRules, readTitleWithoutAi } from "../ai/title-reader.ts";
 import type { ListingSummary, SearchIntent, Targets } from "../../shared/types.ts";
@@ -11,6 +11,7 @@ import { sameCardNumber } from "../identity/card-identity.ts";
 import { DEVELOPMENT_SEARCH_LIMIT } from "../../shared/research-policy.ts";
 import { createPriceFirstSession, type SoldScreeningFactory } from "./price-first.ts";
 import { compareAnalysisPriority } from "../../shared/analysis-priority.ts";
+import { prioritizeListingText } from "./listing-text-priority.ts";
 import { createScreeningPriceSource } from "../pricing/pkmnprices.ts";
 
 const SOURCE_PAGE_LIMIT = 200;
@@ -22,11 +23,12 @@ function literalTitleFits(listing: ListingSummary, intent: SearchIntent): boolea
 }
 
 interface FindSteps {
-    readIntent: typeof readSearchWithoutAi;
+    readIntent: typeof readSearchWithAi;
     search: typeof searchListings;
     readTitle: typeof readTitleWithoutAi;
     soldScreening?: SoldScreeningFactory;
     priceSource?: typeof createScreeningPriceSource;
+    prioritizeText?: typeof prioritizeListingText;
 }
 
 export interface SearchSummary {
@@ -52,18 +54,20 @@ export interface SearchOptions {
     signal?: AbortSignal;
     targets?: Targets;
     includeOffers?: boolean;
+    automaticPhotos?: boolean;
     newOnly?: { excludeIds: readonly string[] };
     filters?: ListingFilters;
     asOf?: number;
 }
 
 // One live source page, local/saved metadata, then reusable sold-price research.
-// Full photo assessments are a separate queue with their own persistent budget.
+// The browser queues photos separately within the same persistent search budget.
 export async function findDeals(search: string, {
     onStart = () => {}, onListing = () => {}, onPriceExcluded = () => {}, minPrice = 0, signal, targets,
-    includeOffers = false, newOnly, filters, asOf = Date.now(),
+    includeOffers = false, automaticPhotos = false, newOnly, filters, asOf = Date.now(),
 }: SearchOptions = {}, dependencies: FindSteps = {
-    readIntent: readSearchWithoutAi, search: searchListings, readTitle: readTitleWithoutAi, priceSource: createScreeningPriceSource,
+    readIntent: readSearchWithAi, search: searchListings, readTitle: readTitleWithoutAi,
+    priceSource: createScreeningPriceSource, prioritizeText: prioritizeListingText,
 }): Promise<ListingSummary[]> {
     if (signal?.aborted) return [];
     if (cardLanguageStatus(search) === "OTHER") throw new EnglishOnlyError();
@@ -137,8 +141,10 @@ export async function findDeals(search: string, {
     }
     if (signal?.aborted) return [];
     onStart(summary());
+    let ordered = matching.sort((a, b) => compareAnalysisPriority(a, b, targets));
+    if (automaticPhotos && dependencies.prioritizeText) ordered = await dependencies.prioritizeText(ordered, targets, signal);
     const results: ListingSummary[] = [];
-    for (const listing of matching.sort((a, b) => compareAnalysisPriority(a, b, targets))) {
+    for (const listing of ordered) {
         if (signal?.aborted) return [];
         if (!worthScreening(listing, listingFilters, asOf)) continue;
         const mismatch = listing.match ?? cardMismatch(listing.screen, intent);

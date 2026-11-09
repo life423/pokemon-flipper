@@ -15,8 +15,8 @@ export interface ListingFilters {
 // Admission uses metadata; downstream callers can supply matching saved photo
 // evidence. A predicted raw grade never makes a card a certified slab, and a
 // low auction opening bid is not a Buy It Now price.
-export function matchesListingFilters(listing: ListingSummary, filters: ListingFilters = {}, evaluation?: Evaluation | null, requestedGraded?: boolean | null): boolean {
-    if (filters.typeFilter && filters.typeFilter !== "all" && listing.buyingOption !== filters.typeFilter) return false;
+export function listingFilterBlock(listing: ListingSummary, filters: ListingFilters, evaluation?: Evaluation | null, requestedGraded?: boolean | null) {
+    if (filters.typeFilter && filters.typeFilter !== "all" && listing.buyingOption !== filters.typeFilter) return "LISTING_FORMAT";
     // Query words and the explicit control are independent constraints. A
     // contradictory selection does not silently discard either requirement.
     const wantedKinds = [filters.kindFilter, typeof requestedGraded === "boolean" ? requestedGraded ? "graded" : "raw" : null]
@@ -28,10 +28,15 @@ export function matchesListingFilters(listing: ListingSummary, filters: ListingF
             searchPhotosFitDetails(listing.images, evaluation.listing.photos ?? []);
         const observed = sameEvidence ? observedCardKind(evaluation) : null;
         const actual = observed ?? (listing.isGraded ? "graded" : "raw");
-        if (wantedKinds.some(kind => actual !== kind)) return false;
+        if (wantedKinds.some(kind => actual !== kind)) return "CARD_TYPE";
     }
-    if (listing.currentPrice !== null && listing.currentPrice > (filters.maxPrice ?? Infinity)) return false;
-    return listing.buyingOption !== "FIXED_PRICE" || (listing.currentPrice ?? 0) >= (filters.minPrice ?? 0);
+    if (listing.currentPrice !== null && listing.currentPrice > (filters.maxPrice ?? Infinity)) return "ABOVE_MAX_PRICE";
+    if (listing.buyingOption === "FIXED_PRICE" && !((listing.currentPrice ?? 0) >= (filters.minPrice ?? 0))) return "BELOW_MIN_PRICE";
+    return null;
+}
+
+export function matchesListingFilters(listing: ListingSummary, filters: ListingFilters = {}, evaluation?: Evaluation | null, requestedGraded?: boolean | null): boolean {
+    return listingFilterBlock(listing, filters, evaluation, requestedGraded) === null;
 }
 
 export function withinAutomaticAuctionWindow(listing: Pick<ListingSummary, "buyingOption" | "endTime">, now = Date.now()): boolean {

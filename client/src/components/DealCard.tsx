@@ -26,6 +26,7 @@ interface Props {
     transitionName?: string;
     listing: ListingSummary;
     analysis?: AnalysisState;
+    assessmentNote?: string;
     selected: boolean;
     now: number;
     onOpen: () => void;
@@ -42,7 +43,7 @@ const LISTED_DATE = new Intl.DateTimeFormat(undefined, { year: "numeric", month:
 const signed = (value: number) => `${value < 0 ? "−" : "+"}${dollars(Math.abs(value))}`;
 const dateOf = (value: string | null | undefined) => typeof value === "string" && Number.isFinite(Date.parse(value)) ? new Date(value) : null;
 
-export function DealCard({ listing, analysis, selected, now, onOpen, years, index = 0, transitionName, minGrade = 0, targets = MONEY_CONFIG.targets, photoReviewState, saved, saving, onSave }: Props) {
+export function DealCard({ listing, analysis, assessmentNote, selected, now, onOpen, years, index = 0, transitionName, minGrade = 0, targets = MONEY_CONFIG.targets, photoReviewState, saved, saving, onSave }: Props) {
     const evaluation = analysis?.status === "done" ? analysis.evaluation : null;
     const priceGap = priceEvidenceGap(evaluation);
     const deferred = Boolean(priceGap) || isResearchDeferred(evaluation);
@@ -104,6 +105,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
             <span className={styles.badge}>{badge}</span>
         </header>
         <PhotoReview compact evaluation={evaluation} listing={listing} state={photoReviewState} phase={analysis?.status === "loading" || analysis?.status === "error" ? analysis.status : undefined} />
+        {assessmentNote && <p className={styles.note}>{analysis?.status === "error" ? analysis.message : `Automatic assessment skipped · ${assessmentNote}`}</p>}
         {priceGap ? <p className={styles.note}>{priceGap}</p> : evaluation?.underwriting?.verdict === "CANT_PRICE" && <p className={styles.note}>{evaluation.underwriting.reasons[0]}</p>}
         {!evaluation && screen?.soldEvidence && <SoldPriceScreening listing={listing} compact />}
         {!evaluation && !screen?.soldEvidence && screen?.status === "UNSCREENED" && <p className={styles.note}>{screen.pricingIssue?.kind === "RATE_LIMIT" ? "Pricing paused for provider cooldown." : screen.pricingIssue?.kind === "TEMPORARY" ? "Price lookup temporarily unavailable." : screen.pricingIssue?.kind === "CREDITS" ? "Pricing unavailable. Check provider credits." : screen.pricingIssue?.kind === "CONFIG" ? "Pricing unavailable. Check provider setup." : screen.reason}</p>}
