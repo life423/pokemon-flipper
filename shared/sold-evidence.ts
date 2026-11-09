@@ -1,5 +1,5 @@
 import { isRawCondition } from "./conditions.ts";
-import type { ScreeningSoldReference } from "./types.ts";
+import type { Printing, ScreeningSoldEvidence, ScreeningSoldReference } from "./types.ts";
 
 const positive = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value > 0;
 const normalize = (value: unknown) => String(value ?? "").trim().toUpperCase();
@@ -29,4 +29,12 @@ export function usableSoldReference(reference: ScreeningSoldReference, slab: boo
 export function soldReferenceScope(reference: ScreeningSoldReference): string {
     return JSON.stringify([reference.recordId, normalize(reference.name), normalize(reference.set), normalize(reference.cardNumber),
         reference.printing, reference.finish, normalize(reference.grader), reference.grade === null ? null : Number(reference.grade)]);
+}
+
+// Query-scoped research is not an observed edition. Keep alternative markets
+// available for identity research without pricing the live copy against one.
+export function hasExactSoldScope(evidence: ScreeningSoldEvidence, printing?: Printing | "UNKNOWN" | null): boolean {
+    return evidence.exactScope && evidence.references.length > 0 &&
+        new Set(evidence.references.map(soldReferenceScope)).size === 1 &&
+        (!printing || printing === "UNKNOWN" || evidence.references.every(reference => reference.printing === printing));
 }

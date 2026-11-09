@@ -9,6 +9,7 @@ import type { Evaluation, ListingSummary, RatingLevel, Screen, SearchIntent } fr
 import { underwrite } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { canAutoAnalyze } from "../../shared/analysis.ts";
+import { salesSummary } from "../fixtures/card-evaluation.ts";
 
 const NOW = Date.parse("2026-11-02T12:00:00Z");
 const targets = { minProfit: 0, minRoi: 0 };
@@ -33,7 +34,7 @@ function evaluation(item: ListingSummary, resale = 250, level?: RatingLevel): Ev
         condition: { centering: area(), corners: area(), edges: area(), surface: area(), creases: "NONE_SEEN", rawCondition: "LIGHTLY_PLAYED",
             gradeRange: { low: 4, likely: 5, high: 8 }, authenticity: { concern: "NONE_SEEN", reasons: [] }, confidence: "HIGH", limitations: [], summary: "Offline assessment." },
         gradingMode: "FULL", modeReasons: [], gradeStatus: "ESTIMATED", setAside: [],
-        rawPricing: { status: "PRICED", prices: [{ condition: "LIGHTLY_PLAYED", price: resale, updatedAt: new Date(NOW).toISOString() }] },
+        rawPricing: { status: "PRICED", prices: [{ basis: "EBAY_SOLD", condition: "LIGHTLY_PLAYED", price: resale, updatedAt: new Date(NOW).toISOString() }] },
         gradedPricing: null, slab: null, slabPricing: null, underwriting: null, rating: null,
         answeredAt: new Date(NOW).toISOString(), reusedSteps: [], usage: [],
     };
@@ -105,6 +106,31 @@ test("known canonical identity respects requested set, collector number, printed
     const analyses = { [wrongSet.id]: done(setValue), [wrongNumber.id]: done(numberValue), [wrongName.id]: done(nameValue), [right.id]: done(correct) };
     assert.deepEqual(ids(filter([wrongSet, wrongNumber, wrongName, right], analyses, {}, "search", holoIntent)), [right.id]);
     assert.deepEqual(filter([right], analyses, {}, "search", { ...holoIntent, printing: "UNLIMITED" }), []);
+});
+
+test("equivalent photo wording keeps completed profitable slabs in Deals while other identities stay excluded", () => {
+    const cases = [
+        { name: "Lugia V", set: "Silver Tempest", number: "185/195", words: ["lugia", "v"],
+            matching: { name: "Lugia V", set: "Sword & Shield—Silver Tempest" },
+            different: { name: "Lugia V", set: "Sword & Shield—Lost Origin" } },
+        { name: "Nidoran Male", set: "Evolutions", number: "43/108", words: ["nidoran", "male"],
+            matching: { name: "Nidoran♂", set: "Evolutions" }, different: { name: "Nidoran♀", set: "Evolutions" } },
+    ];
+    for (const { name, set, number, words, matching, different } of cases) {
+        const item = listing(name, { title: `${name} ${set} ${number} PSA 9`, isGraded: true });
+        const value = slab(item, "PSA", "9");
+        value.identity = { ...value.identity!, name, set, cardNumber: number };
+        value.slabPricing = { status: "PRICED", summary: salesSummary("PSA", "9", [200, 240, 280]) };
+        value.underwriting = underwrite(value, MONEY_CONFIG);
+        assert.equal(value.underwriting.verdict, "BUY_GRADED");
+        const intent = { ...holoIntent, cardName: name, sets: [set], cardNumber: number, titleWords: words,
+            finish: null, graded: true, grader: "PSA", minGrade: 9, maxGrade: 9 };
+        const analyses = { [item.id]: done(value) };
+        value.photoCheck!.cardIdentity = { ...matching, cardNumber: number, finish: "UNKNOWN", language: "English", confidence: "HIGH", evidence: [] };
+        assert.deepEqual(groupSearchResults(filter([item], analyses, {}, "search", intent), analyses, false, new Set()).deals, [item]);
+        Object.assign(value.photoCheck!.cardIdentity, different);
+        assert.deepEqual(filter([item], analyses, {}, "search", intent), []);
+    }
 });
 
 test("a broad reprint search and unknown photo identity are not reclassified as vintage mismatches", () => {
@@ -407,7 +433,7 @@ test("the completed Chansey loss leaves Sorting and attention without deleting p
     assessed.underwriting = underwrite(assessed, MONEY_CONFIG);
     assert.equal(assessed.underwriting?.verdict, "PASS");
     assert.equal(assessed.underwriting?.best?.profit, -75.29);
-    assert.equal(assessed.underwriting?.best?.maxBid, 0);
+    assert.equal(assessed.underwriting?.best?.maxBid, 5.9);
     const analyses = freeze({ [chansey.id]: done(assessed) });
     const groups = groupSearchResults([chansey], analyses, true, new Set());
     assert.deepEqual(groups.candidates, []);
@@ -479,8 +505,9 @@ test("new-only progress queues only unseen eligible listings while keeping other
 });
 
 test("empty Deals alternatives prefer positive results below targets and omit losses, mismatches and material holds", () => {
+    const customTargets = { minProfit: 50, minRoi: 0.25 };
     const below = listing("below"), loss = listing("loss"), pending = listing("pending"), held = listing("held"), fake = listing("fake");
-    const positive = evaluation(below, 180); positive.underwriting = underwrite(positive, MONEY_CONFIG);
+    const positive = evaluation(below, 180); positive.underwriting = underwrite(positive, { ...MONEY_CONFIG, targets: customTargets });
     assert.equal(positive.underwriting.verdict, "PASS"); assert.ok(positive.underwriting.best!.profit > 0);
     const hold = evaluation(held); hold.identity = { ...hold.identity!, status: "NEEDS_REVIEW", reasons: ["Release is uncertain."] }; hold.underwriting = underwrite(hold, MONEY_CONFIG);
     const counterfeit = evaluation(fake); counterfeit.condition!.authenticity.concern = "LIKELY_FAKE"; counterfeit.underwriting = underwrite(counterfeit, MONEY_CONFIG);
@@ -489,7 +516,7 @@ test("empty Deals alternatives prefer positive results below targets and omit lo
         listing("ended", { endTime: new Date(NOW - 1).toISOString() }), listing("unavailable", { availability: "UNAVAILABLE" }),
         listing("above-filter", { currentPrice: 200 }), listing("dropped", { screen: screen({ status: "DROPPED" }) })];
     const filtered = filter(rows, analyses, { maxPrice: "150" });
-    const alternatives = selectDealAlternatives(filtered, analyses, MONEY_CONFIG.targets, NOW);
+    const alternatives = selectDealAlternatives(filtered, analyses, customTargets, NOW);
     assert.deepEqual(alternatives.map(option => [option.listing.id, option.label]), [[below.id, "Below your targets"], [pending.id, "Resale not yet verified"]]);
     assert.equal(alternatives[0].profit, positive.underwriting.best!.profit);
     assert.equal(alternatives[1].profit, null); assert.equal(alternatives[1].roi, null);
@@ -499,8 +526,8 @@ test("empty Deals alternatives prefer positive results below targets and omit lo
 test("unfinished and reference-only alternatives expose no optimistic profit and require no provider work", t => {
     const fetch = t.mock.method(globalThis, "fetch", () => assert.fail("alternatives only project saved results"));
     const reference = listing("reference"), value = evaluation(reference, 5000);
-    value.rawPricing!.prices[0].basis = "TCGPLAYER";
     value.underwriting = underwrite(value, MONEY_CONFIG);
+    Object.assign(value.rawPricing!.prices[0], { basis: "TCGPLAYER" });
     const unavailable = listing("no-sold-quotes", { screen: screen({ status: "UNSCREENED", soldEvidence: {
         status: "UNAVAILABLE", exactScope: false, references: [], note: "No sold quotes are available.",
     } }) });

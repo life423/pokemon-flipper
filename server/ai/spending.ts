@@ -36,7 +36,7 @@ export interface AiReservation { ledgerId: string; searchId: string; attemptId: 
 // number in seller data, request metadata, JSON length or image dimensions.
 interface Options { directory?: string; preflight?: (body: unknown) => Promise<AiInputProof> }
 const NANO_USD = 1_000_000_000;
-export const AI_SEARCH_HARD_CAP_USD = 0.02;
+export const AI_SEARCH_HARD_CAP_USD = 0.10;
 export const MAX_STANDARD_INPUT_TOKENS = 272_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // USD / million tokens, represented exactly as nano-USD / token. Only the
@@ -65,7 +65,7 @@ async function durableJson(file: string, value: unknown) {
     } finally { await handle?.close().catch(() => {}); await fs.rm(temporary, { force: true }).catch(() => {}); }
 }
 function capInNanoUsd(value: unknown): number {
-    if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > AI_SEARCH_HARD_CAP_USD || !Number.isSafeInteger(Math.floor(value * NANO_USD))) return fail("Paid AI needs an explicit per-search dollar cap between $0 and $0.02 before it can resume.");
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > AI_SEARCH_HARD_CAP_USD || !Number.isSafeInteger(Math.floor(value * NANO_USD))) return fail(`Paid AI needs an explicit per-search dollar cap between $0 and $${AI_SEARCH_HARD_CAP_USD.toFixed(2)} before it can resume.`);
     return Math.floor(value * NANO_USD);
 }
 function validateControl(value: any): Control {

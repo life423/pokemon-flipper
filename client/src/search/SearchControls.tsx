@@ -174,7 +174,7 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
         <>
             {showSearchOptions && <div className={styles.searchOptions} role="group" aria-label="Search options">
                 {purchaseFields}
-                <p className={styles.preferenceNote}>English cards only. Up to {DEVELOPMENT_SEARCH_LIMIT} matching listings per scan. Recent sold evidence informs priority before automatic AI, within a separate 2¢ budget. Identity and condition remain preliminary until photo assessment. All prices by default; the minimum applies to Buy It Now and the maximum to both formats.</p>
+                <p className={styles.preferenceNote}>English cards only. Up to {DEVELOPMENT_SEARCH_LIMIT} matching listings per scan. Recent sold evidence informs priority before automatic AI, within the search’s AI budget. Identity and condition remain preliminary until photo assessment. All prices by default; the minimum applies to Buy It Now and the maximum to both formats.</p>
             </div>}
             <div className={styles.controlPanel} hidden={hidden} data-idle={idle || undefined}>
                 <div className={styles.controlRow}>
@@ -332,12 +332,12 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
                         <select value={autoSetting} onChange={(event) => changeAutoSetting(Number(event.target.value))}>
                             {AUTO_OPTIONS.map((option) => (
                                 <option key={option} value={option}>
-                                    {option === ALL ? "Automatic · within 2¢" : option === 0 ? "Off · manual only" : `Top ${option}`}
+                                    {option === ALL ? "Automatic · within budget" : option === 0 ? "Off · manual only" : `Top ${option}`}
                                 </option>
                             ))}
                         </select>
                     </label>
-                    <p className={styles.usage}>Saved evidence is reused first. New photo work checks identity and either raw condition or the slab label in one assessment of up to 6 photos. All paid stages share the 2¢ search cap; unconfirmed charges remain counted against it. A pause keeps saved evidence available.</p>
+                    <p className={styles.usage}>Saved evidence is reused first. New photo work checks identity and either raw condition or the slab label in one assessment of up to 6 photos. All paid stages share the search’s AI budget; unconfirmed charges remain counted against it. A pause keeps saved evidence available.</p>
                     {usage && <p className={styles.usage}>{describeUsage(usage)}</p>}
                 </section>
                 <section className={styles.drawerSection}>

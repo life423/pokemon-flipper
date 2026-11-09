@@ -50,6 +50,29 @@ const TAG_DESCRIPTIONS: Record<string, readonly string[]> = {
     ...BGS_DESCRIPTIONS, "10": ["GEMMINT"], "9.5": [],
 };
 
+// Preserve the existing title-code check for raw evidence as well as slabs.
+export function hasParenthesizedGradeQualifier(title: string): boolean {
+    return /\((?:oc|mk|mc|st|pd|of)\)/i.test(title);
+}
+
+export function missingTextureReason(title: string | undefined): string | null {
+    const text = title ?? "";
+    for (const match of text.matchAll(/\bmissing[\s\p{Dash_Punctuation}]+texture\b/giu)) {
+        const before = text.slice(0, match.index);
+        if (!/\b(?:not|no|without)(?:[\s\p{Dash_Punctuation}]+an?)?[\s\p{Dash_Punctuation}]+$/iu.test(before)) {
+            return "The title claims a missing-texture error, which is a separate market. Ordinary sold prices do not apply.";
+        }
+    }
+    return null;
+}
+
+// Title-only designations cannot borrow a plain numeric slab-grade market,
+// even when the provider leaves its structured qualifier empty.
+export function hasSpecialSlabTitle(title: string): boolean {
+    return hasParenthesizedGradeQualifier(title) || /\b(?:pristine|black label|perfect|altered|miscut|qualified|qualifier|authentic(?:ated)?)\b/i.test(title) ||
+        missingTextureReason(title) !== null;
+}
+
 export function gradeQualifier(text: unknown, grader: string | null, grade: string | null): string | null {
     const value = String(text ?? "").trim();
     if (/^(none|n\/a|null)?$/i.test(value)) return null;

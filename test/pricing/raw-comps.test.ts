@@ -6,13 +6,12 @@ import { underwrite } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import type { Comp, PricedCard } from "../../server/pricing/types.ts";
 import type { Identity } from "../../shared/types.ts";
-import { rawPricesFor } from "../../server/pricing/raw-prices.ts";
 import { acceptedSoldCondition, type SoldConditionReading } from "../../server/ai/sold-condition.ts";
 
 const now = Date.parse("2026-10-30T18:00:00Z");
 const identity = cardEvaluation().identity!;
 const card: PricedCard = { source: "pkmnprices", name: "Venusaur", cardNumber: "15/102", records: [], variants: [
-    { name: "Unlimited Holofoil", printing: "UNLIMITED", finish: "HOLO", recordId: 1, setName: "Base Set", prices: [{ condition: "LIGHTLY_PLAYED", price: 30, updatedAt: null }] },
+    { name: "Unlimited Holofoil", printing: "UNLIMITED", finish: "HOLO", recordId: 1, setName: "Base Set" },
 ] };
 const sale = (id: number, price = 100, extra: Partial<Comp> = {}): Comp => ({ id, price, sold_at: "2026-10-29", title: "Venusaur Base Set 15/102 Unlimited Holo LP", grader: null, grade: null, grade_qualifier: null, currency: "USD", variant: "Unlimited Holofoil", attribution: "exact", listing_url: `https://www.ebay.com/itm/${id}`, sale_type: "fixed_price", ...extra });
 
@@ -25,7 +24,7 @@ test("raw condition is explicit; absent, ambiguous, and hit-point labels are not
     assert.equal(compCondition("Venusaur Heavily Played 100 HP"), "HEAVILY_PLAYED");
 });
 
-test("recent condition-matched eBay sold median replaces market price and changes real underwriting", async () => {
+test("a recent eBay sold median supports raw underwriting and counts duplicate sales once", async () => {
     const raw = await rawPricesWithSales(card, identity, { now, fetchRawComps: async () => [sale(1, 90), sale(2, 100), sale(3, 110), sale(3, 110)] });
     assert.equal(raw.prices![0].price, 100);
     assert.equal(raw.prices![0].basis, "EBAY_SOLD");
@@ -35,15 +34,14 @@ test("recent condition-matched eBay sold median replaces market price and change
     evaluation.listing.shipping = 0;
     evaluation.gradedPricing = null;
     const config = { ...MONEY_CONFIG, targets: { minProfit: 0, minRoi: 0 } };
-    assert.equal(underwrite({ ...evaluation, rawPricing: { status: "PRICED", prices: card.variants[0].prices } }, config).verdict, "PASS");
     assert.equal(underwrite({ ...evaluation, rawPricing: raw }, config).verdict, "BUY_RAW");
 });
 
 test("foreign currency, another printing, slabs, lots, unknown condition/amount and old sales cannot inflate raw value", async () => {
     const invalid = [sale(3, 900, { currency: "EUR" }), sale(4, 900, { attribution: "shared" }), sale(5, 900, { grader: "PSA", grade: "9" }), sale(6, 900, { title: "Venusaur LP lot 3 cards" }), sale(7, 900, { title: "Venusaur Holo" }), sale(8, 900, { variant: "1st Edition Holofoil" }), sale(9, 900, { sold_at: "2026-01-01" }), sale(10, 900, { sale_type: null }), sale(11, 900, { sold_at: "2027-01-01" })];
     const raw = await rawPricesWithSales(card, identity, { now, fetchRawComps: async () => [sale(1), sale(2), ...invalid, sale(12, 900, { variant: "Unlimited Reverse Holofoil" })] });
-    assert.equal(raw.prices![0].price, 30, "two seller-title-only matches retain the marked market fallback");
-    assert.equal(raw.prices![0].basis, "TCGPLAYER");
+    assert.equal(raw.status, "PRICE_UNAVAILABLE");
+    assert.equal(raw.prices, undefined);
     assert.equal(raw.ebayComps?.find(s => s.grade === "LIGHTLY_PLAYED")?.count, 2);
 });
 
@@ -51,7 +49,8 @@ test("a lone seller-title condition cannot acquire the photo-evidenced one-sale 
     const raw = await rawPricesWithSales(card, identity, { now, fetchRawComps: async () => [sale(1, 100)] });
     assert.equal(raw.conditionEvidence, "SELLER_TEXT");
     assert.equal(raw.ebayComps?.find(summary => summary.grade === "LIGHTLY_PLAYED")?.count, 1);
-    assert.equal(raw.prices![0].price, 30); assert.equal(raw.prices![0].basis, "TCGPLAYER");
+    assert.equal(raw.status, "PRICE_UNAVAILABLE");
+    assert.equal(raw.prices, undefined);
 });
 
 test("one or two physically condition-matched sold copies support a LOW-confidence raw resale without promoting contradictory evidence", async () => {
@@ -92,13 +91,15 @@ test("one or two physically condition-matched sold copies support a LOW-confiden
     }
 });
 
-test("missing AI verdicts and failed sold-data requests preserve working market pricing", async () => {
+test("missing comp verdicts and failed sold-data requests leave raw pricing unavailable", async () => {
     const raw = await rawPricesWithSales(card, identity, { now, fetchRawComps: async () => [sale(1), sale(2), sale(3)], checkComps: async () => new Map() });
-    assert.equal(raw.prices![0].price, 30);
+    assert.equal(raw.status, "PRICE_UNAVAILABLE");
+    assert.equal(raw.prices, undefined);
     assert.equal(raw.ebayComps?.find(s => s.grade === "LIGHTLY_PLAYED")?.count, 0);
     const failed = await rawPricesWithSales(card, identity, { fetchRawComps: async () => { throw new Error("temporary"); } });
-    assert.equal(failed.prices![0].price, 30);
-    assert.match(failed.evidenceNote!, /temporarily unavailable/);
+    assert.equal(failed.status, "PRICE_UNAVAILABLE");
+    assert.equal(failed.prices, undefined);
+    assert.match(failed.reason!, /temporarily unavailable/);
 });
 
 test("a falling resale market lowers the estimate too; values are never selected just to make a deal", async () => {
@@ -127,11 +128,11 @@ test("every eligible returned sold copy is inspected and absent Mint evidence ne
     });
     assert.equal(calls, 17);
     assert.equal(raw.reviewedSoldCopies, 0);
-    assert.equal(raw.prices?.find(price => price.condition === "MINT"), undefined);
-    assert.equal(raw.prices?.find(price => price.condition === "LIGHTLY_PLAYED")?.price, 30);
+    assert.equal(raw.status, "PRICE_UNAVAILABLE");
+    assert.equal(raw.prices, undefined);
 });
 
-test("unresolved photo targets retain their market fallback without fetching or assessing historical copies", async () => {
+test("unresolved photo targets remain unpriced without fetching or assessing historical copies", async () => {
     let fetches = 0, assessments = 0;
     const unresolved: Partial<Identity>[] = [{ finish: "NOT_STATED" }, { finish: "UNKNOWN" }, { finish: "CONFLICTING" },
         { status: "NEEDS_REVIEW" }, { printing: "UNKNOWN" }, { name: null }, { set: null }, { cardNumber: null }];
@@ -141,7 +142,8 @@ test("unresolved photo targets retain their market fallback without fetching or 
             fetchRawComps: async () => { fetches++; return [sale(1), sale(2), sale(3)]; },
             assessCondition: async () => { assessments++; return { condition: "LIGHTLY_PLAYED", evidence: ["Visible whitening"], photoCount: 2 }; },
         });
-        assert.deepEqual(raw, rawPricesFor(card, target), "keep only the fallback the existing market rules can actually support");
+        assert.equal(raw.status, "PRICE_UNAVAILABLE");
+        assert.equal(raw.prices, undefined);
     }
     assert.equal(fetches, 0); assert.equal(assessments, 0);
     const resolved = await rawPricesWithSales(card, identity, { now,
@@ -185,7 +187,11 @@ test("cached matches, missing target conditions and cache failures prevent new r
             },
             acquireCondition: async () => { acquisitions++; return null; },
         });
-        assert.equal(raw.prices![0].basis, mode === "cached" ? "EBAY_SOLD" : "TCGPLAYER", mode);
+        if (mode === "cached") assert.equal(raw.prices?.[0].basis, "EBAY_SOLD");
+        else {
+            assert.equal(raw.status, "PRICE_UNAVAILABLE", mode);
+            assert.equal(raw.prices, undefined, mode);
+        }
     }
     assert.equal(acquisitions, 0);
 });
@@ -202,6 +208,7 @@ test("null or foreign acquired copies cannot inject raw sales or trigger a secon
             },
         });
         assert.equal(acquisitions, 1); assert.equal(raw.reviewedSoldCopies, 0);
-        assert.equal(raw.prices![0].basis, "TCGPLAYER");
+        assert.equal(raw.status, "PRICE_UNAVAILABLE");
+        assert.equal(raw.prices, undefined);
     }
 });

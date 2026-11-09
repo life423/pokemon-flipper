@@ -1,7 +1,4 @@
 import { readCache, writeCache } from "../lib/cache.ts";
-import { conditionOf } from "./raw-prices.ts";
-import { cardVariants } from "./records.ts";
-import type { CardRecord } from "./types.ts";
 import { setKey } from "../../shared/sets.ts";
 import { fetchJson } from "../lib/http.ts";
 import { createLimiter } from "../lib/concurrency.ts";
@@ -9,47 +6,7 @@ import { createSingleFlight } from "../lib/single-flight.ts";
 const limit = createLimiter(2);
 const share = createSingleFlight();
 
-// PokemonPriceTracker. Kept as a cross-check: its raw prices are split
-// by printing, but its graded sales mix printings.
-
 const BASE = "https://www.pokemonpricetracker.com/api/v2";
-const SEARCH_LIMIT = 5;
-
-interface TrackerPrice {
-    price?: number;
-    lastUpdated?: string;
-}
-
-interface TrackerCard {
-    tcgPlayerId: number;
-    name: string;
-    setName: string;
-    cardNumber: string;
-    prices?: { variants?: Record<string, Record<string, TrackerPrice>> };
-}
-
-// A PokemonPriceTracker card in the shape identity and pricing expect.
-export function fromPokemonPriceTracker(record: TrackerCard): CardRecord {
-    const variants = record.prices?.variants ?? {};
-
-    return {
-        source: "pokemonPriceTracker",
-        id: record.tcgPlayerId,
-        name: record.name,
-        setName: record.setName,
-        cardNumber: record.cardNumber,
-        tcgPlayerId: record.tcgPlayerId,
-        variants: cardVariants(Object.keys(variants), record.setName, (label) =>
-            Object.entries(variants[label])
-                .filter(([, entry]) => typeof entry?.price === "number")
-                .map(([condition, entry]) => ({
-                    condition: conditionOf(condition),
-                    price: entry.price as number,
-                    updatedAt: entry.lastUpdated ?? null,
-                }))
-        ),
-    };
-}
 
 // A PokemonPriceTracker request, with a failure turned into a message.
 async function trackerGet(path: string): Promise<{ data?: unknown; metadata?: { hasMore?: boolean } }> {
@@ -74,22 +31,6 @@ async function trackerGet(path: string): Promise<{ data?: unknown; metadata?: { 
     }
 
     return body;
-}
-
-export async function lookupCards({ set, name }: { set: string; name: string }): Promise<CardRecord[]> {
-    const params = new URLSearchParams({ set, search: name, limit: String(SEARCH_LIMIT) });
-    const key = `pokemonpricetracker:cards?${params}`;
-    return share(key, async () => {
-    const cached = await readCache<TrackerCard[]>(key, 24);
-
-    if (cached) return cached.map(fromPokemonPriceTracker);
-
-    const body = await trackerGet(`/cards?${params}`);
-    const cards: TrackerCard[] = Array.isArray(body.data) ? body.data : body.data ? [body.data as TrackerCard] : [];
-
-    await writeCache(key, cards);
-    return cards.map(fromPokemonPriceTracker);
-    });
 }
 
 const YEARS_KEY = "pokemonpricetracker:set-years";

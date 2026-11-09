@@ -17,6 +17,7 @@ test("incomplete screening and failed analyses stay visible in Review without be
     assert.equal(resultGroup(candidate, null), "candidates");
     assert.equal(resultGroup(candidate, null, true, true), "review");
     assert.equal(resultGroup({ ...listing, screen: { ...listing.screen!, status: "DROPPED" } }, null), null);
+    evaluation.rawPricing = null;
     evaluation.underwriting = { verdict: "CANT_PRICE", reasons: [], best: null, paths: [], assumptions: [] };
     assert.equal(resultGroup(candidate, evaluation), "review");
     evaluation.underwriting.verdict = "PASS";

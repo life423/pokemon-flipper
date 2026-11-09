@@ -63,11 +63,10 @@ export const MONEY_CONFIG: MoneyConfig = {
         },
     },
 
-    // What a deal has to clear: profit after every cost, and return on
-    // everything you put in.
+    // Zero means Any. A deal still needs a positive profit after every cost.
     targets: {
-        minProfit: 50,
-        minRoi: 0.25,
+        minProfit: 0,
+        minRoi: 0,
     },
 
     // Preliminary screening, before full photo assessment, assumes each raw card

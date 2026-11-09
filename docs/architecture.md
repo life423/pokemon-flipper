@@ -64,7 +64,7 @@ flowchart TD
    request, except the existing focused-review exception for a raw First Edition
    Base Set lead priced at $10 or less. The browser considers eligible loaded
    rows with two assessments in flight, reuses saved evidence first and shares
-   the persistent $0.02 AI cap. Fifty metadata rows do not imply fifty paid
+   the persistent AI cap of up to $0.10 per search. Fifty metadata rows do not imply fifty paid
    assessments. All nested Browse work shares the separate 100-request ceiling for new searches
    per search and account-wide daily quota protection.
 5. A direct listing link resolves only that listing. Shortlist load/save uses
@@ -97,6 +97,8 @@ flowchart TD
    90-day market even when only one valid current sale exists; the labeled
    180-day fallback applies only when no current match remains. Pricing-policy
    changes reprice saved evaluations without invalidating paid photo readings.
+   Saved graded summaries containing excluded special-label titles also reprice;
+   screening and final eligibility share the qualifier-title predicate.
    Acquisition, screening and final prices share correction-aware sold-ID
    reconciliation in `sold-comps.ts`, before eligibility. Provider revision
    timestamps take precedence, including newer retractions; equally revised
@@ -106,6 +108,16 @@ flowchart TD
    printed names/forms. Observed publisher-era wording can be cleaned with a
    separate written release, full number and numeric slab grade; this permits
    exact price screening without substituting a requested identity for evidence.
+   The same cleaner reconciles CRZ/Holo UR/separate Galarian Gallery wording
+   only with written Crown Zenith, a full GG fraction and numeric slab grade.
+   Source titles and printing/finish/special-label checks remain unchanged.
+   Numbered four-word names remain complete literal claims for catalog matching;
+   unnumbered prose keeps its conservative limit. Numeric-grade-anchored exact
+   parenthetical holder-accessory notes do not become part of a printed name.
+   The title reader and metadata cleaner share the literal collector-number
+   extractor in card-identity.ts. Sword & Shield publisher wording accepts a
+   source-observed plain partial number with numeric slab grade and mapped
+   release; other full-fraction-only descriptors retain their existing guards.
    Final graded prices apply the same exact sold-title target checks as
    screening before recency selection and outlier handling. Final adapters
    share bounded cursor collection and canonical cached page URLs: slabs stop
@@ -151,7 +163,7 @@ All paths below are relative to the repository root.
 | Explicit deeper photo review | `server/analysis/deeper-review.ts`, `server/ai/deeper-photo-review.ts` | Keep the original assessment and a separately keyed focused report; no broad discovery. |
 | Isolated model comparison | `scripts/compare-saved-models.ts`, `server/analysis/model-experiment.ts`, `server/ai/focused-printing-experiment.ts` | Explicit saved-example diagnostics; immutable inputs, private additive evidence and original spending allowances. Does not change production routing or accepted assessments. |
 | AI transport and identity rules | `server/ai/openai.ts`, `server/ai/policy.ts`, `server/identity/` | Exact preflight, spending and SDK dispatch remain distinct from canonical identification and label checks. |
-| Raw resale evidence | `server/pricing/raw-comps.ts`, `raw-prices.ts`, `server/ai/sold-condition.ts` | Reuse accepted sold-copy findings first, then at most one relevant bounded acquisition. Exact physical condition/printing/finish acceptance stays separate from seller clues and market fallbacks. |
+| Raw resale evidence | `server/pricing/raw-comps.ts`, `raw-prices.ts`, `server/ai/sold-condition.ts` | Reuse accepted sold-copy findings first, then at most one relevant bounded acquisition. Exact physical condition, printing and finish acceptance stays separate from seller clues. |
 | Existing slabs and grading scenarios | `server/pricing/graded-comps.ts` | Exact grader/grade sold evidence; asking references in older saved records remain distinct from sales. |
 | Shared sold-evidence rules | `server/pricing/sold-comps.ts` | Pure comp rejection, median, outlier and summary helpers shared by raw/graded pricing. Provider access stays outside this module. |
 | Money and purchase decisions | `shared/money/underwriting.ts`, `config.ts`, `offer.ts`, `rating.ts`, `targets.ts` | Deterministic calculations shared by server and browser. |
@@ -186,7 +198,14 @@ normal searches now offer working retries or automatic price recovery.
   applicable slab label must match the evidence used for final advice. A strong
   physical reading can resolve wrong seller metadata; genuine ambiguity stays
   unresolved. Uncertain preliminary scopes cannot exclude premium-printing
-  upside or blend different printings and finishes into one valuation.
+  upside or blend different printings and finishes into one valuation. They also
+  cannot assign profit, a purchase ceiling or positive financial priority by
+  borrowing a query's requested edition. Shared `hasExactSoldScope` guards free
+  money math, saved priorities and raw market context while retaining research.
+- **Edition changes revalidate financial advice:** the existing identity parser
+  supplies semantic Edition/Features/Printing claims to financial cache context,
+  saved-evaluation reuse and shortlist refresh/resave. Changed or missing claims
+  cannot preserve old advice; accepted paid photo keys/answers are unchanged.
 - **Three resale paths stay distinct:** raw resale uses assessed raw condition;
   existing slab resale uses that slab's grader/grade; raw-to-grade scenarios use
   configured submission services and fees. The PSA/CGC submission list does not
@@ -196,14 +215,13 @@ normal searches now offer working retries or automatic price recovery.
   pricing, never seller metadata alone. Observing a raw card in that request
   does not authorize another paid assessment automatically or invent condition.
 - **Missing evidence stays visible:** do not turn missing sales into a price,
-  treat asking prices as completed sales, or describe a market fallback as a
-  verified sold median. Missing/deferred screening evidence does not buy photo
-  work by default. Explicit TCGplayer raw quotes and asking-only slab references retain scenario
-  math but cannot independently create Deals or final rejections. Price-only
-  reference gaps remain Sorting; physical risks retain their review status.
-  Supported independent routes and sparse matched sales retain their existing
-  behavior. Unknown downside is shown as unknown. Legacy prices without a
-  recorded basis remain readable for compatibility.
+  treat asking prices as completed sales, or replace sold evidence with a
+  market quote. Missing or deferred screening evidence does not buy photo
+  work by default. Raw prices require matched sold evidence. A supported
+  lower condition can establish a conservative positive resale route. Asking
+  references can still illustrate slab competition. Price-only gaps stay in
+  Sorting and physical risks retain their review status. Unknown downside is
+  shown as unknown. Older raw quotes without a basis need a matching sold summary.
 - **Money stays in code:** photos do not set fees, profit or ROI. Grade scenario
   weights are assumptions, not measured odds. An upper grade bound is a
   possibility, not the likely outcome or a certified grade.
@@ -218,7 +236,7 @@ normal searches now offer working retries or automatic price recovery.
   credits come from provider response headers, independently of request counts.
   Cached response reads consume neither. The ledger is local to the configured
   key and does not establish provider-wide accounting across key rotation or
-  independent replicas. It does not replace the persistent two-cent AI
+  independent replicas. It does not replace the persistent per-search AI
   cap or the 100 actual Browse requests per new search. `server/ebay/api.ts` reserves
   Browse calls through `usage.ts` and `daily-budget.ts`; optional work preserves
   the daily reserve. Cached reads do not consume Browse calls. Cancellation

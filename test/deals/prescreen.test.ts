@@ -4,27 +4,17 @@ import { prescreen } from "../../server/deals/prescreen.ts";
 import { sellerCondition } from "../../shared/conditions.ts";
 import { toCardRecord } from "../../server/pricing/pkmnprices.ts";
 import { canAutoAnalyze, resultGroup } from "../../shared/analysis.ts";
-import { identifyCard } from "../../server/identity/card-identity.ts";
-import { rawPricesFor } from "../../server/pricing/raw-prices.ts";
-import { underwrite } from "../../shared/money/underwriting.ts";
+import { MONEY_CONFIG } from "../../shared/money/config.ts";
 
 const NOW = Date.parse("2026-09-30T00:00:00Z");
 
-const usd = (variant, condition, price) => ({ currency: "USD", variant, condition, market_price: price });
-
 const LUGIA = toCardRecord({
     id: 28158,
-    tcg_player_id: 86903,
     name: "Lugia",
     number: "009",
     total_set_number: "111",
     set: { id: 607, name: "Neo Genesis" },
-    prices: [
-        usd("1st Edition Holofoil", "Moderately Played", 1134.84),
-        usd("Unlimited Holofoil", "Near Mint", 531.39),
-        usd("Unlimited Holofoil", "Lightly Played", 446.25),
-        usd("Unlimited Holofoil", "Moderately Played", 315),
-    ],
+    prices: [{ variant: "1st Edition Holofoil" }, { variant: "Unlimited Holofoil" }],
 });
 
 const sale = (price, soldAt, title) => ({
@@ -52,6 +42,16 @@ const PSA9 = [
 const deps = {
     lookupCards: async () => [LUGIA],
     fetchComps: async (recordId, { grader, grade }) => (grader === "PSA" && String(grade) === "9" ? PSA9 : []),
+    fetchRawComps: async (_recordId, variant) => {
+        const first = variant === "1st Edition Holofoil";
+        const quotes = first ? [["MP", 1134.84]] : [["NM", 531.39], ["LP", 446.25], ["MP", 315]];
+        return quotes.flatMap(([condition, price]) => PSA9.slice(0, 3).map((item, index) => ({
+            ...item, id: `${condition}-${index}`, price, variant, sold_at: "2026-09-25",
+            title: `Lugia Neo Genesis ${first ? "1st Edition" : "Unlimited"} 9/111 Holo ${condition}`,
+            grader: null, grade: null, currency: "USD",
+        })));
+    },
+    config: { ...MONEY_CONFIG, targets: { minProfit: 50, minRoi: 0.25 } },
     now: NOW,
 };
 
@@ -107,7 +107,7 @@ test("a raw card priced well under its best case is a candidate", async () => {
     assert.ok(result.bestCase.maxBid > 300);
 });
 
-test("negative raw market context retains its math without rejecting missing grading upside", async () => {
+test("negative raw sold context retains its math without rejecting missing grading upside", async () => {
     const result = await prescreen(rawLugia({ price: 2000 }), deps);
 
     assert.equal(result.status, "UNSCREENED");
@@ -129,24 +129,15 @@ test("fully priced preliminary raw and grading routes can still reject a price t
     assert.ok(result.money.paths.every(path => typeof path.downsideNet === "number"));
 });
 
-test("a profitable raw market reference is preliminary potential while final underwriting remains unpriced", async () => {
+test("missing raw and graded sales do not establish a preliminary price", async () => {
     const listing = rawLugia({ title: "Lugia 9/111 Neo Genesis 1st Edition Holo", price: 500 });
-    const result = await prescreen(listing, { ...deps, fetchComps: async () => [] });
-    assert.equal(result.status, "CANDIDATE");
-    assert.equal(result.bestCase.label, "Sell raw");
-    assert.equal(result.money.priceEvidenceIncomplete, true);
-    assert.equal(result.money.paths.find(path => path.path === "RAW").downsideNet, undefined);
-    assert.match(result.reason, /estimates.*matched resale evidence.*not a verified deal/i);
-    const { identity, card } = await identifyCard(listing, { printingMarks: { firstEditionStamp: "VISIBLE", artBoxShadow: "ABSENT" },
-        printedName: null, printedNumber: null, slab: null }, { lookupCards: deps.lookupCards });
-    const final = underwrite({ listing, identity, rawPricing: rawPricesFor(card, identity),
-        condition: { rawCondition: "NEAR_MINT", gradeRange: null, authenticity: { concern: "NONE_SEEN", reasons: [] } } });
-    assert.equal(final.verdict, "CANT_PRICE");
-    assert.ok(final.best.profit > 0);
-    assert.equal(final.best.downside, null);
+    const result = await prescreen(listing, { ...deps, fetchComps: async () => [], fetchRawComps: async () => [] });
+    assert.equal(result.status, "UNSCREENED");
+    assert.equal(result.needsAnalysis, "PRICE_EVIDENCE");
+    assert.equal(result.bestCase, null);
 });
 
-test("the seller's condition caps its displayed best case while a priced condition upgrade can request verification", async () => {
+test("the seller's condition selects the preliminary sold cohort without substituting a better condition", async () => {
     // Lightly played: best grade 6, which has no sales, so only the raw
     // Lightly Played price counts.
     const result = await prescreen(rawLugia({ cardCondition: "Lightly played (Excellent)" }), deps);
@@ -154,7 +145,7 @@ test("the seller's condition caps its displayed best case while a priced conditi
     assert.equal(result.status, "UNSCREENED");
     assert.equal(result.bestCase.label, "Sell raw");
     assert.equal(result.bestCase.maxBid, 271.62);
-    assert.deepEqual(result.conditionUpside, { sellerCondition: "LIGHTLY_PLAYED", targetCondition: "NEAR_MINT", rawMarketPrice: 531.39 });
+    assert.equal(result.money.paths.find(path => path.path === "RAW").compCount, 3);
 });
 
 test("a card number in the title stands in when the item details skip it", async () => {
@@ -203,6 +194,31 @@ test("a 1st Edition claim is screened at 1st Edition prices", async () => {
     assert.equal(result.status, "CANDIDATE");
 });
 
+test("a cheap 1st Edition Base Set lead requests focused verification without claiming a deal", async () => {
+    const machop = toCardRecord({ id: 1, name: "Machop", set: { name: "Base Set" }, number: "52", total_set_number: "102",
+        prices: [{ variant: "Unlimited" }, { variant: "1st Edition" }] });
+    const listing = rawLugia({ title: "Machop Base Set 52/102 1st Edition Non-Holo",
+        aspects: { "Card Name": "Machop", Set: "Base Set", "Card Number": "52/102", Language: "English" }, buyingOption: "FIXED_PRICE" });
+    const noSales = { lookupCards: async () => [machop], fetchRawComps: async () => [], fetchComps: async () => [] };
+
+    for (const price of [3, 10]) {
+        const result = await prescreen({ ...listing, price }, noSales);
+        assert.equal(result.status, "UNSCREENED");
+        assert.equal(result.needsAnalysis, "IDENTITY");
+        assert.equal(result.card?.printing, "FIRST_EDITION");
+        assert.equal(result.bestCase, null);
+        assert.equal(result.focusedReview, "CHEAP_FIRST_EDITION_BASE_SET");
+    }
+
+    const aboveLimit = await prescreen({ ...listing, price: 10.01 }, noSales);
+    const disproven = await prescreen({ ...listing, price: 5, photoMarks: { firstEditionStamp: "NOT_PRESENT", artBoxShadow: "PRESENT" } }, noSales);
+    for (const result of [aboveLimit, disproven]) {
+        assert.equal(result.status, "UNSCREENED");
+        assert.equal(result.needsAnalysis, "PRICE_EVIDENCE");
+        assert.equal(result.focusedReview, undefined);
+    }
+});
+
 test("a very cheap Buy It Now waits for photos without being labeled junk; auctions are exempt", async () => {
     // Lugia's cheapest raw price here is $315 (Moderately Played).
     let compCalls = 0;
@@ -213,7 +229,7 @@ test("a very cheap Buy It Now waits for photos without being labeled junk; aucti
     assert.equal(pending.junk, undefined);
     assert.equal(pending.status, "UNSCREENED");
     assert.deepEqual(pending.priceAnomaly, { referencePrice: 315, photoChecked: false });
-    assert.match(pending.reason, /Photo verification is required/);
+    assert.match(pending.reason, /Photos are needed to verify the card/);
     assert.equal(compCalls, 0, "pending photos do not spend graded comp lookups");
     assert.equal(auction.priceAnomaly, undefined);
     assert.equal(cheapButReal.priceAnomaly, undefined);

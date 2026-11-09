@@ -4,7 +4,7 @@ import { candidateAdmission, summarizeBenchmark, compareAnalysisPriority } from 
 import { canAutoAnalyze } from "../../shared/analysis.ts";
 import { englishListingEligible } from "../../shared/card-language.ts";
 import { matchesListingFilters } from "../../shared/listing-filters.ts";
-import { cardEvaluation } from "../fixtures/card-evaluation.ts";
+import { cardEvaluation, salesSummary } from "../fixtures/card-evaluation.ts";
 import type { Evaluation, ListingSummary, ScreeningSoldEvidence, SearchIntent } from "../../shared/types.ts";
 
 const NOW = Date.parse("2026-11-03T12:00:00Z");
@@ -21,7 +21,7 @@ function evaluation(item: ListingSummary, actualPrice: number, resale = 150): Ev
         termsCheckedAt: new Date(NOW).toISOString(), aspects: { Language: "English" } };
     value.photoCheck!.cardCount = "ONE";
     value.condition!.gradeRange = null;
-    value.rawPricing = { status: "PRICED", prices: [{ condition: "LIGHTLY_PLAYED", price: resale, updatedAt: new Date(NOW).toISOString() }] };
+    value.rawPricing = { status: "PRICED", prices: [{ condition: "LIGHTLY_PLAYED", price: resale, basis: "EBAY_SOLD", updatedAt: new Date(NOW).toISOString() }] };
     value.gradedPricing = null;
     value.usage = []; value.reusedSteps = [];
     return value;
@@ -66,6 +66,10 @@ test("deferred sold data and exceptions are diagnosed without inventing an extra
 
 test("Any/Any priority and exported comparison follow the real client ranking", () => {
     const item = listing("comparison");
+    item.screen!.soldEvidence = { status: "AVAILABLE", exactScope: true, note: "One exact Unlimited raw market.", references: [{
+        recordId: 1, name: "Venusaur", set: "Base Set", cardNumber: "15/102", printing: "UNLIMITED", finish: "HOLO",
+        grader: null, grade: null, condition: "LIGHTLY_PLAYED", summary: salesSummary("RAW", "LIGHTLY_PLAYED", [140, 150, 160]),
+    }] };
     item.screen!.money = { shipping: 0, paths: [{ path: "RAW", label: "Offline resale comparison", expectedNet: 150, fixedCosts: 0, compCount: 3, compConfidence: "MEDIUM" }], auction: false, usual: null };
     const easy = candidateAdmission(item, {}, NOW, targets);
     const strict = candidateAdmission(item, {}, NOW, { minProfit: 100, minRoi: 0 });

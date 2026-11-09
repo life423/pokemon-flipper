@@ -31,6 +31,20 @@ test("private context distinguishes changed evidence and seller facts while acce
     assert.notEqual(evaluationContextKey({ ...input, title: "Blastoise" }), key);
 });
 
+test("financial context distinguishes semantic edition claims while preserving unrelated feature metadata", () => {
+    const input = { title: "Lugia Neo Genesis 9/111 Holo", images: ["front", "back"], aspects: { Set: "Neo Genesis", Grade: "7" } };
+    const unstated = evaluationContextKey(input);
+    for (const field of ["Edition", "Features", "Printing"]) {
+        const first = evaluationContextKey({ ...input, aspects: { ...input.aspects, [field]: "1st Edition" } });
+        assert.notEqual(first, unstated, field);
+        assert.notEqual(evaluationContextKey({ ...input, aspects: { ...input.aspects, [field]: "Unlimited" } }), first, field);
+        assert.equal(evaluationContextKey({ ...input, aspects: { ...input.aspects, [field]: "First Edition, Holofoil" } }), first,
+            "equivalent edition claims retain their financial context");
+        assert.equal(evaluationContextKey({ ...input, aspects: { ...input.aspects, [field]: "Holofoil, Swirl" } }), unstated,
+            "metadata without an edition claim does not expire ordinary financial evidence");
+    }
+});
+
 test("corrupt private records fail closed rather than becoming provider-cache misses", async () => {
     const store = createPrivateEvaluationStore({ cached: async () => ({ version: 1, evaluation: { listing: { id: "wrong-item" } } }) });
     await assert.rejects(store.load("expected-item"), StorageUnavailableError);

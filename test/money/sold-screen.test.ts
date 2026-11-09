@@ -2,6 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { applySoldPriceScreen } from "../../shared/money/sold-screen.ts";
 import { MONEY_CONFIG, type MoneyConfig } from "../../shared/money/config.ts";
+import { analysisPriority } from "../../shared/analysis-priority.ts";
+import { canAutoAnalyze } from "../../shared/analysis.ts";
+import { retargetScreen } from "../../shared/money/targets.ts";
 import type { ListingSummary, ScreeningSoldEvidence, ScreeningSoldReference } from "../../shared/types.ts";
 
 // Deliberately simple transaction costs make these worked comparisons
@@ -87,8 +90,8 @@ test("conditional offers are opt-in, limited to ten percent, and never apply to 
     assert.equal(applySoldPriceScreen({ ...terms, buyingOption: "AUCTION" }, source, { config: noFees, includeOffers: true }).screen.status, "DROPPED");
 });
 
-test("an uncertain printing or multiple slab grades cannot be financially excluded", () => {
-    const terms = listing({ currentPrice: 10000 });
+test("unsettled editions, finishes or slab grades retain research without assigning a profitable market", () => {
+    const terms = listing({ currentPrice: 1, images: ["front", "back"] });
     const original = reference();
     const otherGrade = reference({ grade: "9", summary: { ...original.summary, grade: "9" } });
     for (const source of [evidence([original], { exactScope: false }), evidence([original, otherGrade]),
@@ -98,8 +101,31 @@ test("an uncertain printing or multiple slab grades cannot be financially exclud
         assert.equal(result.status, "UNSCREENED");
         assert.equal(result.needsAnalysis, "SLAB_LABEL");
         assert.equal(result.bestCase, null);
-        assert.ok(result.money);
+        assert.equal(result.money, undefined);
+        assert.equal(result.soldEvidence, source);
+        assert.equal(canAutoAnalyze({ ...terms, screen: result }), true, "uncertain identity remains researchable, not rejected");
+        const priority = analysisPriority({ ...terms, screen: result }, { minProfit: 0, minRoi: 0 });
+        assert.equal(priority.band, 0);
+        assert.equal(priority.expectedProfit, null);
+        assert.equal(retargetScreen(result, 1, { minProfit: 0, minRoi: 0 }).money, undefined);
     }
+});
+
+test("First Edition prices cannot price or prioritize an Unlimited copy, including stale saved screening money", () => {
+    const original = reference();
+    const premium = evidence([reference({ printing: "FIRST_EDITION", summary: { ...original.summary, median: 1000, low: 900, high: 1100 } })]);
+    const terms = listing({ currentPrice: 150, images: ["front", "back"], screen: { status: "UNSCREENED", reason: null, assumed: null, bestCase: null,
+        card: { name: "Blastoise", set: "Base Set", cardNumber: "2/102", printing: "UNLIMITED", printingLabel: "Unlimited" } } });
+    const oldMoney = applySoldPriceScreen(listing({ currentPrice: 150 }), premium, { config }).screen.money;
+    assert.ok(oldMoney, "an explicitly First Edition market can support its own preliminary math");
+    const stale = { ...terms, screen: { ...terms.screen!, soldEvidence: premium, money: oldMoney } };
+    assert.equal(analysisPriority(stale, { minProfit: 0, minRoi: 0 }).expectedProfit, null);
+    const corrected = applySoldPriceScreen(stale, premium, { config });
+    assert.equal(corrected.screen.money, undefined);
+    assert.equal(corrected.screen.bestCase, null);
+    assert.equal(corrected.screen.status, "UNSCREENED");
+    assert.equal(analysisPriority(corrected, { minProfit: 0, minRoi: 0 }).band, 0);
+    assert.deepEqual(corrected.screen.soldEvidence, premium, "retain original market observations without relabeling them");
 });
 
 test("older matched sales can inform priority but cannot justify a hard rejection", () => {

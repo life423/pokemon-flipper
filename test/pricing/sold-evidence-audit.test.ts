@@ -42,7 +42,7 @@ test("Shadowless graded pricing retains confirmed cross-label corrections and ho
         printingLabel: "Shadowless (no 1st Edition)", finish: "HOLO", language: "English", evidence: null, reasons: [] };
     const card: PricedCard = { source: "pkmnprices", name: "Venusaur", cardNumber: "15/102", records: [], variants:
         ["1st Edition Holofoil", "Unlimited Holofoil"].map((name, index) => ({ name, printing: index ? "SHADOWLESS" : "FIRST_EDITION",
-            finish: "HOLO", prices: [], recordId: 1, setName: "Base Set (Shadowless)" })) };
+            finish: "HOLO", recordId: 1, setName: "Base Set (Shadowless)" })) };
     const uncertain = sale(9999, { id: "corrected-sale", title: "Venusaur Base Set Shadowless 15/102 Holo PSA 7", sale_type: null });
     const confirmed = { ...uncertain, price: 175, sale_type: "best_offer_accepted" as const };
     for (const rows of [[uncertain, confirmed], [confirmed, uncertain]]) {
@@ -71,6 +71,26 @@ test("No Symbol Jungle sales cannot inflate an ordinary Jungle market, while ord
     assert.equal(summary.count, 2); assert.equal(summary.median, 105);
     assert.equal(summary.dropped["unsupported Jungle No Symbol variant"], 1);
     assert.equal(compProblem(sale(100, { title: "Venusaur Base Set 15/102 Unlimited Holo PSA 7 no symbol" }), criteria), null);
+});
+
+test("advertised print errors do not set ordinary raw or graded sold prices", () => {
+    const raw = { ...criteria, grader: "RAW", grade: "MODERATELY_PLAYED" };
+    const ordinary = sale(23, { title: "Mewtwo 10/102 Base Set Holo Unlimited MP", grader: raw.grader, grade: raw.grade });
+    const premium = { ...ordinary, price: 85, title: "Mewtwo 10/102 Printer Hickey Ink Error Base Set Holo Misprint MP" };
+    const summary = summarizeComps([ordinary, premium], raw);
+    assert.equal(summary.count, 1);
+    assert.equal(summary.median, 23);
+    assert.equal(summary.dropped["advertised print error"], 1);
+
+    const slab = sale(500);
+    for (const suffix of ["MIS-PRINT", "Printer's Hickey", "Printing Error"]) {
+        assert.equal(compProblem({ ...slab, title: `${slab.title} ${suffix}` }, criteria), "advertised print error");
+    }
+    assert.equal(compProblem({ ...slab, variant: "Unlimited Holofoil Misprint" }, criteria), "advertised print error");
+    for (const suffix of ["No misprint", "Not a printer hickey", "Without any printing errors", "Non-misprint"]) {
+        assert.equal(compProblem({ ...ordinary, title: `${ordinary.title} ${suffix}` }, raw), null);
+    }
+    assert.equal(compProblem({ ...ordinary, title: `${ordinary.title} No misprint, printer hickey` }, raw), "advertised print error");
 });
 
 test("unconfirmed historical amounts cannot set the sold median or displace actual transactions as outliers", () => {
@@ -108,7 +128,7 @@ test("an exact graded lookup stays unavailable when its only historical amounts 
     const identity: Identity = { status: "IDENTIFIED", name: "Venusaur", set: "Base Set", cardNumber: "15/102", printing: "UNLIMITED",
         printingLabel: "Unlimited", finish: "HOLO", language: "English", evidence: null, reasons: [] };
     const card: PricedCard = { source: "pkmnprices", name: "Venusaur", cardNumber: "15/102", records: [],
-        variants: [{ name: "Unlimited Holofoil", printing: "UNLIMITED", finish: "HOLO", prices: [], recordId: 1, setName: "Base Set" }] };
+        variants: [{ name: "Unlimited Holofoil", printing: "UNLIMITED", finish: "HOLO", recordId: 1, setName: "Base Set" }] };
     const pricing = await compsForGrade(card, identity, { grader: "PSA", grade: "7", now,
         fetchComps: async () => [sale(10000, { sale_type: null }), sale(20000, { sale_type: undefined })] });
     assert.equal(pricing.status, "PRICE_UNAVAILABLE");

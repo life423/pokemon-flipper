@@ -2,8 +2,8 @@ import { CONDITION_NAMES, isRawCondition } from "../conditions.ts";
 import type { ListingSummary, Screen, ScreeningSoldEvidence, ScreeningSoldReference, Targets } from "../types.ts";
 import { MONEY_CONFIG, type MoneyConfig } from "./config.ts";
 import { offerPlan, offerWorthMaking } from "./offer.ts";
-import { bestPath, netFromSale, pathNumbers } from "./underwriting.ts";
-import { usableSoldReference, soldReferenceScope } from "../sold-evidence.ts";
+import { bestPath, gradingTier, netFromSale, pathNumbers } from "./underwriting.ts";
+import { hasExactSoldScope, usableSoldReference } from "../sold-evidence.ts";
 
 type SoldScreenListing = Pick<ListingSummary, "currentPrice" | "shipping" | "isGraded" | "buyingOption" | "bestOffer" | "screen">;
 interface SoldScreenOptions {
@@ -18,6 +18,31 @@ const normalize = (value: unknown) => String(value ?? "").trim().toUpperCase();
 function label(reference: ScreeningSoldReference, slab: boolean): string {
     return slab ? `Preliminary ${normalize(reference.grader)} ${reference.grade} resale` :
         `Sold-title ${CONDITION_NAMES[reference.condition!]} raw comparison`;
+}
+
+function gradingLead(listing: SoldScreenListing, evidence: ScreeningSoldEvidence, config: MoneyConfig): Screen["gradingLead"] {
+    const price = listing.currentPrice, shipping = listing.shipping ?? config.buying.assumedShippingWhenUnknown;
+    if (listing.isGraded || listing.buyingOption !== "FIXED_PRICE" || !evidence.exactScope || price === null ||
+        !Number.isFinite(price) || price < 0 || !Number.isFinite(shipping) || shipping < 0) return undefined;
+    const references = (evidence.gradingReferences ?? []).filter(reference =>
+        (reference.grade === "8" || reference.grade === "9") && usableSoldReference(reference, true) &&
+        reference.summary.windowDays === 90 &&
+        (!listing.screen?.card?.printing || listing.screen.card.printing === "UNKNOWN" || reference.printing === listing.screen.card.printing));
+    // A profitable sale at a scout grade buys research only. The actual card
+    // still needs a supported grade range and downside pricing after review.
+    for (const grade of [8, 9]) {
+        for (const reference of references) {
+            const grader = reference.grader;
+            if ((grader !== "PSA" && grader !== "CGC") || Number(reference.grade) !== grade) continue;
+            const salePrice = reference.summary.median!;
+            const tier = gradingTier(grader, salePrice, config.grading);
+            if (!tier) continue;
+            const numbers = pathNumbers({ price, shipping, expectedNet: netFromSale(reference.summary.low ?? salePrice, "graded", config.selling),
+                fixedCosts: tier.fee + config.grading.shippingPerCard }, config);
+            if (numbers.clears) return { grader, grade };
+        }
+    }
+    return undefined;
 }
 
 // Price-first admission, not a deal verdict. Slab exclusion uses the highest
@@ -48,16 +73,29 @@ export function applySoldPriceScreen<T extends SoldScreenListing>(
     // Never retain an unrelated legacy ceiling when the new sold check cannot
     // price it. Original photo/card evidence and focused-review flags survive.
     delete screen.money;
-    delete screen.conditionUpside;
-    delete screen.lowResale;
+    delete screen.gradingLead;
 
     const finish = () => ({ ...listing, screen });
-    if (evidence.status !== "AVAILABLE") return finish();
+    if (evidence.status !== "AVAILABLE") {
+        if (evidence.status === "UNAVAILABLE") {
+            const lead = gradingLead(listing, evidence, moneyConfig);
+            if (lead) {
+                screen.gradingLead = lead;
+                screen.reason = `Recent ${lead.grader} ${lead.grade} sales leave room after costs if this copy earns that grade. Photos still need to support a grade range.`;
+            }
+        }
+        return finish();
+    }
 
     const references = evidence.references.filter((reference) => usableSoldReference(reference, listing.isGraded));
     if (!references.length) {
         screen.soldEvidence = { ...evidence, status: "UNAVAILABLE", note: "No usable recent matched sold-price reference is available." };
         screen.reason = screen.soldEvidence.note;
+        return finish();
+    }
+
+    if (!hasExactSoldScope(evidence, screen.card?.printing)) {
+        screen.reason = "Sold references remain separate market context. The listing's printing, finish and grade must identify one matching market before estimating profit or a purchase limit.";
         return finish();
     }
 
@@ -78,6 +116,7 @@ export function applySoldPriceScreen<T extends SoldScreenListing>(
     const paths = pricedReferences.map((reference) => ({
         label: label(reference, listing.isGraded),
         path: listing.isGraded ? "GRADED_RESALE" as const : "RAW" as const,
+        rawCondition: reference.condition ?? undefined,
         expectedNet: netFromSale(reference.summary.median!, kind, config.selling),
         downsideNet: positive(reference.summary.low) ? netFromSale(reference.summary.low, kind, config.selling) : undefined,
         fixedCosts: 0,
@@ -90,15 +129,12 @@ export function applySoldPriceScreen<T extends SoldScreenListing>(
         return finish();
     }
 
-    // An unusable second scope must not disappear and make the remaining
-    // cheaper printing/grade look uniquely applicable.
-    const singleScope = new Set(evidence.references.map(soldReferenceScope)).size === 1;
     screen.money = {
         shipping,
         paths,
         auction: listing.buyingOption === "AUCTION",
         bestOffer: listing.bestOffer === true,
-        usual: listing.isGraded && singleScope ? {
+        usual: listing.isGraded ? {
             price: references[0].summary.median!,
             sales: references[0].summary.sales.map((sale) => sale.price).filter(positive),
         } : null,
@@ -113,7 +149,7 @@ export function applySoldPriceScreen<T extends SoldScreenListing>(
 
     // A missing/older/ambiguous upper reference cannot justify rejecting a
     // listing. Multiple printings/finishes/grades are never blended together.
-    const canExclude = evidence.exactScope && singleScope && references.every((reference) =>
+    const canExclude = references.every((reference) =>
         reference.summary.windowDays! <= 90 && positive(reference.summary.high));
     if (!canExclude) {
         screen.reason = "Preliminary sold comparisons are available, but a single exact recent slab scope is not established. Label assessment is still needed.";

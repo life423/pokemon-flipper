@@ -8,6 +8,9 @@ import { createSoldScreening } from "../../server/pricing/screening-sales.ts";
 import { rawPricesWithSales } from "../../server/pricing/raw-comps.ts";
 import { compsForGrade } from "../../server/pricing/graded-comps.ts";
 import { withPriceResearchSignal } from "../../server/pricing/research-budget.ts";
+import { cachedCompChecks } from "../../server/ai/comp-checker.ts";
+import { MODEL } from "../../server/ai/openai.ts";
+import { printingLabel } from "../../server/identity/card-identity.ts";
 import { readCache, writeCache } from "../../server/lib/cache.ts";
 import { cardEvaluation } from "../fixtures/card-evaluation.ts";
 import type { CardRecord, Comp, PricedCard, SoldPageSelection } from "../../server/pricing/types.ts";
@@ -24,8 +27,8 @@ function offlineKey(t: TestContext) {
 const sale = (id: string, extra: Partial<Comp> = {}): Comp => ({ id, title: "Venusaur Base Set 15/102 Unlimited Holo LP", price: 200,
     sold_at: "2026-11-03T12:00:00Z", variant, currency: "USD", attribution: "exact", sale_type: "fixed_price",
     listing_url: null, grader: null, grade: null, grade_qualifier: null, ...extra });
-const card = (id: string): CardRecord => ({ source: "pkmnprices", id, name: "Venusaur", setName: "Base Set", cardNumber: "15/102", tcgPlayerId: null,
-    variants: [{ name: variant, finish: "HOLO", printing: "UNLIMITED", prices: [{ condition: "LIGHTLY_PLAYED", price: 30, updatedAt: null }] }] });
+const card = (id: string): CardRecord => ({ source: "pkmnprices", id, name: "Venusaur", setName: "Base Set", cardNumber: "15/102",
+    variants: [{ name: variant, finish: "HOLO", printing: "UNLIMITED" }] });
 function pricedCard(id: string): PricedCard {
     const record = card(id);
     return { source: record.source, name: record.name, cardNumber: record.cardNumber, records: [record],
@@ -321,6 +324,37 @@ test("Stop during asynchronous sold-page selection rejects final pricing without
         } })), error => error === stop);
         assert.equal(requests - before, kind === "graded" ? 1 : 2, "Stop must prevent any page after the current candidate window");
     }
+});
+
+test("saved slab vetoes cannot stop pagination before an eligible sale", async t => {
+    offlineKey(t);
+    t.mock.method(globalThis, "fetch", () => assert.fail("both sold pages and the existing veto are cached"));
+    const id = randomUUID(), vetoed = scopedSale("graded", `vetoed-${id}`, { price: 300 }), accepted = scopedSale("graded", `accepted-${id}`);
+    await writeCache(`pkmnprices:${soldPath("graded", id, true)}`, {
+        data: [vetoed], pagination: { has_more: true, next_cursor: "second" },
+    });
+    await writeCache(`pkmnprices:${soldPath("graded", id, true, "second")}`, {
+        data: [accepted], pagination: { has_more: true, next_cursor: "unused" },
+    });
+    const scope = [identity.name, identity.set, identity.cardNumber, printingLabel(identity.printing, identity.set), "PSA", "8", "HOLO", ""].join("|").toLowerCase();
+    const saleMetadata = JSON.stringify([vetoed.title, vetoed.variant, vetoed.grader, vetoed.grade, vetoed.grade_qualifier, vetoed.attribution]);
+    await writeCache(`comp-check:v2:${MODEL}:${scope}:${vetoed.id}:${saleMetadata}`, { keep: false, reason: "SIGNED_OR_ALTERED", note: "Saved veto." });
+
+    const options = { fetchComps, grader: "PSA", grade: 8, now, cachedChecks: cachedCompChecks };
+    const final = await compsForGrade(pricedCard(id), identity, options);
+    assert.equal(final.status, "PRICED");
+    assert.equal(final.summary?.count, 1);
+    assert.equal(final.summary?.median, 200);
+    assert.deepEqual(final.summary?.dropped, { "AI: signed or altered": 1 });
+
+    let finalChecks = 0;
+    const retried = await compsForGrade(pricedCard(id), identity, { ...options, checkComps: async (sales, target) => {
+        finalChecks++;
+        assert.deepEqual(sales.map(sale => sale.id), [vetoed.id, accepted.id]);
+        return cachedCompChecks(sales, target);
+    } });
+    assert.equal(finalChecks, 1, "optional final checker sees the whole result only after pagination");
+    assert.deepEqual(retried.summary, final.summary);
 });
 
 test("a usable slab sale stops immediately while raw research retains its two-page candidate window", async t => {

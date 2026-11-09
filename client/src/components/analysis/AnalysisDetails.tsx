@@ -46,7 +46,7 @@ export function AnalysisDetails({
             {evaluation.underwriting && evaluation.underwriting.paths.length > 0 && (
                 <Section title="Every path">
                     <div className={styles.paths}>
-                        {evaluation.underwriting.paths.map((path) => (
+                        {evaluation.underwriting.paths.filter(path => path.path !== "RAW" || path.status !== "PRICED" || !referencePriceReason(evaluation, path)).map((path) => (
                             <PathCard key={path.label} path={path} auction={evaluation.listing.buyingOption === "AUCTION"} referenceReason={path.status === "PRICED" ? referencePriceReason(evaluation, path) : null} />
                         ))}
                     </div>
@@ -79,7 +79,6 @@ export function AnalysisDetails({
             {(evaluation.rawPricing || evaluation.gradedPricing) && (
                 <PricesSection raw={evaluation.rawPricing} graded={evaluation.gradedPricing} />
             )}
-            {evaluation.rawPricing?.crossCheckNote && <p className={styles.small}>{evaluation.rawPricing.crossCheckNote}</p>}
 
             {evaluation.photoCheck && <PhotosSection evaluation={evaluation} photoCheck={evaluation.photoCheck} />}
 

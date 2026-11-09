@@ -12,7 +12,7 @@ import { candidateAdmission } from "./review/benchmark-results.ts";
 import { compareAnalysisPriority } from "../shared/analysis-priority.ts";
 import { createModelExperimentRunner } from "../server/analysis/model-experiment.ts";
 import { runStructured } from "../server/ai/openai.ts";
-import { aiSpending } from "../server/ai/spending.ts";
+import { AI_SEARCH_HARD_CAP_USD, aiSpending } from "../server/ai/spending.ts";
 import { withAiUsageContext } from "../server/ai/usage-context.ts";
 import { assertSqlStorageReady, closeDatabase, storageBackend } from "../server/storage/index.ts";
 import type { Evaluation, ListingSummary, Targets } from "../shared/types.ts";
@@ -24,9 +24,11 @@ export async function compareListingPriority(args = process.argv.slice(2)) {
     const live = mode === "--live", sourceFile = path.resolve(sourceArg);
     if (!sourceFile.startsWith(path.resolve("data/search-benchmarks") + path.sep)) throw new Error("The original report must be inside ignored data/search-benchmarks/.");
     const source = JSON.parse(await fs.readFile(sourceFile, "utf8"));
+    const recordedAiCap = source.settings?.aiCapUsd;
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(source.searchId) ||
         !source.summary?.intent || typeof source.query !== "string" || !source.query.trim() || source.query.length > 300 ||
-        source.settings?.aiCapUsd !== 0.02 || ![25, EBAY_SEARCH_BROWSE_LIMIT].includes(source.settings?.browseCap) ||
+        !Number.isFinite(recordedAiCap) || recordedAiCap < 0 || recordedAiCap > AI_SEARCH_HARD_CAP_USD ||
+        ![25, 50, EBAY_SEARCH_BROWSE_LIMIT].includes(source.settings?.browseCap) ||
         !Array.isArray(source.listings) || source.listings.length < 1 || source.listings.length > 50 ||
         !Number.isFinite(Date.parse(source.startedAt))) throw new Error("An original capped search report and its pre-photo metadata are required.");
     // Production eligibility reads the current auction clock. Restrict this
@@ -72,6 +74,7 @@ export async function compareListingPriority(args = process.argv.slice(2)) {
         if (live) await assertSqlStorageReady();
         report.budgetBefore = await aiSpending.summary(searchId);
         if (report.budgetBefore.attempts < 1) throw new Error("The original paid search account must already exist; no replacement allowance is authorized.");
+        if (live && report.budgetBefore.capUsd > recordedAiCap) throw new Error("The current cap exceeds the original report allowance.");
         // Stop cancels dispatch through the transport wrapper above. Keep this
         // consumer attached so an accepted answer finishes saving before SQL
         // closes, exactly as in the saved-photo comparison diagnostic.

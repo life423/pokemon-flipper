@@ -16,29 +16,23 @@ import {
     printingLabel,
     normalizeSetName,
     sameSetFamily,
+    setSearchTerm,
 } from "../../server/identity/card-identity.ts";
-import { rawPricesFor } from "../../server/pricing/raw-prices.ts";
+import { variantFor } from "../../server/pricing/raw-prices.ts";
 import { toCardRecord } from "../../server/pricing/pkmnprices.ts";
 
-const usd = (variant, condition, price) => ({
-    currency: "USD",
-    variant,
-    condition,
-    market_price: price,
-});
+const usd = variant => ({ currency: "USD", variant });
 
 // Real pkmnprices records, trimmed.
 const LUGIA = toCardRecord({
     id: 28158,
-    tcg_player_id: 86903,
     name: "Lugia",
     number: "009",
     total_set_number: "111",
     set: { id: 607, name: "Neo Genesis" },
     prices: [
-        usd("1st Edition Holofoil", "Moderately Played", 1134.84),
-        usd("Unlimited Holofoil", "Near Mint", 531.39),
-        usd("Unlimited Holofoil", "Lightly Played", 446.25),
+        usd("1st Edition Holofoil"),
+        usd("Unlimited Holofoil"),
     ],
 });
 
@@ -48,7 +42,7 @@ const BASE_CHARIZARD = toCardRecord({
     number: "004",
     total_set_number: "102",
     set: { id: 463, name: "Base Set" },
-    prices: [usd("Holofoil", "Near Mint", 944.53)],
+    prices: [usd("Holofoil")],
 });
 
 const BLACK_DOT_CHARIZARD = toCardRecord({
@@ -57,7 +51,7 @@ const BLACK_DOT_CHARIZARD = toCardRecord({
     number: "004",
     total_set_number: "102",
     set: { id: 463, name: "Base Set" },
-    prices: [usd("Holofoil", "Near Mint", 1200)],
+    prices: [usd("Holofoil")],
 });
 
 const SHADOWLESS_CHARIZARD = toCardRecord({
@@ -67,8 +61,8 @@ const SHADOWLESS_CHARIZARD = toCardRecord({
     total_set_number: "102",
     set: { id: 525, name: "Base Set (Shadowless)" },
     prices: [
-        usd("1st Edition Holofoil", "Moderately Played", 10000),
-        usd("Unlimited Holofoil", "Lightly Played", 2257.87),
+        usd("1st Edition Holofoil"),
+        usd("Unlimited Holofoil"),
     ],
 });
 
@@ -114,11 +108,9 @@ function charizardListing(title) {
 const charizardPhotos = (marks) =>
     photoCheck(marks, { printedName: "Charizard", printedNumber: "4/102" });
 
-const pricesOf = (card, identity) => rawPricesFor(card, identity).prices.map((p) => p.price);
-
 // The milestone
 
-test("milestone: the Lugia listing is Unlimited, matched despite 009/111, and priced as Unlimited only", async () => {
+test("milestone: the Lugia listing is Unlimited, matched despite 009/111, and selects the Unlimited variant only", async () => {
     const { identity, card } = await identifyCard(LUGIA_LISTING, photoCheck(), {
         lookupCards: lookup(LUGIA),
     });
@@ -131,17 +123,12 @@ test("milestone: the Lugia listing is Unlimited, matched despite 009/111, and pr
     assert.equal(identity.finish, "HOLO");
     assert.ok(readyForPricing(identity));
 
-    const pricing = rawPricesFor(card, identity);
-
-    assert.equal(pricing.status, "PRICED");
-    assert.equal(pricing.printing, "UNLIMITED");
-    assert.deepEqual(
-        pricing.prices.map((p) => [p.condition, p.price]),
-        [["NEAR_MINT", 531.39], ["LIGHTLY_PLAYED", 446.25]]
-    );
+    const { variant } = variantFor(card, identity);
+    assert.equal(variant?.printing, "UNLIMITED");
+    assert.equal(variant?.name, "Unlimited Holofoil");
 });
 
-test("a 1st Edition copy of the same card gets only the 1st Edition price", async () => {
+test("a 1st Edition copy of the same card selects only the 1st Edition variant", async () => {
     const listing = {
         ...LUGIA_LISTING,
         title: "2000 Pokemon Neo Genesis 1st Edition Lugia 9/111 Holo",
@@ -154,23 +141,23 @@ test("a 1st Edition copy of the same card gets only the 1st Edition price", asyn
     );
 
     assert.equal(identity.printing, "FIRST_EDITION");
-    assert.deepEqual(pricesOf(card, identity), [1134.84]);
+    assert.equal(variantFor(card, identity).variant?.name, "1st Edition Holofoil");
 });
 
 test("seller says Unlimited but the photos show a stamp: review, and no price", async () => {
-    const { identity, card } = await identifyCard(
+    const { identity } = await identifyCard(
         LUGIA_LISTING,
         photoCheck({ firstEditionStamp: "VISIBLE" }),
         { lookupCards: lookup(LUGIA) }
     );
 
     assert.equal(identity.status, "NEEDS_REVIEW");
-    assert.equal(rawPricesFor(card, identity).status, "PRICE_UNAVAILABLE");
+    assert.equal(readyForPricing(identity), false);
 });
 
 // Base Set, split across two database sets
 
-test("Base Set: a Shadowless copy is priced from the Shadowless record", async () => {
+test("Base Set: a Shadowless copy selects the Shadowless catalog record", async () => {
     const { identity, card } = await identifyCard(
         charizardListing("1999 Pokemon Base Set Shadowless Charizard 4/102 Holo Rare"),
         charizardPhotos({ artBoxShadow: "ABSENT" }),
@@ -180,10 +167,10 @@ test("Base Set: a Shadowless copy is priced from the Shadowless record", async (
     assert.equal(identity.status, "IDENTIFIED");
     assert.equal(identity.printing, "SHADOWLESS");
     assert.equal(identity.set, "Base Set (Shadowless)");
-    assert.deepEqual(pricesOf(card, identity), [2257.87]);
+    assert.equal(variantFor(card, identity).variant?.recordId, SHADOWLESS_CHARIZARD.id);
 });
 
-test("Base Set: an Unlimited copy is priced from the Base Set record", async () => {
+test("Base Set: an Unlimited copy selects the Base Set catalog record", async () => {
     const { identity, card } = await identifyCard(
         charizardListing("1999 Pokemon Base Set Charizard 4/102 Holo Unlimited"),
         charizardPhotos({ artBoxShadow: "PRESENT" }),
@@ -192,10 +179,10 @@ test("Base Set: an Unlimited copy is priced from the Base Set record", async () 
 
     assert.equal(identity.printing, "UNLIMITED");
     assert.equal(identity.set, "Base Set");
-    assert.deepEqual(pricesOf(card, identity), [944.53]);
+    assert.equal(variantFor(card, identity).variant?.recordId, BASE_CHARIZARD.id);
 });
 
-test("Base Set: a 1st Edition copy is priced from its own printing", async () => {
+test("Base Set: a 1st Edition copy selects its own printing", async () => {
     const { identity, card } = await identifyCard(
         charizardListing("1999 Pokemon Base Set 1st Edition Charizard 4/102 Holo"),
         charizardPhotos({ firstEditionStamp: "VISIBLE", artBoxShadow: "ABSENT" }),
@@ -204,7 +191,7 @@ test("Base Set: a 1st Edition copy is priced from its own printing", async () =>
 
     assert.equal(identity.printing, "FIRST_EDITION");
     assert.equal(identity.set, "Base Set (Shadowless)");
-    assert.deepEqual(pricesOf(card, identity), [10000]);
+    assert.equal(variantFor(card, identity).variant?.name, "1st Edition Holofoil");
 });
 
 test("Base Set: the Black Dot Error only matches when the listing names it", async () => {
@@ -223,7 +210,7 @@ test("Base Set: the Black Dot Error only matches when the listing names it", asy
 
     assert.equal(plain.identity.name, "Charizard");
     assert.equal(error.identity.name, "Charizard (Black Dot Error)");
-    assert.deepEqual(pricesOf(error.card, error.identity), [1200]);
+    assert.equal(variantFor(error.card, error.identity).variant?.recordId, BLACK_DOT_CHARIZARD.id);
 });
 
 test("printing labels are read set by set", () => {
@@ -323,7 +310,7 @@ function dateNumberCase(name = "Dark Alakazam", numerator = 1, month = "Jan") {
     const photos = photoCheck({}, { printedName: name, printedNumber: fraction, cardCount: "ONE",
         cardMatch: { verdict: "MATCH", problems: [] }, images: [{ number: 1, view: "FRONT", usable: true, isStockImage: false, issues: [] }],
         cardIdentity: { name, set: "Team Rocket", cardNumber: fraction, language: "English", finish: "HOLO", confidence: "HIGH", evidence: ["Collector fraction is readable."] } });
-    const record = toCardRecord({ id: numerator, name, number: String(numerator), total_set_number: "82", set: { id: 1, name: "Team Rocket" }, prices: [usd("Unlimited Holofoil", "Near Mint", 100)] });
+    const record = toCardRecord({ id: numerator, name, number: String(numerator), total_set_number: "82", set: { id: 1, name: "Team Rocket" }, prices: [usd("Unlimited Holofoil")] });
     return { listing, photos, record, fraction };
 }
 
@@ -370,7 +357,7 @@ function sellerFieldCorrectionCase() {
         images: [{ number: 1, view: "FRONT", usable: true, isStockImage: false, issues: [] }, { number: 2, view: "BACK", usable: true, isStockImage: false, issues: [] }],
         cardIdentity: { name: "Dark Blastoise", set: "Team Rocket", cardNumber: "3/82", finish: "HOLO", language: "English", confidence: "HIGH", evidence: ["Readable name, 3/82 fraction, Rocket symbol and holo artwork agree."] },
         cardMatch: { verdict: "MISMATCH", problems: ["The visible collector number is 3/82, not the seller aspects' 20/82.", "The visible finish is holo, not the seller aspects' Regular."] } });
-    const record = toCardRecord({ id: 26301, name: "Dark Blastoise", number: "003", total_set_number: "82", set: { id: 1, name: "Team Rocket" }, prices: [usd("Unlimited Holofoil", "Lightly Played", 100)] });
+    const record = toCardRecord({ id: 26301, name: "Dark Blastoise", number: "003", total_set_number: "82", set: { id: 1, name: "Team Rocket" }, prices: [usd("Unlimited Holofoil")] });
     return { listing, photos, record };
 }
 
@@ -436,7 +423,7 @@ test("real printing, authenticity and reprint concerns remain blocking after sel
 });
 
 test("a local seller-field correction is not accepted without a matching catalog identity and finish", async () => {
-    for (const records of [[], [{ ...sellerFieldCorrectionCase().record, variants: [{ name: "Unlimited", printing: "UNLIMITED", finish: "NON_HOLO", prices: [] }] }],
+    for (const records of [[], [{ ...sellerFieldCorrectionCase().record, variants: [{ name: "Unlimited", printing: "UNLIMITED", finish: "NON_HOLO" }] }],
         [{ ...sellerFieldCorrectionCase().record, name: "Dark Blastoise ex" }]]) {
         const { listing, photos } = sellerFieldCorrectionCase();
         const result = await identifyCard(listing, photos, { lookupCards: lookup(...records) });
@@ -480,9 +467,9 @@ test("printing evidence that all agrees is accepted", () => {
     assert.equal(result.printing, "UNLIMITED");
 });
 
-test("any disagreement goes to review, never a majority vote", () => {
+test("agreement between the title and photo cannot override a lower-value seller detail", () => {
     const result = resolvePrinting(
-        { title: "UNLIMITED", itemSpecifics: "FIRST_EDITION", photo: "UNLIMITED" },
+        { title: "FIRST_EDITION", itemSpecifics: "UNLIMITED", photo: "FIRST_EDITION" },
         { hasEditions: true }
     );
 
@@ -548,6 +535,15 @@ test("set names from grading labels and series prefixes match the database's", (
     assert.equal(normalizeSetName("1999 POKEMON GAME SHADOWLESS"), "base set shadowless");
     assert.equal(normalizeSetName("Base Set (Shadowless)"), "base set shadowless");
     assert.equal(sameSetFamily("Crown Zenith", "Sword & Shield Crown Zenith"), true);
+    for (const set of ["Sword & Shield - Lost Origin", "Sword Shield Lost Origin", "Sword and Shield Lost Origin"]) {
+        assert.equal(normalizeSetName(set), "lost origin");
+        assert.equal(setSearchTerm(set), "Origin");
+        assert.equal(sameSetFamily("SWSH11: Lost Origin", set), true);
+        assert.equal(sameSetFamily("SWSH09: Brilliant Stars", set), false);
+    }
+    assert.equal(normalizeSetName("Sword & Shield"), "sword shield");
+    assert.equal(normalizeSetName("Sword & Shield Black Star Promos"), "sword shield black star promos");
+    assert.equal(sameSetFamily("Sword & Shield Base Set", "Base Set"), false);
     assert.equal(sameSetFamily("XY Base Set", "Base Set"), false);
     assert.equal(sameSetFamily("Base Set 2", "Base Set"), false);
 });
@@ -711,7 +707,7 @@ test("corroborated physical identity can survive a missing catalog record withou
     const { identity, card } = await identifyCard(charizardListing(), charizardPhotos(), { lookupCards: async () => [],
         photoIdentity: { name: "Charizard", set: "Base Set", cardNumber: "4/102", finish: "HOLO", printing: "UNLIMITED" } });
     assert.equal(identity.status, "IDENTIFIED"); assert.equal(card, null);
-    assert.equal(rawPricesFor(card, identity).status, "PRICE_UNAVAILABLE");
+    assert.equal(variantFor(card, identity).variant, undefined);
 });
 
 test("a title that disagrees with the slab label goes to review", async () => {
@@ -792,6 +788,25 @@ test("a pricier claim the photos clearly don't support is priced as what the pho
     assert.match(decision.reason, /seller says 1st Edition, but the photos show Unlimited/);
 });
 
+test("a readable Shadowless card and matching title can correct a seller's First Edition field", async () => {
+    const listing = charizardListing("Charizard 4/102 Base Set Shadowless Holo");
+    listing.aspects.Features = "1st Edition";
+    const photos = charizardPhotos({ artBoxShadow: "ABSENT" });
+    const confirmed = await identifyCard(listing, photos, { lookupCards: BASE_FAMILY });
+    assert.equal(confirmed.identity.status, "IDENTIFIED");
+    assert.equal(confirmed.identity.printing, "SHADOWLESS");
+    assert.equal(confirmed.identity.recordId, SHADOWLESS_CHARIZARD.id);
+    assert.match(confirmed.identity.reasons.join(" "), /conflicting item detail/);
+    assert.equal(listing.aspects.Features, "1st Edition");
+
+    const unreadable = await identifyCard(listing, charizardPhotos({ firstEditionStamp: "CANT_TELL", artBoxShadow: "ABSENT" }),
+        { lookupCards: BASE_FAMILY });
+    assert.equal(unreadable.identity.status, "NEEDS_REVIEW");
+    const conflictingLabel = resolvePrinting({ title: "SHADOWLESS", itemSpecifics: "FIRST_EDITION", photo: "SHADOWLESS", label: "FIRST_EDITION" },
+        { hasEditions: true, setName: "Base Set" });
+    assert.equal(conflictingLabel.status, "NEEDS_REVIEW");
+});
+
 test("a pricier printing than the seller claims still needs both: no settling upward", () => {
     const decision = resolvePrinting(
         { title: "UNLIMITED", itemSpecifics: "NOT_STATED", photo: "FIRST_EDITION" },
@@ -810,7 +825,7 @@ test("corroborated photos can identify a seller's wrong set and finish without b
     assert.equal(identity.status, "IDENTIFIED");
     assert.equal(identity.set, "Neo Genesis");
     assert.equal(identity.finish, "HOLO");
-    assert.equal(rawPricesFor(card, identity).status, "PRICED");
+    assert.equal(variantFor(card, identity).variant?.name, "Unlimited Holofoil");
     const ordinary = await identifyCard(seller, photos, { lookupCards: lookup(LUGIA) });
     assert.equal(ordinary.identity.status, "NEEDS_REVIEW");
 });

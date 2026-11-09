@@ -48,7 +48,7 @@ export function meetsMoneyTargets(net: number, cost: number, minProfit: number, 
     if (!Number.isSafeInteger(net) || !Number.isSafeInteger(cost) || cost < 0 ||
         !profitTarget || !roiTarget || minProfit < 0 || minRoi < 0) return false;
     const profit = BigInt(net) - BigInt(cost);
-    return profit * profitTarget.denominator >= profitTarget.numerator * 100n &&
+    return profit > 0n && profit * profitTarget.denominator >= profitTarget.numerator * 100n &&
         profit * roiTarget.denominator >= BigInt(cost) * roiTarget.numerator;
 }
 

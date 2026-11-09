@@ -74,12 +74,13 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
         : decision?.status === "ENDED" ? ["Ended", "quiet"]
         : decision?.status === "OVER_LIMIT" ? ["Over limit", "pass"]
         : decision?.status === "PROVISIONAL" ? ["Your review needed", "watch"]
-        : deal && auction ? [decision?.breakEven ? "Break-even" : "Within limit", decision?.breakEven ? "watch" : "buy"]
+        : deal && auction ? ["Within limit", decision?.anyTargets ? "watch" : "buy"]
         : deal ? [evaluation?.rating?.level === "THIN" ? "Thin margin" : best?.path === "GRADE" ? "Buy + grade" : "Buy", best?.path === "GRADE" ? "grade" : "buy"]
         : offer ? ["Offer", "offer"]
         : verdict === "NEEDS_REVIEW" ? ["Your review needed", "watch"]
         : verdict === "CANT_PRICE" ? ["Can't price", "watch"]
         : verdict === "PASS" ? ["Pass", "pass"]
+        : !evaluation && screen?.gradingLead ? ["Grading candidate", "pending"]
         : !evaluation && screen?.soldEvidence && screen.soldEvidence.status !== "AVAILABLE" ? ["Price unconfirmed", "quiet"]
         : !evaluation && canRetryPricing(listing, now) ? ["Waiting for price", "pending"]
         : pricePending ? ["Verify price", "watch"]
@@ -120,7 +121,7 @@ export function DealCard({ listing, analysis, selected, now, onOpen, years, inde
         {pricePending && <p className={styles.notice}>Unusually low price. Awaiting photo verification.</p>}
         {offer && offerNumbers && <p className={styles.notice}>Offer {dollars(offer.offer)} · est. profit {signed(offerNumbers.profit)} if accepted. Acceptance is unknown.</p>}
         {mistakes[0] && <p className={styles.note}>{mistakes[0].detail}</p>}
-        {best?.path === "RAW" && <p className={styles.note}>Estimated resale {dollars(best.salePrice)} · {name(best.priceCondition ?? "UNKNOWN")} · {evaluation?.rawPricing?.prices?.find(price => price.condition === best.priceCondition)?.basis === "EBAY_SOLD" ? "eBay sold median" : "market-price fallback"}.</p>}
+        {!priceGap && best?.path === "RAW" && <p className={styles.note}>Estimated resale {dollars(best.salePrice)} · {name(best.priceCondition ?? "UNKNOWN")} · eBay sold median.</p>}
         {best?.path === "GRADED_RESALE" && evaluation?.slabPricing?.activeReference && !evaluation.slabPricing.summary?.count && <p className={styles.note}>Resale target {dollars(best.salePrice)} · below photo-checked Buy It Now competition.</p>}
         {evaluation?.condition && <GradingComparison evaluation={evaluation} />}
         {evaluation?.condition && claimedCondition(evaluation.listing.cardCondition) && <p className={styles.note}>Seller says: {CONDITION_NAMES[claimedCondition(evaluation.listing.cardCondition)!]} · AI assesses: {name(evaluation.condition.rawCondition)}</p>}

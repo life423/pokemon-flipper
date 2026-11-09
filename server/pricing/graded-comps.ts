@@ -1,6 +1,7 @@
 import { printingLabel, readyForPricing, titleDecidesPrinting } from "../identity/card-identity.ts";
-import { canPrice, variantFor } from "./raw-prices.ts";
+import { variantFor } from "./raw-prices.ts";
 import { compProblem, matchesSoldTarget, summarizeComps, uniqueSoldComps, type CompCriteria } from "./sold-comps.ts";
+import { getPriceResearchSignal } from "./research-budget.ts";
 import type { CompSummary, GradeRange, GradedPricing, Identity, SlabPricing } from "../../shared/types.ts";
 import type { CheckComps, Comp, CompTarget, FetchComps, PricedCard, PricedVariant } from "./types.ts";
 
@@ -10,8 +11,11 @@ export type { CompCriteria } from "./sold-comps.ts";
 
 const DAY_MS = 86400000;
 
-function matchesTarget(comp: Comp, target: CompTarget): boolean {
-    return matchesSoldTarget(comp, { name: target.cardName, setName: target.setName, cardNumber: target.cardNumber }, target.grader, target.grade);
+function eligibleComp(comp: Comp, criteria: CompCriteria, target: CompTarget, titleMismatches?: Set<Comp>): boolean {
+    if (compProblem(comp, criteria) !== null) return false;
+    if (matchesSoldTarget(comp, { name: target.cardName, setName: target.setName, cardNumber: target.cardNumber }, target.grader, target.grade)) return true;
+    titleMismatches?.add(comp);
+    return false;
 }
 
 // The rules, then the AI's second look at whatever passed them.
@@ -22,12 +26,7 @@ async function checkedSummary(
     checkComps: CheckComps | undefined
 ): Promise<CompSummary> {
     const titleMismatches = new Set<Comp>();
-    const passing = comps.filter(comp => {
-        if (compProblem(comp, criteria) !== null) return false;
-        if (matchesTarget(comp, target)) return true;
-        titleMismatches.add(comp);
-        return false;
-    });
+    const passing = comps.filter(comp => eligibleComp(comp, criteria, target, titleMismatches));
     const verdicts = checkComps && passing.length > 0 ? await checkComps(passing, target) : undefined;
     // Any eligible current sale takes precedence over older prices. Use the
     // explicitly labeled 180-day fallback only when no current match remains;
@@ -61,11 +60,19 @@ function gradedVariantFor(card: PricedCard | null, identity: Identity): ReturnTy
     if (!readyForPricing(identity)) {
         return { reason: "The card isn't fully identified, so graded copies can't be priced." };
     }
-    if (!canPrice(`${card?.source}Comps`, ["printing", "grade"])) {
+    if (card?.source !== "pkmnprices") {
         return { reason: "This price source can't price graded copies by printing." };
     }
 
     return variantFor(card, identity);
+}
+
+interface GradedCompOptions {
+    fetchComps: FetchComps;
+    // Only saved checks may inform pagination. Optional new checks are final-only.
+    cachedChecks?: CheckComps;
+    checkComps?: CheckComps;
+    now?: number;
 }
 
 // Recent sales of one grade for this card's printing. Where the title
@@ -74,17 +81,26 @@ function gradedVariantFor(card: PricedCard | null, identity: Identity): ReturnTy
 async function fetchVariantComps(
     card: PricedCard,
     variant: PricedVariant,
-    { grader, grade, fetchComps, criteria, target }: { grader: string; grade: number | string; fetchComps: FetchComps; criteria: CompCriteria; target: CompTarget }
+    { grader, grade, fetchComps, criteria, target, cachedChecks }: Pick<GradedCompOptions, "fetchComps" | "cachedChecks"> &
+        { grader: string; grade: number | string; criteria: CompCriteria; target: CompTarget }
 ): Promise<Comp[]> {
     const sourceLabels = titleDecidesPrinting(variant.setName)
         ? card.variants.filter((v) => v.recordId === variant.recordId).map((v) => v.name)
         : [variant.name];
 
+    const eligible = (sale: Comp) => eligibleComp(sale, criteria, target);
+    const stopWhen = cachedChecks ? async (sales: readonly Comp[]) => {
+        const signal = getPriceResearchSignal();
+        for (const sale of sales) {
+            if (!eligible(sale)) continue;
+            const verdict = (await cachedChecks([sale], target, signal)).get(sale);
+            if (verdict?.keep !== false) return true;
+        }
+        return false;
+    } : (sales: readonly Comp[]) => sales.some(eligible);
     const comps: Comp[] = [];
     for (const sourceLabel of sourceLabels) {
-        comps.push(...await fetchComps(variant.recordId, { grader, grade, variant: sourceLabel,
-            stopWhen: sales => sales.some(sale => compProblem(sale, criteria) === null && matchesTarget(sale, target)),
-        }));
+        comps.push(...await fetchComps(variant.recordId, { grader, grade, variant: sourceLabel, stopWhen }));
     }
     return uniqueSoldComps(comps);
 }
@@ -96,10 +112,11 @@ export async function gradedPricesFor(
     gradeRange: GradeRange | null,
     {
         fetchComps,
+        cachedChecks,
         checkComps,
         grader = "PSA",
         now = Date.now(),
-    }: { fetchComps: FetchComps; checkComps?: CheckComps; grader?: string; now?: number }
+    }: GradedCompOptions & { grader?: string }
 ): Promise<GradedPricing> {
     const { variant, reason } = gradedVariantFor(card, identity);
 
@@ -112,10 +129,10 @@ export async function gradedPricesFor(
     for (let grade = gradeRange.low; grade <= gradeRange.high; grade += 1) {
         const criteria: CompCriteria = { printing: identity.printing, setName: variant.setName, finish: variant.finish, grader, grade, now };
         const target = compTarget(card, identity, variant, grader, grade);
-        const comps = await fetchVariantComps(card, variant, { grader, grade, fetchComps, criteria, target });
+        const comps = await fetchVariantComps(card, variant, { grader, grade, fetchComps, criteria, target, cachedChecks });
 
         byGrade.push(
-            await checkedSummary(comps, criteria, target, checkComps)
+            await checkedSummary(comps, criteria, target, checkComps ?? cachedChecks)
         );
     }
 
@@ -146,9 +163,10 @@ export async function compsForGrade(
         grader,
         grade,
         fetchComps,
+        cachedChecks,
         checkComps,
         now = Date.now(),
-    }: { grader: string; grade: number | string; fetchComps: FetchComps; checkComps?: CheckComps; now?: number }
+    }: GradedCompOptions & { grader: string; grade: number | string }
 ): Promise<SlabPricing> {
     const { variant, reason } = gradedVariantFor(card, identity);
 
@@ -157,9 +175,9 @@ export async function compsForGrade(
     const label = printingLabel(identity.printing, identity.set);
     const criteria: CompCriteria = { printing: identity.printing, setName: variant.setName, finish: variant.finish, grader, grade, now };
     const target = compTarget(card, identity, variant, grader, grade);
-    const comps = await fetchVariantComps(card, variant, { grader, grade, fetchComps, criteria, target });
+    const comps = await fetchVariantComps(card, variant, { grader, grade, fetchComps, criteria, target, cachedChecks });
 
-    const summary = await checkedSummary(comps, criteria, target, checkComps);
+    const summary = await checkedSummary(comps, criteria, target, checkComps ?? cachedChecks);
 
     const details = { printingLabel: label, variant: variant.name, grader, grade, summary };
 

@@ -5,19 +5,18 @@ import { compatibleBoundedPlans, type BoundedAssessmentPlan } from "./bounded-pl
 export { assessBoundedListing, BOUNDED_ASSESSMENT_SCHEMA, type BoundedReading } from "../ai/bounded-assessment.ts";
 export { BOUNDED_VISION_MODEL, BOUNDED_ASSESSMENT_VERSION, BOUNDED_CONDITION_VERSION, BOUNDED_SLAB_ASSESSMENT_VERSION, BOUNDED_PHOTO_LIMIT, selectBoundedPhotos, boundedAssessmentKey, boundedAssessmentPlan } from "./bounded-plan.ts";
 import { cachedCompChecks } from "../ai/comp-checker.ts";
-import { deferJungleNoSymbolPricing, jungleNoSymbolReason } from "../../shared/jungle-no-symbol.ts";
+import { missingTextureReason } from "../../shared/grade-qualifier.ts";
 import { createSoldConditionAcquirer } from "../ai/sold-condition.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { createSharedWork } from "../lib/shared-work.ts";
 import { storageFailure } from "../lib/storage-failure.ts";
 import { StorageUnavailableError } from "../storage/index.ts";
 import { aiSpendingFailure } from "../ai/spending.ts";
-import { identifyCard, readyForPricing } from "../identity/card-identity.ts";
+import { identifyCard, readyForPricing, printingClaimFromAspects } from "../identity/card-identity.ts";
 import { checkSlab } from "../identity/slab-check.ts";
 import { lookupCards, fetchComps, fetchRawComps } from "../pricing/pkmnprices.ts";
 import { gradedPricesFor, compsForGrade } from "../pricing/graded-comps.ts";
 import { rawPricesWithSales, compCondition } from "../pricing/raw-comps.ts";
-import { rawPricesFor } from "../pricing/raw-prices.ts";
 import { matchesSoldTarget } from "../pricing/sold-comps.ts";
 import type { Comp } from "../pricing/types.ts";
 import { loadSaved, reusableRecord, photoFingerprint } from "./store.ts";
@@ -28,6 +27,7 @@ import { rateDeal } from "../../shared/money/rating.ts";
 import { cardLanguageStatus, EnglishOnlyError } from "../../shared/card-language.ts";
 import { listingEvidenceKey } from "../../shared/listing-evidence.ts";
 import { currentPriceEvidence, PRICING_VERSION } from "../../shared/pricing-freshness.ts";
+import { unsupportedVariantReason, withoutUnsupportedRawPrices, withoutUnsupportedVariantPrices } from "../../shared/money/price-evidence.ts";
 import { RAW_CONDITIONS } from "../../shared/conditions.ts";
 import { withinAutomaticAuctionWindow } from "../../shared/listing-filters.ts";
 import type { Evaluation } from "../../shared/types.ts";
@@ -120,13 +120,19 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             photoCheck: null, condition: null, gradingMode: "BLOCKED", modeReasons: [], gradeStatus: "SKIPPED", setAside: [], identity: null,
             rawPricing: null, gradedPricing: null, slab: null, slabPricing: null, underwriting: null, rating: null, answeredAt: null, reusedSteps: [], usage: [] };
         const privateContext = { evidenceKey: listingEvidenceKey({ title: options.current?.title ?? listing.title, images: options.current?.images ?? listing.images }), contextKey: evaluationContextKey(listing) };
+        const printingClaim = printingClaimFromAspects(listing.aspects);
+        // Legacy checkpoints and older private hashes did not include these
+        // item specifics. Re-run identity with accepted photos when they change.
+        const matchesPrintingClaim = (saved: Evaluation) => printingClaimFromAspects(saved.listing.aspects) === printingClaim;
         const finish = async () => {
-            Object.assign(evaluation, deferJungleNoSymbolPricing(evaluation));
+            Object.assign(evaluation, withoutUnsupportedVariantPrices(evaluation));
             evaluation.underwriting = underwrite(evaluation); evaluation.rating = rateDeal(evaluation);
             if (evaluation.photoCheck) await privateEvaluations.save(evaluation, privateContext);
             return evaluation;
         };
         if (ended || !listing.images.length) { evaluation.modeReasons = [ended ? "This listing is no longer available." : "The listing has no photos."]; return finish(); }
+        const textureError = missingTextureReason(listing.title);
+        if (options.automatic && textureError) { evaluation.modeReasons = [textureError]; return finish(); }
         const eligibleNow = () => !signal.aborted && (!listing.endTime || Date.parse(listing.endTime) > deps.now()) &&
             (!options.automatic || withinAutomaticAuctionWindow(listing, deps.now()));
         const deferWindow = () => { evaluation.modeReasons = ["Automatic auction analysis is limited to live auctions ending within the next 12 hours."]; evaluation.gradeStatus = "DEFERRED_AUCTION_WINDOW"; return finish(); };
@@ -173,9 +179,9 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         };
         const latest = legacy?.latestEvaluation?.evaluation;
         const revisedLatest = latest ? recheckSavedSlab(latest, listing.aspects) : null;
-        if (latest && !latest.pricingDeferred && !revisedLatest!.needsPricing && legacy?.latestEvaluation?.evidenceKey === listingEvidenceKey({ title: listing.title, images: listing.images }) && currentPriceEvidence(latest, deps.now()) && !await hasNewerSharedReading(latest)) {
+        if (latest && matchesPrintingClaim(latest) && !latest.pricingDeferred && !revisedLatest!.needsPricing && legacy?.latestEvaluation?.evidenceKey === listingEvidenceKey({ title: listing.title, images: listing.images }) && currentPriceEvidence(latest, deps.now()) && !await hasNewerSharedReading(latest)) {
             if (cardLanguageStatus(listing.title, [latest.identity?.language, latest.photoCheck?.cardIdentity?.language]) === "OTHER") throw new EnglishOnlyError();
-            const reused = deferJungleNoSymbolPricing(revisedLatest!.evaluation);
+            const reused = withoutUnsupportedRawPrices(withoutUnsupportedVariantPrices(revisedLatest!.evaluation));
             reused.listing = { ...reused.listing, ...evaluation.listing, photosAnalyzed: latest.listing.photosAnalyzed };
             reused.usage = []; reused.reusedSteps = [...new Set([...reused.reusedSteps, "savedEvaluation"])];
             reused.underwriting = underwrite(reused); reused.rating = rateDeal(reused);
@@ -184,8 +190,8 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         const remembered = await privateEvaluations.load(itemId);
         const revisedRemembered = remembered ? recheckSavedSlab(remembered.evaluation, listing.aspects) : null;
         if (remembered?.contextKey === privateContext.contextKey &&
-            !remembered.evaluation.pricingDeferred && !revisedRemembered!.needsPricing && (remembered.evaluation.assessmentVersion === ANALYSIS_VERSION || plans.some(plan => plan.version === remembered.evaluation.assessmentVersion)) && currentPriceEvidence(remembered.evaluation, deps.now()) && !await hasNewerSharedReading(remembered.evaluation)) {
-            const reused = deferJungleNoSymbolPricing(revisedRemembered!.evaluation);
+            matchesPrintingClaim(remembered.evaluation) && !remembered.evaluation.pricingDeferred && !revisedRemembered!.needsPricing && (remembered.evaluation.assessmentVersion === ANALYSIS_VERSION || plans.some(plan => plan.version === remembered.evaluation.assessmentVersion)) && currentPriceEvidence(remembered.evaluation, deps.now()) && !await hasNewerSharedReading(remembered.evaluation)) {
+            const reused = withoutUnsupportedRawPrices(withoutUnsupportedVariantPrices(revisedRemembered!.evaluation));
             if (cardLanguageStatus(listing.title, [reused.identity?.language, reused.photoCheck?.cardIdentity?.language]) === "OTHER") throw new EnglishOnlyError();
             reused.listing = { ...reused.listing, ...evaluation.listing, photosAnalyzed: reused.listing.photosAnalyzed };
             reused.usage = []; reused.reusedSteps = [...new Set([...reused.reusedSteps, "savedEvaluation"])];
@@ -330,7 +336,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             evaluation.identity.reasons.push("The bounded photos do not establish the exact English card identity. Seller wording alone cannot confirm it.");
         }
         if (check.cardCount !== "ONE" || !readyForPricing(evaluation.identity)) return finish();
-        if (jungleNoSymbolReason(evaluation)) return finish();
+        if (unsupportedVariantReason(evaluation)) return finish();
         const identity = evaluation.identity;
         const unavailable = (error: unknown) => {
             const stop = stopFailure(error);
@@ -342,7 +348,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             const slab = evaluation.slab;
             if (slab?.status === "OK") try {
                 evaluation.slabPricing = await compsForGrade(identified.card, identity, { grader: slab.grader!, grade: slab.grade!,
-                    fetchComps: (...args) => guarded(() => deps.fetchComps(...args)), checkComps: (...args) => guarded(() => deps.compChecks(...args)) });
+                    fetchComps: (...args) => guarded(() => deps.fetchComps(...args)), cachedChecks: (...args) => guarded(() => deps.compChecks(...args)) });
             } catch (error) { evaluation.slabPricing = unavailable(error); }
         } else {
             const condition = evaluation.condition;
@@ -384,8 +390,6 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                     },
                 });
                 evaluation.usage.push(...sold.usage.map(usage => ({ step: "soldConditionAssessment", ...usage })));
-                // The raw helper's ordinary outage fallback cannot turn a denied
-                // sold-research request into a fresh market-price recommendation.
                 evaluation.rawPricing = priceLimits > beforeRaw ? { status: "PRICE_UNAVAILABLE", reason: evaluation.pricingDeferred!.note } : raw;
             }
             if (hardFailure) throw hardFailure;
@@ -393,10 +397,9 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                 evaluation.gradedPricing = {};
                 for (const grader of GRADERS) try {
                     evaluation.gradedPricing[grader] = await gradedPricesFor(identified.card, identity, evaluation.condition.gradeRange, { grader, now: deps.now(),
-                        fetchComps: (...args) => guarded(() => deps.fetchComps(...args)), checkComps: (...args) => guarded(() => deps.compChecks(...args)) });
+                        fetchComps: (...args) => guarded(() => deps.fetchComps(...args)), cachedChecks: (...args) => guarded(() => deps.compChecks(...args)) });
                 } catch (error) { evaluation.gradedPricing[grader] = unavailable(error); }
             }
-            if (!evaluation.rawPricing && condition.rawCondition !== "UNKNOWN") evaluation.rawPricing = rawPricesFor(identified.card, identity);
         }
         signal.throwIfAborted();
         evaluation.pricesCheckedAt = new Date(deps.now()).toISOString();

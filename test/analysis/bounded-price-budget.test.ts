@@ -29,7 +29,7 @@ function subject() {
         images: ["front", "back", "front-detail", "back-detail"].map(view => `https://i.ebayimg.com/images/g/offline-${view}/s-l1600.jpg`),
         aspects: { "Card Name": "Venusaur", Set: "Base Set", "Card Number": "15/102", Language: "English", Finish: "Holo" } };
     const card: CardRecord = { source: "pkmnprices", id: 99, name: "Venusaur", setName: "Base Set", cardNumber: "15/102",
-        variants: [{ name: "Holofoil", finish: "HOLO", printing: "UNLIMITED", prices: [{ condition: "LIGHTLY_PLAYED", price: 180, updatedAt: new Date(NOW).toISOString() }] }] };
+        variants: [{ name: "Holofoil", finish: "HOLO", printing: "UNLIMITED" }] };
     return { listing, card, reading };
 }
 function harness(changes: Parameters<typeof createBoundedEvaluator>[0] = {}, values = subject()) {
@@ -74,7 +74,7 @@ test("accepted shared photos are reused before the advisory check and catalog de
     assert.ok([...h.cache.keys()].some(key => key.startsWith("private-evaluation:")), "the accepted reading and deferred checkpoint remain saved");
 });
 
-test("a raw sold-request limit cannot be swallowed into a profitable TCGplayer fallback", async () => {
+test("a raw sold-request limit leaves the route unpriced and in Sorting", async () => {
     const h = harness({ fetchRawComps: async () => { throw limit(); } });
     const result = await h.evaluate(h.listing.id);
     assert.equal(result.condition?.rawCondition, "LIGHTLY_PLAYED"); assert.equal(result.rawPricing?.status, "PRICE_UNAVAILABLE");
@@ -98,7 +98,7 @@ test("completed raw profit remains a Deal when a later grading route is deferred
 
 test("completed PSA or CGC scenarios remain actionable when the other grader reaches its allowance", async () => {
     for (const supported of ["PSA", "CGC"] as const) {
-        const values = subject(); values.card.variants[0].prices = [{ condition: "LIGHTLY_PLAYED", price: 25, updatedAt: new Date(NOW).toISOString() }];
+        const values = subject();
         values.reading.condition!.gradeRange = { low: 7, likely: 7, high: 7 };
         const h = harness({ fetchComps: async (_id, options) => { if (options.grader !== supported) throw limit(); return comps(options.grader, options.grade); } }, values);
         const result = await h.evaluate(h.listing.id);
@@ -159,7 +159,11 @@ test("shared evaluator work supplies its own signal so one cancelled consumer ca
     while (!finish) await new Promise(resolve => setTimeout(resolve, 1));
     one.abort(); await assert.rejects(first, error => (error as Error).name === "AbortError");
     assert.ok(inherited); assert.equal(inherited.aborted, false);
-    finish(); assert.equal((await second).rawPricing?.status, "PRICED"); assert.equal(h.calls.assessed, 1);
+    finish();
+    const result = await second;
+    assert.equal(result.identity?.status, "IDENTIFIED");
+    assert.equal(h.calls.raw, 1);
+    assert.equal(h.calls.assessed, 1);
 });
 
 test("stopping the final evaluator consumer cancels pending price work and retains accepted photos", async () => {

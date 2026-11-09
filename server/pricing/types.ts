@@ -1,24 +1,22 @@
-import type { Printing, RawPrice } from "../../shared/types.ts";
+import type { Printing } from "../../shared/types.ts";
 
 export type PrintingOrUnknown = Printing | "UNKNOWN";
 
-// One printing of a card in a price database, with its raw prices.
+// One printing and finish of a card in the sold-listing provider's catalog.
 export interface CardVariant {
     // The database's own label, like "1st Edition Holofoil".
     name: string;
     printing: PrintingOrUnknown;
     finish: string;
-    prices: RawPrice[];
 }
 
 // A card as one price database files it.
 export interface CardRecord {
-    source: "pkmnprices" | "pokemonPriceTracker";
+    source: "pkmnprices";
     id: number | string;
     name: string;
     setName: string | null;
     cardNumber: string;
-    tcgPlayerId: number | null;
     variants: CardVariant[];
 }
 

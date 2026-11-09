@@ -39,6 +39,22 @@ test("range searches omit the exact grade from marketplace keywords", () => {
     assert.equal(marketplaceQuery("Unown A", readSearchByRules("Unown A")), "unown a");
 });
 
+test("spelled-out slab grades are applied locally and removed from discovery keywords", () => {
+    const search = "Aquapolis holo graded seven or higher by PSA";
+    const read = readSearchLocally(search);
+    assert.deepEqual([read.grader, read.minGrade, read.maxGrade, read.finish], ["PSA", 7, 10, "HOLO"]);
+    assert.equal(marketplaceQuery(search, read), "aquapolis holo PSA");
+    assert.equal(criteriaMismatch(searchAttributes("Aquapolis PSA 6 Holo"), read), "OTHER_GRADE");
+    assert.equal(criteriaMismatch(searchAttributes("Aquapolis PSA 7 Holo"), read), null);
+
+    const range = "Aquapolis CGC between eight and 9.5 reverse holo";
+    assert.deepEqual(explicitCriteria(range), { grader: "CGC", minGrade: 8, maxGrade: 9.5, finish: "REVERSE_HOLO" });
+    assert.equal(marketplaceQuery(range, readSearchLocally(range)), "aquapolis reverse holo CGC");
+    assert.equal(explicitCriteria("ungraded one owner Charizard").minGrade, null);
+    assert.equal(explicitCriteria("Aquapolis psaseven").minGrade, null);
+    assert.equal(explicitCriteria("Aquapolis PSA 7th card").minGrade, null);
+});
+
 test("conversational deal requests retain the exact printed name and independent criteria", () => {
     for (const prefix of ["find me a good deal on a", "Can you please find me the best deal on a", "show me deals for a", "get me a cheap deal on a"]) {
         const search = `${prefix} holographic Dark Blastoise Team Rocket`;

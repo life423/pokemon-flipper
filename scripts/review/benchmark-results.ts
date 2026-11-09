@@ -33,7 +33,6 @@ export function candidateAdmission(listing: ListingSummary, filters: ListingFilt
     if (screen?.junk || listing.match === "JUNK") reasons.push("JUNK");
     else if (listing.match) reasons.push(listing.match);
     if (screen?.pricingIssue) reasons.push(`PRICING_${screen.pricingIssue.kind}`);
-    if (screen?.lowResale && !screen.lowResale.cheapFirstEditionBaseSet) reasons.push("LOW_RESALE");
     if (screen?.soldEvidence) {
         if (screen.status === "DROPPED") reasons.push("SOLD_DROPPED");
         if (screen.soldEvidence.status !== "AVAILABLE") reasons.push(`SOLD_${screen.soldEvidence.status}`);

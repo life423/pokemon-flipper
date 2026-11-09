@@ -17,9 +17,10 @@ test("saved real-shape catalog records survive descriptor-only differences in bo
         { setId: 633, set: "Fusion Strike", query: "Mew VMAX", term: "mew vmax", item: detail(34436, "Mew VMAX (Alternate Art Secret)", "269", "264", "SWSH08: Fusion Strike") },
         { setId: 606, set: "Vivid Voltage", query: "Pikachu VMAX", term: "pikachu vmax", item: detail(27943, "Pikachu VMAX (Secret)", "188", "185", "SWSH04: Vivid Voltage") },
         { setId: 529, set: "Shining Legends", query: "Mewtwo GX", term: "mewtwo gx", item: detail(19490, "Mewtwo GX (Secret Shining)", "78", "73", "Shining Legends") },
+        { setId: 704, set: "Lost Origin", querySet: "Sword & Shield - Lost Origin", query: "Aerodactyl V", term: "aerodactyl v", item: detail(70401, "Aerodactyl V (Alternate Full Art)", "180", "196", "SWSH11: Lost Origin") },
     ];
     for (const { setId, set, term, item } of fixtures) {
-        await writeCache(`pkmnprices:${setsPath(set)}`, { data: [{ id: setId, name: set }] });
+        await writeCache(`pkmnprices:${setsPath(set)}`, { data: [{ id: setId, name: item.set.name }] });
         await writeCache(`pkmnprices:${listPath(setId, term)}`, { data: [
             { ...item, id: item.id + 3, name: null },
             { ...item, id: item.id + 1, name: "Dark " + item.name },
@@ -29,8 +30,8 @@ test("saved real-shape catalog records survive descriptor-only differences in bo
     }
     t.mock.method(globalThis, "fetch", async () => { throw new Error("Saved catalog matches must require no provider requests"); });
     const source = createScreeningPriceSource({ maxRequests: 0 });
-    for (const { set, query: name, item } of fixtures) {
-        const query = { set, name, cardNumber: `${item.number}/${item.total_set_number}` };
+    for (const { set, querySet, query: name, item } of fixtures) {
+        const query = { set: querySet ?? set, name, cardNumber: `${item.number}/${item.total_set_number}` };
         assert.deepEqual((await source.lookupCards(query)).map(card => card.id), [item.id]);
         assert.deepEqual((await lookupCards(query)).map(card => card.id), [item.id]);
     }

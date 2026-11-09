@@ -37,7 +37,6 @@ export interface IdentityDraft extends Identity {
     listedCardNumber: string | null;
     hasEditions: boolean | null;
     recordId: CardRecord["id"] | null;
-    tcgPlayerId: number | null;
 }
 
 interface PrintingDecision {
@@ -127,6 +126,14 @@ export function titleDecidesPrinting(setName: unknown): boolean {
 
 // Card numbers
 
+// Literal collector-number forms shared by title reading and metadata cleanup.
+// Never fill a missing number from the search or infer one from an ordinary year.
+export function cardNumberIn(title: string): string | null {
+    return title.match(/\b(?:[a-z]{0,5}\d{1,4}[a-z]?)\s*\/\s*(?:[a-z]{0,5}\d{1,4}[a-z]?)\b/i)?.[0].replace(/\s/g, "")
+        ?? title.match(/\b(?:swsh|sm|svp|sv|xy|bw|dp|hgss|gg|tg|h)\d{1,4}[a-z]?\b/i)?.[0]
+        ?? title.match(/(?:#|\b(?:card\s*(?:no\.?|number)?|no\.))\s*(\d{1,3}[a-z]?)\b/i)?.[1] ?? null;
+}
+
 function parseNumberPart(part: string | undefined) {
     if (part === undefined || part === "") return null;
 
@@ -188,6 +195,17 @@ const SET_ALIASES: Record<string, string> = {
     rocket: "team rocket",
 };
 
+// Known releases whose Sword & Shield era may be written out on the label or
+// in seller metadata. Keep the standalone base release and promos separate.
+export const SWORD_SHIELD_RELEASE_CODES = {
+    "evolving skies": "swsh07",
+    "fusion strike": "swsh08",
+    "brilliant stars": "swsh09",
+    "lost origin": "swsh11",
+    "crown zenith": "swsh12.5",
+    "crown zenith galarian gallery": "swsh12.5",
+};
+
 // "SWSH: Crown Zenith", "Crown Zenith", and "2023 Pokemon Crown Zenith"
 // are the same set.
 export function normalizeSetName(value: unknown): string {
@@ -201,7 +219,8 @@ export function normalizeSetName(value: unknown): string {
         .replace(/\s+/g, " ")
         .trim();
 
-    return SET_ALIASES[words] ?? words;
+    const release = words.replace(/^(?:sword (?:and )?shield|swsh) /, "");
+    return SET_ALIASES[words] ?? (Object.hasOwn(SWORD_SHIELD_RELEASE_CODES, release) ? release : words);
 }
 
 // The normalized names of every set a listing's set may be filed under.
@@ -350,8 +369,6 @@ function review(reason: string): PrintingDecision {
     return { status: "NEEDS_REVIEW", printing: "UNKNOWN", reason };
 }
 
-// The title, the item details, and the photos have to agree. There is
-// no majority vote: any disagreement goes to review.
 // Cheapest to priciest, for settling a seller's claim against the photos.
 const PRINTING_RANK: Record<Printing, number> = { UNLIMITED: 0, SHADOWLESS: 1, FIRST_EDITION: 2 };
 
@@ -372,6 +389,15 @@ export function resolvePrinting(
         return review("The seller's text contradicts itself about the printing.");
     }
     if (new Set(stated).size > 1) {
+        // An explicitly named, lower-value printing backed by the photos can
+        // correct an overstated seller field. A slab label is separate evidence.
+        if (hasEditions && label === "NOT_STATED" && isPrinting(title) && isPrinting(itemSpecifics) &&
+            photo === title && PRINTING_RANK[title] < PRINTING_RANK[itemSpecifics]) {
+            return {
+                status: "ACCEPTED", printing: title,
+                reason: `The title and photos show ${printingName(title)}. The conflicting item detail was not used for pricing.`,
+            };
+        }
         return review("The title, item details, or slab label disagree about the printing.");
     }
 
@@ -429,6 +455,10 @@ function aspectText(aspects: Record<string, string>, namePattern: RegExp): strin
         .filter(([name]) => namePattern.test(name))
         .map(([, value]) => value)
         .join(" ");
+}
+
+export function printingClaimFromAspects(aspects: Record<string, string>): PrintingClaim {
+    return printingClaimFromText(aspectText(aspects, /edition|feature|print/i));
 }
 
 // PSA's readable English 1999 Base Set label names premium printings. A
@@ -717,7 +747,6 @@ export async function identifyCard(
         finish: "NOT_STATED",
         hasEditions: null,
         recordId: null,
-        tcgPlayerId: null,
         evidence: null,
         reasons: correctedNumber ? [`The seller-entered card number #${listing.aspects!["Card Number"]} is date-formatted; the title and photographed fraction establish #${correctedNumber}.`] : [],
     };
@@ -858,7 +887,7 @@ export async function identifyCard(
 
     const evidence = {
         title: printingClaimFromText(sellerListing.title),
-        itemSpecifics: printingClaimFromText(aspectText(aspects, /edition|feature|print/i)),
+        itemSpecifics: printingClaimFromAspects(aspects),
         label,
         photo,
         photoSource,
@@ -925,7 +954,6 @@ export async function identifyCard(
         if (record) {
             identity.set = record.setName;
             identity.recordId = record.id;
-            identity.tcgPlayerId = record.tcgPlayerId ?? null;
         }
     }
 

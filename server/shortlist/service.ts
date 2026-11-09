@@ -14,6 +14,7 @@ import { readCache } from "../lib/cache.ts";
 import { withFreshListing } from "../../shared/fresh-listing.ts";
 import { searchAttributes } from "../../shared/search-criteria.ts";
 import { loadPrivateEvaluation, evaluationContextKey } from "../analysis/private-evaluation.ts";
+import { printingClaimFromAspects } from "../identity/card-identity.ts";
 
 export function createShortlistService({ store = shortlistStore, details = getListingDetails, load = loadSaved, latest = loadPrivateEvaluation, cached = (id: string) => readCache<ListingDetails>(listingCacheKey(id), 24 * 7), now = () => Date.now() } = {}) {
     const limit = createLimiter(2);
@@ -28,13 +29,15 @@ export function createShortlistService({ store = shortlistStore, details = getLi
         const candidate = record?.version === ANALYSIS_VERSION ? record.latestEvaluation : null;
         const fullPhotos = candidate?.evaluation.listing.photos ?? [];
         const matchesSnapshot = candidate && (candidate.evidenceKey === listingEvidenceKey(listing) || candidate.evaluation.listing.title.trim() === listing.title.trim() && photoEvidenceKey(fullPhotos) === photoEvidenceKey(listing.images));
-        const matchesCurrentDetails = !currentDetails || candidate?.evaluation.listing.title.trim() === currentDetails.title.trim() && photoEvidenceKey(fullPhotos) === photoEvidenceKey(currentDetails.images);
+        const matchesCurrentDetails = !currentDetails || candidate?.evaluation.listing.title.trim() === currentDetails.title.trim() && photoEvidenceKey(fullPhotos) === photoEvidenceKey(currentDetails.images) &&
+            printingClaimFromAspects(candidate?.evaluation.listing.aspects ?? {}) === printingClaimFromAspects(currentDetails.aspects);
         let snapshot = matchesSnapshot && matchesCurrentDetails ? candidate!.evaluation : null;
         if (!snapshot) {
             const bounded = await latest(listing.id);
             const photos = bounded?.evaluation.listing.photos ?? [];
             const sameSnapshot = bounded && (bounded.evidenceKey === listingEvidenceKey(listing) || bounded.evaluation.listing.title.trim() === listing.title.trim() && photoEvidenceKey(photos) === photoEvidenceKey(listing.images));
-            const sameDetails = !currentDetails || bounded?.contextKey === evaluationContextKey(currentDetails);
+            const sameDetails = !currentDetails || bounded?.contextKey === evaluationContextKey(currentDetails) &&
+                printingClaimFromAspects(bounded?.evaluation.listing.aspects ?? {}) === printingClaimFromAspects(currentDetails.aspects);
             if (sameSnapshot && sameDetails) snapshot = bounded!.evaluation;
         }
         const review = record?.deeperPhotoReview;
@@ -78,7 +81,8 @@ export function createShortlistService({ store = shortlistStore, details = getLi
                     bestOffer: refreshed.bestOffer ?? false, cardCondition: refreshed.cardCondition, conditionNotes: refreshed.conditionNotes,
                     availability: refreshed.availability ?? "UNKNOWN", screen: undefined, match: undefined, mistakes: undefined };
                 const same = latest.evaluation && latest.evaluation.listing.title.trim() === refreshed.title.trim() &&
-                    photoEvidenceKey(latest.evaluation.listing.photos ?? latest.listing.images) === photoEvidenceKey(refreshed.images);
+                    photoEvidenceKey(latest.evaluation.listing.photos ?? latest.listing.images) === photoEvidenceKey(refreshed.images) &&
+                    printingClaimFromAspects(latest.evaluation.listing.aspects) === printingClaimFromAspects(refreshed.aspects);
                 const evaluation = same && latest.evaluation ? retargetEvaluation({ ...latest.evaluation, listing: { ...latest.evaluation.listing,
                     title: refreshed.title, url: refreshed.url, price: refreshed.price, shipping: refreshed.shipping, buyingOption: refreshed.buyingOption,
                     listedAt: listing.listedAt, createdAt: listing.createdAt,

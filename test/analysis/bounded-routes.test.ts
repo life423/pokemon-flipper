@@ -21,8 +21,8 @@ const listing = (extra: Partial<ListingDetails> = {}): ListingDetails => ({ id: 
     price: 50, shipping: 5, buyingOption: "FIXED_PRICE", bids: 0, endTime: null, seller: null,
     images: Array.from({ length: 12 }, (_, index) => photo(index + 1)), availability: "ACTIVE", condition: "Graded", cardCondition: null, conditionNotes: [],
     aspects: { "Card Name": "Venusaur", Set: "Base Set", "Card Number": "15/102", Language: "English", Finish: "Holo", "Professional Grader": "CGC", Grade: "8.5" }, ...extra });
-const card: CardRecord = { source: "pkmnprices", id: 123, name: "Venusaur", setName: "Base Set", cardNumber: "15/102", tcgPlayerId: 3,
-    variants: [{ name: "Holofoil", finish: "HOLO", printing: "UNLIMITED", prices: [{ condition: "LIGHTLY_PLAYED", price: 150, updatedAt: new Date(NOW).toISOString() }] }] };
+const card: CardRecord = { source: "pkmnprices", id: 123, name: "Venusaur", setName: "Base Set", cardNumber: "15/102",
+    variants: [{ name: "Holofoil", finish: "HOLO", printing: "UNLIMITED" }] };
 function slabReading(count: number, grade = "8.5"): BoundedReading {
     return { photoCheck: { cardCount: "ONE", holder: "GRADED_SLAB", photoSufficiency: "SUFFICIENT", confidence: "HIGH", printedName: "Venusaur", printedNumber: "15/102",
         cardIdentity: { name: "Venusaur", set: "Base Set", cardNumber: "15/102", language: "English", finish: "HOLO", confidence: "HIGH", evidence: ["Readable label and collector number."] },

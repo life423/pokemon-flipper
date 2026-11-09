@@ -2,7 +2,7 @@
 
 Find eBay Pokémon card listings worth flipping, priced to the exact printing, with a max bid for every one.
 
-Search for a card or inspect a listing link. The app checks identity, price evidence and estimated costs before presenting a purchase limit. Current HTTP searches admit up to **50 matching metadata rows**, with a persistent **$0.02 AI cap** and **100 Browse-request cap per new search**. Displayed listings and paid assessments have separate limits.
+Search for a card or inspect a listing link. The app checks identity, price evidence and estimated costs before presenting a purchase limit. New browser profiles start with Any profit and Any ROI. A Deal still requires positive net profit. Current HTTP searches admit up to **50 matching metadata rows**, with a persistent AI cap of up to **$0.10 per search** and **100 Browse-request cap per new search**. Displayed listings and paid assessments have separate limits.
 
 > **The question it answers:** *At this price, is this card worth buying to resell?*
 
@@ -59,9 +59,9 @@ them again; preliminary comparisons never create a confirmed Deal.
 
 The automatic queue considers eligible loaded candidates with at most two
 assessments in flight. It reuses saved evidence and starts new paid work only
-while the shared two-cent search budget permits it. Fifty displayed rows do
+while the search's shared AI budget permits it. Fifty displayed rows do
 not promise fifty AI assessments or fifty deals. Listing details and all nested
-Browse work also share the separate 25-request search allowance.
+Browse work also share the separate 100-request allowance for new searches.
 
 ```
 Your search          base set 1999 charizard
@@ -91,7 +91,7 @@ Saved evidence       reuse unchanged photo assessments first
 Bounded AI           exact input-token preflight, then one assessment
     │                RAW: up to 6 photos, 2,200 output tokens
     │                SLAB_LABEL: first 2 unique photos, 1,600 output tokens
-    │                shared 2¢ budget; no automatic paid fallback/opinion
+    │                shared search budget; no automatic paid fallback/opinion
     ▼
 Prices and money     matched evidence, costs, a verdict and purchase ceiling
 ```
@@ -120,7 +120,7 @@ their existing deterministic pricing and money rules:
 
 | Path | Buy | Sell | Priced from |
 | --- | --- | --- | --- |
-| **Resell raw** | Raw card | Raw, as is | Recent condition-matched eBay sales; labeled market fallback when needed |
+| **Resell raw** | Raw card | Raw, as is | Recent eBay sales at the assessed condition or a supported lower condition |
 | **Buy and grade** | Raw card | PSA or CGC slab | Sold comps across a supported numeric grade range |
 | **Resell the slab** | Graded slab | Same slab | Sold comps at its exact grader and grade |
 
@@ -138,7 +138,7 @@ every legacy diagnostic or buy missing evidence solely to fill a UI section.
 - **Find new listings:** fetch one newest-result page, skip previously seen IDs and apply selected filters before admitting up to 50 matching metadata rows. Earlier results stay available. Automatic assessment depends on saved evidence and the remaining search budget. This window does not cover all eBay inventory.
 - **Assessment verdicts:** buy raw, buy and grade, buy graded, pass, needs review, or can't price. Preliminary rows remain distinct from completed assessments.
 - **A max bid:** the most you can pay and still clear your targets after eBay fees, sales tax, shipping, and grading costs.
-- **Resale evidence:** one confirmed, exactly matched eBay sale can support a price; one or two matches retain low confidence. Raw resale also requires accepted photo-condition evidence for the sold copy. TCGplayer raw quotes remain labeled references and cannot establish a Deal alone. Graded cards prefer matching sales within 90 days, using the labeled 180-day fallback only when no current match exists. Open Prices to inspect the supporting sales. Only confirmed USD transaction amounts enter sold-price estimates.
+- **Resale evidence:** one confirmed, exactly matched eBay sale can support a price; one or two matches retain low confidence. Raw resale also requires accepted photo-condition evidence for the sold copy. Graded cards prefer matching sales within 90 days, using the labeled 180-day fallback only when no current match exists. Open Prices to inspect the supporting sales. Only confirmed USD transaction amounts enter sold-price estimates.
 - **Trading activity:** fuller saved assessments can show recorded eBay sales over 30 days, active selling days and average recorded sales per day. Counts cover the same printing, with raw conditions or slab grades combined. They measure provider observations, not total market volume or guaranteed time to sell; bounded research does not buy a new activity lookup.
 - **Your targets, live:** set a minimum profit and minimum return in the toolbar (or *Any*). Every max bid, verdict, and ranking recalculates instantly, with no new lookups.
 - **Ratings:** *Strong*, *Good*, or *Thin*, from plain rules: room under the max bid, the outcome at the low end of the grade range, how many sales back the price, photo confidence, and seller feedback. Every concern is listed.
@@ -151,7 +151,7 @@ every legacy diagnostic or buy missing evidence solely to fill a UI section.
 - **Auction guidance:** maximum bids include the modeled costs and targets. Observed sales provide market references, without a forecast of the closing price.
 - **The exact printing:** 1st Edition, Shadowless, and Unlimited are priced apart. Supported photo/label evidence can resolve a wrong title or item detail; an unresolved material identity problem still blocks purchase advice.
 - **Reprints caught:** Celebrations, Classic Collection (2021 and 2026), Base Set 2, metal cards, and Topps cards don't get priced as vintage originals.
-- **Checked comps:** sold comps pass identity, printing, finish, grader/grade and other eligibility rules. Bounded HTTP research reuses saved AI comp checks and sold-copy condition evidence; it does not purchase new comp-review batches or historical photo assessments. Missing matched sales remain unavailable or use the labeled market fallback.
+- **Checked comps:** sold comps pass identity, printing, finish, grader/grade and other eligibility rules. Bounded HTTP research reuses saved AI comp checks and sold-copy condition evidence; it does not purchase new comp-review batches or historical photo assessments. Missing matched sales leave a pricing route unavailable.
 
 ## Design principles
 
@@ -275,7 +275,8 @@ Everything is TypeScript. The server runs through [tsx](https://tsx.is), and the
 eBay raises the limit through its free [Application Growth Check](https://developer.ebay.com/grow/application-growth-check).
 
 **OpenAI.** A persistent guard at the SDK transport boundary enforces a maximum
-of **$0.02 per search** across concurrent stages, retries and process restarts.
+of **$0.10 per search** across concurrent stages, retries and process restarts.
+Existing search accounts keep their original limits, spending and reservations.
 Paid processing is operator-controlled. Fresh installations, missing or invalid
 controls/ledgers and unsupported model or cache pricing fail closed; starting
 the app does not enable spending or reset a search allowance.
@@ -294,7 +295,7 @@ condition using at most six selected photos and a 2,200-token output limit.
 An uncached SLAB_LABEL request uses the first two unique photos and a
 1,600-token output limit for visible identity, certified label and case evidence;
 condition is always null. Both use the same exact-input preflight, durable
-reservation and two-cent ceiling. A disproved seller slab claim does not launch
+reservation and per-search ceiling. A disproved seller slab claim does not launch
 a second paid raw assessment. Bounded HTTP research does not buy separate
 identity passes, a second condition opinion, fresh comp-check batches or sold
 listing photo reviews. The CLI uses this same evaluator; the separate legacy
@@ -308,7 +309,7 @@ no eBay Browse requests. This is a focused assessment canary, not the measured
 cost or deal quality of a complete uncached search.
 
 Underlying AI concurrency remains a ceiling, not a spending allowance. The
-development UI offers **Automatic · within 2¢** or **Off · manual only**.
+development UI offers **Automatic · within budget** or **Off · manual only**.
 Automatic work considers the eligible loaded rows, with at most two assessments
 in flight after sold-price screening; the transport still enforces its persistent
 spending reservations.
@@ -342,7 +343,7 @@ printing/raw-or-graded scope with incomplete coverage labeled. Bounded HTTP
 assessment does not buy a new volume lookup. No background polling is added.
 
 The existing usage panel now reports price requests and provider-reported
-credits separately from the two-cent OpenAI budget and eBay Browse quota.
+credits separately from the OpenAI budget and eBay Browse quota.
 Missing charge headers remain explicitly incomplete. The remaining daily
 credit count is the last provider observation, not a live balance from polling.
 Accepted responses are saved to the configured SQL/file response cache even
@@ -361,7 +362,7 @@ off failed checks for 30 seconds. It preserves the daily reserve and never start
 AI analysis. New inventory scans share a separate one-minute newest-search cache,
 remember seen IDs across restarts and admit up to 50 unseen matching metadata
 rows. Preliminary screening uses saved/local metadata; automatic photo work
-shares the two-cent budget and two-assessment in-flight limit. The 25-request
+shares the search budget and two-assessment in-flight limit. The 100-request
 Browse ceiling includes both initial retrieval and follow-up details.
 There is no recurring inventory polling.
 
@@ -456,7 +457,7 @@ boundaries and the regressions added for their failure cases:
 | Reuse and concurrency | Same evidence shares work; canceled/restarted consumers wait for saved results; successful and unresolved answers do not expire into automatic repurchases. |
 | Candidate selection | Source/known filters precede paid work; auctions use a fixed search-start 12-hour window and expire before later stages. The historical batch restriction has since been replaced by the current 50-row metadata admission and budget-bounded automatic queue. |
 | Evidence and messages | Exact identity/finish gates reject unusable comparisons; numbered close-up notes cannot masquerade as listing-wide missing coverage; deliberate deferrals do not create false deals or routine review tasks. |
-| Cost and quota | Persistent, cross-process reservations enforce the two-cent ceiling; unknown costs and missing/corrupt accounting block dispatch; Browse has a separate 25-request per-search ceiling and account-wide daily protection. |
+| Cost and quota | Persistent, cross-process reservations enforce the per-search AI ceiling; unknown costs and missing/corrupt accounting block dispatch; Browse has a separate 100-request ceiling for new searches and account-wide daily protection. |
 | Lifecycle and outcomes | Changed filters stop old-scope work; target/price changes recheck hypothetical upside; manual upgrades reuse photo work; Sorting and Deals reflect actual assessment state. |
 | Attribution and isolation | Search UUIDs, task/model/tier, usage/cache writes and request hashes are logged without prompts or credentials; tests use temporary data and explicit offline transport mocks. |
 

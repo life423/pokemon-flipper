@@ -7,14 +7,14 @@ import styles from "./DecisionSummary.module.css";
 export function AuctionSummary({ evaluation, targets, now }: { evaluation: Evaluation; targets: Targets; now: number }) {
     const decision = auctionDecision(evaluation, targets, now);
     const result = decision.overLimit ? decision.atCurrent : decision.atCeiling;
-    const cautious = decision.provisional || decision.breakEven || decision.ended || decision.overLimit;
+    const cautious = decision.provisional || decision.anyTargets || decision.ended || decision.overLimit;
     return <div className={styles.auction}>
         <div className={styles.amounts}>
             <div><span className={styles.label}>Current bid</span><strong>{dollars(evaluation.listing.price)}</strong></div>
-            <div><span className={styles.label}>{decision.label}</span><strong className={styles.limit}>{dollars(decision.ceiling)}</strong></div>
+            <div><span className={styles.label}>Max snipe bid</span><strong className={styles.limit}>{dollars(decision.ceiling)}</strong></div>
         </div>
         <p className={styles.status}>
-            {decision.status === "ENDED" ? "Auction ended" : decision.status === "OVER_LIMIT" ? "Already above your limit — pass at this price." : decision.status === "UNPRICED" ? "No reliable bid limit yet. Finish the photo and pricing checks." : decision.provisional ? "Provisional limit — your review is needed because photo or grading uncertainty remains." : decision.breakEven ? "Set a profit or ROI target to leave a margin." : "Use the bid limit as your maximum snipe for the selected resale route."}
+            {decision.status === "ENDED" ? "Auction ended" : decision.status === "OVER_LIMIT" ? "Already above your limit — pass at this price." : decision.status === "UNPRICED" ? "No reliable bid limit yet. Finish the photo and pricing checks." : decision.provisional ? "Provisional limit — your review is needed because photo or grading uncertainty remains." : decision.anyTargets ? "Set a profit or ROI target to require a larger margin." : "Use the bid limit as your maximum snipe for the selected resale route."}
         </p>
         {result && <div className={styles.scenario}>
             <p className={styles.label}>{decision.overLimit ? "At current bid" : "If won for"} {dollars(result.price)} · {evaluation.underwriting?.best?.label}</p>

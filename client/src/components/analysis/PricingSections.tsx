@@ -1,6 +1,7 @@
 import type { CompSummary, GradedPricing, RawPricing } from "../../types";
 import { dollars, name } from "../../format";
 import { RAW_CONDITIONS, CONDITION_NAMES } from "../../../../shared/conditions.ts";
+import { isRawSoldPrice } from "../../../../shared/money/price-evidence.ts";
 import { Pairs, Section } from "./primitives";
 import styles from "../DetailPanel.module.css";
 
@@ -66,8 +67,9 @@ export function PricesSection({
                     <h4 className={styles.subTitle}>Raw{raw.printingLabel ? `, ${raw.printingLabel}` : ""}</h4>
                     {raw.status === "PRICED" ? (
                         <Pairs rows={RAW_CONDITIONS.map(condition => {
-                            const price = raw.prices?.find(entry => entry.condition === condition);
-                            return [CONDITION_NAMES[condition], !price ? "No supported price" : `${dollars(price.price)} · ${price.basis === "EBAY_SOLD" ? `eBay sold median (${price.comps?.count} ${raw.conditionEvidence === "AI_PHOTOS" ? "photo-assessed " : ""}sales)` : price.basis === "TCGPLAYER" || raw.source === "pkmnprices" ? "TCGplayer market fallback" : "Market feed"}`];
+                            const price = raw.prices?.find(entry => entry.condition === condition && isRawSoldPrice(entry));
+                            return [CONDITION_NAMES[condition], !price ? "No supported price"
+                                : `${dollars(price.price)} · eBay sold median${price.comps ? ` (${price.comps.count} ${raw.conditionEvidence === "AI_PHOTOS" ? "photo-assessed " : ""}sales)` : ""}`];
                         })} />
                     ) : (
                         <p className={styles.muted}>{raw.reason}</p>

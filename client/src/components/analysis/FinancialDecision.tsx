@@ -10,7 +10,7 @@ import { Tween } from "../Tween";
 import { Notes, Pairs, Section } from "./primitives";
 import { isResearchDeferred } from "../../../../shared/photo-review.ts";
 import styles from "../DetailPanel.module.css";
-import { priceEvidenceGap } from "../../../../shared/money/price-evidence.ts";
+import { isRawSoldPrice, priceEvidenceGap } from "../../../../shared/money/price-evidence.ts";
 
 export function FinancialDecision({ evaluation, targets, now }: { evaluation: Evaluation; targets: Targets; now: number }) {
     const priceGap = priceEvidenceGap(evaluation);
@@ -19,9 +19,9 @@ export function FinancialDecision({ evaluation, targets, now }: { evaluation: Ev
         <Pairs rows={[
             [evaluation.listing.buyingOption === "AUCTION" ? "Current bid" : "Asking price", dollars(evaluation.listing.price)],
             ["Shipping", evaluation.listing.shipping === null ? "Not quoted" : dollars(evaluation.listing.shipping)],
-            ...(evaluation.underwriting?.best ? [["Reference resale estimate before costs", dollars(evaluation.underwriting.best.salePrice)]] as [string, ReactNode][] : []),
+            ...(evaluation.underwriting?.best && evaluation.underwriting.best.path !== "RAW" ? [["Reference resale estimate before costs", dollars(evaluation.underwriting.best.salePrice)]] as [string, ReactNode][] : []),
         ]} />
-        <p className={styles.small}>Saved photo findings remain available. A purchase or bid limit needs matched resale evidence; this estimate is not a purchase recommendation.</p>
+        <p className={styles.small}>Saved photo findings remain available. A purchase or bid limit needs matched resale evidence.</p>
     </Section>;
     if (isResearchDeferred(evaluation)) return <Section title="Automatic research deferred">
         <p>{evaluation.rawPricing?.evidenceNote}</p>
@@ -55,9 +55,9 @@ function VerdictSection({
         ["Shipping", listing.shipping === null ? `Not quoted · ${dollars(MONEY_CONFIG.buying.assumedShippingWhenUnknown)} assumed` : dollars(listing.shipping)],
     ];
     if (best?.path === "RAW") {
-        const quote = evaluation.rawPricing?.prices?.find(price => price.condition === best.priceCondition);
+        const quote = evaluation.rawPricing?.prices?.find(price => price.condition === best.priceCondition && isRawSoldPrice(price));
         rows.push(["Raw sale estimate before fees", dollars(best.salePrice)]);
-        rows.push(["Resale evidence", best.pricingNotes?.length ? "Conservative adjusted market fallback" : quote?.basis === "EBAY_SOLD" ? `${quote.comps?.count ?? "Matched"} eBay sold comps` : "TCGplayer market fallback"]);
+        rows.push(["Resale evidence", `${quote?.comps?.count ?? "Matched"} eBay sold comps`]);
         rows.push(["Net sale proceeds after fees and shipping", dollars(best.expectedNet)]);
     }
 

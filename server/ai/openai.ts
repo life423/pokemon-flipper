@@ -98,7 +98,7 @@ export async function runStructured<T>({
     dispatchSignal?: AbortSignal;
     maxRetries?: number;
     maxOutputTokens?: number;
-    // One compact immutable assessment for the two-cent development workflow.
+    // One compact immutable assessment for the bounded search workflow.
     bounded?: boolean;
     // Explicit bounded comparisons/refinements can select a verified model.
     // Normal callers keep their configured policy; the spending guard still

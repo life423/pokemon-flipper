@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { StorageUnavailableError } from "../storage/index.ts";
 import { normalizedPhoto } from "../../shared/listing-evidence.ts";
+import { printingClaimFromAspects } from "../identity/card-identity.ts";
 import type { Evaluation } from "../../shared/types.ts";
 
 // This namespace is deliberately absent from the SQL public-cache allowlist:
@@ -10,8 +11,13 @@ export const PRIVATE_EVALUATION_PREFIX = "private-evaluation:v1:";
 export const EVALUATION_CLAIM_FIELDS = ["Card Name", "Character", "Set", "Card Number", "Language", "Finish", "Professional Grader", "Grade", "Certification Number", "Year Manufactured"];
 export interface PrivateEvaluationSnapshot { version: 1; evidenceKey: string; contextKey: string; evaluation: Evaluation }
 export function evaluationContextKey(listing: { title: string; images: readonly string[]; aspects: Record<string, string> }): string {
-    return createHash("sha256").update(JSON.stringify([listing.title.trim(), listing.images.map(normalizedPhoto),
-        EVALUATION_CLAIM_FIELDS.map(field => [field, listing.aspects[field] ?? null])])).digest("hex");
+    const input = [listing.title.trim(), listing.images.map(normalizedPhoto),
+        EVALUATION_CLAIM_FIELDS.map(field => [field, listing.aspects[field] ?? null])];
+    // Edition/Features/Printing can change identity without changing the paid
+    // photo inputs. Keep their semantic claim in financial context only.
+    const printing = printingClaimFromAspects(listing.aspects);
+    if (printing !== "NOT_STATED") input.push(printing);
+    return createHash("sha256").update(JSON.stringify(input)).digest("hex");
 }
 const keyFor = (id: string) => PRIVATE_EVALUATION_PREFIX + createHash("sha256").update(id).digest("hex");
 function validate(value: unknown, itemId: string): PrivateEvaluationSnapshot {

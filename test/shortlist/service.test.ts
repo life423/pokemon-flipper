@@ -38,6 +38,53 @@ test("changed photos clear financial advice without invoking an assessment",asyn
     const store=await fixture(t);const service=createShortlistService({store,load:async()=>snapshot(),details:async()=>({...details(),images:["https://i.ebayimg.com/new.jpg"]})});await service.save(listing());const entry=(await service.refresh([listing().id])).entries[0];
     assert.equal(entry.evaluation,null);assert.equal(entry.needsAnalysis,true);assert.deepEqual(entry.listing.images,["https://i.ebayimg.com/new.jpg"]);
 });
+test("changed or missing edition specifics clear shortlist advice without changing accepted photo answers", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("shortlist edition refresh must use only supplied offline details"));
+    for (const field of ["Edition", "Features", "Printing"]) for (const claim of ["Unlimited", null]) {
+        const record = snapshot();
+        const evaluation = record.latestEvaluation!.evaluation;
+        evaluation.listing.aspects = { [field]: "1st Edition" };
+        evaluation.identity!.printing = "FIRST_EDITION";
+        evaluation.identity!.printingLabel = "1st Edition Shadowless";
+        evaluation.photoCheck!.printingMarks = { firstEditionStamp: "VISIBLE", artBoxShadow: "ABSENT", reprintMark: "NONE_SEEN", evidence: ["First Edition stamp is visible."] };
+        evaluation.rawPricing!.printing = "FIRST_EDITION";
+        for (const pricing of Object.values(evaluation.gradedPricing!)) pricing!.printing = "FIRST_EDITION";
+        record.photoCheck = { result: structuredClone(evaluation.photoCheck!), usage: { inputTokens: 700, outputTokens: 450 } };
+        const accepted = structuredClone(record);
+        let loads = 0, requests = 0;
+        let currentDetails: ListingDetails = { ...details(), aspects: { [field]: "1st Edition" } };
+        const service = createShortlistService({ store: await fixture(t), load: async () => { loads++; return record; }, latest: async () => null,
+            cached: async () => currentDetails,
+            details: async () => { requests++; currentDetails = { ...details(), aspects: claim ? { [field]: claim } : {} }; return currentDetails; } });
+        const saved = await service.save(listing());
+        assert.equal(saved.evaluation?.identity?.printing, "FIRST_EDITION");
+        const result = await service.refresh([saved.id]), refreshed = result.entries[0];
+        assert.deepEqual(result.errors, []);
+        assert.equal(refreshed.evaluation, null, `${field}/${claim}`);
+        assert.equal(refreshed.needsAnalysis, true);
+        assert.equal(requests, 1); assert.equal(loads, 1, "refresh updates terms without dispatching analysis or repricing");
+        const resaved = await service.save(listing());
+        assert.equal(resaved.evaluation, null, "resaving cannot resurrect the old edition prices after current specifics changed");
+        assert.equal(resaved.needsAnalysis, true); assert.equal(requests, 1);
+        assert.deepEqual(record, accepted, "source-linked paid photo answers remain available for later identity rechecking");
+    }
+});
+test("unrelated feature wording and equivalent edition claims keep shortlist evidence reusable", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("feature metadata refresh must remain offline"));
+    for (const [before, after] of [["Holofoil", "Holofoil, Swirl"], ["1st Edition Holofoil", "First Edition, Swirl"]]) {
+        const record = snapshot();
+        record.latestEvaluation!.evaluation.listing.aspects = { Features: before };
+        const service = createShortlistService({ store: await fixture(t), load: async () => record,
+            cached: async () => ({ ...details(), aspects: { Features: before } }),
+            details: async () => ({ ...details(), aspects: { Features: after } }) });
+        const saved = await service.save(listing());
+        const result = await service.refresh([saved.id]);
+        assert.deepEqual(result.errors, []);
+        assert.ok(result.entries[0].evaluation, `${before} -> ${after}`);
+        assert.equal(result.entries[0].needsAnalysis, false);
+        assert.equal(result.entries[0].evaluation?.listing.price, details().price, "ordinary purchase-term retargeting still works");
+    }
+});
 test("resaving after known photo changes cannot resurrect an older assessment", async t => {
     const store=await fixture(t);const service=createShortlistService({store,load:async()=>snapshot(),cached:async()=>({...details(),images:[]})});
     assert.equal((await service.save(listing())).evaluation,null);
@@ -110,4 +157,10 @@ test("saving bounded analysis uses its private snapshot and rejects changed cach
     const changed = createShortlistService({ store: await fixture(t), load: async () => null, latest: async () => saved,
         cached: async () => ({ ...details(), aspects: { Grade: "9" } }) });
     assert.equal((await changed.save(listing())).evaluation, null, "an unchanged title/photo is insufficient when label claims changed");
+    const oldEdition = structuredClone(saved);
+    oldEdition.evaluation.listing.aspects = { Features: "1st Edition" };
+    oldEdition.evaluation.identity!.printing = "FIRST_EDITION";
+    const missingEdition = createShortlistService({ store: await fixture(t), load: async () => null, latest: async () => oldEdition, cached: async () => details() });
+    assert.equal((await missingEdition.save(listing())).evaluation, null,
+        "old private hashes that omitted edition facts cannot restore First Edition advice after the claim disappears");
 });

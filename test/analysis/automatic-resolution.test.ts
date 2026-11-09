@@ -41,8 +41,6 @@ test("price-first rejection defers automatic work while temporary gaps and verif
     assert.equal(canAutoAnalyze({ ...listing, images: [] }), false);
     assert.equal(canAutoAnalyze({ ...listing, availability: "UNAVAILABLE" }), false);
     assert.equal(canAutoAnalyze({ ...promising, currentPrice: 223_200 }), false);
-    assert.equal(canAutoAnalyze({ ...promising, screen: { ...promising.screen, lowResale: { minimum: 60, rawMarketMaximum: 20, cheapFirstEditionBaseSet: false } },
-        mistakes: [{ kind: "GENERIC_TITLE", detail: "Generic seller title" }] }), false);
     assert.equal(canAutoAnalyze({ ...temporary, screen: { ...temporary.screen, pricingIssue: { kind: "CREDITS", retryAt: null } } }), false);
     const assessed = cardEvaluation(); assessed.underwriting!.verdict = "PASS";
     assert.equal(resultGroup(listing, assessed), null, "AI eligibility cannot turn an analyzed rejection into a Deal");

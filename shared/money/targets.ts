@@ -1,11 +1,11 @@
 import { MONEY_CONFIG, type MoneyConfig } from "./config.ts";
-import { bestPath, netFromSale, pathNumbers, underwrite } from "./underwriting.ts";
+import { bestPath, pathNumbers, underwrite } from "./underwriting.ts";
 import { rateDeal } from "./rating.ts";
 import { offerPlan, offerWorthMaking } from "./offer.ts";
 import type { Evaluation, ListingSummary, Screen, Targets } from "../types.ts";
 import { withFreshListing } from "../fresh-listing.ts";
 import { applySoldPriceScreen } from "./sold-screen.ts";
-import { deferJungleNoSymbolPricing } from "../jungle-no-symbol.ts";
+import { withoutUnsupportedRawPrices, withoutUnsupportedVariantPrices } from "./price-evidence.ts";
 
 // Your profit and return targets change by card, so the page re-prices
 // everything for the targets you set. The same money math runs on the
@@ -36,7 +36,7 @@ export function retargetEvaluation(evaluation: Evaluation, targets: Targets, cur
               },
           }
         : evaluation;
-    const scoped = deferJungleNoSymbolPricing(updated);
+    const scoped = withoutUnsupportedRawPrices(withoutUnsupportedVariantPrices(updated));
     const underwriting = underwrite(scoped, withTargets(targets));
     const repriced = { ...scoped, underwriting };
 
@@ -50,9 +50,13 @@ export function retargetScreen(
     price: number | null,
     targets: Targets,
     config: MoneyConfig = MONEY_CONFIG,
-    includeOffers = false
+    includeOffers = false,
+    current?: Pick<ListingSummary, "shipping" | "isGraded" | "buyingOption" | "bestOffer">
 ): Screen {
     if (screen.soldEvidence) {
+        if (current && screen.soldEvidence.gradingReferences?.length) {
+            return applySoldPriceScreen({ ...current, currentPrice: price, screen }, screen.soldEvidence, { targets, config, includeOffers }).screen;
+        }
         if (screen.soldEvidence.status !== "AVAILABLE" || !screen.money || price === null) return screen;
         // Median-price paths rank the queue; the retained sold sample decides
         // whether a slab's upper recent outcome can still meet these targets.
@@ -65,7 +69,17 @@ export function retargetScreen(
         // unquoted zero-dollar screening assumption, rather than a real quote.
         return screen.assumed ? { ...updated, assumed: screen.assumed } : updated;
     }
-    if (!screen.money || price === null || screen.status === "UNSCREENED" && !screen.conditionUpside && !screen.money.priceEvidenceIncomplete) return screen;
+    // Older retry snapshots did not distinguish an unverified raw estimate
+    // from a price backed by sold comps. Retain graded paths and known sales.
+    const { lowResale, conditionUpside, ...saved } = screen as Screen & { lowResale?: unknown; conditionUpside?: unknown };
+    const money = saved.money;
+    const supported = money?.paths.filter(path => path.path !== "RAW" || (path.compCount ?? 0) > 0);
+    if (lowResale || conditionUpside || money && supported && supported.length !== money.paths.length) {
+        screen = { ...saved, status: "UNSCREENED", bestCase: null, requiresOffer: false, priceAnomaly: undefined,
+            reason: "The saved raw estimate has no matched eBay sales. Updated price evidence is needed.", needsAnalysis: "PRICE_EVIDENCE",
+            money: money && supported?.length ? { ...money, paths: supported, rawFloorNet: undefined, priceEvidenceIncomplete: true } : undefined };
+    }
+    if (!screen.money || price === null || screen.status === "UNSCREENED" && !screen.money.priceEvidenceIncomplete) return screen;
 
     const repriced = withTargets(targets, config);
     const { shipping, paths } = screen.money;
@@ -81,7 +95,7 @@ export function retargetScreen(
     const unresolved = Boolean(screen.money.priceEvidenceIncomplete && !best.clears && !requiresOffer);
     const incompleteReason = "The preliminary estimates do not clear your current targets, but missing resale evidence leaves raw-card grading or condition upside unresolved. These estimates do not establish a verified deal or a completed price exclusion.";
 
-    const repricedScreen: Screen = {
+    return {
         ...screen,
         status: best.clears || requiresOffer ? "CANDIDATE" : unresolved ? "UNSCREENED" : "DROPPED",
         ...(screen.money.priceEvidenceIncomplete ? { needsAnalysis: unresolved ? "PRICE_EVIDENCE" : undefined,
@@ -89,10 +103,4 @@ export function retargetScreen(
         requiresOffer,
         bestCase: { label: best.label, maxBid: best.maxBid, profit: best.profit, roi: best.roi },
     };
-    if (!screen.conditionUpside) return repricedScreen;
-    if (repricedScreen.status === "CANDIDATE") return { ...repricedScreen, needsAnalysis: undefined };
-    const upside = pathNumbers({ expectedNet: netFromSale(screen.conditionUpside.rawMarketPrice, "raw", config.selling), fixedCosts: 0, shipping, price }, repriced);
-    return { ...repricedScreen, status: upside.clears || unresolved ? "UNSCREENED" : "DROPPED", needsAnalysis: upside.clears ? "IDENTITY" : unresolved ? "PRICE_EVIDENCE" : undefined,
-        reason: upside.clears ? "The saved better-condition raw market quote could clear your current targets. Photos must verify that condition; this is not a verified deal."
-            : unresolved ? incompleteReason : "Even the better-condition raw market quote does not clear your current targets. Manual analysis remains available." };
 }

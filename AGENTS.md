@@ -1,6 +1,6 @@
 # Project memory and working agreement
 
-Updated November 5, 2026. These are current requirements. Older dated reports
+Updated November 8, 2026. These are current requirements. Older dated reports
 describe their own checkpoints; consult Git for branch and delivery state.
 
 ## Workspace and delivery
@@ -65,6 +65,15 @@ Read docs/architecture.md for the source map and reading order.
   Recognized parenthetical catalog rarity labels do not erase printed Shining
   names. Sun & Moon era wording requires an observed phrase, full number,
   numeric slab grade and separate written release; bare/unknown words remain.
+  CRZ/Holo UR/split Galarian Gallery metadata additionally requires written
+  Crown Zenith and a full GG fraction; special slab labels stay separate.
+  Four-word literal names require an observed collector number; exact native
+  catalog matching still gates their prices. A numeric-grade-anchored exact
+  (LIMITED EDITION GUARD) accessory note is metadata, not a printed name.
+  Sword & Shield publisher wording may also use a plain source-observed partial
+  collector number plus numeric slab grade and mapped written release. Share
+  cardNumberIn with the title reader; never infer a denominator or treat a lone
+  promo/release code as that partial-number anchor.
 - Honor listing format, raw/graded, prices and grade/finish constraints throughout.
   After assessment, corroborated holder evidence takes precedence over eBay's
   raw/graded category. Keep query and control constraints consistent in results,
@@ -88,11 +97,22 @@ Read docs/architecture.md for the source map and reading order.
   One applicable sale authorizes automatic photos with sparse confidence retained,
   retaining the focused
   <=$10 raw First Edition Base Set research exception.
+- When a named Buy It Now search has no usable raw sold prices, one exact
+  market can reuse or fetch up to four first pages for PSA/CGC 8 and 9. The
+  lower observed sale price must clear current targets after grading and
+  resale costs to queue photos. A grading lead has no assumed grade, price
+  ceiling or deal verdict. Keep this evidence separate from raw sold prices.
 - Exact slab grader/grade/printing/finish scopes stay separate. Only one explicit
   scope with >=1 eligible sale within 90 days can exclude obvious overpricing
   using the upper observed resale value after costs. Raw condition buckets and
   unspecified medians order research; they do not assign this copy a condition,
   create a Deal or exclude unassessed grading/premium-printing upside.
+- First Edition, Unlimited and Shadowless are separate markets at every stage.
+  Query-only or ambiguous printing research cannot supply this copy's profit,
+  purchase ceiling or positive financial priority. Keep those observations and
+  identity research eligible without borrowing the premium market. Changed or
+  missing seller edition specifics invalidate financial reuse, including
+  shortlist refresh/resave, while accepted paid photo answers remain reusable.
 - The browser queues eligible assessments, at most two in flight. Fifty metadata
   rows do not promise fifty paid assessments. Reuse saved evidence first.
 - Raw requests combine identity/condition across at most six selected photos.
@@ -123,21 +143,20 @@ Read docs/architecture.md for the source map and reading order.
 
 ## Spending, storage and reuse
 
-- Preserve the persistent **$0.02 OpenAI generation cap per search ID**.
+- Preserve the persistent **$0.10 OpenAI generation ceiling per search ID**.
   Automatic/explicit follow-ups and nested stages share the ID and guard.
   Exact final-input preflight, maximum input/output reservation and unknown-charge
   holds are required. Invalid state/config fails closed. Cache hits do not reset
   the allowance; brainstorming is not authorization to raise it.
-- The user explicitly permits up to $0.10 per search only if desperately needed
-  to finish useful analysis. Keep the default at $0.02, report an actual increase
-  and its spending, and preserve existing charges/holds. This fallback has not
-  been used. Prefer a free catalog/local resolution before additional text AI.
+- The user explicitly raised the cap for new search accounts to $0.10 on
+  November 8. Preserve the limits, charges and holds of existing accounts.
+  Prefer a free catalog/local resolution before additional text AI.
 - New searches allow **100 actual eBay Browse requests per search**, separate from daily
   account quota/reserve. Retries, nested calls and restarts retain spent counts.
   Cache hits, OAuth and Analytics are separate. The old expiring development
   ledger is historical, not a daily app limit. Existing 25/50-request ledgers retain
   their stored limits and counts; opening an old search never resets it.
-- The two-cent cap does not cover PKMNPrices credits or eBay quota. Screening
+- PKMNPrices credits and eBay quota are separate from the AI ceiling. Screening
   permits 128 uncached requests; final valuation and retries share one persistent
   **256-request PKMNPrices allowance per new search UUID**. Existing 64/128-request
   ledgers remain usable with their original limits and counts. Cache hits cost no new
@@ -158,8 +177,8 @@ Read docs/architecture.md for the source map and reading order.
   authorize requests. Existing Analytics/Browse observations and completed price
   response headers supply them; warning polling never calls providers. A failed
   telemetry write must not invalidate or repurchase accepted evidence.
-- Optimize AI cost per correctly identified deal. Two cents is a ceiling, not
-  desired spending. Evaluate cheap first checks and selective stronger reviews
+- Optimize AI cost per correctly identified deal. Keep typical spend well below
+  the ceiling. Evaluate cheap first checks and selective stronger reviews
   without automatically running both models or discarding accepted work.
   Reuse source-linked observations and relevant original photos for one specific
   unresolved question; prior model guesses are context, not physical proof.
@@ -188,14 +207,14 @@ Read docs/architecture.md for the source map and reading order.
 
 ## Evidence and financial rules
 
-- Explicit TCGplayer raw quotes and asking-only slab references retain labeled
-  scenario math but cannot establish a Deal or a completed rejection. Price-only
-  gaps stay Sorting; material photo risks still need attention. A separately
-  supported profitable route remains usable. Unknown downside is null, not a
-  repeated point estimate. Older absent-basis price records remain readable.
+- Raw resale uses matched eBay sales at the assessed condition or a supported
+  lower condition. Discard saved raw estimates without sold provenance.
+  Asking-only slab references retain labeled scenario math. Price-only gaps
+  stay Sorting and material photo risks still need attention. A separately
+  supported profitable route remains usable. Unknown downside stays null.
 - Recent matched eBay transactions supplied by PKMNPrices are primary truth.
-  Reject unconfirmed historical amounts. Distinguish asking references, TCGplayer
-  fallback, unspecified raw sales and condition-matched sold prices. Do not merge
+  Reject unconfirmed historical amounts. Distinguish asking references,
+  unspecified raw sales and condition-matched sold prices. Do not merge
   printings, finishes, currencies, grades or raw conditions.
   Reconcile duplicate source IDs through uniqueSoldComps before eligibility.
   Provider updated_at precedence retains corrected amounts and newer retractions;

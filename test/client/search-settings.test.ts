@@ -1,6 +1,6 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { ALL, AUTO_KEY, DEFAULT_AUTO, DEFAULT_RESULTS, readAutoSetting, readResultsSetting } from "../../client/src/search/settings.ts";
+import { ALL, AUTO_KEY, DEFAULT_AUTO, DEFAULT_RESULTS, readAutoSetting, readResultsSetting, readTargets, targetText } from "../../client/src/search/settings.ts";
 import { BOUNDED_AUTO_CONCURRENCY, DEVELOPMENT_SEARCH_LIMIT } from "../../shared/research-policy.ts";
 
 function storage(t: TestContext, entries: Record<string, string> = {}) {
@@ -13,6 +13,17 @@ function storage(t: TestContext, entries: Record<string, string> = {}) {
     t.after(() => { if (previous) Object.defineProperty(globalThis, "localStorage", previous); else Reflect.deleteProperty(globalThis, "localStorage"); });
     return saved;
 }
+
+test("profit and ROI default to Any and preserve saved targets", t => {
+    const saved = storage(t);
+    assert.deepEqual(readTargets(), { minProfit: 0, minRoi: 0 });
+    assert.deepEqual(targetText(readTargets()), { minProfit: "", minRoi: "" });
+
+    const custom = { minProfit: 50, minRoi: 0.25 };
+    saved.set("targets", JSON.stringify(custom));
+    assert.deepEqual(readTargets(), custom);
+    assert.deepEqual(targetText(readTargets()), { minProfit: "50", minRoi: "25" });
+});
 
 test("fresh settings display50 metadata results independently of budgeted automatic assessment", t => {
     storage(t);

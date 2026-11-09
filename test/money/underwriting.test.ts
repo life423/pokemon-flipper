@@ -62,8 +62,8 @@ function lugiaEvaluation(overrides = {}) {
         rawPricing: {
             status: "PRICED",
             prices: [
-                { condition: "NEAR_MINT", price: 531.39 },
-                { condition: "LIGHTLY_PLAYED", price: 446.25 },
+                { basis: "EBAY_SOLD", condition: "NEAR_MINT", price: 531.39 },
+                { basis: "EBAY_SOLD", condition: "LIGHTLY_PLAYED", price: 446.25 },
             ],
         },
         gradedPricing: {
@@ -181,9 +181,9 @@ test("raw prices fall back to a worse condition, never a better one", () => {
             rawPricing: {
                 status: "PRICED",
                 prices: [
-                    { condition: "NEAR_MINT", price: 531.39 },
-                    { condition: "LIGHTLY_PLAYED", price: 446.25 },
-                    { condition: "HEAVILY_PLAYED", price: 210.54 },
+                    { basis: "EBAY_SOLD", condition: "NEAR_MINT", price: 531.39 },
+                    { basis: "EBAY_SOLD", condition: "LIGHTLY_PLAYED", price: 446.25 },
+                    { basis: "EBAY_SOLD", condition: "HEAVILY_PLAYED", price: 210.54 },
                 ],
             },
         }),
@@ -292,7 +292,7 @@ test("final raw pricing uses the AI's condition even when the seller calls it Ne
         listing: { price: 100, shipping: 5, cardCondition: "Near mint or better" },
         condition: { rawCondition: "HEAVILY_PLAYED", gradeRange: { low: 2, likely: 3, high: 5 }, authenticity: { concern: "NONE_SEEN", reasons: [] } },
         gradedPricing: {},
-        rawPricing: { status: "PRICED", prices: [{ condition: "NEAR_MINT", price: 531.39 }, { condition: "HEAVILY_PLAYED", price: 70 }] },
+        rawPricing: { status: "PRICED", prices: [{ basis: "EBAY_SOLD", condition: "NEAR_MINT", price: 531.39 }, { basis: "EBAY_SOLD", condition: "HEAVILY_PLAYED", price: 70 }] },
     }), CONFIG);
     assert.equal(result.verdict, "PASS");
     assert.equal(pathOf(result, "Sell raw").salePrice, 70);

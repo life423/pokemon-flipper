@@ -1,4 +1,4 @@
-// Raw card conditions, best to worst, as TCGplayer prices them.
+// Raw card conditions, best to worst.
 export const RAW_CONDITIONS = [
     "MINT",
     "NEAR_MINT",

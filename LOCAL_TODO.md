@@ -1,6 +1,6 @@
 # Pokémon Flipper — current to-do list
 
-Updated November 5, 2026. This file is tracked at the user's request. It is the
+Updated November 8, 2026. This file is tracked at the user's request. It is the
 current index, not a chronological work log. LOCAL_PLAN.md and dated docs retain
 research details; Git retains earlier versions of this list. Credentials,
 provider payloads, photos and data/ stay excluded. No computer handoff is pending.
@@ -21,22 +21,39 @@ provider payloads, photos and data/ stay excluded. No computer handoff is pendin
 - [ ] Measure where promising inventory is lost: eligibility, missing prices,
   unresolved physical evidence, actual negative margin or a budget/queue stop.
   Keep genuine missing evidence separate from rejection.
+- [x] Add a separate raw-to-grade research lane when exact raw sales are absent.
+  Reuse exact recent graded sales, screen for a margin at a realistic non-gem
+  grade after costs, then assess the actual copy. Keep estimated grade and
+  completed-sale evidence separate; do not turn a research lead into a Deal.
+- [x] Run a raw-only Shadowless Alakazam BIN search at Any/Any. All 50 retained
+  rows lacked usable raw sold evidence; both relevant native provider pages
+  were empty. No photos were purchased. Fix the known listing's separate
+  printing issue: a readable card and agreeing title can correct an overstated
+  seller field. The ended listing remains a historical example.
 - [x] Complete one saved Arcanine candidate through current terms, reused photo
   assessment, one sold-copy review and a provider-blocked replay. It remains
   Sorting/CANT_PRICE because the reviewed LP+ sale supplies no accepted LP price;
   it is not a verified Deal. New AI cost 0.32264 cents; replay adds zero calls.
+- [x] Test existing lowest-price discovery alongside newest-first under the
+  original accounts. The Crown Zenith slab sample found no supported margin;
+  the raw Mew follow-through cost 0.56404 cents, remained Sorting with no manual
+  hold, and reopened free. No production second source or model change added.
+  These diagnostics do not complete the verified BIN milestone above.
 
 ## Working foundations to preserve
+
+- [x] Default to Any profit and Any ROI while requiring positive net profit.
+  Preserve explicitly saved targets. Use matched eBay sales for raw pricing
+  and ignore unsupported estimates from saved results.
 
 - [x] Shared Azure SQL Basic provider/assessment caches; persistent per-search
   OpenAI and provider request accounting; exact input/output reservations;
   cancellation and accepted-response saving.
-- [x] Default $0.02 generation cap per search UUID, 100 actual eBay Browse
+- [x] $0.10 generation cap for new search accounts, 100 actual eBay Browse
   requests per new search, 128 uncached screening/256 all-stage PKMN requests.
   Existing ledgers retain their limits and spent/unknown counts. PKMN's 20,000
   daily credits and eBay's daily quota are separate from AI dollars. Daily
-  depletion warnings exist. Up to $0.10 AI is authorized only if desperately
-  needed; it has not been used.
+  depletion warnings exist. Fresh installs still require operator setup.
 - [x] Up to 200 source summaries, 50 retained matching rows, price-exclusion
   refill, visible listing-format/raw/graded/purchase-price controls, English-only
   scope, and a fixed search-start next-12-hours automatic auction window.
@@ -49,7 +66,8 @@ provider payloads, photos and data/ stay excluded. No computer handoff is pendin
   when supported, and both PSA/CGC comparisons.
 - [x] Raw resale reads accepted sold-copy conditions first, then permits at most
   one relevant bounded acquisition. Negative observations are reused. Seller
-  labels and TCGplayer/asking references alone do not establish a raw Deal.
+  labels and other estimates stay out of the raw price. A supported lower
+  condition can establish a conservative profitable route.
 - [x] Audited cents-based money calculations, tax-inclusive fee bases, target
   limits, realistic optional offers within 10% of asking, and price-only versus
   physical-review states. No automatic purchase, bid, offer or seller message.
@@ -62,6 +80,37 @@ provider payloads, photos and data/ stay excluded. No computer handoff is pendin
 
 ## Pricing accuracy and economical evidence recovery
 
+- [x] Audit other ways matched evidence and profitable results disappear. Keep
+  the raw resale route open when a lower-condition estimate or grading falls
+  short without matching raw sales. Parse anchored cert/condition wording on
+  sold slabs and follow the existing page budget past saved vetoes. Normalize
+  set prefixes and Nidoran gender symbols in the final results filter. Saved
+  replay reached Deals for a historical auction; a live BIN is still unverified.
+- [x] Share the existing literal collector-number parser and recover numbered
+  slab publisher wording with a plain partial #number, numeric grade and mapped
+  release. Preserve promo codes/unknowns and full-fraction-only rarity rules.
+  Live Evolving Skies rerun excluded 66 rows versus 21 initially; no paid AI.
+  Exact Medicham/Rayquaza examples reject losing asks. All 1,049 tests pass.
+- [x] Recover numbered four-word printed names in the existing literal reader.
+  Real Palkia/Dialga slab markets now reach price research; neither saved ask
+  supports a profitable median, so no photo check was purchased. Preserve
+  unnumbered behavior and unknown words. Fix the holder-note regression exposed
+  by the full suite; all 1,048 tests, typechecks and build pass. SQL replay is free.
+- [x] Reconcile observed CRZ, Holo UR and split Galarian Gallery metadata in the
+  existing name cleaner with written release/full GG number/numeric slab anchors.
+  Saved SQL replay excludes five more overpriced slabs with zero provider/photo
+  calls. Special labels, printed forms and omitted-set uncertainty survive;
+  1,046 isolated tests, typechecks and production build pass. No Deal claimed.
+- [x] Keep First Edition/Unlimited/Shadowless research separate even before final
+  valuation. Ambiguous or query-only markets no longer supply preliminary profit,
+  ceilings or positive financial priority. Retain references/identity research;
+  saved money and local retargeting share the same scope check. No paid rechecks.
+- [x] Revalidate identity when Edition/Features/Printing specifics change or
+  disappear before reusing financial advice. Preserve accepted photos; protect
+  legacy/private evaluation and shortlist refresh/resave from stale reuse.
+- [x] Consolidate title-based special slab/parenthetical qualifier checks across
+  screening and final prices. Reject contaminated saved graded comparisons
+  without invalidating paid photo answers or bumping all valuation versions.
 - [x] Recover catalog pricing for observed parenthetical Secret Shining labels
   without erasing printed Shining forms. Anchored Sun & Moon publisher metadata
   now reaches exact sold screening. The saved 25-row Mewtwo replay excludes 21
@@ -79,6 +128,15 @@ provider payloads, photos and data/ stay excluded. No computer handoff is pendin
 - [ ] Add verified cheapest matching available BIN competition as a separate
   resale ceiling. Reuse rows/accepted labels; include delivered terms, seller
   caution and availability. Asking prices remain distinct from completed sales.
+- [x] Replay 12 intent phrases and fix free parsing of spelled-out slab grades
+  and spaced "Reverse Holo Foil" or "Non Holo Foil" wording.
+- [x] Run a single bounded text check on saved catalog candidates. It identified
+  Moonbreon, abstained on the sleepy Mew description, and left both broad
+  controls open. Cost $0.0001202 with a free replay.
+- [ ] Validate catalog candidate retrieval for nicknames/descriptions before any
+  automatic text check. Preserve typed filters and broad searches. Measure
+  correct listings reached and photo calls avoided. Treat delivered-price
+  phrases as separate constraints.
 - [ ] Review bare OC/MC/Error qualifier wording consistently across sold
   screening and final pricing, while preserving ordinary seller lot suffixes.
 - [ ] Finish bounded sparse-market recovery: exact recent sales, labeled older
@@ -116,7 +174,9 @@ provider payloads, photos and data/ stay excluded. No computer handoff is pendin
 - [ ] Resolve demonstrated residual descriptors using real catalog context;
   preserve unknown words, explicit release conflicts and grading qualifiers.
   Remaining examples include seller-title Secret Shining residue and MewTube;
-  the catalog suffix and anchored Sun & Moon era are already corrected.
+  the catalog suffix, anchored Sun & Moon era and anchored CRZ/Holo UR/split
+  Gallery wording are corrected. Check parent-release titles under explicit
+  subset queries against native catalog identity before broadening admission.
 - [ ] Improve whole-gallery sampling, front/back versus close-up coverage,
   stamp/copyright/set-symbol/reprint recognition and false obstruction/language
   warnings. Preserve actual reviewed photo numbers and prior paid evidence.

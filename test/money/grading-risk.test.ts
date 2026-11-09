@@ -66,7 +66,7 @@ test("a sparse nonmonotonic Umbreon cannot supply grading or offer advice under 
     evaluation.condition!.gradeRange = { low: 1, likely: null, high: 5 };
     evaluation.condition!.confidence = "LOW";
     evaluation.condition!.rawCondition = "DAMAGED";
-    evaluation.rawPricing = { status: "PRICED", prices: [{ condition: "DAMAGED", price: 958.5, updatedAt: null }] };
+    evaluation.rawPricing = { status: "PRICED", prices: [{ basis: "EBAY_SOLD", condition: "DAMAGED", price: 958.5, updatedAt: null }] };
     evaluation.gradedPricing = { PSA: { status: "PRICED", byGrade: [1739.04, null, 1112.5, 1267.5, 1395].map((price, i) => ({ ...salesSummary("PSA", i + 1), median: price, count: price === null ? 0 : 3 })) } };
     const corrected = retargetEvaluation(evaluation, any);
     const path = corrected.underwriting?.paths.find((entry) => entry.grader === "PSA");
@@ -95,9 +95,9 @@ test("a missing grade never inherits an observed lower-grade premium to create a
     const supported = retargetEvaluation(evaluation, any);
     assert.equal(supported.underwriting?.verdict, "PASS");
     assert.equal(supported.underwriting?.best?.profit, -238.5);
-    assert.equal(supported.underwriting?.best?.maxBid, 779.68);
+    assert.equal(supported.underwriting?.best?.maxBid, 779.67);
     assert.ok(priced(supported).outlook?.every((entry) => entry.filledFrom === null));
-    evaluation.rawPricing = { status: "PRICED", prices: [{ condition: "LIGHTLY_PLAYED", price: 2000, updatedAt: null }] };
+    evaluation.rawPricing = { status: "PRICED", prices: [{ basis: "EBAY_SOLD", condition: "LIGHTLY_PLAYED", price: 2000, updatedAt: null }] };
     evaluation.gradedPricing.PSA!.byGrade = evaluation.gradedPricing.PSA!.byGrade!.filter((entry) => entry.grade !== 7);
     assert.equal(retargetEvaluation(evaluation, any).underwriting?.verdict, "BUY_RAW", "an independent supported raw route still works");
 });

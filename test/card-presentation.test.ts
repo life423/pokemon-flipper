@@ -22,10 +22,10 @@ test("auction profit, total investment and ROI all use the displayed winning pri
     assert.notEqual(decision.atCeiling.profit, decision.atCurrent?.profit);
 });
 
-test("Any profit and ROI explicitly produce a break-even ceiling, retaining small nonzero returns", () => {
+test("Any profit and ROI allow a small positive margin and display small nonzero returns", () => {
     const decision = auctionDecision(cardEvaluation(any), any);
-    assert.equal(decision.breakEven, true);
-    assert.equal(decision.label, "Break-even bid ceiling");
+    assert.equal(decision.anyTargets, true);
+    assert.ok(decision.atCeiling && decision.atCeiling.profit > 0);
     assert.equal(returnText(0.1 / 82.2), "0.12%");
     assert.equal(returnText(-0.0012), "-0.12%");
     assert.equal(returnText(0.000001), "<0.01%");

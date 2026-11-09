@@ -1,5 +1,6 @@
-import { normalizeWords } from "./card-identity.ts";
+import { cardNumberIn, normalizeWords, SWORD_SHIELD_RELEASE_CODES } from "./card-identity.ts";
 import { canonicalCatalogName, sameCatalogName } from "./catalog-name.ts";
+import { searchAttributes } from "../../shared/search-criteria.ts";
 import { setKey } from "../../shared/sets.ts";
 
 // These are listing metadata, never an invitation to match a shorter species
@@ -12,16 +13,15 @@ const GRADE_SPAN = new RegExp(`\\b${GRADER}\\s*(?:[-–—]\\s*)?(?:${DESCRIPTIO
 const BEFORE_GRADE_GEM = new RegExp(`\\bgem[ -]+(?:mint|mt)(?=\\s+${GRADER}\\s*(?:[-–—]\\s*)?${GRADE})`, "gi");
 const INCLUDED_HOLDER_SUFFIX = /\s+(?:with|w\s*\/|includes?|including)\s+(?:(?:a|an|the)\s+)?(?:(?:protective|protection|magnetic|acrylic|hard|fitted|display|slab)\s+)*(?:guards?|cases?|holders?|sleeves?|top[ -]?loaders?)\s*[.!]?\s*$/i;
 const GRADED_ARTIST_SUFFIX = /\s+(?:kagemaru\s+)?himeno\s*$/i;
+const CERT_NUMBER = /\bcert(?:ification)?\b(?:\s+(?:number|no\.?))?[\s:#]+\d{7,10}(?![\w./])/gi;
+const NM_MT = /\bnm\s*[-–—]\s*mt\b(?!['’]|\s*\+)/gi;
 const ART_DESCRIPTION = /\b(?:(?:alternate|alt)(?:[\s/-]+full)?[\s-]+art|full(?:[\s/-]+(?:alternate|alt))?[\s-]+art|(?:special[\s-]+)?illustration[\s-]+rare)\b(?!['’])(?:\s*\/\s*)?/gi;
 // These release codes are publisher metadata only beside the corresponding
 // written release and an explicit collector fraction, never a promo number.
-const SWORD_SHIELD_RELEASES: [RegExp, RegExp][] = [
-    [/\bevolving\s+skies\b/i, /\bswsh07\b(?![\w.'’])/gi],
-    [/\bfusion\s+strike\b/i, /\bswsh08\b(?![\w.'’])/gi],
-    [/\bbrilliant\s+stars\b/i, /\bswsh09\b(?![\w.'’])/gi],
-    [/\blost\s+origin\b/i, /\bswsh11\b(?![\w.'’])/gi],
-    [/\bcrown\s+zenith(?:\s+galarian\s+gallery)?\b/i, /\bswsh12\.5\b(?![\w.'’])/gi],
-];
+const SWORD_SHIELD_RELEASES = Object.entries(SWORD_SHIELD_RELEASE_CODES).map(([release, code]) => ({
+    name: new RegExp(`\\b${release.replace(/ /g, "\\s+")}\\b`, "i"),
+    code: new RegExp(`\\b${code.replace(".", "\\.")}\\b(?![\\w.'’])`, "gi"),
+}));
 
 // normalizeWords normally discards symbols. Gender and these printed forms
 // distinguish cards, so preserve them even when a catalog uses Unicode glyphs.
@@ -58,7 +58,31 @@ export function stripListingNameBoilerplate(value: string, title = value, set?: 
     // observed excess words, including residual "gem" in older name readings.
     for (const match of title.matchAll(BEFORE_GRADE_GEM)) cleaned = removeObservedWords(cleaned, match, title);
     const graded = new RegExp(GRADE_SPAN.source, "i").test(title);
-    if (/\b[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?\b/i.test(title)) {
+    if (graded) {
+        for (const pattern of [/\(\s*limited[ -]+edition[ -]+guard\s*\)/gi, CERT_NUMBER]) {
+            for (const match of title.matchAll(pattern)) cleaned = removeObservedWords(cleaned, match, title);
+        }
+        // Sellers can separate the ordinary PSA 8 descriptor from the grade.
+        const descriptions = [...title.matchAll(NM_MT)];
+        if (descriptions.length) {
+            const { grader, grade } = searchAttributes(title);
+            if (grader === "PSA" && grade === 8) {
+                for (const match of descriptions) cleaned = removeObservedWords(cleaned, match, title);
+            }
+        }
+    }
+    const fullNumber = /\b[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?\b/i.test(title);
+    const release = SWORD_SHIELD_RELEASES.find(({ name }) => name.test(title));
+    // Slab titles commonly reproduce only the label's #number. That observed
+    // number, numeric grade and written release also anchor publisher metadata.
+    // This does not infer a denominator or loosen other rarity/printing rules.
+    const partialNumber = cardNumberIn(title);
+    if (release && (fullNumber || graded && /^\d{1,3}[a-z]?$/i.test(partialNumber ?? ""))) {
+        const era = /\b(?:sword(?:\s*(?:&|and)\s*|\s+)shield|swsh)\b(?!['’])/gi;
+        cleaned = cleaned.replace(era, " ").replace(release.code, " ");
+        for (const pattern of [era, release.code]) for (const match of title.matchAll(pattern)) cleaned = removeObservedWords(cleaned, match, title);
+    }
+    if (fullNumber) {
         // A catalog release and full printed number anchor this observed foil
         // descriptor. Remove only excess source words, preserving a separate
         // occurrence belonging to the card's printed name.
@@ -76,8 +100,17 @@ export function stripListingNameBoilerplate(value: string, title = value, set?: 
         if (writtenRelease?.test(title)) for (const match of title.matchAll(/\bcosmos[ -]+holo(?:graphic|foil)?\b/gi)) {
             cleaned = removeObservedWords(cleaned, match, title);
         }
-        const release = SWORD_SHIELD_RELEASES.find(([set]) => set.test(title));
-        if (release) cleaned = cleaned.replace(/\b(?:sword\s*(?:&|and)\s*shield|swsh)\b(?!['’])/gi, " ").replace(release[1], " ");
+        // A full GG collector fraction, numeric slab grade and written release
+        // anchor these observed metadata spans. Reconcile only excess source
+        // words; a separate printed form/owner or unknown word must survive.
+        if (graded && ["crown zenith", "crown zenith galarian gallery"].includes(setKey(set ?? "")) &&
+            /\bcrown\s+zenith\b/i.test(title) && /\bGG\d+\s*\/\s*GG\d+\b/i.test(title)) {
+            const metadata = [/\bCRZ\b(?![\w.'’])/gi, /\bholo(?:graphic|foil)?\s+UR\b(?![\w.'’])/gi];
+            // The literal reader already removes a contiguous complete set.
+            // Only a separately written subtitle needs extra reconciliation.
+            if (!/\bcrown\s+zenith[\s:–—-]+galarian\s+gallery\b/i.test(title)) metadata.push(/\bgalarian\s+gallery\b(?!['’])/gi);
+            for (const pattern of metadata) for (const match of title.matchAll(pattern)) cleaned = removeObservedWords(cleaned, match, title);
+        }
         // Abbreviations require a written release and a numeric slab label.
         // They never erase an unanchored name or a promo/partial number.
         const scarletViolet = /\bscarlet\s*(?:&|and)?\s*violet\b/i.test(title);

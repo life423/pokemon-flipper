@@ -9,6 +9,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { Evaluation, ListingSummary, SearchIntent } from "../shared/types.ts";
 import type { SearchSummary } from "../server/deals/find-deals.ts";
 import type { AiSearchBudget } from "../shared/ai-usage.ts";
+import { AI_SEARCH_HARD_CAP_USD, aiSpending } from "../server/ai/spending.ts";
 import { DEVELOPMENT_SEARCH_LIMIT } from "../shared/research-policy.ts";
 import { runBenchmarkQueue, type BenchmarkQueueResult } from "./review/benchmark-queue.ts";
 import { BENCHMARK_TRANSPORT_LIMITS, createBenchmarkTransport } from "./review/benchmark-transport.ts";
@@ -24,9 +25,11 @@ if (args.includes("--help")) {
 const command = benchmarkCommand(args);
 const live = command.mode !== "replay";
 const previous = command.mode === "live" ? null : JSON.parse(await fs.readFile(path.resolve(command.file), "utf8"));
+const recordedAiCap = previous?.settings?.aiCapUsd;
 if (previous && (!Array.isArray(previous.listings) || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(previous.searchId) ||
     typeof previous.query !== "string" || !previous.query.trim() || previous.query.length > 300 || !previous.summary?.intent ||
-    previous.settings?.aiCapUsd !== 0.02 || ![25, 50, BENCHMARK_TRANSPORT_LIMITS.ebayBrowse].includes(previous.settings?.browseCap) ||
+    !Number.isFinite(recordedAiCap) || recordedAiCap < 0 || recordedAiCap > AI_SEARCH_HARD_CAP_USD ||
+    ![25, 50, BENCHMARK_TRANSPORT_LIMITS.ebayBrowse].includes(previous.settings?.browseCap) ||
     ![64, 128, BENCHMARK_TRANSPORT_LIMITS.prices].includes(previous.settings?.priceTransportsDiagnosticCap))) {
     throw new Error("Resume/replay requires an original bounded-search report, its search ID, query, intent and unchanged limits.");
 }
@@ -40,6 +43,8 @@ await fs.mkdir(directory, { recursive: true });
 const context = new AsyncLocalStorage<{ searchId: string; listingId?: string; phase: string }>();
 const browseCap = previous?.settings.browseCap ?? BENCHMARK_TRANSPORT_LIMITS.ebayBrowse;
 const priceTransportsDiagnosticCap = previous?.settings.priceTransportsDiagnosticCap ?? BENCHMARK_TRANSPORT_LIMITS.prices;
+const settings = { targets, filters, includeOffers, matchingRows: DEVELOPMENT_SEARCH_LIMIT,
+    aiCapUsd: (recordedAiCap ?? null) as number | null, browseCap, priceTransportsDiagnosticCap };
 const observer = createBenchmarkTransport({ live, context: () => context.getStore() ?? { searchId, phase: "setup" }, allowAzureAuth: true,
     limits: { ebayBrowse: browseCap, prices: priceTransportsDiagnosticCap } });
 const originalFetch = globalThis.fetch;
@@ -64,7 +69,7 @@ const report: {
         "Stop drains already-dispatched accepted responses before final usage accounting; retained photo answers may still lack a completed valuation.",
         ...(live ? [] : ["Replayed listing availability is a saved snapshot, not a new eBay live check. Missing AI evidence fails before any reservation/preflight."]),
     ],
-    settings: { targets, filters, includeOffers, matchingRows: DEVELOPMENT_SEARCH_LIMIT, aiCapUsd: 0.02, browseCap, priceTransportsDiagnosticCap },
+    settings,
     listings: [], snapshots: {}, events: [],
 };
 const started = performance.now();
@@ -80,7 +85,6 @@ try {
     const storage = await import("../server/storage/index.ts");
     closeDatabase = storage.closeDatabase;
     await storage.assertSqlStorageReady();
-    const { aiSpending } = await import("../server/ai/spending.ts");
     const { aiUsageToday } = await import("../server/ai/usage.ts");
     const { priceResearchSummary, withPriceResearchSignal } = await import("../server/pricing/research-budget.ts");
     const { browseSearchAllowance } = await import("../server/ebay/search-budget.ts");
@@ -94,10 +98,14 @@ try {
         ai: await aiUsageToday(searchId), budget: await aiSpending.summary(searchId), browse: await browseSearchAllowance(), pricing: await priceResearchSummary(searchId),
         ...(refreshAccount ? { accountEbay: await ebayUsage({ fresh: true }) } : {}),
     }));
+    const guard = await aiSpending.summary(searchId);
+    if (live) {
+        if (!guard.configured || guard.paused || guard.capUsd === null) throw new Error("Existing AI spending configuration is not ready. The benchmark did not change it.");
+        if (previous && guard.capUsd > recordedAiCap) throw new Error("The current cap exceeds the original report allowance. Use saved-only replay for this report.");
+        if (!previous) settings.aiCapUsd = guard.capUsd;
+    }
     report.snapshots.before = await snapshots("before");
     await checkpoint();
-    const guard = await aiSpending.summary(searchId);
-    if (live && (!guard.configured || guard.paused || guard.capUsd === null || guard.capUsd > 0.02)) throw new Error("Existing AI spending configuration is not ready. The benchmark did not change it.");
     const stopped = new AbortController();
     const timer = setTimeout(() => stopped.abort(new Error("Diagnostic ten-minute deadline reached")), 600_000);
     const stop = () => stopped.abort(new Error("Diagnostic stopped"));

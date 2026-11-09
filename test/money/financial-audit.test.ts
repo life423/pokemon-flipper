@@ -146,7 +146,10 @@ test("weighted grading proceeds use the same cent amount before and after saved-
     // represented as $100.01 everywhere, including reuse without AI.
     assert.equal(path.expectedNet, 100.01);
     const reused = pathNumbers({ expectedNet: path.expectedNet, fixedCosts: path.fixedCosts, shipping: 0, price: listing.price }, money);
-    assert.equal(path.maxBid, 100.01);
+    assert.equal(path.maxBid, 100);
+    assert.equal(path.profit, 0);
+    assert.equal(path.clears, false);
+    assert.equal(pathNumbers({ expectedNet: path.expectedNet, fixedCosts: 0, shipping: 0, price: path.maxBid }, money).clears, true);
     assert.equal(path.maxBid, reused.maxBid);
     assert.equal(path.profit, reused.profit);
     assert.equal(path.clears, reused.clears);

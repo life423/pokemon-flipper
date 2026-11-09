@@ -8,27 +8,37 @@ import { observedCardKind } from "./photo-evidence.ts";
 type Finish = NonNullable<SearchIntent["finish"]>;
 const GRADER = "(?:psa|cgc|bgs|sgc|tag)";
 const GRADE = "(10|[1-9](?:\\.5)?)(?![\\d./])";
+const GRADE_WORDS = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+const QUERY_GRADE = `(10|[1-9](?:\\.5)?|\\b(?:${GRADE_WORDS.join("|")}))(?![a-z\\d./])`;
+const GRADE_ANCHOR = `(?:${GRADER}|grades?|graded)\\s*(?:grades?\\s*)?`;
+const GRADE_BOUND = "at least|minimum|min|at most|maximum|max";
+const GRADE_RANGE = `(?:between\\s+)?${QUERY_GRADE}\\s*(?:to|through|and|-)\\s*${QUERY_GRADE}`;
+const GRADE_SUFFIX = "\\s*(?:\\+|or (?:better|higher|above|lower|less)|and (?:up|above|under|below))";
 const textOf = (value: string) => value.normalize("NFKC").toLowerCase().replace(/[–—]/g, "-");
+const queryGrade = (value: string) => Number(value) || GRADE_WORDS.indexOf(value) + 1;
 
 export function finishIn(text: string): Finish | null {
     const finish = finishClaim(text);
     return finish === "NOT_STATED" || finish === "CONFLICTING" ? null : finish;
 }
 
-// Reliable common operators still work if the language-model request fails.
+// Read common grade wording before building marketplace keywords.
 export function explicitCriteria(search: string): Pick<SearchIntent, "grader" | "minGrade" | "maxGrade" | "finish"> {
     const text = textOf(search);
     const grader = text.match(new RegExp(`\\b${GRADER}(?=\\b|\\d)`, "i"))?.[0].toUpperCase() ?? null;
-    const anchor = `(?:${GRADER}|grades?|graded)\\s*(?:grades?\\s*)?`;
-    const range = text.match(new RegExp(`\\b${anchor}(?:between\\s+)?${GRADE}\\s*(?:to|through|and|-)\\s*${GRADE}`));
-    if (range) return { grader, minGrade: Math.min(+range[1], +range[2]), maxGrade: Math.max(+range[1], +range[2]), finish: finishIn(text) };
-    const single = text.match(new RegExp(`\\b(?:(at least|minimum|min|at most|maximum|max)\\s+)?${anchor}(?:(at least|minimum|min|at most|maximum|max)\\s+)?${GRADE}(\\s*(?:\\+|or (?:better|higher|above|lower|less)|and (?:up|above)|and (?:under|below)))?`));
-    if (!single) return { grader, minGrade: null, maxGrade: null, finish: finishIn(text) };
-    const grade = +single[3];
+    const finish = finishIn(text);
+    const range = text.match(new RegExp(`\\b${GRADE_ANCHOR}${GRADE_RANGE}`));
+    if (range) {
+        const first = queryGrade(range[1]), last = queryGrade(range[2]);
+        return { grader, minGrade: Math.min(first, last), maxGrade: Math.max(first, last), finish };
+    }
+    const single = text.match(new RegExp(`\\b(?:(${GRADE_BOUND})\\s+)?${GRADE_ANCHOR}(?:(${GRADE_BOUND})\\s+)?${QUERY_GRADE}(${GRADE_SUFFIX})?`));
+    if (!single) return { grader, minGrade: null, maxGrade: null, finish };
+    const grade = queryGrade(single[3]);
     const operator = `${single[1] ?? ""} ${single[2] ?? ""} ${single[4] ?? ""}`;
     const lower = /least|minimum|\bmin\b|\+|better|higher|above|\bup\b/.test(operator);
     const upper = /most|maximum|\bmax\b|lower|less|under|below/.test(operator);
-    return { grader, minGrade: upper ? 1 : grade, maxGrade: lower ? 10 : grade, finish: finishIn(text) };
+    return { grader, minGrade: upper ? 1 : grade, maxGrade: lower ? 10 : grade, finish };
 }
 
 export function fallbackKeywords(search: string): string {
@@ -37,7 +47,7 @@ export function fallbackKeywords(search: string): string {
         // printed name. Keep letters/articles inside names such as Unown A.
         .replace(/^\s*(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:find|show|get)\s+(?:me\s+)?/i, "")
         .replace(/^\s*(?:(?:a|the|some)\s+)?(?:(?:good|great|best|profitable|cheap)\s+)?deals?\s+(?:on|for)\s+(?:(?:an?|the)\s+)?/i, "")
-        .replace(new RegExp(`\\b(?:(?:at least|minimum|min|at most|maximum|max)\\s+)?(?:${GRADER}|grades?|graded)\\s*(?:grades?\\s*)?(?:(?:at least|at most|minimum|maximum|between)\\s+)?${GRADE}(?:\\s*(?:to|through|and|-)\\s*${GRADE}|\\s*(?:\\+|or (?:better|higher|above|lower|less)|and (?:up|above|under|below)))?`, "gi"), " ")
+        .replace(new RegExp(`\\b(?:(?:${GRADE_BOUND})\\s+)?${GRADE_ANCHOR}(?:${GRADE_RANGE}|(?:(?:${GRADE_BOUND})\\s+)?${QUERY_GRADE}(?:${GRADE_SUFFIX})?)`, "gi"), " ")
         .replace(/\b(?:can you|could you|show me|find me|i want|i am looking for|looking for|please|some|any|all|cards?|graded|grading|copies|from|with|the|by)\b/gi, " ")
         .replace(/\s+/g, " ").trim();
 }
@@ -77,7 +87,9 @@ function searchSetFamily(value: string): string {
     if (key === "game") return "base set";
     if (/^game base set(?: 2)?$/.test(key)) return key.slice("game ".length);
     if (key === "rocket") return "team rocket";
-    return key === "crown zenith galarian gallery" ? "crown zenith" : key;
+    // Readable slab labels can include the publisher era before the release.
+    const release = key.replace(/^sword (?:and )?shield (?!base set\b)/, "");
+    return release === "crown zenith galarian gallery" ? "crown zenith" : release;
 }
 
 function confirmedPhotoCard(evaluation: Evaluation): PhotoCardReading | null {
@@ -107,7 +119,8 @@ export function evaluatedIdentityMismatch(evaluation: Evaluation, intent: Search
     if (cardSet && wantedSets.length && !wantedSets.includes(cardSet)) return "OTHER_SET";
     if (intent.cardNumber && numberMismatch(intent.cardNumber, card?.cardNumber)) return "OTHER_CARD";
     if (card?.name && !/^(?:unknown|not (?:known|visible|stated))$/i.test(card.name) && intent.titleWords.length) {
-        const words = (value: string) => value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        const words = (value: string) => value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
+            .replace(/♀/g, " female ").replace(/♂/g, " male ").replace(/[^a-z0-9]+/g, " ").trim();
         const name = ` ${words(card.name)} `;
         if (intent.titleWords.some(word => !name.includes(` ${words(word)} `))) return "OTHER_CARD";
     }

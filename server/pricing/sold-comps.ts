@@ -13,7 +13,7 @@ import {
 import { readTitleByRules } from "../ai/title-reader.ts";
 import { resolveScreeningName } from "../identity/screening-name.ts";
 import { sameCatalogName } from "../identity/catalog-name.ts";
-import { gradeQualifier } from "../../shared/grade-qualifier.ts";
+import { gradeQualifier, hasParenthesizedGradeQualifier, hasSpecialSlabTitle } from "../../shared/grade-qualifier.ts";
 import type { CompSummary, Confidence } from "../../shared/types.ts";
 import type { Comp, CompDropReason, CompVerdict, PrintingOrUnknown } from "./types.ts";
 import { jungleNoSymbolReason } from "../../shared/jungle-no-symbol.ts";
@@ -101,9 +101,6 @@ const DAY_MS = 86400000;
 // printing or a special copy than a price. Needs 3 or more sales.
 const OUTLIER_FACTOR = 2.5;
 
-// PSA qualifiers (off-center, miscut, stain...) sell below a plain grade.
-const PSA_QUALIFIER = /\((oc|mk|mc|st|pd|of)\)/i;
-
 function titleAgrees(claim: PrintingClaim, printing: PrintingOrUnknown): boolean {
     if (claim === "CONFLICTING") return false;
     if (printing === "FIRST_EDITION") return claim === "FIRST_EDITION";
@@ -136,11 +133,20 @@ export function printingProblem(comp: Comp, printing: PrintingOrUnknown, setName
     return null;
 }
 
+function advertisedPrintError(text: string): boolean {
+    const claims = /\b((?:no|not|without)[\s-]+(?:(?:a|an|any)\s+)?|non-)?(?:printer(?:['’]s)?[\s-]+hickeys?|mis[\s-]?prints?|print(?:ing)?[\s-]+errors?)\b/gi;
+    for (const [, negation] of text.matchAll(claims)) {
+        if (!negation) return true;
+    }
+    return false;
+}
+
 // Why a comp can't price this card, or null when it can.
 export function compProblem(comp: Comp, { printing, setName, grader, grade, now, windowDays = RECENT_DAYS, finish }: CompCriteria): string | null {
     if (comp.attribution !== "exact") return "shared with another card";
     if (comp.currency && comp.currency !== "USD") return "not a USD sale";
     if (jungleNoSymbolReason({ listing: { title: `${comp.title} ${comp.variant ?? ""}` }, identity: { set: setName ?? null } })) return "unsupported Jungle No Symbol variant";
+    if (advertisedPrintError(comp.title) || advertisedPrintError(comp.variant ?? "")) return "advertised print error";
 
     const mismatch = printingProblem(comp, printing, setName);
 
@@ -149,7 +155,8 @@ export function compProblem(comp: Comp, { printing, setName, grader, grade, now,
     if (lookAlikeProblem(comp.title, setName)) return "title names another product";
     if (noveltyIn(comp.title)) return "metal or novelty card";
     if (comp.grader !== grader || comp.grade !== String(grade)) return "different grade";
-    if (gradeQualifier(comp.grade_qualifier, comp.grader, comp.grade) || PSA_QUALIFIER.test(comp.title ?? "")) return "qualified or special grade";
+    if (gradeQualifier(comp.grade_qualifier, comp.grader, comp.grade) ||
+        (grader === "RAW" ? hasParenthesizedGradeQualifier(comp.title ?? "") : hasSpecialSlabTitle(comp.title ?? ""))) return "qualified or special grade";
     // Older provider rows can retain an asking price when the final sale type
     // is unknown. Only confirmed transaction amounts may form resale prices;
     // a real accepted-offer amount is still usable when explicitly identified.

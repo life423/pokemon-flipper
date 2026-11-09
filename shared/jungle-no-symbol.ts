@@ -1,5 +1,5 @@
 import { setKey } from "./sets.ts";
-import type { Evaluation, PhotoCheck } from "./types.ts";
+import type { PhotoCheck } from "./types.ts";
 
 export interface JungleVariantContext {
     listing?: { title?: string };
@@ -30,16 +30,4 @@ export function jungleNoSymbolReason(input: JungleVariantContext): string | null
     const marks = input.photoCheck?.printingMarks;
     if (![input.listing?.title, ...labels, marks?.reprintMark, ...(marks?.evidence ?? [])].some(noSymbol)) return null;
     return "Jungle No Symbol is a separate market variant. Matching No Symbol prices are not supported yet; ordinary Jungle sold prices are not used.";
-}
-
-// A saved financial snapshot may predate this scope guard. Repricing the view
-// removes its inapplicable ordinary prices without changing accepted photo
-// facts, assessment keys or the original provider-response caches.
-export function deferJungleNoSymbolPricing(evaluation: Evaluation): Evaluation {
-    const reason = jungleNoSymbolReason(evaluation);
-    if (!reason) return evaluation;
-    const unavailable = { status: "PRICE_UNAVAILABLE" as const, reason };
-    return { ...evaluation, rawPricing: evaluation.rawPricing ? unavailable : null,
-        gradedPricing: evaluation.gradedPricing ? Object.fromEntries(Object.keys(evaluation.gradedPricing).map(grader => [grader, unavailable])) : null,
-        slabPricing: evaluation.slab || evaluation.slabPricing ? unavailable : null };
 }

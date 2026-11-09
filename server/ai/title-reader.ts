@@ -12,6 +12,7 @@ import { rawConditionClaim } from "../../shared/raw-condition-claim.ts";
 import { CONDITION_NAMES } from "../../shared/conditions.ts";
 import { stripListingNameBoilerplate } from "../identity/screening-name.ts";
 import { setKey } from "../../shared/sets.ts";
+import { cardNumberIn } from "../identity/card-identity.ts";
 import { cachedSetNames } from "../search/set-catalog.ts";
 
 // Many sellers leave the set, number, or name out of the item details
@@ -121,10 +122,6 @@ function literalSet(title: string, knownSetNames: readonly string[]) {
     }
     return null;
 }
-const cardNumberIn = (title: string) => title.match(/\b(?:[a-z]{0,5}\d{1,4}[a-z]?)\s*\/\s*(?:[a-z]{0,5}\d{1,4}[a-z]?)\b/i)?.[0].replace(/\s/g, "")
-    ?? title.match(/\b(?:swsh|sm|svp|sv|xy|bw|dp|hgss|gg|tg|h)\d{1,4}[a-z]?\b/i)?.[0]
-    ?? title.match(/(?:#|\b(?:card\s*(?:no\.?|number)?|no\.))\s*(\d{1,3}[a-z]?)\b/i)?.[1] ?? null;
-
 export function readTitleByRules(title: string, knownSetNames: readonly string[] = []): TitleReading {
     const attributes = searchAttributes(title);
     const matchedSet = literalSet(title, knownSetNames);
@@ -147,7 +144,10 @@ export function readTitleByRules(title: string, knownSetNames: readonly string[]
         .replace(/(?:^|\s)[-–—]+(?=\s|$)/g, " ")
         .replace(/\s+/g, " ").trim();
     const nameWords = name.split(" ");
-    const cardName = !excluded && name && nameWords.length <= 3 && /^[a-z][a-z '.-]*$/i.test(name) && !/\b(?:would|like|best|better|higher|above|below|under|over|between|holos|deals?|search|selling|sale|lot|lots)\b/i.test(name) ? name : null;
+    // Numbered printed names such as Origin Forme Dialga VSTAR need four
+    // words. Keep unnumbered prose conservative; the catalog still decides
+    // whether this complete literal name and number identify a market.
+    const cardName = !excluded && name && (nameWords.length <= 3 || nameWords.length === 4 && number !== null) && /^[a-z][a-z '.-]*$/i.test(name) && !/\b(?:would|like|best|better|higher|above|below|under|over|between|holos|deals?|search|selling|sale|lot|lots)\b/i.test(name) ? name : null;
     return { kind: excluded ? "NOT_A_CARD" : null, cardName, set, cardNumber: number, language: language === "OTHER" ? "Other" : language === "ENGLISH" ? "English" : null,
         grader: attributes.grader, grade: attributes.grade === null ? null : String(attributes.grade), condition };
 }

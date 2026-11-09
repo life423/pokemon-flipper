@@ -1,7 +1,6 @@
 import { readCache, writeCache } from "../lib/cache.ts";
 import { sameCardNumber, sameSetFamily, setFamily, setSearchTerm } from "../identity/card-identity.ts";
 import { canonicalCatalogName, pricingSearchName, sameCatalogName } from "./search-name.ts";
-import { conditionOf } from "./raw-prices.ts";
 import { cardNumberOf, cardVariants } from "./records.ts";
 import { CONFIRMED_SALE_TYPES, uniqueSoldComps } from "./sold-comps.ts";
 import type { CardRecord, Comp, FetchComps, FetchRawComps, FetchSoldPage, LookupCards, LookupQueryCards, QueryCatalogResult, SoldPage, SoldPageSelection, SoldStream } from "./types.ts";
@@ -14,8 +13,8 @@ import { getAiUsageContext, withAiUsageContext } from "../ai/usage-context.ts";
 import { getPriceResearchSignal, reservePriceRequest, PriceResearchBudgetError } from "./research-budget.ts";
 import { PRICE_SCREEN_REQUEST_LIMIT, SOLD_MARKET_PAGE_LIMIT } from "../../shared/research-policy.ts";
 
-// pkmnprices.com: TCGplayer prices by printing and condition, and
-// individual eBay sold comps. Provider credits describe returned-item quota,
+// pkmnprices.com: native catalog identity, variant labels and individual eBay
+// sold comps. Provider credits describe returned-item quota,
 // not a dollar charge; record the reported counters without inferring billing.
 // Positive metadata is saved for a day; sold pages for six hours.
 const BASE = "https://api.pkmnprices.com/v1";
@@ -236,12 +235,9 @@ async function finish(path: string, response: Response, body: ApiBody): Promise<
     return body;
 }
 
-interface PkmnPrice {
+interface PkmnVariantEntry {
     currency?: string;
     variant: string;
-    condition: string;
-    market_price: number;
-    created_at?: string;
 }
 
 interface PkmnCard {
@@ -249,14 +245,14 @@ interface PkmnCard {
     name: string;
     number: string;
     total_set_number?: string | null;
-    tcg_player_id?: number | null;
     set?: { id: number; name: string };
-    prices?: PkmnPrice[];
+    // The card-detail response carries native variant labels in this array.
+    prices?: PkmnVariantEntry[];
 }
 
 // A pkmnprices card in the shape identity and pricing expect.
 export function toCardRecord(detail: PkmnCard): CardRecord {
-    const usd = (detail.prices ?? []).filter((price) => (price.currency ?? "USD") === "USD");
+    const variants = (detail.prices ?? []).filter(entry => (entry.currency ?? "USD") === "USD").map(entry => entry.variant);
 
     return {
         source: "pkmnprices",
@@ -264,16 +260,7 @@ export function toCardRecord(detail: PkmnCard): CardRecord {
         name: detail.name,
         setName: detail.set?.name ?? null,
         cardNumber: cardNumberOf(detail),
-        tcgPlayerId: detail.tcg_player_id ?? null,
-        variants: cardVariants([...new Set(usd.map((price) => price.variant))], detail.set?.name, (label) =>
-            usd
-                .filter((price) => price.variant === label)
-                .map((price) => ({
-                    condition: conditionOf(price.condition),
-                    price: price.market_price,
-                    updatedAt: price.created_at ?? null,
-                }))
-        ),
+        variants: cardVariants([...new Set(variants)], detail.set?.name),
     };
 }
 

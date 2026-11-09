@@ -56,6 +56,21 @@ test("complete pre-grader GEM MINT descriptions do not pollute literal or saved 
     assert.equal(resolveScreeningName({ title: "Dragonite GEM MINT CGC 10 Curious", claims: ["Dragonite gem curious"], candidate: "Dragonite" }), "Dragonite curious");
 });
 
+test("numbered four-word names remain literal in titles and queries without dropping unknown modifiers", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("literal names cannot dispatch provider requests"));
+    const { readSearchLocally } = await import("../../server/search/intent.ts");
+    for (const name of ["Origin Forme Dialga VSTAR", "Origin Forme Palkia VSTAR", "Team Magma's Groudon EX", "Mega Charizard X ex"]) {
+        const title = `${name} Crown Zenith GG68/GG70 Holo PSA 9`;
+        assert.equal(readTitleByRules(title).cardName, name.toLowerCase());
+        assert.equal(readSearchLocally(title).cardName, name.toLowerCase());
+        assert.equal(readTitleByRules(`${name} Crown Zenith PSA 9`).cardName, null, "unnumbered prose keeps its existing conservative interpretation");
+    }
+    const extra = readTitleByRules("Mew Curious Special Variant Crown Zenith GG10/GG70 PSA 9");
+    assert.equal(extra.cardName, "mew curious special variant");
+    assert.notEqual(resolveScreeningName({ title: "Mew Curious Special Variant", claims: [extra.cardName!], candidate: "Mew" }), "Mew");
+    assert.equal(readTitleByRules("Origin Forme Palkia VSTAR Curious Crown Zenith GG67/GG70 PSA 9").cardName, null);
+});
+
 test("unknown residuals and conflicting claims remain unresolved instead of borrowing the search", () => {
     assert.equal(resolveScreeningName({ title: "Venusaur Curious Variant", claims: ["Venusaur curious variant"], candidate: "Venusaur" }), "Venusaur curious variant");
     assert.equal(resolveScreeningName({ title: "Venusaur Curious Variant", claims: ["Venusaur", "Venusaur curious variant"], candidate: "Venusaur" }), null);
@@ -81,6 +96,10 @@ test("source-observed accompanying holders reconcile old name fragments without 
         assert.equal(resolveScreeningName({ title: "Guard Spec. PSA 9 with Guard", claims, candidate: "Guard Spec." }), "Guard Spec.");
     }
     assert.equal(resolveScreeningName({ title: "Dark Charizard CGC 9 with Guard", claims: ["Charizard", "dark charizard guard"], candidate: "Charizard" }), null);
+    const accessory = "Charizard Base Set 4/102 PSA 8 (LIMITED EDITION GUARD)";
+    assert.equal(readTitleByRules(accessory).cardName, "charizard");
+    assert.equal(resolveScreeningName({ title: accessory, claims: ["charizard limited edition guard"], candidate: "Charizard" }), "Charizard");
+    assert.equal(resolveScreeningName({ title: "Charizard (Limited Edition Guard)", claims: ["charizard limited edition guard"], candidate: "Charizard" }), "charizard limited edition guard");
 });
 
 test("name cleanup does not remove unanchored, ungraded or unrelated holder wording", () => {
@@ -142,6 +161,7 @@ test("source-observed art and release descriptors reconcile old saved claims wit
         ["Rayquaza V Evolving Skies 194/203 Full Art Holo PSA 9", ["Rayquaza V", "rayquaza v full art"], "Rayquaza V"],
         ["Pokemon SWSH Evolving Skies Rayquaza V 194/203 PSA 9", ["Rayquaza V", "swsh rayquaza v"], "Rayquaza V"],
         ["Giratina V Lost Origin 186/196 SWSH11 Alt Full Art PSA 9", ["Giratina V", "giratina v swsh11 alt full art"], "Giratina V"],
+        ["Pokemon Sword Shield Lost Origin Aerodactyl V 180/196 Full Art Holo Ultra Rare PSA 10", ["Aerodactyl V", "sword shield aerodactyl v"], "Aerodactyl V"],
     ] as const) assert.equal(resolveScreeningName({ title, claims, candidate }), candidate, title);
     for (const [title, claims, candidate] of [
         ["Dark Charizard Evolving Skies 194/203 Full Art", ["Dark Charizard"], "Charizard"],
@@ -150,7 +170,37 @@ test("source-observed art and release descriptors reconcile old saved claims wit
         ["Rayquaza V Evolving Skies 194/203 SWSH11", ["SWSH11 Rayquaza V"], "Rayquaza V"],
         ["SWSH Rayquaza V 194/203", ["SWSH Rayquaza V"], "Rayquaza V"],
         ["Rayquaza V Evolving Skies 194/203 Curious Art", ["Rayquaza V Curious Art"], "Rayquaza V"],
+        ["Sword Shield Aerodactyl V 180/196 PSA 10", ["Sword Shield Aerodactyl V"], "Aerodactyl V"],
     ] as const) assert.notEqual(resolveScreeningName({ title, claims, candidate }), candidate, title);
+});
+
+test("numbered slab publisher metadata accepts explicit partial numbers without inferring a denominator", () => {
+    for (const [name, number] of [["Medicham V", "186"], ["Rayquaza VMAX", "111"], ["Trevenant VMAX", "014"]]) {
+        const title = `2021 POKEMON SWORD & SHIELD EVOLVING SKIES #${number} FULL ART/${name} PSA 9 Mint`;
+        const reading = readTitleByRules(title);
+        assert.equal(reading.cardName, name.toLowerCase());
+        assert.equal(reading.cardNumber, number, "never infer the printed denominator");
+        assert.equal(resolveScreeningName({ title, set: "Evolving Skies", claims: [name, `sword shield ${name}`], candidate: name }), name);
+    }
+    for (const [source, name] of [
+        ["SWSH Evolving Skies Medicham V #186 PSA 9", "Medicham V"],
+        ["Sword & Shield Evolving Skies Dark Medicham V #186 PSA 9", "Dark Medicham V"],
+        ["Sword & Shield Evolving Skies Rocket's Medicham V #186 PSA 9", "Rocket's Medicham V"],
+    ]) assert.equal(readTitleByRules(source).cardName, name.toLowerCase());
+    for (const title of [
+        "Sword & Shield Evolving Skies Medicham V 186 PSA 9", "Sword & Shield Evolving Skies Medicham V PSA 9",
+        "Sword & Shield Evolving Skies Medicham V #186 raw", "Sword & Shield Evolving Skies Medicham V #186 PSA",
+        "Sword & Shield Medicham V #186 PSA 9", "SwordShield Evolving Skies Medicham V #186 PSA 9",
+    ]) assert.notEqual(readTitleByRules(title).cardName, "medicham v", title);
+    const unknown = "Sword & Shield Evolving Skies Medicham V Curious #186 PSA 9";
+    assert.equal(readTitleByRules(unknown).cardName, "medicham v curious");
+    assert.notEqual(resolveScreeningName({title: unknown, set: "Evolving Skies", claims: ["sword shield medicham v curious"], candidate: "Medicham V"}), "Medicham V");
+    for (const number of ["SWSH07", "SWSH194"]) {
+        const title = `${number} Evolving Skies Medicham V PSA 9`;
+        assert.equal(readTitleByRules(title).cardNumber, number, "a lone promo/release code remains the literal number");
+        assert.notEqual(resolveScreeningName({title, set: "Evolving Skies", claims: [`${number} Medicham V`], candidate: "Medicham V"}), "Medicham V");
+    }
+    assert.equal(readTitleByRules("Medicham V SWSH07 Evolving Skies #186 PSA 9").cardNumber, "SWSH07", "existing mixed promo-code precedence is unchanged");
 });
 
 test("anchored art abbreviations reconcile older saved name residue while retaining source identity conflicts", () => {
@@ -193,6 +243,45 @@ test("observed Cosmos Holo metadata needs a full number and written catalog rele
         const source = `${name} Neo Genesis 9/111 Cosmos Holo PSA 9`;
         assert.equal(resolveScreeningName({ title: source, claims: [name, `${name} cosmos`], candidate: "Lugia", set: "Neo Genesis" }), name, source);
     }
+});
+
+test("observed gallery release and rarity metadata reconcile literal and saved slab names", () => {
+    for (const [name, number, wording, polluted] of [
+        ["Diancie", "GG13/GG70", "Pokemon CRZ GG13/GG70 Crown Zenith Galarian Gallery Diancie Full Art PSA 9", "crz diancie"],
+        ["Paras", "GG32/GG70", "Pokemon CRZ GG32/GG70 Crown Zenith Galarian Gallery Paras Full Art PSA 9", "crz paras"],
+        ["Simisear VSTAR", "GG37/GG70", "Pokemon CRZ GG37/GG70 Crown Zenith Galarian Gallery Simisear VSTAR Full Art PSA 9", "crz simisear vstar"],
+        ["Mew", "GG10/GG70", "Pokemon TCG SWSH Crown Zenith Mew GG10/GG70 Holo UR CGC 10 EN 2023", "mew ur"],
+        ["Mew", "GG10/GG70", "POKEMON Crown Zenith MEW GG10/GG70 Galarian Gallery Holo CGC 10 GEM MINT", "mew galarian gallery"],
+    ]) {
+        const reading = readTitleByRules(wording);
+        assert.equal(reading.cardNumber, number);
+        assert.equal(resolveScreeningName({ title: wording, set: reading.set, claims: [name, reading.cardName, polluted], candidate: name }), name, wording);
+    }
+    for (const name of ["Dark Mew", "Mew ex", "Mew VMAX", "Rocket's Mewtwo", "Galarian Mr. Mime", "UR Mew", "Gallery Mew"]) {
+        const title = `${name} Crown Zenith GG10/GG70 Galarian Gallery Holo UR CGC 10`;
+        assert.equal(resolveScreeningName({ title, set: "Crown Zenith", claims: [name, `${name} galarian gallery ur`], candidate: "Mew" }), name, title);
+    }
+});
+
+test("gallery metadata requires observed release, complete GG number and numeric slab grade", () => {
+    for (const [title, polluted, set] of [
+        ["Mew GG10/GG70 Holo UR CGC 10", "mew ur", "Crown Zenith"],
+        ["Mew Crown Zenith #GG10 Holo UR CGC 10", "mew ur", "Crown Zenith"],
+        ["Mew Crown Zenith GG10/GG70 Holo UR raw", "mew ur", "Crown Zenith"],
+        ["Mew Crown Zenith GG10/GG70 Holo UR CGC", "mew ur", "Crown Zenith"],
+        ["Mew Lost Origin GG10/GG70 Holo UR CGC 10", "mew ur", "Lost Origin"],
+        ["Mew Crown Zenith GG10/GG70 UR CGC 10", "mew ur", "Crown Zenith"],
+        ["Mew Crown Zenith GG10/GG70 Holo UR's CGC 10", "mew ur's", "Crown Zenith"],
+        ["CRZ Mew GG10/GG70 PSA 9", "crz mew", "Crown Zenith"],
+        ["CRZ Mew Lost Origin GG10/GG70 PSA 9", "crz mew", "Lost Origin"],
+        ["CRZ Mew Crown Zenith GG10 PSA 9", "crz mew", "Crown Zenith"],
+        ["CRZ Mew Crown Zenith GG10/GG70 raw", "crz mew", "Crown Zenith"],
+        ["Mew GG10/GG70 Galarian Gallery CGC 10", "mew galarian gallery", "Crown Zenith"],
+        ["Mew Crown Zenith GG10 Galarian Gallery CGC 10", "mew galarian gallery", "Crown Zenith"],
+        ["Mew Crown Zenith GG10/GG70 Galarian Gallery raw", "mew galarian gallery", "Crown Zenith"],
+        ["Mew Crown Zenith GG10/GG70 Galarian Gallery's CGC 10", "mew galarian gallery's", "Crown Zenith"],
+    ]) assert.notEqual(resolveScreeningName({ title, set, claims: [polluted], candidate: "Mew" }), "Mew", title);
+    assert.equal(readTitleByRules("Mew Crown Zenith Galarian Gallery GG10/GG70 Holo CGC 10").cardName, "mew", "the already-recognized complete set remains removable");
 });
 
 test("Sun and Moon era metadata requires a separate written release, full number and slab grade", () => {

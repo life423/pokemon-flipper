@@ -23,7 +23,7 @@ export function auctionDecision(evaluation: Evaluation, targets: Targets = MONEY
     const ended = evaluation.listing.availability === "UNAVAILABLE" || Boolean(evaluation.listing.endTime && Date.parse(evaluation.listing.endTime) <= now);
     const overLimit = ceiling !== null && current !== null && current > ceiling;
     const status = ended ? "ENDED" : ceiling === null ? "UNPRICED" : overLimit ? "OVER_LIMIT" : provisional ? "PROVISIONAL" : "WITHIN_LIMIT";
-    const breakEven = targets.minProfit === 0 && targets.minRoi === 0;
+    const anyTargets = targets.minProfit === 0 && targets.minRoi === 0;
     // A graded resale price cannot predict the closing price of a raw card.
     const raw = evaluation.underwriting?.paths.find((path) => path.path === "RAW" && path.status === "PRICED");
     const summary = evaluation.slab?.status === "OK" && evaluation.slabPricing?.status === "PRICED" ? evaluation.slabPricing.summary : null;
@@ -41,11 +41,10 @@ export function auctionDecision(evaluation: Evaluation, targets: Targets = MONEY
     } : !evaluation.slab && evaluation.identity?.status === "IDENTIFIED" && evaluation.condition && evaluation.condition.confidence !== "LOW" && evaluation.condition.authenticity.concern === "NONE_SEEN" && raw?.status === "PRICED" && raw.salePrice && evaluation.condition.rawCondition !== "UNKNOWN" ? {
         price: raw.salePrice, low: null, high: null, count: null, source: `Raw market quote${raw.priceCondition ? ` · ${raw.priceCondition.toLowerCase().replaceAll("_", " ")}` : ""}`,
     } : null;
-    return { ceiling, provisional, ended, overLimit, status, breakEven, benchmark,
+    return { ceiling, provisional, ended, overLimit, status, anyTargets, benchmark,
         atCurrent: best && current !== null ? scenarioAt(best, current) : null,
         atCeiling: best && ceiling !== null ? scenarioAt(best, ceiling) : null,
         atBenchmark: best && benchmark ? scenarioAt(best, benchmark.price) : null,
-        label: breakEven ? "Break-even bid ceiling" : "Max snipe bid",
     };
 }
 

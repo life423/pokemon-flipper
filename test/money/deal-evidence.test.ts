@@ -6,10 +6,11 @@ import { rateDeal } from "../../shared/money/rating.ts";
 import { priceEvidenceGap } from "../../shared/money/price-evidence.ts";
 import { resultGroup } from "../../shared/analysis.ts";
 import { isResearchDeferred, photoReviewStatus } from "../../shared/photo-review.ts";
-import type { Evaluation, ListingSummary } from "../../shared/types.ts";
-import { rawPricesFor } from "../../server/pricing/raw-prices.ts";
+import type { Evaluation, ListingSummary, RawPrice } from "../../shared/types.ts";
 
 const any = { minProfit: 0, minRoi: 0 };
+const legacyQuote = (condition: RawPrice["condition"], price: number): RawPrice =>
+    JSON.parse(JSON.stringify({ condition, price, basis: "TCGPLAYER", updatedAt: null }));
 function rawReference(): Evaluation {
     const evaluation = cardEvaluation(any);
     evaluation.listing.price = 380;
@@ -18,9 +19,9 @@ function rawReference(): Evaluation {
     evaluation.condition!.rawCondition = "MODERATELY_PLAYED";
     evaluation.condition!.gradeRange = null;
     evaluation.rawPricing = { status: "PRICED", prices: [
-        { condition: "LIGHTLY_PLAYED", price: 611.27, basis: "TCGPLAYER", updatedAt: null },
-        { condition: "MODERATELY_PLAYED", price: 500, basis: "TCGPLAYER", updatedAt: null },
-        { condition: "HEAVILY_PLAYED", price: 145, basis: "TCGPLAYER", updatedAt: null },
+        legacyQuote("LIGHTLY_PLAYED", 611.27),
+        legacyQuote("MODERATELY_PLAYED", 500),
+        legacyQuote("HEAVILY_PLAYED", 145),
     ] };
     evaluation.gradedPricing = {};
     return evaluation;
@@ -41,25 +42,18 @@ function slabReference(): Evaluation {
     return evaluation;
 }
 
-test("a profitable TCGplayer fallback retains its estimate but stays Sorting under Any targets and retargeting", t => {
-    t.mock.method(globalThis, "fetch", () => assert.fail("evidence decisions and retargeting must stay offline"));
+test("saved market estimates disappear without discarding photos or creating a Deal", t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("retargeting must stay offline"));
     const original = rawReference();
-    for (const targets of [any, { minProfit: 50, minRoi: 0.25 }]) {
-        const result = retargetEvaluation(original, targets);
-        const best = result.underwriting!.best!;
-        assert.equal(result.underwriting!.verdict, "CANT_PRICE");
-        assert.equal(best.salePrice, 500);
-        assert.equal(best.profit, 8.81);
-        assert.equal(best.downside, null);
-        assert.equal(best.downsideAtMaxBid, null);
-        assert.match(result.underwriting!.reasons.join(" "), /TCGplayer.*matched eBay sold price/);
-        assert.equal(result.rating, null);
-        assert.equal(photoReviewStatus(result).needsYourReview, false);
-        assert.equal(isResearchDeferred(result), true);
-        assert.equal(resultGroup(summary(result), result, true), "candidates", "a fallback cannot create a Deal or offer");
-        assert.equal(result.condition, original.condition, "accepted photo evidence remains reusable");
-        assert.equal(result.rawPricing, original.rawPricing, "the original quotes remain available");
-    }
+    const result = retargetEvaluation(original, any);
+    assert.equal(result.underwriting!.verdict, "CANT_PRICE");
+    assert.equal(result.underwriting!.best, null);
+    assert.deepEqual(result.rawPricing?.prices, []);
+    assert.equal(result.rating, null);
+    assert.equal(isResearchDeferred(result), true);
+    assert.equal(resultGroup(summary(result), result, true), "candidates");
+    assert.equal(result.condition, original.condition);
+    assert.equal(original.rawPricing!.prices!.length, 3, "original evidence is left intact");
 });
 
 test("unrelated raw sold buckets do not verify a selected condition's market estimate", () => {
@@ -70,13 +64,19 @@ test("unrelated raw sold buckets do not verify a selected condition's market est
     assert.equal(retargetEvaluation(evaluation, any).underwriting!.verdict, "CANT_PRICE");
 });
 
-test("new direct market fallbacks identify their basis before any sold lookup can be skipped", () => {
-    const evaluation = rawReference();
-    evaluation.rawPricing = rawPricesFor({ source: "pkmnprices", name: "Venusaur", cardNumber: "15/102", records: [],
-        variants: [{ name: "Unlimited Holofoil", printing: "UNLIMITED", finish: "HOLO", recordId: 1, setName: "Base Set",
-            prices: [{ condition: "MODERATELY_PLAYED", price: 500, updatedAt: null }] }] }, evaluation.identity!);
-    assert.equal(evaluation.rawPricing.prices?.[0].basis, "TCGPLAYER");
-    assert.equal(retargetEvaluation(evaluation, any).underwriting!.verdict, "CANT_PRICE");
+test("a saved estimate cannot mask a verified sale at a worse raw condition", () => {
+    const original = rawReference();
+    original.listing.price = 80;
+    original.rawPricing!.prices!.push({ condition: "HEAVILY_PLAYED", price: 200, updatedAt: null, basis: "EBAY_SOLD",
+        comps: salesSummary("RAW", "HEAVILY_PLAYED", [200]) });
+    const result = retargetEvaluation(original, any);
+    assert.equal(result.underwriting!.verdict, "BUY_RAW");
+    assert.equal(result.underwriting!.best!.priceCondition, "HEAVILY_PLAYED");
+    assert.equal(resultGroup(summary(result), result), "deals");
+    original.listing.price = 190;
+    const losing = retargetEvaluation(original, any);
+    assert.equal(losing.underwriting!.verdict, "CANT_PRICE");
+    assert.match(priceEvidenceGap(losing) ?? "", /lower-condition/);
 });
 
 test("a supported independent PSA or CGC grading route can reach Deals despite a richer unsupported raw estimate", () => {
@@ -95,6 +95,17 @@ test("a supported independent PSA or CGC grading route can reach Deals despite a
         assert.equal(resultGroup(summary(result), result), "deals");
         assert.ok(result.rating);
     }
+});
+
+test("a losing grading route does not close an unpriced raw resale route", () => {
+    const evaluation = rawReference();
+    evaluation.condition!.gradeRange = { low: 7, likely: 7, high: 7 };
+    evaluation.gradedPricing = { PSA: { status: "PRICED", byGrade: [salesSummary("PSA", 7, [300, 320, 340])] } };
+    const result = retargetEvaluation(evaluation, any);
+    assert.equal(result.underwriting!.verdict, "CANT_PRICE");
+    assert.ok(result.underwriting!.paths!.some(path => path.path === "GRADE" && path.status === "PRICED" && path.profit < 0));
+    assert.match(priceEvidenceGap(result) ?? "", /Raw resale still needs a matched eBay sale/);
+    assert.equal(resultGroup(summary(result), result), "candidates");
 });
 
 test("already supplied sparse matched raw prices and older prices without a basis remain readable", () => {
@@ -140,7 +151,10 @@ test("one or two LOW confidence exact slab sales still support resale even when 
 });
 
 test("old saved BUY and PASS fallback advice cannot re-enter Deals or offers before retargeting", () => {
-    const result = retargetEvaluation(rawReference(), any);
+    const original = rawReference();
+    original.rawPricing!.prices![1].basis = "EBAY_SOLD";
+    const result = retargetEvaluation(original, any);
+    result.rawPricing!.prices = rawReference().rawPricing!.prices;
     for (const verdict of ["BUY_RAW", "PASS"] as const) {
         const old = { ...result, underwriting: { ...result.underwriting!, verdict } };
         assert.equal(resultGroup(summary(old), old, true), "candidates");
@@ -153,7 +167,7 @@ test("old saved BUY and PASS fallback advice cannot re-enter Deals or offers bef
 });
 
 test("a new deeper photo concern retains the independent price gap while routing the physical risk to review", () => {
-    for (const evaluation of [rawReference(), slabReference()]) {
+    for (const evaluation of [slabReference()]) {
         evaluation.deeperPhotoReview = { inputKey: "offline-focused-review", reviewedAt: new Date().toISOString(),
             summary: "A new physical concern", photoNumbers: [1], findings: [{ area: "IDENTITY", impact: "NEW_CONCERN",
                 observation: "The visible printing mark contradicts the accepted identity.", photoNumbers: [1] }],

@@ -11,8 +11,8 @@ import type { CardRecord } from "../../server/pricing/types.ts";
 test("BGS and TAG compact label assessments price only the photographed certified grade", async t => {
     t.mock.method(globalThis, "fetch", () => { assert.fail("All provider work must use injected offline evidence"); });
     const now = Date.now();
-    const card: CardRecord = { source: "pkmnprices", id: 998877, name: "Lugia", cardNumber: "9/111", setName: "Neo Genesis", tcgPlayerId: null,
-        variants: [{ name: "Unlimited Holofoil", finish: "HOLO", printing: "UNLIMITED", prices: [] }] };
+    const card: CardRecord = { source: "pkmnprices", id: 998877, name: "Lugia", cardNumber: "9/111", setName: "Neo Genesis",
+        variants: [{ name: "Unlimited Holofoil", finish: "HOLO", printing: "UNLIMITED" }] };
     for (const grader of ["BGS", "TAG"]) {
         const cache = new Map<string, any>();
         let photoCalls = 0;

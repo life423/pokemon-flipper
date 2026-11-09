@@ -248,7 +248,7 @@ export function App() {
                 const analysis = rawAnalyses[listing.id];
                 const evaluation = analysis?.status === "done" && analysis.evidenceKey === listingEvidenceKey(listing) ? analysis.evaluation : undefined;
                 const resolved = withResolvedCriteria(listing, evaluation, summary?.intent);
-                return resolved.screen ? { ...resolved, screen: retargetScreen(resolved.screen, resolved.currentPrice, targets, undefined, includeOffers) } : resolved;
+                return resolved.screen ? { ...resolved, screen: retargetScreen(resolved.screen, resolved.currentPrice, targets, undefined, includeOffers, resolved) } : resolved;
             }),
         [rawListings, rawAnalyses, summary, targets, includeOffers]
     );
@@ -332,7 +332,7 @@ export function App() {
     function changeTarget(field: keyof Targets, text: string) {
         setTargetInputs((previous) => ({ ...previous, [field]: text }));
 
-        // Empty means any: no minimum. The max bid still stops at break-even.
+        // Blank selects Any. A buy still has to produce positive net profit.
         const value = text.trim() === "" ? 0 : Number(text);
 
         // Half-typed or negative: keep the last good target.
@@ -835,7 +835,7 @@ export function App() {
         <div className={styles.progressActions}>
             <div className={styles.progressButtons}>
                 <button type="button" className={styles.secondary} onClick={() => setBudget((current) => current + Math.min(DEVELOPMENT_SEARCH_LIMIT, counts.waiting))}>
-                    Analyze remaining · within 2¢
+                    Analyze remaining within budget
                 </button>
             </div>
         </div>
@@ -852,7 +852,7 @@ export function App() {
             <p>
                 {counts.candidates} listings are eligible for AI analysis; {counts.mismatched} set aside as other cards, sets, languages or search criteria.
             </p>
-            <p>Development searches show up to {DEVELOPMENT_SEARCH_LIMIT} matching listings. Automatic photo work uses the remaining 2¢ AI budget; saved assessments and prices are reused.</p>
+            <p>Development searches show up to {DEVELOPMENT_SEARCH_LIMIT} matching listings. Automatic photo work uses the remaining AI budget; saved assessments and prices are reused.</p>
         </>
     );
 
@@ -1007,7 +1007,7 @@ export function App() {
                             ai={{ done: aiDone, target: aiTarget, analyzing: counts.analyzing, waiting: counts.waiting, failed: startedAnalyses.filter((analysis) => analysis.status === "error").length, paused: Boolean(analysisBlocked) || stopped }}
                             stats={{
                                 junk: (summary?.skipped ?? 0) + counts.junk,
-                                dropped: counts.dropped,
+                                dropped: (summary?.priceExcluded ?? 0) + counts.dropped,
                                 unchecked: counts.unchecked,
                                 deals: groups.deals.length,
                             }}
@@ -1097,7 +1097,7 @@ export function App() {
                         ))}
 
                     {view === "all" && visible.length > 0 && <p className={styles.discoveryNote}>
-                        {visible.length} matching {visible.length === 1 ? "listing" : "listings"} in the loaded results, including passes and unfinished assessments. Known wrong cards and junk are excluded. {filtered.filter((listing) => evaluationOf(analyses[listing.id])?.photoCheck).length} AI photo reviews complete; other cards remain preliminary. Each development scan admits at most {DEVELOPMENT_SEARCH_LIMIT} matching listings; the number fully assessed depends on saved evidence and the separate 2¢ AI budget.
+                        {visible.length} matching {visible.length === 1 ? "listing" : "listings"} in the loaded results, including passes and unfinished assessments. Known wrong cards and junk are excluded. {filtered.filter((listing) => evaluationOf(analyses[listing.id])?.photoCheck).length} AI photo reviews complete; other cards remain preliminary. Each development scan admits at most {DEVELOPMENT_SEARCH_LIMIT} matching listings; the number fully assessed depends on saved evidence and the AI budget for this search.
                     </p>}
                     <div className={styles.results}>
                         {/* Before the first results: placeholders in the shape of cards. */}

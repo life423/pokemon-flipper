@@ -6,19 +6,19 @@ import { AUTOMATIC_PRICE_CEILING, withinAutomaticAuctionWindow } from "./listing
 import { photoReviewStatus } from "./photo-review.ts";
 import { observedCardKind } from "./photo-evidence.ts";
 import { priceEvidenceGap } from "./money/price-evidence.ts";
+import { missingTextureReason } from "./grade-qualifier.ts";
 
 // Automatic analysis and its progress counts use the same eligibility rule.
 export function canAutoAnalyze(listing: ListingSummary): boolean {
-    if (!withinAutomaticAuctionWindow(listing) || !listing.images.length || listing.availability === "UNAVAILABLE" || listing.screen?.junk ||
+    if (!withinAutomaticAuctionWindow(listing) || !listing.images.length || listing.availability === "UNAVAILABLE" || listing.screen?.junk || missingTextureReason(listing.title) ||
         listing.currentPrice === null || !Number.isFinite(listing.currentPrice) || listing.currentPrice < 0 || listing.currentPrice > AUTOMATIC_PRICE_CEILING ||
         ["CONFIG", "CREDITS"].includes(listing.screen?.pricingIssue?.kind ?? "")) return false;
-    if (listing.screen?.lowResale && !listing.screen.lowResale.cheapFirstEditionBaseSet) return false;
     const soldEvidence = listing.screen?.soldEvidence;
     if (soldEvidence) {
         // The new bounded workflow must finish sold-price screening before
         // identity/photo gaps or discovery hints can buy an assessment.
         if (listing.screen!.status === "DROPPED") return false;
-        if (soldEvidence.status !== "AVAILABLE" && listing.screen!.focusedReview !== "CHEAP_FIRST_EDITION_BASE_SET") return false;
+        if (soldEvidence.status !== "AVAILABLE" && !listing.screen!.gradingLead && listing.screen!.focusedReview !== "CHEAP_FIRST_EDITION_BASE_SET") return false;
     }
     const temporaryPrice = ["TEMPORARY", "RATE_LIMIT"].includes(listing.screen?.pricingIssue?.kind ?? "");
     const resolvable = Boolean(listing.screen?.status === "UNSCREENED" && (listing.screen.needsAnalysis || temporaryPrice));

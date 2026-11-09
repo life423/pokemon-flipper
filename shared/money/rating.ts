@@ -3,7 +3,7 @@ import { dollars, percent } from "../format.ts";
 import { auctionOutlook, describeOutlook, usualPrice } from "./auction.ts";
 import { pathNumbers } from "./underwriting.ts";
 import { MONEY_CONFIG } from "./config.ts";
-import { referencePriceReason } from "./price-evidence.ts";
+import { isRawSoldPrice, referencePriceReason } from "./price-evidence.ts";
 import type { AuctionOutlook, CompSummary, Confidence, Evaluation, PricedPath, Rating, RatingLevel } from "../types.ts";
 
 // How good a deal is, beyond clearing your targets. Plain rules on what
@@ -40,8 +40,8 @@ function compsBehind(evaluation: RatingInput, best: PricedPath): CompSummary[] {
     }
 
     if (best.path === "RAW") {
-        const quote = evaluation.rawPricing?.prices?.find(price => price.condition === best.priceCondition);
-        return quote?.basis === "EBAY_SOLD" && quote.comps?.count ? [quote.comps] : [];
+        const quote = evaluation.rawPricing?.prices?.find(price => price.condition === best.priceCondition && isRawSoldPrice(price));
+        return quote?.comps?.count ? [quote.comps] : [];
     }
 
     return [];
@@ -102,11 +102,6 @@ export function rateDeal(evaluation: RatingInput): Rating | null {
     if (best.path === "GRADED_RESALE" && evaluation.slabPricing?.activeReference && !evaluation.slabPricing.summary?.count) {
         concerns.push("Resale uses photo-checked current Buy It Now competition; no matched sold-price estimate was available.");
         notes.push(...(best.pricingNotes ?? []));
-    }
-    if (best.path === "RAW") {
-        const quote = evaluation.rawPricing?.prices?.find(price => price.condition === best.priceCondition);
-        if (quote?.basis === "TCGPLAYER") concerns.push("Raw resale uses a TCGplayer market fallback, not a verified eBay sold median.");
-        concerns.push(...(best.pricingNotes ?? []));
     }
 
     if (comps.length > 0) {

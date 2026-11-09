@@ -1,4 +1,4 @@
-# Shared project notes — November 5, 2026
+# Shared project notes — November 8, 2026
 
 This Markdown file is tracked at the user’s explicit request so the plan travels
 with the repository. Older entries calling it private or ignored describe the
@@ -9,6 +9,308 @@ Catalog/search ecae9e9, raw resale 489ebb7 and catalog-name coverage b123ed7
 were committed and pushed on main. Current work is on
 improve/consistent-sold-pricing. Markdown notes are tracked; no handoff was
 created. The pre-existing .env.example deletion remains unrelated/uncommitted.
+
+## Live Buy It Now validation — November 8
+
+Named raw Buy It Now searches can now queue a grading lead when the ordinary
+raw sold search is empty. Recent exact PSA/CGC 8 or 9 sales must support the
+lower observed price after costs. The existing evaluator still needs a
+photo-supported grade range and verified pricing before a card reaches Deals.
+
+A live Unlimited Mewtwo search up to $80 had ordinary raw evidence for 45 of
+50 rows and therefore did not use the new fallback. Four automatic reviews
+found no deal. One targeted $44.99 shipped copy was Lightly Played, with no
+supported numeric grade or raw resale price. The five assessments on the
+same search account cost 1.78238¢ against a 10¢ cap. The run exposed two
+screening bugs: better-condition sold prices inflated priority for visibly
+seller-described played copies, and an advertised misprint inflated ordinary
+comps. Condition now affects queue order, and explicit print errors stay out
+of ordinary sold prices.
+
+The Any/Any graded Aerodactyl V 180/196 search checked 25 source listings,
+retained five and produced zero Deals. It used four Browse requests, six
+PKMNPrices requests and 0.48172¢ of OpenAI generation. A saved replay screened
+out one overpriced row after reconciling its Lost Origin release name and kept
+a texture-error claim out of ordinary slab analysis. The UI now counts rows
+excluded by the price screen even when they never reach the results grid.
+
+The raw-only Shadowless Alakazam 1/102 search retained 50 from 85 source listings;
+30 more passed initial eligibility but were outside the retained batch. Of the
+50, 32 had exact market scope. The two native raw sale requests returned empty
+confirmed-sale pages, so no row advanced to paid photos. The other 14 price
+requests were catalog misses from title fragments. Review those misses with
+catalog-anchored normalization; this does not solve empty sold data. Reuse
+exact graded sales for a separate raw-to-grade research signal when the
+purchase and grading costs work at a realistic grade.
+
+A known purchase was already ended and correctly refused as a live candidate.
+Its historical photo assessment cost 0.473¢ and missed the blank stamp area.
+The original seller's title and visible printing disagreed with an overstated
+item detail. Identity now accepts that downward correction when title and
+photos agree; an unreadable stamp or conflicting slab label still holds. A
+provider-blocked replay with manually observed photo facts confirmed the
+correct Shadowless catalog record. It did not establish condition, resale
+value, or a live Deal. Original photos and diagnostic reports remain ignored.
+
+## Search intent and analysis budget — November 8
+
+The user raised the OpenAI ceiling to $0.10 for new search accounts. Existing
+accounts retain their original ceilings, costs and reservations. Aim well below
+the cap by reusing evidence and resolving identity and price before photos.
+
+Resolve unambiguous searches with local rules and the catalog. Pilot a cheap
+text-only call for ambiguous intent using catalog candidates and explicit user
+constraints. Allow abstention. Try listing text selectively after sold-price
+screening if it could avoid a paid photo review. The existing text ranking pilot
+avoided zero photo calls, so measure saved calls and missed candidates before
+enabling it automatically. For valuation, use the cheapest verified exact
+available Buy It Now match including shipping as a competitive ceiling.
+Keep it separate from completed-sale evidence.
+
+A 12-phrase replay used saved catalog and listing data without calling eBay or
+PKMNPrices. It reproduced two free-screening gaps. Search grade ranges now
+handle spelled-out values, and shared finish parsing keeps "Reverse Holo Foil"
+and "Non Holo Foil" distinct from regular holo. The saved Dark Blastoise catalog
+still resolves holo to 03/82 without requiring the number in eBay keywords.
+
+One bounded text-only call received four search phrases and two preselected
+saved catalog pools. It chose Evolving Skies Umbreon VMAX 215/203 for Moonbreon,
+abstained on the sleepy Mew description, and preserved the broad Umbreon VMAX
+and Galarian Gallery controls. Both token counting and generation returned HTTP
+200. Generation cost $0.0001202 (0.01202¢), with 1,027 input and 35 output tokens.
+Replay reused the answer with no provider call. This was a controlled
+experiment with supplied candidates. It did not measure the app's ability to
+retrieve candidate pools for nicknames, live search recall, or saved photo calls.
+The model remains outside production discovery. Delivered-price language such
+as "under $350 shipped" still needs its own constraint.
+
+## Market-led slab searches and partial-number recovery — November 5
+
+Used saved exact PSA10 markets to calculate break-even item ceilings with the
+existing cents-based tax/fee/shipping engine and Any/Any targets. Mew GG10/GG70:
+$683.70 with free inbound shipping, $676.70 with $7 assumed shipping, $588.14
+under the lower observed resale. Giratina VSTAR GG69/GG70: $381.56/$374.56/
+$346.18 respectively. Existing price-sorted Browse adapters returned 54 and 56
+source rows; neither search admitted an exact matching listing under its median
+ceiling. Each used one Browse request and zero price-provider or paid AI calls.
+Their distinct queries have separate search IDs; no existing account was reset.
+
+A normal HTTP Evolving Skies PSA9 search then returned 199 single-card summaries
+from 811 reported results. Initially 71 were screened, 21 price-excluded and 50
+retained. Forty-five retained rows failed exact-market identity before useful
+price research; 28 had null names, with publisher-era text common among them.
+One catalog 429 and other temporary/incomplete price states also occurred;
+these were not proof of absent markets or exhausted daily quota.
+
+Fixed the demonstrated partial-number boundary in existing modules: move the
+literal collector-number extractor unchanged into card-identity.ts and remove
+its former local definition from title-reader.ts. Both reading and name cleanup
+share it. Sword & Shield publisher metadata can now be reconciled beside an
+explicit plain partial collector number, numeric slab grade and mapped written
+release. Full-number behavior remains; bare numbers, lone promo/release codes,
+unknown wording, printing/finish/grade constraints and other full-fraction-only
+metadata rules remain conservative. Saved normalized publisher residue is
+reconciled against the original observed phrase. No denominator is inferred.
+
+Targeted real Medicham V #186 and Rayquaza #111/#194 research established exact
+markets and excluded all three saved asks without buying photos. Medicham's
+single matched PSA9 sale was $36.25 against $38.45 asking, yielding -$19.09 after
+configured costs. Normal HTTP rerun under the SAME Evolving search account then
+screened 116, excluded 66 and retained 50, leaving 80 unprocessed eligible rows
+in that source window. Seven retained rows had sold references. These are
+observed live-run changes with updated caches and recovered provider work, not
+a claim that all 45 extra exclusions were caused solely by one parser edit.
+
+The most plausible retained lead was Pikachu #049 PSA9 at $29, with one $65
+reverse-holo sale suggesting $8.08 net under $7 assumed shipping. A fresh normal
+resolve confirmed active BIN terms but left shipping unquoted. Original photo
+triage shows a plain PSA9 label and no visible reverse-holo pattern, favoring
+ordinary non-holo. It does not support borrowing the reverse-holo sale. This is
+manual unsupported-premium triage, not accepted app identity, a financial PASS
+or a Deal. No paid photo assessment was purchased. The separate best-available
+purchase idea does not authorize presenting this copy as profitable.
+
+This pass used five Browse requests across the two focused markets, the broad
+search/rerun and one current-term resolve; the Evolving account recorded 163
+PKMN request attempts / 361 reported credits with one unreported-credit attempt.
+All three AI accounts remained at zero charged/held and the two-cent cap stayed
+unchanged. Final observed headroom was 4,969/5,000 Browse requests and
+19,641/20,000 PKMN credits, with no depletion warning. PKMN's UTC daily reset
+occurred during the work; do not subtract pre-reset observations as one day.
+
+Independent review and all 1,049 isolated tests, typechecks, build and whitespace
+checks passed. No runtime/test files were added or deleted; existing parser
+code was moved/reused. The unrelated .env.example deletion remains untouched.
+Private diagnostics/source photos remain ignored. The verified BIN milestone
+is still open; remaining source admission, residual descriptors, numberless
+ambiguous markets and exact-finish photo evidence remain concrete next work.
+
+## Numbered four-word names and live candidate screening — November 5
+
+The literal title reader's three-word ceiling hid valid Origin Forme Palkia
+VSTAR and Origin Forme Dialga VSTAR claims from catalog research. It now retains
+four-word names only when a collector number is actually present. Unknown words
+and printed forms remain intact; unnumbered searches retain their prior behavior.
+The existing native name/set/number checks still decide market compatibility.
+An old cached null name is recoverable from current literal claims, without a
+new paid title reading or changed saved-photo keys.
+
+Full-suite validation found that a known parenthetical holder-accessory note
+could now become a four-word name. The existing occurrence-aware name cleaner
+handles the exact (LIMITED EDITION GUARD) note only beside a numeric slab grade.
+The valid Shadowless sale remains included. Explicit signed-title name conflicts
+are excluded before optional checking; the retained test also verifies that an
+accepted veto of a different eligible comparison still affects final pricing.
+No arbitrary removal of unknown words, source-title rewriting or global set
+matching change was added.
+
+Bounded price research on the two original saved candidates added six PKMN
+requests / 35 reported credits, zero eBay requests and zero paid AI. Palkia PSA9
+had 11 exact sold observations, median $115, against a saved $114.99 ask with
+unquoted shipping. Its omitted release remains research context, not exact
+observed identity or preliminary profit. Dialga PSA9 had 20 matched observations,
+median $112.50, against $150 plus $9.99 shipping. Its upper outlier can keep it
+eligible for research, but the normal median economics lose $85.61; no label
+assessment was purchased. Saved terms are not fresh availability confirmation.
+The same original-account replay reused SQL with zero additional transports.
+
+One fresh normal HTTP search for Suicune V GG38/GG70 Crown Zenith PSA10 used one
+Browse request and nine PKMN requests / 20 reported credits. It screened all 23
+source rows, price-excluded 18 and retained five unresolved rows; none had a
+supported profitable median. Ordinary matched sales had median $200 versus
+retained asks of $238.72 or more. No photos were purchased. The search's AI
+account remains at zero charged/held, with the unchanged two-cent cap. Latest
+observed provider headroom was 4,974/5,000 Browse requests and 19,007/20,000 PKMN
+credits; these are dated observations, not a new poll or whole-account audit.
+
+Private reports remain in ignored data/candidate-validation/. No runtime/test
+files were created or deleted. Independent review and all 1,048 isolated tests,
+typechecks, production build and whitespace checks pass. The unrelated
+.env.example deletion remains untouched. Parent-release versus explicit-subset
+admission remains deferred: keep native catalog evidence and final filtering
+consistent before widening that boundary. The genuine profitable BIN milestone
+remains open. The user reiterated the ChatGPT comparison workflow; retain the
+existing separate best-available-purchase idea without calling a current loss a
+verified profitable Deal or buying more opinions to change an unfavorable grade.
+
+## Anchored slab-title recovery — November 5
+
+The existing screening-name cleaner now reconciles observed CRZ, Holo UR and
+separately written Galarian Gallery metadata only beside a written Crown Zenith
+release, full GG collector fraction and numeric slab grade. Source titles are
+unchanged. Printed forms/owners, unknown words, edition/finish checks and special
+slab labels remain distinct. Omitted sets still supply research references
+without becoming an exact observed scope. No new runtime module, paid stage,
+model/prompt change or assessment/cache-version bump was added.
+
+A cache-only replay of three saved retained lists (64 unique listing IDs across
+overlapping searches) through the production price-first session established
+five more exact scopes: three ordinary Mew CGC10 listings and Simisear VSTAR /
+Diancie PSA9. Four had no usable price context; the split-subtitle Mew already
+had references but no exact scope. All five are above target even using the
+upper observed sold price after costs, so they are excluded before photos.
+Paras now reaches catalog research but its required cache entry was missing;
+with uncached requests set to zero it remains deferred. The replay used current
+SQL contents, so changes to older reference medians are not market-growth claims
+or isolated measurements of this parser change.
+
+The replay dispatched zero eBay, PKMNPrices, photo, preflight or generation
+requests and changed no original search allowance. Private reports are under
+data/candidate-validation/2026-11-05/slab-name-replay*. Independent review and
+all 1,046 isolated tests, typechecks, production build and whitespace checks
+passed. No files were deleted in this focused cleanup; it modifies existing
+runtime/tests. The unrelated .env.example deletion remains untouched.
+
+The profitable BIN milestone remains open. A separate known admission boundary
+is a parent Crown Zenith title under an explicit Galarian Gallery query. Before
+widening that directional set match, establish the exact native catalog identity;
+do not infer it from a requested set or indiscriminately strip unknown wording.
+
+## Discovery-order and raw/slab follow-through — November 5
+
+Controlled diagnostics used the existing price-sorted Browse adapter through
+findDeals, preserving each original search account, price screen, 50-row bound
+and spending guards. This was not a new production source or evaluator.
+Crown Zenith PSA9 lowest-price discovery screened 82, excluded 44 and retained
+38; none had a supported positive median margin. It added one Browse request,
+26 PKMN requests/37 reported credits and zero AI. Do not automatically add a
+second source request to every search without evidence it improves outcomes.
+
+A distinct exact raw Mew search returned 173 summaries and retained 50; the
+lowest-price follow-up reused that same account. Raw and exact PSA10/CGC9/CGC10
+market research remained separate. One credible live copy received a normal
+HTTP assessment plus the existing single historical-copy check, costing
+$0.0056404 (0.56404 cents) total. The original model answer supported Near Mint
+raw condition but supplied no numeric grade range. Code did not erase a range;
+the existing sleeve/LIMITED rule lowered condition confidence. No accepted
+condition-matched eBay raw price resulted, and grade-specific sales cannot
+price a live copy with no supported range. Current shipping is unquoted and the
+reference math uses its disclosed assumption. Actual Any/Any client grouping
+is Sorting/CANT_PRICE, with zero manual-review reasons and zero Deals.
+
+Normal HTTP reopen returned savedEvaluation, no generation usage, no new price
+request and zero additional charge. A separate exact CGC10 slab search reused
+the market data, screened 15 and excluded five; remaining ordinary asks were
+above the supported margin or had unresolved claims. No additional photos were
+purchased. The cap did not stop these cases. Keep the genuine BIN milestone
+open, preserve accepted negatives and abstentions, and do not buy another
+opinion merely to obtain grade10 or convert a fallback estimate into a Deal.
+
+This batch changed no runtime code, model, prompt, allowance or financial
+assumption. Only tracked notes and ignored diagnostic reports were added.
+Latest observed daily headroom after the raw evaluation was 4,976/5,000 eBay
+requests and 19,062/20,000 PKMN credits; later observations remain in private
+reports. Source-order coverage, these finite samples and missing evidence do
+not establish that no deals exist across eBay.
+
+## Separate edition markets and retain paid findings — November 5
+
+The user reaffirmed that First Edition and non-First Edition prices are entirely
+different markets. Final sold eligibility already separates printing, finish,
+grader and grade, but preliminary ranking could attach profitable First Edition
+math to a missing-edition listing because the query requested that printing.
+One shared exact-scope predicate now gates preliminary math and saved financial
+priority, also replacing duplicate scope checks in raw context. Unknown and
+mixed markets retain separate observations and automatic identity research;
+they do not acquire a profit estimate, ceiling or hard price rejection.
+
+A provider-blocked replay of the saved Lapras changes its old band-3 $36.05
+expected/$5.91 lower-scenario priority to neutral identity research with no
+financial estimate. The original front label shows Unlimited. This is manual
+triage, not an accepted app assessment; it does not create a verified item-ID
+exception or a Deal. Replay made zero provider/photo/AI calls.
+
+The cache review found that Edition/Features/Printing item specifics could
+change without invalidating old financial advice. The existing identity parser
+now supplies the semantic printing claim to private financial context and
+legacy/private reuse checks. Shortlist refresh/resave compares the same claim.
+Changed or missing claims re-enter identity or clear stale advice; accepted
+photo keys/answers, model/prompt versions and spent counters are preserved.
+Equivalent edition wording and unrelated feature text retain reuse.
+
+The preceding cleanup also consolidates special slab title/parenthetical
+qualifier exclusions in the existing shared module. Screening and final sale
+eligibility agree before pagination/recency decisions. A retained-sale audit
+reprices contaminated saved graded summaries without a global pricing-version
+bump. The slab regression reuses photos and then reuses corrected pricing;
+affected raw-to-grade evaluations still enter the existing whole pricing path,
+so no claim of route-granular or universally free repricing is made.
+
+Metadata-only Zapdos, Haunter, Fossil PSA7 and Crown Zenith PSA9 scans plus one
+Lapras current-detail check used five Browse requests, 117 PKMN requests and
+336 reported credits, with zero new paid AI. Exact scopes removed overpriced
+copies before photos. No genuine profitable BIN was verified. Latest observed
+headroom was 4,981/5,000 eBay requests and 19,187/20,000 PKMN credits, not a new
+provider poll or a guarantee that another app has not consumed quota since.
+Private reports/photos remain under ignored data/candidate-validation/.
+
+All 1,043 isolated tests, both TypeScript checks, production build and whitespace
+checks pass. Independent reviews found no blocking issue in the preliminary
+scope or financial-cache corrections. Existing tests that expected financial
+priority from unresolved scopes were corrected; the diagnostic target-ranking
+fixture now supplies a real exact market instead of an empty ambiguous scope.
+No new runtime/test files, paid stage, model, budget increase or blanket cache
+invalidation was introduced. The profitable BIN milestone remains open.
 
 ## Catalog recovery and economical candidate checks — November 5
 
@@ -1760,6 +2062,23 @@ These are hypotheses to evaluate, not rules that create a Deal by themselves.
 
 ## Interface and later product work
 
+- Design study (Nov 8; reference for later UI work): reviewed 407 theory slides,
+  12 design-guideline pages and the seven authored snapshots in the
+  [Advanced CSS course](https://github.com/jonasschmedtmann/advanced-css-course/tree/cf60eed1dbf87ba5464c2a3fa291c87dae668b7b).
+  The useful combination is [Natours](https://natours.netlify.app/) for visual
+  hierarchy and responsive media, [Trillo](https://trillo.netlify.app/) for a
+  gallery leading into summary and evidence, and [Nexter](https://nexter.netlify.app/)
+  for layouts that adapt to their available width. The decks reinforce a small
+  type/spacing scale and muted secondary details (theory pp. 99–124, 185–217),
+  actions next to what they affect and short, purposeful feedback (pp. 223–229),
+  familiar table, gallery and sidebar patterns (pp. 270–301, 337–347), and
+  breakpoints chosen where the content stops fitting (pp. 371–373, 402–405).
+  Apply this to stable comparisons: exact card identity, ask/current bid, net
+  profit or safe bid, and evidence status first; expandable comps and uncropped
+  listing photos close by. Keep the existing responsive grid, focus handling
+  and reduced-motion support. Validate reading order, keyboard/touch controls,
+  contrast and scrolling on narrow layouts. Avoid hover-only pricing, tall
+  marketing heroes and the demo's CSS-only modal in the deal workflow.
 - Additional screenshot supplied explicitly as possible notes for later, not now,
   saved at data/design/ui-palette-notes-2026-11-02.png. Candidate palette:
   Primary #7C3AED; Accent #A78BFA; Surface #171923; Profit #22C55E;

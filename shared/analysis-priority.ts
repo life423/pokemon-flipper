@@ -3,6 +3,8 @@ import { pathNumbers } from "./money/underwriting.ts";
 import type { ListingSummary, Targets } from "./types.ts";
 import { rawMarketContext, type RawMarketContext } from "./raw-market-context.ts";
 import { sellerConditionClues } from "./raw-condition-claim.ts";
+import { hasExactSoldScope } from "./sold-evidence.ts";
+import { conditionGap } from "./conditions.ts";
 
 export interface AnalysisPriority {
     band: number;
@@ -46,12 +48,20 @@ export function analysisPriority(listing: ListingSummary, targets: Targets = MON
             : context?.caution === "UNUSUALLY_LOW" ? "Unusually low asking price needs verification; its price alone does not establish value."
             : context ? "Research priority compares delivered asking with matching sales of unspecified condition; resale value and grading upside still need assessment."
             : "Photo lead still needs identity or price confirmation.") };
-    if (listing.match || (screen?.priceAnomaly && !screen.priceAnomaly.photoChecked) || !money || price === null || !Number.isFinite(price)) return unknown;
+    if (screen?.gradingLead && (!listing.match || listing.match === "UNCONFIRMED_CRITERIA")) {
+        return { ...unknown, band: 1, evidence: photoSupport + Number(screen.gradingLead.grade === 8),
+            investment: price, reason: screen.reason ?? unknown.reason };
+    }
+    if (listing.match || (screen?.priceAnomaly && !screen.priceAnomaly.photoChecked) || !money || price === null || !Number.isFinite(price) ||
+        screen?.soldEvidence && !hasExactSoldScope(screen.soldEvidence, screen.card?.printing)) return unknown;
     const config = { ...MONEY_CONFIG, targets };
     // The screen's $0 fallback avoids a premature exclusion. Queue ranking
     // uses the normal purchase assumption when delivery has not been quoted.
     const shipping = listing.shipping === null ? MONEY_CONFIG.buying.assumedShippingWhenUnknown : money.shipping;
-    const ranked = money.paths.map((path): AnalysisPriority => {
+    // A cleaner sold copy should not move a worn seller-described card up
+    // the queue. This changes order only; photos can still establish upside.
+    const plausiblePaths = money.paths.filter(path => !path.rawCondition || !seller?.claim || conditionGap(seller.claim, path.rawCondition) >= 0);
+    const ranked = plausiblePaths.map((path): AnalysisPriority => {
         const expected = pathNumbers({ expectedNet: path.expectedNet, fixedCosts: path.fixedCosts, shipping, price }, config);
         const samples = path.compCount ?? 0;
         const compSupport = samples >= 3 && ["HIGH", "MEDIUM", "LOW"].includes(path.compConfidence ?? "")

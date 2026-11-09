@@ -5,7 +5,7 @@ import { prescreen, type ScreenInput } from "./prescreen.ts";
 import { lookupCards, fetchComps, fetchRawComps, pricingCooldown } from "../pricing/pkmnprices.ts";
 import { withTargets } from "../../shared/money/targets.ts";
 import { cardMismatch } from "../search/relevance.ts";
-import { checkComps } from "../ai/comp-checker.ts";
+import { cachedCompChecks, checkComps } from "../ai/comp-checker.ts";
 import { criteriaMismatch, searchAttributes } from "../../shared/search-criteria.ts";
 
 const MAX_ATTEMPTS = 3;
@@ -16,7 +16,9 @@ export class PricingRetryError extends Error {
 }
 interface Job { token: string; listing: ListingSummary; input: ScreenInput; intent: SearchIntent | null; screen: Screen; match?: ListingSummary["match"]; nextAt: number; attempts: number; expires: number }
 export function createPricingRetries({
-    price = (input: ScreenInput, targets: Targets, includeOffers: boolean) => prescreen(input, { lookupCards, fetchComps, fetchRawComps, checkComps, config: withTargets(targets), includeOffers }),
+    price = (input: ScreenInput, targets: Targets, includeOffers: boolean) => prescreen(input, {
+        lookupCards, fetchComps, fetchRawComps, cachedChecks: cachedCompChecks, checkComps, config: withTargets(targets), includeOffers,
+    }),
     cooldown = pricingCooldown,
     now = () => Date.now(),
     wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),

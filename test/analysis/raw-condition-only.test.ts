@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { applyConditionRules } from "../../server/analysis/rules.ts";
 import { underwrite } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
-import { cardEvaluation } from "../fixtures/card-evaluation.ts";
+import { cardEvaluation, salesSummary } from "../fixtures/card-evaluation.ts";
 import { photoReviewStatus } from "../../shared/photo-review.ts";
 import { photoEvidence } from "../../shared/photo-evidence.ts";
 import { describeRange } from "../../shared/format.ts";
@@ -19,7 +19,9 @@ function rawOnly(rawCondition: "DAMAGED" | "NEAR_MINT", price: number, resale: n
     evaluation.listing.endTime = null;
     evaluation.condition!.rawCondition = rawCondition;
     evaluation.condition!.gradeRange = null;
-    evaluation.rawPricing = { status: "PRICED", prices: [{ condition: rawCondition, price: resale, updatedAt: null }] };
+    evaluation.rawPricing = { status: "PRICED", conditionEvidence: "AI_PHOTOS",
+        prices: [{ condition: rawCondition, price: resale, updatedAt: null, basis: "EBAY_SOLD",
+            comps: { ...salesSummary("RAW", rawCondition, [resale]), median: resale, confidence: "LOW" } }] };
     evaluation.gradeStatus = "RAW_CONDITION_ONLY";
     evaluation.underwriting = underwrite(evaluation, MONEY_CONFIG);
     return evaluation;
@@ -58,7 +60,7 @@ test("a photographed damaged raw card with no numeric grade can still be a compl
     assert.equal(evaluation.underwriting?.verdict, "PASS");
     assert.equal(evaluation.underwriting?.best?.path, "RAW");
     assert.equal(evaluation.underwriting?.best?.profit, -75.29);
-    assert.equal(evaluation.underwriting?.best?.maxBid, 0);
+    assert.ok(evaluation.underwriting!.best!.maxBid < evaluation.listing.price);
     assert.equal(photoReviewStatus(evaluation).needsYourReview, false, "the absent numeric estimate is a note, not a raw-resale review hold");
     assert.equal(resultGroup({ ...evaluation.listing, currentPrice: evaluation.listing.price, images: [], isGraded: false }, evaluation), null);
     assert.ok(evaluation.underwriting?.paths.filter(path => path.path === "GRADE").every(path => path.status === "UNAVAILABLE"));

@@ -58,8 +58,8 @@ test("no browser candidate is emitted until the batch's sold evidence is ready",
 
 test("fifty admitted rows reuse one canonical catalog lookup and sold page before any AI", async t => {
     const fetch = t.mock.method(globalThis, "fetch", async () => assert.fail("offline sources only; no AI, eBay or price transport"));
-    const card: CardRecord = { source: "pkmnprices", id: 1, name: "Charizard", setName: "Base Set", cardNumber: "4/102", tcgPlayerId: null,
-        variants: [{ name: "Unlimited Holofoil", printing: "UNLIMITED", finish: "HOLO", prices: [] }] };
+    const card: CardRecord = { source: "pkmnprices", id: 1, name: "Charizard", setName: "Base Set", cardNumber: "4/102",
+        variants: [{ name: "Unlimited Holofoil", printing: "UNLIMITED", finish: "HOLO" }] };
     const sold: Comp[] = [90, 100, 110].map((price, index) => ({ id: index, title: "Charizard Base Set 4/102 Unlimited Holo NM English",
         price, currency: "USD", sold_at: new Date(NOW - DAY).toISOString(), sale_type: "fixed_price", attribution: "exact", variant: "Unlimited Holofoil", grader: null, grade: null }));
     let catalogCalls = 0, rawCalls = 0;

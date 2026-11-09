@@ -86,8 +86,8 @@ test("screening reuses cached final-valuation pages when the first page has no c
     });
     assert.equal((await fetchComps(id, { grader: "PSA", grade: 8, variant: "Unlimited Holofoil" })).length, 4);
     const source = createScreeningPriceSource({ maxRequests: 0 });
-    const record: CardRecord = { source: "pkmnprices", id, name: "Dragonite", setName: "Fossil", cardNumber: "4/62", tcgPlayerId: null,
-        variants: [{ name: "Unlimited Holofoil", printing: "UNLIMITED", finish: "HOLO", prices: [] }] };
+    const record: CardRecord = { source: "pkmnprices", id, name: "Dragonite", setName: "Fossil", cardNumber: "4/62",
+        variants: [{ name: "Unlimited Holofoil", printing: "UNLIMITED", finish: "HOLO" }] };
     const subject: ListingSummary = { id: "saved-row", title: "Dragonite Fossil 4/62 Unlimited Holo PSA 8", isGraded: true,
         currentPrice: 150, shipping: 0, bids: 0, buyingOption: "FIXED_PRICE", endTime: null, images: [], url: "https://www.ebay.com/itm/123", seller: null };
     const intent: SearchIntent = { cardName: "Dragonite", sets: ["Fossil"], cardNumber: "4/62", printing: null, graded: true, titleWords: ["dragonite"], source: "rules" };

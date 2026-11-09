@@ -30,3 +30,18 @@ test("legacy raw condition prompts expire without invalidating slabs or historic
     assert.equal(currentPriceEvidence(evaluation, now), true);
     assert.equal(CONDITION_RULES_VERSION, 1, "historical sold-category definitions did not change");
 });
+
+test("only retained special-tier graded evidence invalidates otherwise current pricing", () => {
+    const now = Date.parse("2026-11-05T20:00:00Z"), evaluation = cardEvaluation();
+    Object.assign(evaluation, { pricingVersion: PRICING_VERSION, pricesCheckedAt: new Date(now).toISOString(),
+        assessmentVersion: `test/prompts-${PHOTO_REVIEW_REVISION}`,
+        conditionVersion: `test/condition-${CONDITION_RULES_VERSION}/prompts-${CONDITION_ASSESSMENT_REVISION}` });
+    const summary = evaluation.gradedPricing!.CGC!.byGrade![0];
+    summary.sales[0].title = "Venusaur Base Set 15/102 CGC 6 Pristine";
+    assert.equal(currentPriceEvidence(evaluation, now), false, "raw-to-grade projections must not reuse special tiers either");
+    summary.sales[0].title = "Venusaur Base Set 15/102 CGC 6 EX/NM OC123";
+    assert.equal(currentPriceEvidence(evaluation, now), true, "ordinary descriptions and inventory suffixes stay reusable");
+    evaluation.rawPricing!.prices![0].comps = { ...summary, grader: "RAW", grade: "LIGHTLY_PLAYED",
+        sales: [{ ...summary.sales[0], title: "Venusaur Base Set 15/102 Pristine raw LP" }] };
+    assert.equal(currentPriceEvidence(evaluation, now), true, "raw sale-title behavior is unchanged");
+});

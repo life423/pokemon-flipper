@@ -3,8 +3,7 @@ import { MONEY_CONFIG, type BuyingConfig, type GradingConfig, type MoneyConfig, 
 import { RAW_CONDITIONS, isRawCondition } from "../conditions.ts";
 import { dollars, round2 } from "../format.ts";
 import { cents, meetsMoneyTargets, money, sellingFeeCents, taxedCents } from "./cents.ts";
-import { referencePriceReason } from "./price-evidence.ts";
-import { jungleNoSymbolReason } from "../jungle-no-symbol.ts";
+import { isRawSoldPrice, referencePriceReason, unsupportedVariantReason } from "./price-evidence.ts";
 import type {
     CompSummary,
     Condition,
@@ -266,55 +265,21 @@ export function rawPath(input: UnderwritingInput, listing: PricedListing, shippi
         return unavailablePath("RAW", label, "The photos don't support a raw condition, so the raw price is unknown.");
     }
 
-    // The assessed condition's price, or the nearest worse condition's.
-    // Never a better one.
+    // Use the closest condition with sold evidence, at or below the assessed
+    // condition. A saved asking or market quote cannot hide a matched sale.
     const entry = RAW_CONDITIONS.slice(RAW_CONDITIONS.indexOf(condition.rawCondition))
-        .map((name) => rawPricing.prices?.find((price) => price.condition === name))
-        .find((price) => price !== undefined);
+        .map(name => rawPricing.prices?.find(price => price.condition === name && isRawSoldPrice(price)))
+        .find(price => price !== undefined);
 
-    if (!entry || !isRawCondition(entry.condition) || !Number.isFinite(entry.price) || entry.price <= 0) {
-        return unavailablePath("RAW", label, "There's no raw price at the assessed condition or below.");
-    }
+    if (!entry || !isRawCondition(entry.condition)) return unavailablePath("RAW", label, "No matched eBay sale supports the assessed condition or a lower one.");
 
-    let salePrice = entry.price;
-    const pricingNotes: string[] = [];
-    if (entry.basis === "TCGPLAYER") {
-        if (entry.crossCheck && Number.isFinite(entry.crossCheck.price) && entry.crossCheck.price > 0 && entry.crossCheck.price < salePrice) {
-            salePrice = entry.crossCheck.price;
-            pricingNotes.push(`PokémonPriceTracker reports a lower matching condition/printing market quote of ${dollars(salePrice)}; it caps the primary TCGplayer fallback. This is a second market feed, not a separate sold transaction.`);
-        }
-        // A condition-specific market fallback is not a matched eBay sale.
-        // Prevent inverted condition quotes and checked slab evidence from
-        // making an unsupported raw premium look like executable profit.
-        const better = (rawPricing.prices ?? []).filter(price => isRawCondition(price.condition) &&
-            RAW_CONDITIONS.indexOf(price.condition) < RAW_CONDITIONS.indexOf(entry.condition as typeof condition.rawCondition) &&
-            Number.isFinite(price.price) && price.price > 0);
-        const ceiling = Math.min(salePrice, ...better.map(price => price.price));
-        if (ceiling < salePrice) { salePrice = ceiling; pricingNotes.push("The raw fallback exceeded a better-condition quote; the lower quote caps this estimate."); }
-        const reference = GRADERS.flatMap(grader => {
-            const prices = input.gradedPricing?.[grader];
-            if (prices?.status !== "PRICED" || prices.printing !== input.identity?.printing || prices.variant !== rawPricing.variant) return [];
-            const gradeRange = condition.gradeRange;
-            if (!gradeRange) return [];
-            return (prices.byGrade ?? []).filter(summary => {
-                const age = Date.parse(input.pricesCheckedAt ?? summary.newestSale ?? "") - Date.parse(summary.newestSale ?? "");
-                return Number(summary.grade) >= gradeRange.low && Number(summary.grade) <= gradeRange.high &&
-                    summary.count >= 2 && summary.median !== null && Number.isFinite(summary.median) && summary.median > 0 && age >= 0 && age <= 180 * 86400000;
-            }).map(summary => ({ grader, summary }));
-        }).sort((a, b) => a.summary.median! - b.summary.median!)[0];
-        if (reference && reference.summary.median! < salePrice) {
-            salePrice = reference.summary.median!;
-            pricingNotes.push(`The unsupported raw fallback of ${dollars(entry.price)} exceeds matched ${reference.grader} ${reference.summary.grade} sold evidence. This conservative raw estimate is capped at ${dollars(salePrice)} using ${reference.summary.count} sales (newest ${reference.summary.newestSale}); it is not a verified raw sold median.`);
-        }
-    }
-    const net = netFromSale(salePrice, "raw", config.selling);
-    const low = entry.basis !== "TCGPLAYER" ? entry.comps?.low : null;
+    const salePrice = entry.price;
+    const low = entry.comps?.low;
     const downsideNet = typeof low === "number" && Number.isFinite(low) && low > 0 && low <= salePrice
         ? netFromSale(low, "raw", config.selling) : null;
-
     return pricedPath(
-        { path: "RAW", label, expectedNet: net, downsideNet, fixedCosts: 0, listing, shipping, config },
-        { salePrice, priceCondition: entry.condition, ...(pricingNotes.length ? { pricingNotes } : {}) }
+        { path: "RAW", label, expectedNet: netFromSale(salePrice, "raw", config.selling), downsideNet, fixedCosts: 0, listing, shipping, config },
+        { salePrice, priceCondition: entry.condition }
     );
 }
 
@@ -504,7 +469,7 @@ function underwriteBase(input: UnderwritingInput, config: MoneyConfig): Underwri
         return verdict("NEEDS_REVIEW", identity?.reasons?.length ? identity.reasons : ["The card isn't identified yet."]);
     }
 
-    const unsupportedVariant = jungleNoSymbolReason(input);
+    const unsupportedVariant = unsupportedVariantReason(input);
     if (unsupportedVariant && (input.slab ? input.slab.status === "OK" : condition?.authenticity.concern === "NONE_SEEN")) {
         return verdict("CANT_PRICE", [unsupportedVariant]);
     }
@@ -579,6 +544,14 @@ function underwriteBase(input: UnderwritingInput, config: MoneyConfig): Underwri
     if (evidenceGaps.length) return {
         verdict: "CANT_PRICE", reasons: evidenceGaps, best: bestPath(priced), paths, assumptions,
     };
+
+    const raw = paths[0];
+    if (isPriced(raw) && raw.priceCondition !== condition.rawCondition) {
+        return { ...verdict("CANT_PRICE", ["The lower-condition resale estimate falls short of your targets. A matched sale at the assessed condition is still needed."], assumptions), paths };
+    }
+    if (best && !isPriced(raw) && input.rawPricing && isRawCondition(condition.rawCondition)) {
+        return { ...verdict("CANT_PRICE", ["Grading falls short of your targets. Raw resale still needs a matched eBay sale at the assessed condition or below."], assumptions), paths };
+    }
 
     if (best) {
         return {

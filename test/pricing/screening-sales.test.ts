@@ -16,11 +16,13 @@ import { canAutoAnalyze, resultGroup } from "../../shared/analysis.ts";
 import { readSearchLocally, readSearchWithoutAi } from "../../server/search/intent.ts";
 import { findDeals } from "../../server/deals/find-deals.ts";
 import { writeCache } from "../../server/lib/cache.ts";
+import { hasSpecialSlabTitle } from "../../shared/grade-qualifier.ts";
+import { compProblem } from "../../server/pricing/sold-comps.ts";
 
 const NOW = Date.parse("2026-11-03T12:00:00Z"), DAY = 86_400_000;
 const intent: SearchIntent = { cardName: "Charizard", sets: ["Base Set"], cardNumber: "4/102", printing: null, graded: null, titleWords: ["charizard"], source: "rules" };
-const variant = (name = "Unlimited Holofoil", printing: "UNLIMITED" | "FIRST_EDITION" | "SHADOWLESS" | "UNKNOWN" = "UNLIMITED", finish = "HOLO") => ({ name, printing, finish, prices: [] });
-const card = (extra: Partial<CardRecord> = {}): CardRecord => ({ source: "pkmnprices", id: 1, name: "Charizard", setName: "Base Set", cardNumber: "4/102", tcgPlayerId: null, variants: [variant()], ...extra });
+const variant = (name = "Unlimited Holofoil", printing: "UNLIMITED" | "FIRST_EDITION" | "SHADOWLESS" | "UNKNOWN" = "UNLIMITED", finish = "HOLO") => ({ name, printing, finish });
+const card = (extra: Partial<CardRecord> = {}): CardRecord => ({ source: "pkmnprices", id: 1, name: "Charizard", setName: "Base Set", cardNumber: "4/102", variants: [variant()], ...extra });
 const listing = (extra: Partial<ListingSummary> = {}): ListingSummary => ({ id: "v1|listing|0", title: "Charizard Base Set 4/102 Unlimited Holo", currentPrice: 40, shipping: 5, bids: 0, isGraded: false, buyingOption: "FIXED_PRICE", endTime: null, images: [], url: "https://www.ebay.com/itm/123", seller: null, ...extra });
 let saleId = 0;
 const sale = (extra: Partial<Comp> = {}): Comp => ({ id: ++saleId, title: "Charizard Base Set 4/102 Unlimited Holo NM", price: 100, sold_at: new Date(NOW - DAY).toISOString(), variant: "Unlimited Holofoil", grader: null, grade: null, currency: "USD", sale_type: "fixed_price", grade_qualifier: null, attribution: "exact", listing_url: `https://www.ebay.com/itm/${saleId}`, ...extra });
@@ -35,6 +37,38 @@ function harness(options: { cards?: CardRecord[]; raw?: (record: number | string
     } });
     return { run, calls };
 }
+
+test("empty raw sales admit only affordable grading leads backed by recent exact sold grades", async () => {
+    const { run, calls } = harness({ page: async (_id, { grader, grade }) => {
+        const recent = grader === "PSA" && grade === "8";
+        return { nextCursor: grader ? "unused" : null, stream: "CONFIRMED", sales: !grader ? [] : [
+            sale({ title: `Charizard Base Set 4/102 Unlimited Holo ${grader} ${grade}`, grader, grade,
+                price: 300, sold_at: new Date(NOW - (recent ? 1 : 100) * DAY).toISOString() }),
+            sale({ title: `Charizard Base Set 4/102 First Edition Holo ${grader} ${grade}`, grader, grade, price: 1000 }),
+        ] };
+    } });
+    const subject = listing({ images: ["front", "back"] });
+    const expensive = { ...subject, currentPrice: 250 };
+    const damaged = { ...subject, title: subject.title + " Damaged" };
+    const [evidence, expensiveEvidence, damagedEvidence] = await Promise.all([
+        run(subject, intent), run(expensive, intent), run(damaged, intent),
+    ]);
+    assert.equal(evidence.status, "UNAVAILABLE");
+    assert.deepEqual(evidence.references, []);
+    assert.equal(evidence.gradingReferences?.length, 1);
+    assert.equal(evidence.gradingReferences?.[0]?.summary.median, 300);
+    assert.equal(damagedEvidence.gradingReferences, undefined);
+    assert.equal(calls.pages.filter(([, options]) => options.grader).length, 4, "no grade pagination or per-listing repeat");
+    const lead = applySoldPriceScreen(subject, evidence);
+    assert.deepEqual(lead.screen.gradingLead, { grader: "PSA", grade: 8 });
+    assert.equal(canAutoAnalyze(lead), true);
+    assert.equal(resultGroup(lead, null), "candidates");
+    assert.equal(lead.screen.money, undefined);
+    assert.equal(lead.screen.bestCase, null);
+    assert.equal(canAutoAnalyze(applySoldPriceScreen(expensive, expensiveEvidence)), false);
+    const tighter = retargetScreen(lead.screen, lead.currentPrice, { minProfit: 200, minRoi: 0 }, undefined, false, lead);
+    assert.equal(canAutoAnalyze({ ...lead, screen: tighter }), false);
+});
 
 test("explicit Jungle No Symbol claims retain unpriced visibility without borrowing ordinary raw or slab references", async () => {
     const { run, calls } = harness({ lookup: async () => assert.fail("unsupported No Symbol markets must not buy ordinary price research") });
@@ -75,24 +109,64 @@ test("ordinary Jungle still uses exact sold references and missing edition wordi
     }
 });
 
+test("missing-texture claims cannot borrow ordinary slab prices or queue photos", async () => {
+    const name = "Aerodactyl V", set = "Lost Origin", number = "180/196";
+    const ordinary = "Pokemon Aerodactyl V Lost Origin 180/196 Alternate Full Art Holo PSA 10";
+    const error = "POKEMON AERODACTYL V ALT #180/196 LOST ORIGIN PSA 10 MISSING TEXTURE ERROR POP 2";
+    const wanted: SearchIntent = { ...intent, cardName: name, sets: [set], cardNumber: number, graded: true, titleWords: ["aerodactyl", "v"] };
+    const errorSale = sale({ title: error, price: 100000, grader: "PSA", grade: "10" });
+    assert.equal(compProblem(errorSale, { printing: "UNLIMITED", setName: set, finish: "HOLO", grader: "PSA", grade: "10", now: NOW }),
+        "qualified or special grade");
+    const { run, calls } = harness({ cards: [card({ name: `${name} (Alternate Full Art)`, setName: set, cardNumber: number })],
+        graded: async () => [errorSale, sale({ title: ordinary, price: 300, grader: "PSA", grade: "10" })] });
+    const subject = (title: string, currentPrice: number) => listing({ title, currentPrice, isGraded: true, images: ["front", "back"],
+        screen: { status: "UNSCREENED", card: { name, set, cardNumber: number, printing: "UNLIMITED" } } });
+
+    for (const price of [100000, 120]) {
+        const item = subject(error, price), evidence = await run(item, wanted);
+        assert.equal(evidence.status, "UNAVAILABLE");
+        assert.deepEqual(evidence.references, []);
+        assert.match(evidence.note, /missing.texture/i);
+        assert.equal(canAutoAnalyze(applySoldPriceScreen(item, evidence)), false);
+    }
+    assert.equal(calls.lookup, 0);
+    assert.equal(calls.graded.length, 0);
+
+    const item = subject(ordinary, 120), evidence = await run(item, wanted);
+    assert.equal(evidence.exactScope, true);
+    assert.equal(evidence.references[0].summary.count, 1);
+    assert.equal(evidence.references[0].summary.median, 300);
+    const screened = applySoldPriceScreen(item, evidence);
+    assert.equal(canAutoAnalyze(screened), true);
+    assert.equal(canAutoAnalyze({ ...screened, title: error }), false, "an older ordinary screen cannot queue a claimed error copy");
+    assert.equal(hasSpecialSlabTitle(`${ordinary} MISSING–TEXTURE ERROR`), true);
+    for (const note of ["TEXTURED ART", "POP 2", "NO MISSING TEXTURE", "NOT A MISSING-TEXTURE ERROR", "NO-MISSING-TEXTURE"]) {
+        assert.equal(hasSpecialSlabTitle(`${ordinary} ${note}`), false, note);
+    }
+});
+
 test("literal modern names reach exact sold-price exclusion before buying labels, while cheap matching copies still need photos", async t => {
     t.mock.method(globalThis, "fetch", () => assert.fail("modern title regressions must remain offline"));
-    for (const [name, set, number, title] of [
+    for (const [name, set, number, title, catalogSet = set, grade = "9"] of [
         ["Rayquaza V", "Evolving Skies", "194/203", "PSA 9 Pokemon 2021 Rayquaza V 194/203 Full Art Ultra Rare Evolving Skies"],
         ["Rayquaza V", "Evolving Skies", "194/203", "Pokemon 2021 SWSH Evolving Skies Rayquaza V #194/203 PSA 9 MINT"],
         ["Rayquaza V", "Evolving Skies", "194/203", "Pokemon Rayquaza V (Alternate Full Art) 194/203 SWSH07:Evolving Skies Holo PSA 9"],
         ["Giratina V", "Lost Origin", "186/196", "Pokemon Sword & Shield Giratina V Lost Origin 186/196 Alt/Full Art Holo PSA 9"],
+        ["Aerodactyl V", "Lost Origin", "180/196", "2022 Pokemon Sword Shield Lost Origin Aerodactyl V 180/196 Full Art Holo Ultra Rare PSA 10", "SWSH11: Lost Origin", "10"],
         ["Mewtwo GX", "Shining Legends", "78/73", "2017 POKEMON SUN & Moon - Shining Legends - MEWTWO GX - #78/73 PSA 9"],
+        ["Medicham V", "Evolving Skies", "186/203", "2021 POKEMON SWORD & SHIELD EVOLVING SKIES #186 FULL ART/MEDICHAM V PSA 9 Mint"],
+        ["Rayquaza VMAX", "Evolving Skies", "111/203", "2021 POKEMON SWORD & SHIELD EVOLVING SKIES #111 FULL ART/RAYQUAZA VMAX PSA 9"],
     ]) {
         const wanted: SearchIntent = { ...intent, cardName: name, sets: [set], cardNumber: number, titleWords: [name.split(" ")[0].toLowerCase()] };
-        const { run, calls } = harness({ cards: [card({ name: `${name} (Alternate Full Art)`, setName: set, cardNumber: number })],
-            graded: async () => three({ title: `${name} ${set} ${number} Unlimited Holo PSA 9`, price: 400, grader: "PSA", grade: "9" }) });
+        const { run, calls } = harness({ cards: [card({ name: `${name} (Alternate Full Art)`, setName: catalogSet, cardNumber: number })],
+            graded: async () => three({ title: `${name} ${set} ${number} Unlimited Holo PSA ${grade}`, price: 400, grader: "PSA", grade }) });
         const subject = await screenListingWithoutAi(listing({ title, isGraded: true, currentPrice: 800, shipping: 0, images: ["front", "back"] }),
             wanted, undefined, async value => readTitleByRules(value, [set]));
         assert.equal(subject.screen!.card!.name, name.toLowerCase(), title);
         const evidence = await run(subject, wanted);
         assert.equal(evidence.exactScope, true, title);
         assert.equal(evidence.references[0].summary.count, 3);
+        assert.equal(evidence.references[0].grade, grade);
         const overpriced = applySoldPriceScreen(subject, evidence);
         assert.equal(overpriced.screen.status, "DROPPED", title);
         assert.equal(canAutoAnalyze(overpriced), false, "existing sold evidence excludes the high price without a paid label check");
@@ -100,6 +174,76 @@ test("literal modern names reach exact sold-price exclusion before buying labels
         assert.equal(canAutoAnalyze(cheap), true);
         assert.equal(resultGroup(cheap, null), "candidates", "metadata never creates a verified Deal");
         assert.equal(calls.lookup, 1); assert.equal(calls.graded.length, 1);
+    }
+});
+
+test("anchored slab metadata reaches one exact sold market and rejects overpricing without paid labels", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("slab metadata cleanup must use only mocked price data"));
+    for (const [name, number, title, polluted] of [
+        ["Diancie", "GG13/GG70", "Pokemon CRZ GG13/GG70 Crown Zenith Galarian Gallery Diancie Full Art PSA 9", "crz diancie"],
+        ["Paras", "GG32/GG70", "Pokemon CRZ GG32/GG70 Crown Zenith Galarian Gallery Paras Full Art PSA 9", "crz paras"],
+        ["Simisear VSTAR", "GG37/GG70", "Pokemon CRZ GG37/GG70 Crown Zenith Galarian Gallery Simisear VSTAR Full Art PSA 9", "crz simisear vstar"],
+        ["Mew", "GG10/GG70", "Pokemon TCG SWSH Crown Zenith Mew GG10/GG70 Holo UR CGC 10 EN 2023", "mew ur"],
+        ["Mew", "GG10/GG70", "POKEMON Crown Zenith MEW GG10/GG70 Galarian Gallery Holo CGC 10 GEM MINT", "mew galarian gallery"],
+    ]) {
+        const set = "Crown Zenith Galarian Gallery", reading = readTitleByRules(title), grader = reading.grader!, grade = reading.grade!;
+        const wanted: SearchIntent = { ...intent, cardName: null, sets: ["Crown Zenith"], cardNumber: null, titleWords: [], graded: true };
+        const { run, calls } = harness({ cards: [card({ name, setName: `SWSH: Crown Zenith: Galarian Gallery`, cardNumber: number, variants: [variant("Holofoil")] })],
+            graded: async () => three({ title: `${name} ${set} ${number} Holo ${grader} ${grade}`, grader, grade, variant: "Holofoil" }) });
+        for (const saved of [false, true]) {
+            const subject = await screenListingWithoutAi(listing({ title, isGraded: true, currentPrice: 1000, shipping: 0, images: ["front", "back"] }), wanted,
+                undefined, async () => saved ? { ...reading, cardName: polluted } : reading);
+            const original = structuredClone(subject);
+            const evidence = await run(subject, wanted);
+            assert.equal(evidence.status, "AVAILABLE", title); assert.equal(evidence.exactScope, true, title);
+            assert.deepEqual(evidence.references.map(value => [value.name, value.printing, value.grader, value.grade]), [[name, "UNLIMITED", grader, grade]]);
+            assert.equal(subject.title, title); assert.deepEqual(subject, original, "research does not rewrite seller claims");
+            assert.equal(applySoldPriceScreen(subject, evidence).screen.status, "DROPPED", title);
+            assert.equal(canAutoAnalyze(applySoldPriceScreen(subject, evidence)), false);
+            const cheap = applySoldPriceScreen({ ...subject, currentPrice: 5 }, evidence);
+            assert.equal(canAutoAnalyze(cheap), true, title); assert.equal(resultGroup(cheap, null), "candidates", "metadata cannot create a Deal");
+        }
+        assert.equal(calls.lookup, 1, "literal and saved residue share canonical catalog work");
+        assert.equal(calls.graded.length, 1, "matched market work is reused");
+        for (const suffix of ["Pristine", "Perfect", "Black Label", "(OC)", "(MC)"]) {
+            const qualified = await run(listing({ title: `${title} ${suffix}`, isGraded: true, images: ["front", "back"] }), wanted);
+            assert.equal(qualified.status, "UNAVAILABLE"); assert.deepEqual(qualified.references, []);
+        }
+        assert.equal(calls.graded.length, 1, "special tiers never borrow ordinary-grade prices");
+    }
+});
+
+test("four-word slab names reach exact catalog research without borrowing omitted sets or dropping form words", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("four-word name regression must remain offline"));
+    for (const [name, number] of [["Origin Forme Palkia VSTAR", "GG67/GG70"], ["Origin Forme Dialga VSTAR", "GG68/GG70"]]) {
+        const set = "Crown Zenith Galarian Gallery";
+        const wanted: SearchIntent = { ...intent, cardName: null, sets: [set], cardNumber: null, titleWords: [], graded: true };
+        const { run, calls } = harness({ cards: [card({ name: `${name} (Secret)`, setName: "SWSH: Crown Zenith: Galarian Gallery", cardNumber: number, variants: [variant("Holofoil")] })],
+            graded: async () => three({ title: `${name} ${number} ${set} Holo PSA 9`, price: 200, grader: "PSA", grade: "9", variant: "Holofoil" }) });
+        for (const omitted of [false, true]) {
+            const title = `2023 Pokemon TCG ${name} ${number} Secret Holo PSA 9 ${omitted ? "" : set}`.trim();
+            // Older title readings may have null for the four-word name; the
+            // current literal reading still supplies that source-observed claim.
+            const subject = await screenListingWithoutAi(listing({ title, isGraded: true, currentPrice: 1000, shipping: 5, images: ["front", "back"] }), wanted,
+                undefined, async value => ({ ...readTitleByRules(value), cardName: null }));
+            const evidence = await run(subject, wanted);
+            assert.equal(evidence.status, "AVAILABLE", title);
+            assert.equal(evidence.exactScope, !omitted, title);
+            assert.equal(evidence.references[0].name, `${name} (Secret)`);
+            const priced = applySoldPriceScreen(subject, evidence);
+            if (omitted) {
+                assert.equal(priced.screen.money, undefined, "requested set is research context, not observed identity");
+                assert.equal(priced.screen.status, "UNSCREENED");
+                assert.equal(canAutoAnalyze(priced), true);
+            } else {
+                assert.equal(priced.screen.status, "DROPPED");
+                assert.equal(canAutoAnalyze(priced), false);
+            }
+        }
+        assert.equal(calls.lookup, 1); assert.equal(calls.graded.length, 1);
+        const changed = await run(listing({ title: `Origin Forme ${name.includes("Palkia") ? "Dialga" : "Palkia"} VSTAR ${number} ${set} Holo PSA 9`, isGraded: true }), wanted);
+        assert.equal(changed.status, "UNAVAILABLE", "same number cannot erase a different printed species");
+        assert.equal(calls.graded.length, 1);
     }
 });
 
@@ -409,7 +553,9 @@ test("explicit edition research cannot borrow another printing's profitable pric
         assert.equal(evidence.exactScope, false, "requested edition is not observed seller or photo evidence");
         assert.deepEqual(subject, original);
         const screened = applySoldPriceScreen(subject, evidence, { targets: { minProfit: 0, minRoi: 0 } });
-        assert.equal(analysisPriority(screened, { minProfit: 0, minRoi: 0 }).band, printing === "UNLIMITED" ? 0 : 3);
+        assert.equal(screened.screen.money, undefined, "an unobserved requested edition cannot price this copy");
+        assert.equal(analysisPriority(screened, { minProfit: 0, minRoi: 0 }).band, 0);
+        assert.equal(analysisPriority(screened, { minProfit: 0, minRoi: 0 }).expectedProfit, null);
         const retargeted = retargetScreen(screened.screen, 200, { minProfit: 0, minRoi: 0 });
         assert.deepEqual(retargeted.soldEvidence?.references.map(reference => reference.printing), [printing], "local retargeting cannot restore out-of-query markets");
     }
@@ -679,6 +825,28 @@ test("sparse slab pages recover applicable sales without mixing grade, finish, p
     await run({ ...subject, id: "another-row" }, intent);
     assert.equal(calls.pages.length, 2, "another listing reuses the recovered exact market");
     assert.equal(calls.raw.length + calls.graded.length, 0);
+});
+
+test("title-only special slab sales share final eligibility before sparse-page stopping and fallback summaries", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("special-label screening must use only the supplied offline source"));
+    const special = sale({ title: "Charizard Base Set 4/102 Unlimited Holo CGC Pristine 10", grader: "CGC", grade: "10", price: 10000 });
+    const ordinary = sale({ title: "Charizard Base Set 4/102 Unlimited Holo CGC 10 Gem Mint", grader: "CGC", grade: "10",
+        grade_qualifier: "Gem Mint", price: 100, sold_at: new Date(NOW - 100 * DAY).toISOString() });
+    const { run, calls } = harness({ page: async (_id, target) => {
+        assert.equal(target.stopWhen!([special]), false, "title-only special tiers cannot stop sparse ordinary research");
+        if (!target.cursor) return { sales: [special], nextCursor: "ordinary" };
+        assert.equal(target.cursor, "ordinary");
+        assert.equal(target.stopWhen!([special, ordinary]), true);
+        return { sales: [ordinary], nextCursor: "unused" };
+    } });
+    const result = await run(listing({ title: "Charizard Base Set 4/102 Unlimited Holo CGC 10 Gem Mint", isGraded: true }), intent);
+    assert.equal(result.status, "AVAILABLE"); assert.equal(result.exactScope, true);
+    assert.equal(result.references.length, 1);
+    const summary = result.references[0].summary;
+    assert.equal(summary.count, 1); assert.equal(summary.median, 100); assert.equal(summary.windowDays, 180);
+    assert.equal(summary.dropped["qualified or special grade"], 1);
+    assert.deepEqual(summary.sales.map(sale => sale.title), [ordinary.title]);
+    assert.deepEqual(calls.pages.map(([, target]) => target.cursor), [undefined, "ordinary"]);
 });
 
 test("one exact recent slab sale stops pagination and admits photo verification without creating a Deal", async () => {

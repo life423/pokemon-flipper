@@ -99,10 +99,13 @@ test("raw seller cautions order priced research independently of shipping or exa
             else { warned.title += " NM"; warned.cardCondition = "Lightly Played"; }
             const before = JSON.stringify([ordinary, warned]), eligible = canAutoAnalyze(warned);
             const priority = analysisPriority(warned, targets);
-            assert.equal(priority.band, 2, `${mode}/${warning}`);
+            assert.equal(priority.band, mode === "incomplete-scope" ? 0 : 2, `${mode}/${warning}`);
             assert.equal(priority.rawResearchCaution, warning === "CONFLICT" ? "SELLER_CONDITION_CONFLICT" : "SELLER_DAMAGE");
             if (mode !== "ordinary-context") assert.equal(priority.rawMarketContext, null);
-            assert.ok(priority.expectedProfit! > analysisPriority(ordinary, targets).expectedProfit!);
+            if (mode === "incomplete-scope") {
+                assert.equal(priority.expectedProfit, null, "unresolved edition/finish cannot support priced priority");
+                assert.equal(analysisPriority(ordinary, targets).expectedProfit, null);
+            } else assert.ok(priority.expectedProfit! > analysisPriority(ordinary, targets).expectedProfit!);
             assert.ok(priority.evidence > analysisPriority(ordinary, targets).evidence);
             assert.ok(compareAnalysisPriority(ordinary, warned, targets) < 0, "caution precedes stronger photos and optimistic profit within the same financial band");
             assert.match(priority.reason, warning === "CONFLICT" ? /Seller condition claims disagree/ : /Seller describes heavy play or damage/);
@@ -128,6 +131,23 @@ test("LP-to-cleaner upside, unverified Mint claims and unknown conditions keep t
     const hitPoints = candidate("hit-points", 50); hitPoints.title += " 120 HP"; hitPoints.cardCondition = "Near Mint";
     assert.equal(analysisPriority(hitPoints, targets).contextPriority, true, "HP stats do not contradict the saved seller condition");
     assert.equal(analysisPriority(hitPoints, targets).rawResearchCaution, null);
+});
+
+test("an explicitly played listing does not borrow a better condition for paid queue priority", () => {
+    const played = { ...candidate("played", 30), cardCondition: "Moderately Played" };
+    const clean = { ...candidate("clean", 50), cardCondition: "Near Mint" };
+    const comps = (condition: "NEAR_MINT" | "MODERATELY_PLAYED", median: number): ScreeningSoldReference => {
+        const raw = reference();
+        return { ...raw, condition, summary: { ...raw.summary, grade: condition, median, low: median, high: median } };
+    };
+    const evidence = { status: "AVAILABLE" as const, exactScope: true, note: "Recent sold titles",
+        references: [comps("NEAR_MINT", 81), comps("MODERATELY_PLAYED", 23)] };
+    const rankedPlayed = applySoldPriceScreen(played, evidence);
+    const rankedClean = applySoldPriceScreen(clean, evidence);
+    assert.equal(analysisPriority(rankedPlayed).band, 0);
+    assert.equal(analysisPriority(rankedClean).band, 2);
+    assert.ok(compareAnalysisPriority(rankedClean, rankedPlayed) < 0);
+    assert.equal(canAutoAnalyze(rankedPlayed), true);
 });
 
 test("financial bands still take precedence over raw caution and slab research receives no raw penalty", () => {

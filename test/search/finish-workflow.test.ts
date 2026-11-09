@@ -111,7 +111,7 @@ test("collector-number requests distinguish3/82from20/82 without inferring a fin
 });
 
 const catalogCard = (number: string, finish = "HOLO"): CardRecord => ({ source: "pkmnprices", id: number, name: "Dark Blastoise", setName: "Team Rocket",
-    cardNumber: number, tcgPlayerId: null, variants: ["FIRST_EDITION", "UNLIMITED"].map(printing => ({ name: `${printing} ${finish}`, printing, finish, prices: [] })) });
+    cardNumber: number, variants: ["FIRST_EDITION", "UNLIMITED"].map(printing => ({ name: `${printing} ${finish}`, printing, finish })) });
 
 test("the exact conversational holo request resolves through catalog before one eBay page and excludes the other numbered card", async t => {
     const fetch = t.mock.method(globalThis, "fetch", () => assert.fail("query and listing sources are supplied offline"));

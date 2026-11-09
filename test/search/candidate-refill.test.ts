@@ -30,8 +30,8 @@ function steps(rows: ListingSummary[], soldScreening: SoldScreeningFactory) {
 
 test("a worthwhile 51st listing refills fifty price exclusions using one page and one shared market lookup", async t => {
     const transport = t.mock.method(globalThis, "fetch", async () => assert.fail("only the injected saved sources may run"));
-    const card: CardRecord = { source: "pkmnprices", id: 1, name: "Charizard", setName: "Base Set", cardNumber: "4/102", tcgPlayerId: null,
-        variants: [{ name: "Unlimited Holofoil", printing: "UNLIMITED", finish: "HOLO", prices: [] }] };
+    const card: CardRecord = { source: "pkmnprices", id: 1, name: "Charizard", setName: "Base Set", cardNumber: "4/102",
+        variants: [{ name: "Unlimited Holofoil", printing: "UNLIMITED", finish: "HOLO" }] };
     const sales: Comp[] = [90, 100, 110].map((price, id) => ({ id, price, title: "Charizard Base Set 4/102 Unlimited Holo English PSA 8",
         grader: "PSA", grade: "8", variant: "Unlimited Holofoil", currency: "USD", attribution: "exact", sale_type: "fixed_price",
         sold_at: new Date(NOW - 86400000).toISOString() }));

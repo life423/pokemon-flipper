@@ -13,6 +13,9 @@ import { canonicalCatalogName, sameCatalogName } from "./search-name.ts";
 import { jungleNoSymbolReason } from "../../shared/jungle-no-symbol.ts";
 import { usableSoldReference } from "../../shared/sold-evidence.ts";
 import { SOLD_MARKET_PAGE_LIMIT } from "../../shared/research-policy.ts";
+import { hasSpecialSlabTitle, missingTextureReason } from "../../shared/grade-qualifier.ts";
+import { availablePhotoCount } from "../../shared/analysis-priority.ts";
+import { sellerConditionClues } from "../../shared/raw-condition-claim.ts";
 
 type Source = { lookupCards: LookupCards; fetchComps: FetchComps; fetchRawComps: FetchRawComps; fetchSoldPage?: FetchSoldPage };
 type Finish = ScreeningSoldReference["finish"];
@@ -22,16 +25,14 @@ const FINISHES = ["HOLO", "NON_HOLO", "REVERSE_HOLO"];
 const DAY_MS = 86_400_000;
 const hasMatchedSales = (references: ScreeningSoldReference[]) => references.some(reference => usableSoldReference(reference, reference.grader !== null));
 const ordinarySale = (sale: Comp) => !/\blot\b|\bbundle\b|\bset of\b|\b\d+\s*(?:cards|pcs)\b|\bsigned\b|\bautograph(?:ed)?\b|\baltered\b|\bcustom\b|\bproxy\b|\breplica\b|\bmiscut\b|\bcrimp\b|\bholo\s*bleed\b|\bdouble\s*holo\b/i.test(sale.title);
-const specialSlab = (title: string) => /\((?:oc|mk|mc|st|pd|of)\)|\b(?:pristine|black label|perfect|altered|miscut|qualified|qualifier|authentic(?:ated)?)\b/i.test(title);
 function marketSummaries(sales: Comp[], market: Market, grader: string | null, grade: string | null, asOf: number): ScreeningSoldReference[] {
     const { record, printing, finish } = market;
     const eligible = uniqueSoldComps(sales).filter(sale => sale.currency === "USD" && ordinarySale(sale) && matchesSoldTarget(sale, record, grader, grade));
     const base = { recordId: record.id, name: record.name, set: record.setName!, cardNumber: record.cardNumber, printing, finish };
     if (grader && grade) {
-        const ordinary = eligible.filter(sale => !specialSlab(sale.title));
         const criteria: CompCriteria = { printing, setName: record.setName, finish, grader, grade, now: asOf };
-        const recent = ordinary.filter(sale => compProblem(sale, criteria) === null && asOf - Date.parse(sale.sold_at) <= 90 * DAY_MS);
-        const summary = summarizeComps(ordinary, { ...criteria, windowDays: recent.length ? 90 : 180 });
+        const recent = eligible.filter(sale => compProblem(sale, criteria) === null && asOf - Date.parse(sale.sold_at) <= 90 * DAY_MS);
+        const summary = summarizeComps(eligible, { ...criteria, windowDays: recent.length ? 90 : 180 });
         return summary.count ? [{ ...base, grader, grade, condition: null, summary }] : [];
     }
     const raw = eligible.filter(sale => !sale.grader && !sale.grade && !/\b(?:psa|cgc|bgs|sgc|tag)\b/i.test(sale.title));
@@ -65,6 +66,7 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
     const catalogs = new Map<string, Promise<CardRecord[]>>();
     const pages = new Map<string, Promise<SoldPage>>();
     const references = new Map<string, Promise<MarketEvidence>>();
+    let gradingMarket: string | undefined;
     const checked = async <T>(work: () => Promise<T>) => { signal?.throwIfAborted(); const value = await work(); signal?.throwIfAborted(); return value; };
     function memo<T>(cache: Map<string, Promise<T>>, key: string, work: () => Promise<T>) {
         signal?.throwIfAborted();
@@ -74,12 +76,12 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
         // a second pre-await abort check would orphan pending's rejection.
         return pending.then(value => { signal?.throwIfAborted(); return value; });
     }
-    const marketReferences = (market: Market, grader: string | null, grade: string | null) => {
+    const marketReferences = (market: Market, grader: string | null, grade: string | null, gradingScout = false) => {
         const { record, printing, finish } = market;
-        const labels = titleDecidesPrinting(record.setName)
+        const labels = !gradingScout && titleDecidesPrinting(record.setName)
             ? [...new Set(record.variants.filter(variant => variant.finish === finish).map(variant => variant.name))]
             : [...new Set(market.labels)];
-        const key = JSON.stringify([record.id, printing, finish, labels, grader, grade]);
+        const key = JSON.stringify([record.id, printing, finish, labels, grader, grade, gradingScout]);
         return memo(references, key, async () => {
             const sales: Comp[] = [];
             let accepted: ScreeningSoldReference[] = [];
@@ -109,7 +111,7 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
                     pageCount++;
                     sales.push(...page.sales);
                     accepted = marketSummaries(sales, market, grader, grade, asOf);
-                    if (page.nextCursor && !hasMatchedSales(accepted)) pending.push({ variant, cursor: page.nextCursor, stream: page.stream });
+                    if (!gradingScout && page.nextCursor && !hasMatchedSales(accepted)) pending.push({ variant, cursor: page.nextCursor, stream: page.stream });
                 } catch (error) {
                     signal?.throwIfAborted();
                     if (error instanceof StorageUnavailableError || error instanceof PriceResearchBudgetError && error.reason !== "LIMIT") throw error;
@@ -121,9 +123,34 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
         });
     };
 
+    async function gradingReferences(listing: ListingSummary, intent: SearchIntent, market: Market) {
+        if (listing.isGraded || listing.buyingOption !== "FIXED_PRICE" || !intent.cardName || !intent.cardNumber || intent.sets.length !== 1 ||
+            !sameCatalogName(market.record.name, intent.cardName) || !sameCardNumber(market.record.cardNumber, intent.cardNumber) || market.labels.length !== 1 ||
+            availablePhotoCount(listing.images) < 2) return [];
+        const condition = sellerConditionClues(listing);
+        if (condition.severe || condition.claim === "MODERATELY_PLAYED") return [];
+
+        // One named market per search session. Read at most four root pages,
+        // shared across matching listings and with the final pricing cache.
+        const key = JSON.stringify([market.record.id, market.printing, market.finish, market.labels[0]]);
+        if (gradingMarket && gradingMarket !== key) return [];
+        gradingMarket = key;
+        const matches: ScreeningSoldReference[] = [];
+        for (const grade of ["8", "9"]) {
+            for (const grader of ["PSA", "CGC"]) {
+                const result = await marketReferences(market, grader, grade, true);
+                matches.push(...result.references.filter(reference => reference.summary.windowDays === 90));
+                if (result.issue) return matches;
+            }
+        }
+        return matches;
+    }
+
     return async (listing: ListingSummary, intent: SearchIntent): Promise<ScreeningSoldEvidence> => {
         signal?.throwIfAborted();
         const evidence: ScreeningSoldEvidence = { status: "UNAVAILABLE", exactScope: false, references: [], note: "The listing does not establish one exact card market for sold-price screening." };
+        const textureError = missingTextureReason(listing.title);
+        if (textureError) return { ...evidence, note: textureError };
         const card = listing.screen?.card;
         const reading = readSoldTitleClaims(listing.title, [card?.set, ...intent.sets].filter((set): set is string => Boolean(set)));
         if (reading.kind && reading.kind !== "SINGLE_CARD") return evidence;
@@ -150,7 +177,7 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
         const finish = titleFinish === "NOT_STATED" ? listedFinish ?? null : titleFinish;
         const titleGrader = reading.grader, listedGrader = listing.listedAttributes?.grader?.toUpperCase();
         const titleGrade = reading.grade, listedGrade = listing.listedAttributes?.grade;
-        if (listing.isGraded && (specialSlab(listing.title) || titleGrader && listedGrader && titleGrader !== listedGrader ||
+        if (listing.isGraded && (hasSpecialSlabTitle(listing.title) || titleGrader && listedGrader && titleGrader !== listedGrader ||
             titleGrade && listedGrade != null && Number(titleGrade) !== listedGrade)) return evidence;
         const grader = listing.isGraded ? listedGrader ?? titleGrader : null;
         const grade = listing.isGraded ? listedGrade == null ? titleGrade : String(listedGrade) : null;
@@ -183,6 +210,11 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
                 if (!result.complete) return incompleteEvidence(evidence, result.issue === "BUDGET");
             }
             evidence.status = hasMatchedSales(evidence.references) ? "AVAILABLE" : "UNAVAILABLE";
+            if (evidence.status === "UNAVAILABLE" && evidence.exactScope) {
+                const market = markets.values().next().value!;
+                const gradedSales = await gradingReferences(listing, intent, market);
+                if (gradedSales.length) evidence.gradingReferences = gradedSales;
+            }
             evidence.note = evidence.status === "AVAILABLE"
                 ? listing.isGraded ? "Recent matched sold amounts for the listed exact grader and grade; the photographed label is not yet verified."
                     : "Recent matched raw sold amounts stay in separate seller-condition buckets. Unstated-condition sales provide market context only, never a condition-specific resale value or grade. These references do not assess this listing's condition or grading upside."

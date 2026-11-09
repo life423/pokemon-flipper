@@ -51,17 +51,16 @@ export interface ScreeningSoldEvidence {
     // confirmation. Unstated premium printings remain possible.
     exactScope: boolean;
     references: ScreeningSoldReference[];
+    gradingReferences?: ScreeningSoldReference[];
     note: string;
 }
 export interface Screen {
     soldEvidence?: ScreeningSoldEvidence;
+    gradingLead?: { grader: Grader; grade: number };
     needsAnalysis?: "IDENTITY" | "FINISH" | "SLAB_LABEL" | "PRICE_EVIDENCE";
     status: "CANDIDATE" | "DROPPED" | "UNSCREENED";
     reason: string | null;
-    // A preliminary raw-market quote, never a certified graded resale ceiling.
-    lowResale?: { minimum: number; rawMarketMaximum: number; cheapFirstEditionBaseSet: boolean };
     focusedReview?: "CHEAP_FIRST_EDITION_BASE_SET";
-    conditionUpside?: { sellerCondition: RawCondition; targetCondition: RawCondition; rawMarketPrice: number };
     pricingIssue?: PricingIssue;
     pricingRetry?: PricingRetry;
     card: {
@@ -78,7 +77,7 @@ export interface Screen {
     // other targets without another lookup.
     money?: {
         shipping: number;
-        paths: { label: string; expectedNet: number; fixedCosts: number; path?: PathKind; downsideNet?: number; compCount?: number; compConfidence?: Confidence }[];
+        paths: { label: string; expectedNet: number; fixedCosts: number; path?: PathKind; rawCondition?: RawCondition; downsideNet?: number; compCount?: number; compConfidence?: Confidence }[];
         // Lowest quoted played/damaged raw condition, when one is available.
         rawFloorNet?: number;
         // Legacy preliminary math cannot exclude raw grading upside while
@@ -308,11 +307,10 @@ export interface Identity {
 // ---- Prices ----
 
 export interface RawPrice {
-    crossCheck?: { source: "pokemonPriceTracker"; price: number; updatedAt: string | null };
     condition: RawCondition | "UNKNOWN";
     price: number;
     updatedAt: string | null;
-    basis?: "EBAY_SOLD" | "TCGPLAYER";
+    basis?: "EBAY_SOLD";
     comps?: CompSummary;
 }
 
@@ -327,7 +325,6 @@ export interface RawPricing extends PriceSource {
     conditionEvidence?: "AI_PHOTOS" | "SELLER_TEXT";
     reviewedSoldCopies?: number;
     sampledSoldCopies?: number;
-    crossCheckNote?: string;
     status: PriceStatus;
     reason?: string;
     printingLabel?: string;

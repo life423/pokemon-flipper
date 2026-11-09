@@ -1,6 +1,7 @@
 import { RAW_CONDITIONS, type RawCondition } from "../../shared/conditions.ts";
 import type { CompSummary, Identity, RawPrice, RawPricing } from "../../shared/types.ts";
-import { rawPricesFor, variantFor } from "./raw-prices.ts";
+import { variantFor } from "./raw-prices.ts";
+import { printingLabel } from "../identity/card-identity.ts";
 import { compProblem, matchesSoldTarget, summarizeComps, uniqueSoldComps } from "./sold-comps.ts";
 import type { CheckComps, Comp, FetchRawComps, PricedCard } from "./types.ts";
 import type { SoldConditionEvidence } from "../ai/sold-condition.ts";
@@ -17,12 +18,19 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
     acquireCondition?: (sales: readonly Comp[], identity: Identity, signal?: AbortSignal) => Promise<{ sale: Comp; evidence: SoldConditionEvidence } | null>;
     requestedCondition?: RawCondition; signal?: AbortSignal }): Promise<RawPricing> {
     signal?.throwIfAborted();
-    const fallback = rawPricesFor(card, identity);
-    const { variant } = variantFor(card, identity);
-    if (!variant || !card || card.source !== "pkmnprices" || !readyForPricing(identity) || !identity.name?.trim()) return fallback;
-    // A sole provider variant may support a marked market fallback even while
-    // the listing's finish is unresolved. It does not resolve that photo target.
-    if (assessCondition && !["HOLO", "NON_HOLO", "REVERSE_HOLO"].includes(identity.finish)) return fallback;
+    if (!readyForPricing(identity) || !identity.name?.trim()) {
+        return { status: "PRICE_UNAVAILABLE", reason: "The card isn't fully identified, so its raw sales can't be matched." };
+    }
+    if (card?.source !== "pkmnprices") {
+        return { status: "PRICE_UNAVAILABLE", reason: "No eBay sold market is available for this card." };
+    }
+    const { variant, reason } = variantFor(card, identity);
+    if (!variant) return { status: "PRICE_UNAVAILABLE", reason };
+    if (assessCondition && !["HOLO", "NON_HOLO", "REVERSE_HOLO"].includes(identity.finish)) {
+        return { status: "PRICE_UNAVAILABLE", reason: "The card's finish must be established before matching sold-copy condition evidence." };
+    }
+    const market = { source: card.source, printing: variant.printing, printingLabel: printingLabel(variant.printing, identity.set),
+        finish: variant.finish, variant: variant.name };
     try {
         const eligibleSale = (sale: Comp) => sale.currency === "USD" && sale.sale_type && !sale.grader && !sale.grade &&
             !/\b(psa|cgc|bgs|sgc|tag|lot|bundle)\b/i.test(sale.title) && compProblem({ ...sale, grader: "RAW", grade: "ANY" },
@@ -86,7 +94,7 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
             }
             const verdicts = checkComps && passing.length ? await checkComps(passing, {
                 cardName: identity.name ?? card.name, setName: variant.setName ?? identity.set ?? "",
-                cardNumber: identity.cardNumber ?? card.cardNumber, printingLabel: fallback.printingLabel ?? identity.printingLabel ?? "",
+                cardNumber: identity.cardNumber ?? card.cardNumber, printingLabel: market.printingLabel,
                 grader: "RAW", grade: condition,
                 finish: variant.finish, ...(assessCondition ? { conditionEvidence: "AI_PHOTOS" as const } : {}),
             }, signal) : undefined;
@@ -101,20 +109,21 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
         }
         const prices = RAW_CONDITIONS.flatMap<RawPrice>(condition => {
             const summary = summaries.find(s => s.grade === condition)!;
-            const market = fallback.prices?.find(p => p.condition === condition);
             // The shared sparse-sale policy applies to physical-condition
             // evidence. Keep the legacy title-only floor until its final-price
             // compatibility path is retired; seller text cannot gain admission.
             const minimum = assessCondition ? MIN_MATCHED_SALES : 3;
             if (summary.count >= minimum && summary.median !== null) return [{ condition, price: summary.median, updatedAt: summary.newestSale, basis: "EBAY_SOLD" as const, comps: summary }];
-            return market ? [{ ...market, basis: "TCGPLAYER" as const }] : [];
+            return [];
         });
-        return { ...fallback, status: prices.length ? "PRICED" : "PRICE_UNAVAILABLE", prices, ebayComps: summaries,
+        return { ...market, ...(prices.length ? { status: "PRICED", prices } : {
+            status: "PRICE_UNAVAILABLE", reason: "The available eBay sales don't establish a raw resale price for this printing and condition.",
+        }), ebayComps: summaries,
             conditionEvidence: assessCondition ? "AI_PHOTOS" : "SELLER_TEXT", reviewedSoldCopies: assessCondition ? sales.length : undefined, sampledSoldCopies,
-            evidenceNote: assessCondition ? `${sales.length} sold copies have accepted photo-condition assessments from ${sampledSoldCopies} returned records. Accepted findings are reused for unchanged photos. Matched-sale minimum for an eBay median: ${MIN_MATCHED_SALES}; one or two sales retain LOW confidence. Other conditions retain a marked market fallback.`
+            evidenceNote: assessCondition ? `${sales.length} sold copies have accepted photo-condition assessments from ${sampledSoldCopies} returned records. Accepted findings are reused for unchanged photos. Matched-sale minimum for an eBay median: ${MIN_MATCHED_SALES}; one or two sales retain LOW confidence.`
                 : "Screening uses seller-stated raw conditions. Final evaluations assess sold-copy photos where available. Up to 40 returned records over 90 days are sampled." };
     } catch {
         signal?.throwIfAborted();
-        return { ...fallback, prices: fallback.prices?.map(p => ({ ...p, basis: "TCGPLAYER" })), evidenceNote: "eBay raw sales are temporarily unavailable; using the condition-specific TCGplayer market fallback." };
+        return { ...market, status: "PRICE_UNAVAILABLE", reason: "eBay raw sales are temporarily unavailable." };
     }
 }

@@ -1,14 +1,10 @@
 import { finishOfVariant, mapVariantPrintings } from "../identity/card-identity.ts";
-import type { RawPrice } from "../../shared/types.ts";
 import type { CardVariant } from "./types.ts";
 
-// A card's printings from a price database's labels: each label mapped
-// to a printing and a finish, with that label's raw prices. Both price
-// sources build their cards this way.
+// Map each catalog label to the printing and finish used for sold research.
 export function cardVariants(
     labels: string[],
-    setName: string | null | undefined,
-    pricesFor: (label: string) => RawPrice[]
+    setName: string | null | undefined
 ): CardVariant[] {
     const printings = mapVariantPrintings(labels, setName);
 
@@ -16,7 +12,6 @@ export function cardVariants(
         name: label,
         printing: printings[label],
         finish: finishOfVariant(label),
-        prices: pricesFor(label),
     }));
 }
 

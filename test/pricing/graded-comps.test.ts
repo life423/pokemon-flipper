@@ -311,7 +311,7 @@ test("Classic Collection comps drop the 1999 original, metal cards, and the othe
     assert.deepEqual(summary.dropped, { "title names another product": 2, "metal or novelty card": 2 });
 });
 
-test("the AI checks only sales that passed the rules, and its drops are counted", async () => {
+test("only matched sales reach the optional check, and its accepted vetoes remain counted", async () => {
     const { identity, card } = await identifyCard(
         {
             title: "2000 Pokemon Neo Genesis Lugia 9/111 Holo Rare Unlimited",
@@ -322,10 +322,13 @@ test("the AI checks only sales that passed the rules, and its drops are counted"
     );
 
     const title = "2000 POKEMON NEO GENESIS #9 LUGIA-HOLO";
+    const vetoed = comp(2000, "2026-09-04", "Unlimited Holofoil", `${title} PSA 8`, { grade: "8" });
     const sales = [
         comp(1900, "2026-09-01", "Unlimited Holofoil", `${title} PSA 8`, { grade: "8" }),
         comp(2000, "2026-09-02", "Unlimited Holofoil", `${title} PSA 8 SIGNED BY ARTIST`, { grade: "8" }),
         comp(1950, "2026-09-03", "Unlimited Holofoil", `${title} PSA 8`, { grade: "8" }),
+        // A prior accepted check can veto an otherwise eligible comparison.
+        vetoed,
         // Fails the rules (another grade), so the AI never sees it.
         comp(1250, "2026-09-04", "Unlimited Holofoil", `${title} PSA 7`, { grade: "7" }),
     ];
@@ -340,14 +343,16 @@ test("the AI checks only sales that passed the rules, and its drops are counted"
             seen = comps.map((c) => c.title);
             assert.equal(target.printingLabel, "Unlimited");
             assert.equal(target.grade, "8");
-            return new Map(comps.map((c) => [c, /SIGNED/.test(c.title) ? { keep: false, reason: "SIGNED_OR_ALTERED", note: "signed" } : { keep: true, reason: null, note: "fits" }]));
+            return new Map(comps.map((c) => [c, c === vetoed ? { keep: false, reason: "SIGNED_OR_ALTERED", note: "accepted source check reports alteration" } : { keep: true, reason: null, note: "fits" }]));
         },
     });
 
     assert.equal(seen.length, 3);
+    assert.ok(seen.every(title => !/SIGNED/.test(title)), "the explicit signed-title mismatch needs no optional check");
     assert.equal(pricing.summary.count, 2);
     assert.equal(pricing.summary.median, 1925);
     assert.equal(pricing.summary.dropped["AI: signed or altered"], 1);
+    assert.equal(pricing.summary.dropped["title does not match target card or grade"], 1);
     assert.equal(pricing.summary.checkedByAI, true);
 });
 
@@ -368,6 +373,95 @@ test("ordinary CGC descriptions do not exclude otherwise matching exact-grade co
     assert.equal(summarizeComps([{ ...ordinary, grade: "8" }], target).count, 0);
     assert.equal(summarizeComps([{ ...ordinary, grader: "PSA" }], target).count, 0);
     assert.equal(summarizeComps([{ ...ordinary, title: `${ordinary.title} (OC)` }], target).count, 0);
+});
+
+test("title-only special tiers cannot stop final pagination or choose the current pricing window", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("special-label pricing must use only the supplied offline evidence"));
+    const { identity, card } = await identifyCard({ title: "Lugia Neo Genesis 9/111 Holo Unlimited", aspects: { Set: "Neo Genesis", "Card Number": "9/111", "Card Name": "Lugia", Language: "English" } },
+        photos("Lugia", "9/111"), { lookupCards: async () => [LUGIA] });
+    for (const [grader, specialLabel, ordinaryDescription] of [["CGC", "Pristine", "Gem Mint"], ["BGS", "Black Label", null], ["TAG", "Pristine", "Gem Mint"]]) {
+        const specials = [9000, 10000].map(price => comp(price, "2026-09-29", "Unlimited Holofoil", `Lugia Neo Genesis 9/111 Unlimited Holo ${grader} ${specialLabel} 10`, { grader, grade: "10" }));
+        const ordinary = comp(200, "2026-06-01", "Unlimited Holofoil", `Lugia Neo Genesis 9/111 Unlimited Holo ${grader} 10${ordinaryDescription ? ` ${ordinaryDescription}` : ""}`, {
+            grader, grade: "10", grade_qualifier: ordinaryDescription,
+        });
+        assert.ok(specials.every(sale => matchesSoldTarget(sale, { name: "Lugia", setName: "Neo Genesis", cardNumber: "9/111" }, grader, "10")),
+            "literal identity matching alone does not separate these special tiers");
+        for (const route of ["slab", "grading"]) {
+            let checks = 0;
+            const options = { now: NOW, grader, fetchComps: async (_id, { stopWhen }) => {
+                assert.equal(stopWhen(specials), false, `${grader} ${specialLabel} cannot stop ordinary-grade research`);
+                assert.equal(stopWhen([...specials, ordinary]), true, "one eligible ordinary sale can stop research");
+                return [...specials, ordinary];
+            }, checkComps: async passing => {
+                checks++;
+                assert.deepEqual(passing, [ordinary], "special tiers never reach the comp checker");
+                return new Map();
+            } };
+            const result = route === "slab" ? await compsForGrade(card, identity, { ...options, grade: 10 })
+                : await gradedPricesFor(card, identity, { low: 10, likely: 10, high: 10 }, options);
+            const summary = route === "slab" ? result.summary : result.byGrade[0];
+            assert.equal(result.status, "PRICED");
+            assert.equal(summary.count, 1); assert.equal(summary.median, 200); assert.equal(summary.confidence, "LOW");
+            assert.equal(summary.windowDays, 180, "special current sales cannot displace the eligible older fallback");
+            assert.equal(summary.dropped["qualified or special grade"], 2);
+            assert.equal(summary.dropped["price far from the other sales"], undefined);
+            assert.deepEqual(summary.sales.map(sale => sale.title), [ordinary.title]);
+            assert.equal(checks, 1);
+        }
+    }
+});
+
+test("shared sold rules preserve raw wording, ordinary grade descriptions and seller inventory codes", () => {
+    const rawTarget = { ...criteria("UNLIMITED", "Neo Genesis", "ANY"), grader: "RAW" };
+    const raw = ["Pristine condition", "Perfect condition", "Authenticated copy"].map(description => comp(200, "2026-09-01", "Unlimited Holofoil", `Lugia Neo Genesis 9/111 Unlimited Holo ${description}`, {
+        grader: "RAW", grade: "ANY",
+    }));
+    const rawSummary = summarizeComps(raw, rawTarget);
+    assert.equal(rawSummary.count, 3, "slab-only title policy cannot newly narrow raw evidence");
+    assert.deepEqual(rawSummary.dropped, {});
+    assert.equal(summarizeComps([{ ...raw[0], title: `${raw[0].title} (OC)` }], rawTarget).count, 0,
+        "raw evidence retains the existing parenthesized-code exclusion");
+    assert.equal(summarizeComps([{ ...raw[0], grade_qualifier: "unknown" }], rawTarget).count, 0,
+        "structured qualifiers remain separate from title wording");
+
+    for (const [grader, grade, description] of [["PSA", "9", "Mint"], ["CGC", "10", "Gem Mint"], ["BGS", "9.5", "Gem Mint"], ["TAG", "10", "Gem Mint"]]) {
+        const title = `Wizards of the Coast Lugia Neo Genesis 9/111 Unlimited Holo ${grader} ${grade} ${description} SKU OC123 MC456 ST789 PD101 OF202 Q3963-5`;
+        const ordinary = comp(200, "2026-09-01", "Unlimited Holofoil", title, { grader, grade, grade_qualifier: description });
+        const summary = summarizeComps([ordinary], { ...criteria("UNLIMITED", "Neo Genesis", grade), grader });
+        assert.equal(summary.count, 1, title);
+        assert.deepEqual(summary.dropped, {});
+        assert.equal(summary.sales[0].title, title, "source inventory and publisher wording remain intact");
+    }
+});
+
+test("certificate numbers and a distant PSA 8 description preserve matched slab sales", async () => {
+    const now = Date.parse("2026-11-04T12:00:00Z");
+    const variant = "1st Edition Holofoil";
+    const examples = [
+        { name: "Jolteon", set: "Jungle", number: "4/64", price: 575, date: "2026-10-28",
+            title: "Pokémon TCG 1999 Jungle Jolteon 4/64 1st Edition Holo PSA 8 Cert 47915931" },
+        { name: "Celebi", set: "Neo Revelation", number: "3/64", price: 1099.99, date: "2026-10-26",
+            title: "Celebi #3 - PSA 8 Neo Revelation 1st Edition Holo 2001 Pokemon NM-MT 3/64" },
+    ];
+    for (const { name, set, number, price, date, title } of examples) {
+        const identity = { status: "IDENTIFIED", name, set, cardNumber: number, printing: "FIRST_EDITION", finish: "HOLO", language: "English" };
+        const card = { source: "pkmnprices", name, cardNumber: number, records: [],
+            variants: [{ name: variant, printing: "FIRST_EDITION", finish: "HOLO", recordId: 1, setName: set }] };
+        const sale = comp(price, date, variant, title, { grade: "8" });
+        const qualified = { ...sale, title: `${title} (OC)` };
+        const result = await compsForGrade(card, identity, { grader: "PSA", grade: 8, now, fetchComps: async () => [sale, qualified] });
+        assert.equal(result.status, "PRICED", title);
+        assert.equal(result.summary.median, price);
+        assert.equal(result.summary.count, 1);
+        assert.equal(result.summary.sales[0].title, title);
+        assert.equal(result.summary.dropped["qualified or special grade"], 1);
+    }
+
+    const [jolteon, celebi] = examples;
+    assert.equal(matchesSoldTarget({ title: jolteon.title.replace(" 47915931", "") },
+        { name: jolteon.name, setName: jolteon.set, cardNumber: jolteon.number }, "PSA", "8"), false, "bare Cert remains unresolved");
+    assert.equal(matchesSoldTarget({ title: celebi.title.replace("PSA 8", "PSA 9") },
+        { name: celebi.name, setName: celebi.set, cardNumber: celebi.number }, "PSA", "9"), false, "NM-MT is not an ordinary PSA 9 description");
 });
 
 test("final slab and grading prices reject another card before median and outlier selection", async () => {

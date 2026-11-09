@@ -1,6 +1,6 @@
 import { cardLanguageStatus } from "./card-language.ts";
 import { sellerConditionClues } from "./raw-condition-claim.ts";
-import { usableSoldReference, soldReferenceScope } from "./sold-evidence.ts";
+import { hasExactSoldScope, usableSoldReference, soldReferenceScope } from "./sold-evidence.ts";
 import { cents } from "./money/cents.ts";
 import { setKey } from "./sets.ts";
 import type { ListingSummary } from "./types.ts";
@@ -21,11 +21,8 @@ export function rawMarketContext(listing: ListingSummary, now = Date.now()): Raw
     if (listing.isGraded || listing.buyingOption !== "FIXED_PRICE" || listing.match || listing.availability === "UNAVAILABLE" ||
         listing.screen?.status === "DROPPED" || listing.screen?.junk || cardLanguageStatus(listing.title) === "OTHER" ||
         listing.screen?.priceAnomaly && !listing.screen.priceAnomaly.photoChecked ||
-        !evidence?.exactScope || evidence.status !== "AVAILABLE" || !evidence.references.length ||
+        !evidence || evidence.status !== "AVAILABLE" || !hasExactSoldScope(evidence, listing.screen?.card?.printing) ||
         price === null || !Number.isFinite(price) || price <= 0 || shipping === null || !Number.isFinite(shipping) || shipping < 0) return null;
-    // An unusable second market must not disappear and make the remaining
-    // cheaper printing or finish look uniquely applicable.
-    if (new Set(evidence.references.map(soldReferenceScope)).size !== 1) return null;
     const references = evidence.references.filter(reference => reference.condition === null && usableSoldReference(reference, false) &&
         reference.summary.windowDays! <= 90);
     if (references.length !== 1) return null;
