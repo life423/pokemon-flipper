@@ -3,6 +3,8 @@ import { sellerConditionClues } from "./raw-condition-claim.ts";
 import { hasExactSoldScope, usableSoldReference, soldReferenceScope } from "./sold-evidence.ts";
 import { cents } from "./money/cents.ts";
 import { setKey } from "./sets.ts";
+import { normalizedPhoto } from "./listing-evidence.ts";
+import { finishClaim } from "./finish.ts";
 import type { ListingSummary } from "./types.ts";
 
 export interface RawMarketContext {
@@ -11,6 +13,34 @@ export interface RawMarketContext {
     deliveredAsking: number;
     askingToSoldMedian: number;
     caution: "UNUSUALLY_LOW" | "SELLER_DAMAGE" | "SELLER_CONDITION_CONFLICT" | null;
+}
+
+// This is a spend decision, not a valuation or a permanent exclusion. A few
+// recent clean raw sales can flag an extreme premium while a plausible grading
+// lead or better listing evidence leaves the photo path open.
+export function deferRawPremiumPhotos(listing: ListingSummary, now: number): boolean {
+    const { screen, currentPrice, shipping } = listing;
+    const evidence = screen?.soldEvidence;
+    if (listing.isGraded || listing.buyingOption !== "FIXED_PRICE" || listing.match || screen?.gradingLead || screen?.focusedReview ||
+        listing.mistakes?.some(mistake => mistake.kind !== "GENERIC_TITLE") ||
+        !evidence || evidence.status !== "AVAILABLE" || !hasExactSoldScope(evidence, screen?.card?.printing) ||
+        currentPrice === null || !Number.isFinite(currentPrice) || currentPrice <= 0 || shipping === null || !Number.isFinite(shipping) || shipping < 0) return false;
+
+    const titleFinish = finishClaim(listing.title);
+    const finish = titleFinish === "NOT_STATED" ? listing.listedAttributes?.finish : titleFinish;
+    if (finish !== evidence.references[0].finish || new Set(listing.images.map(normalizedPhoto)).size >= 3) return false;
+    const condition = sellerConditionClues(listing).claim;
+    if (condition === "MINT" || condition === "NEAR_MINT") return false;
+
+    const recent = evidence.references.filter(reference => {
+        const newest = Date.parse(reference.summary?.newestSale ?? "");
+        return usableSoldReference(reference, false) && reference.summary.windowDays! <= 90 && newest <= now && now - newest <= 90 * 86_400_000;
+    });
+    const clean = recent.some(({ condition, summary }) => (condition === "MINT" || condition === "NEAR_MINT") && summary.count >= 3 && summary.high !== null);
+    if (!clean) return false;
+    const highest = Math.max(...recent.map(({ summary }) => cents(summary.high ?? summary.median!)));
+    const delivered = cents(currentPrice) + cents(shipping);
+    return Number.isSafeInteger(delivered) && Number.isSafeInteger(highest) && delivered > highest * 2;
 }
 
 // Research order only. Unspecified sold-copy condition cannot establish the

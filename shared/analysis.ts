@@ -7,6 +7,7 @@ import { photoReviewStatus } from "./photo-review.ts";
 import { observedCardKind } from "./photo-evidence.ts";
 import { priceEvidenceGap } from "./money/price-evidence.ts";
 import { missingTextureReason } from "./grade-qualifier.ts";
+import { deferRawPremiumPhotos } from "./raw-market-context.ts";
 
 export type AutoAnalysisBlockReason =
     | "OUTSIDE_AUCTION_WINDOW"
@@ -21,6 +22,7 @@ export type AutoAnalysisBlockReason =
     | "SCREEN_DROPPED"
     | "SOLD_EVIDENCE_MISSING"
     | "SOLD_EVIDENCE_DEFERRED"
+    | "RAW_PRICE_PREMIUM"
     | "CRITERIA_MISMATCH"
     | "NO_ANALYSIS_CANDIDATE";
 
@@ -44,6 +46,7 @@ export function autoAnalysisBlockReason(listing: ListingSummary, now = Date.now(
         if (screen.soldEvidence.status !== "AVAILABLE" && !screen.gradingLead && screen.focusedReview !== "CHEAP_FIRST_EDITION_BASE_SET") {
             return screen.soldEvidence.status === "DEFERRED" ? "SOLD_EVIDENCE_DEFERRED" : "SOLD_EVIDENCE_MISSING";
         }
+        if (deferRawPremiumPhotos(listing, now)) return "RAW_PRICE_PREMIUM";
     }
 
     const temporaryPrice = pricingIssue === "TEMPORARY" || pricingIssue === "RATE_LIMIT";
@@ -100,7 +103,7 @@ export function resultGroup(listing: ListingSummary, evaluation: Evaluation | nu
         if (listing.screen.status === "DROPPED") return null;
         // Missing market data is unfinished sorting work, not a request for
         // the user to identify the card or authorize automatic paid photos.
-        if (listing.screen.soldEvidence.status !== "AVAILABLE") return "candidates";
+        if (listing.screen.soldEvidence.status !== "AVAILABLE" || deferRawPremiumPhotos(listing, Date.now())) return "candidates";
     }
     if (!evaluation && canRetryPricing(listing)) return "candidates";
     if (!evaluation && canAutoAnalyze(listing)) return "candidates";

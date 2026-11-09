@@ -332,6 +332,37 @@ test("raw sold research gates condition cohorts but selects by recency independe
     });
 });
 
+test("raw sold-photo work stops when no remaining comp can meet targets and resumes with looser terms", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("target deferral should use mocked providers only"));
+    const live = reading();
+    live.condition!.rawCondition = "LIGHTLY_PLAYED";
+    live.condition!.gradeRange = null;
+    let liveReads = 0, soldReads = 0;
+    const sale: Comp = { id: "lp", title: "Venusaur Base Set 15/102 Unlimited Holo LP", price: 175,
+        sold_at: new Date(now - 86400000).toISOString(), variant: "Holofoil", currency: "USD", attribution: "exact",
+        sale_type: "fixed_price", listing_url: null, grader: null, grade: null, grade_qualifier: null };
+    const { evaluate } = harness({
+        details: async id => details({ id, price: 100, shipping: 5.96 }),
+        assess: async () => { liveReads++; return { result: live, usage: { inputTokens: 700, outputTokens: 450 } }; },
+        fetchRawComps: async () => [sale],
+        soldCondition: () => ({ usage: [], read: async () => null, status: () => "UNREVIEWED",
+            acquire: async () => { soldReads++; return { condition: "LIGHTLY_PLAYED", evidence: ["Accepted physical wear evidence."], photoCount: 4 }; } }),
+    });
+    const id = "v1|raw-target-deferral|0", targets = { minProfit: 0, minRoi: 0.5 };
+    const blocked = await evaluate(id, { targets });
+    assert.equal(blocked.underwriting?.verdict, "CANT_PRICE");
+    assert.match(blocked.rawPricing?.evidenceNote ?? "", /skipped because none/);
+    assert.equal(soldReads, 0);
+    const repeated = await evaluate(id, { targets });
+    assert.ok(repeated.reusedSteps.includes("savedEvaluation"));
+    assert.equal(soldReads, 0);
+    const relaxed = await evaluate(id, { targets: { minProfit: 0, minRoi: 0 } });
+    assert.equal(relaxed.underwriting?.verdict, "BUY_RAW");
+    assert.equal(relaxed.rawPricing?.soldPhotoDeferred, undefined);
+    assert.equal(soldReads, 1);
+    assert.equal(liveReads, 1, "reconsidering the price evidence reuses the live copy's photo reading");
+});
+
 test("catalog-corroborated photos correct stale seller fields without repurchasing the accepted reading or restoring a generic mismatch hold", async () => {
     const listing = details({ aspects: { ...details().aspects, "Card Number": "14/102", Finish: "Regular" } });
     const accepted = reading(); accepted.condition!.rawCondition = "LIGHTLY_PLAYED"; accepted.condition!.gradeRange = null;

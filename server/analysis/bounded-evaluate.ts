@@ -134,6 +134,13 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         // Legacy checkpoints and older private hashes did not include these
         // item specifics. Re-run identity with accepted photos when they change.
         const matchesPrintingClaim = (saved: Evaluation) => printingClaimFromAspects(saved.listing.aspects) === printingClaim;
+        const money = { ...MONEY_CONFIG, targets: options.targets ?? MONEY_CONFIG.targets };
+        const canReuseRawResearch = (saved: Evaluation) => {
+            const deferred = saved.rawPricing?.soldPhotoDeferred;
+            return !deferred || ((listing.price ?? Infinity) >= deferred.price &&
+                (listing.shipping ?? MONEY_CONFIG.buying.assumedShippingWhenUnknown) >= deferred.shipping &&
+                money.targets.minProfit >= deferred.targets.minProfit && money.targets.minRoi >= deferred.targets.minRoi);
+        };
         const finish = async () => {
             Object.assign(evaluation, withoutUnsupportedVariantPrices(evaluation));
             evaluation.underwriting = underwrite(evaluation); evaluation.rating = rateDeal(evaluation);
@@ -191,7 +198,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             hasFreshStampTerms(evaluation.listing, deps.now());
         const latest = legacy?.latestEvaluation?.evaluation;
         const revisedLatest = latest ? recheckSavedSlab(latest, listing) : null;
-        if (latest && !retryableStamp(latest) && matchesPrintingClaim(latest) && !latest.pricingDeferred && !revisedLatest!.needsPricing && legacy?.latestEvaluation?.evidenceKey === listingEvidenceKey({ title: listing.title, images: listing.images }) && currentPriceEvidence(latest, deps.now()) && !await hasNewerSharedReading(latest)) {
+        if (latest && !retryableStamp(latest) && matchesPrintingClaim(latest) && !latest.pricingDeferred && !revisedLatest!.needsPricing && canReuseRawResearch(latest) && legacy?.latestEvaluation?.evidenceKey === listingEvidenceKey({ title: listing.title, images: listing.images }) && currentPriceEvidence(latest, deps.now()) && !await hasNewerSharedReading(latest)) {
             if (cardLanguageStatus(listing.title, [latest.identity?.language, latest.photoCheck?.cardIdentity?.language]) === "OTHER") throw new EnglishOnlyError();
             const reused = withoutUnsupportedRawPrices(withoutUnsupportedVariantPrices(revisedLatest!.evaluation));
             reused.listing = { ...reused.listing, ...evaluation.listing, photosAnalyzed: latest.listing.photosAnalyzed };
@@ -202,7 +209,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         const remembered = await privateEvaluations.load(itemId);
         const revisedRemembered = remembered ? recheckSavedSlab(remembered.evaluation, listing) : null;
         if (remembered?.contextKey === privateContext.contextKey && !retryableStamp(remembered.evaluation) &&
-            matchesPrintingClaim(remembered.evaluation) && !remembered.evaluation.pricingDeferred && !revisedRemembered!.needsPricing && (remembered.evaluation.assessmentVersion === ANALYSIS_VERSION || plans.some(plan => plan.version === remembered.evaluation.assessmentVersion)) && currentPriceEvidence(remembered.evaluation, deps.now()) && !await hasNewerSharedReading(remembered.evaluation)) {
+            matchesPrintingClaim(remembered.evaluation) && !remembered.evaluation.pricingDeferred && !revisedRemembered!.needsPricing && canReuseRawResearch(remembered.evaluation) && (remembered.evaluation.assessmentVersion === ANALYSIS_VERSION || plans.some(plan => plan.version === remembered.evaluation.assessmentVersion)) && currentPriceEvidence(remembered.evaluation, deps.now()) && !await hasNewerSharedReading(remembered.evaluation)) {
             const reused = withoutUnsupportedRawPrices(withoutUnsupportedVariantPrices(revisedRemembered!.evaluation));
             if (cardLanguageStatus(listing.title, [reused.identity?.language, reused.photoCheck?.cardIdentity?.language]) === "OTHER") throw new EnglishOnlyError();
             reused.listing = { ...reused.listing, ...evaluation.listing, photosAnalyzed: reused.listing.photosAnalyzed };
@@ -375,9 +382,11 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                 const sold = deps.soldCondition({ condition: condition.rawCondition, loadDetails: (...args) => guarded(() => deps.details(...args)),
                     cached: deps.cached, save: deps.save, now: deps.now });
                 const beforeRaw = priceLimits;
+                let soldPhotoDeferred: NonNullable<Evaluation["rawPricing"]>["soldPhotoDeferred"];
                 const raw = await rawPricesWithSales(card, identity, {
                     fetchRawComps: (...args) => guarded(() => deps.fetchRawComps(...args)), signal, now: deps.now(), requestedCondition: condition.rawCondition,
                     assessCondition: (sale, target) => guarded(() => sold.read(sale, target, signal)),
+                    conditionStatus: sold.status,
                     acquireCondition: allowSoldPhoto ? async sales => {
                         // Resolving another copy's resale price cannot settle
                         // this copy's suspected structural damage or authenticity.
@@ -385,11 +394,12 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                         const shipping = listing.shipping ?? MONEY_CONFIG.buying.assumedShippingWhenUnknown;
                         const pending = sales.filter(sale => sold.status(sale, identity) === "UNREVIEWED" &&
                             matchesSoldTarget(sale, { name: identity.name!, setName: identity.set, cardNumber: identity.cardNumber }));
-                        const couldCoverCosts = (sale: Comp) => {
-                            if (listing.price === null || !Number.isFinite(sale.price) || sale.price <= 0) return false;
+                        const price = listing.price;
+                        if (price === null) return null;
+                        const meetsTargets = (sale: Comp) => {
+                            if (!Number.isFinite(sale.price) || sale.price <= 0) return false;
                             const net = netFromSale(sale.price, "raw", MONEY_CONFIG.selling);
-                            return pathNumbers({ expectedNet: net, downsideNet: net, fixedCosts: 0, shipping, price: listing.price },
-                                { ...MONEY_CONFIG, targets: { minProfit: 0, minRoi: 0 } }).profit > 0;
+                            return pathNumbers({ expectedNet: net, fixedCosts: 0, shipping, price }, money).clears;
                         };
                         // Seller condition is a research clue, never the accepted
                         // category. Avoid buying a review of a known different
@@ -400,14 +410,21 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                         // Prices gate useful work for a cohort, not which sale
                         // gets reviewed. A newer losing sale must not be skipped
                         // in favor of an older sale that supports a purchase.
-                        const candidates = claimed.some(couldCoverCosts) ? claimed : unspecified.some(couldCoverCosts) ? unspecified : [];
+                        const candidates = claimed.some(meetsTargets) ? claimed : unspecified.some(meetsTargets) ? unspecified : [];
                         const sale = candidates.sort((a, b) => Date.parse(b.sold_at) - Date.parse(a.sold_at))[0];
-                        if (!sale) return null;
+                        if (!sale) {
+                            if (claimed.length || unspecified.length) soldPhotoDeferred = { price, shipping, targets: money.targets };
+                            return null;
+                        }
                         const evidence = await guarded(() => sold.acquire(sale, identity, signal));
                         return evidence ? { sale, evidence } : null;
                     } : undefined,
                 });
                 evaluation.usage.push(...sold.usage.map(usage => ({ step: "soldConditionAssessment", ...usage })));
+                if (soldPhotoDeferred) {
+                    raw.soldPhotoDeferred = soldPhotoDeferred;
+                    raw.evidenceNote = `${raw.evidenceNote} A new sold-photo check was skipped because none of the remaining relevant sale amounts could meet the profit and return targets at these purchase terms.`;
+                }
                 prices.rawPricing = priceLimits > beforeRaw ? { status: "PRICE_UNAVAILABLE", reason: evaluation.pricingDeferred!.note } : raw;
             }
             if (hardFailure) throw hardFailure;
@@ -429,7 +446,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                 !hasFreshStampTerms(evaluation.listing, deps.now())) return finish();
             try {
                 const decision = await findStampDecision(evaluation, {
-                    targets: options.targets ?? MONEY_CONFIG.targets, now: deps.now(), identify, signal,
+                    targets: money.targets, now: deps.now(), identify, signal,
                     price: (identity, card) => priceRaw(identity, card, false),
                 });
                 if (hardFailure) throw hardFailure;

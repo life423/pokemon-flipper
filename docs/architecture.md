@@ -67,8 +67,14 @@ flowchart TD
    assigning the live card a condition or numeric grade. Unspecified-condition
    sales are context only. Raw comparisons cannot reject unassessed grading or
    premium-printing upside.
-4. At least one eligible matched sold observation authorizes automatic photo
-   work. Missing/deferred evidence stays in Sorting without an automatic paid
+4. At least one eligible matched sold observation can authorize automatic photo
+   work. A raw Buy It Now stays in Sorting without automatic photos if the
+   delivered ask exceeds twice the highest recent sale in its exact market,
+   at least three clean-condition sales support the comparison, and the listing
+   states the matched finish. A clean condition claim, three distinct photos,
+   or a supported grading or printing lead keeps it eligible. The detail panel
+   still allows an explicit check.
+   Missing/deferred evidence stays in Sorting without an automatic paid
    request, except the existing focused-review exception for a raw First Edition
    Base Set lead priced at $10 or less. The browser considers eligible loaded
    rows with two assessments in flight, reuses saved evidence first and shares
@@ -96,8 +102,12 @@ flowchart TD
    its photographed grader and certified grade, with no invented raw grading.
    If a compact check disproves the seller's slab claim, the evaluator retains
    the truthful result without automatically buying a raw fallback. Raw as-is
-   and supported grading-upside paths retain their existing pricing behavior;
-   a supported raw condition can be priced with a null numeric grade range.
+   and supported grading-upside paths use separate pricing evidence. A supported
+   raw condition can be priced with a null numeric grade range. Read saved sold
+   photos first. A new sold-photo check requires a relevant cohort with a sale
+   amount that meets current purchase terms and targets after fees. This gate
+   preserves the newest sale in a qualifying cohort. A lower purchase cost or
+   looser targets can reopen deferred research using the saved listing photos.
 9. Price evidence is assembled for the applicable resale paths. The money layer
    then calculates expenses, profit, return and the item-price ceiling. The client
    can change profit/ROI targets using those numbers without new provider calls.

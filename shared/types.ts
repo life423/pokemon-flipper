@@ -332,6 +332,7 @@ export interface RawPricing extends PriceSource {
     prices?: RawPrice[];
     ebayComps?: CompSummary[];
     evidenceNote?: string;
+    soldPhotoDeferred?: { price: number; shipping: number; targets: Targets };
 }
 
 export interface MarketActivity {

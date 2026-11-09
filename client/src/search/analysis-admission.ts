@@ -38,6 +38,7 @@ export function describeListingBlock(listing: ListingSummary, block: ListingBloc
             detail: listing.screen?.soldEvidence?.note,
         };
         case "SOLD_EVIDENCE_DEFERRED": return { label: "Sold-price lookup deferred", detail: listing.screen?.soldEvidence?.note };
+        case "RAW_PRICE_PREMIUM": return { label: "Asking well above recent raw sales", detail: "Delivered asking is more than twice the highest recent matched raw sale. There is too little evidence of grading upside to start paid photos automatically." };
         case "CRITERIA_MISMATCH": return { label: listing.match === "UNCONFIRMED_CRITERIA" ? "Search criteria unconfirmed" : name(listing.match) };
         case "NO_ANALYSIS_CANDIDATE": return { label: "Preliminary screening did not qualify this listing", detail: listing.screen?.reason };
     }

@@ -132,6 +132,21 @@ test("every eligible returned sold copy is inspected and absent Mint evidence ne
     assert.equal(raw.prices, undefined);
 });
 
+test("raw pricing explains why matching sold records did not price the assessed condition", async () => {
+    const raw = await rawPricesWithSales(card, identity, { now, requestedCondition: "LIGHTLY_PLAYED",
+        fetchRawComps: async () => [sale(1, 50), sale(2, 175), sale(3, 180), sale(4, 120), sale(5, 200, { sale_type: null })],
+        assessCondition: async source => source.id === 1 ? { condition: "DAMAGED", evidence: ["Visible crease"], photoCount: 3 } : null,
+        conditionStatus: source => source.id === 2 ? "REVIEWED" : source.id === 3 ? "UNUSABLE" : "UNREVIEWED",
+    });
+    assert.deepEqual(raw.prices?.map(price => [price.condition, price.price]), [["DAMAGED", 50]]);
+    assert.match(raw.evidenceNote!, /4 of 5 sold records passed the title and sale checks/);
+    assert.match(raw.evidenceNote!, /1 sold copy/);
+    assert.match(raw.evidenceNote!, /Photo reviews were inconclusive for 1/);
+    assert.match(raw.evidenceNote!, /1 had unavailable or unusable listing photos/);
+    assert.match(raw.evidenceNote!, /No verified sale established a Lightly Played price/);
+    assert.match(raw.evidenceNote!, /Damaged is the closest lower condition/);
+});
+
 test("unresolved photo targets remain unpriced without fetching or assessing historical copies", async () => {
     let fetches = 0, assessments = 0;
     const unresolved: Partial<Identity>[] = [{ finish: "NOT_STATED" }, { finish: "UNKNOWN" }, { finish: "CONFLICTING" },

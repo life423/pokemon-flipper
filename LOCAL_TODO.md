@@ -102,12 +102,19 @@ Mew ex replay.
   had a positive shadow reading blocked by the phrasing of the negative reprint
   observation. Both now resolve to Unlimited from saved evidence, and cases
   where the reprint area was cropped still require evidence.
-- [ ] Audit the raw Blastoise stops before spending on another full run. Separate
-  genuine printing conflicts from photo errors, preserve explicit anniversary
-  marks even when the model does not mark the entire listing a mismatch, and
-  explain why available raw sales cannot price the assessed condition. Check
-  why a $649.99 asking price reached paid photos while preserving credible
-  raw-to-grade upside and separate printing markets.
+- [x] Replay the saved raw Blastoise admission and audit its sold-copy evidence.
+  The $649.99 listing ($661.99 delivered) was queued because any available raw
+  sold evidence admitted it despite its low priority. The highest recent
+  matched raw sale was $277.05. It now stays in Sorting without automatic paid
+  photos. The raw sold sample returned 40 records. Of those, 32 passed title
+  and sale checks, two had accepted Damaged photo evidence, six saved reviews
+  were inconclusive, and one had unavailable or unusable photos. Final pricing
+  now explains the gap and skips a new sold-photo check when the remaining
+  relevant sale amounts cannot meet the user's targets. Saved photos remain
+  reusable if the targets or purchase terms improve.
+- [ ] Finish auditing other raw Blastoise stops. Separate genuine printing
+  conflicts from photo errors, and preserve explicit anniversary marks even
+  when the model does not mark the entire listing a mismatch.
 - [ ] Add a replay covering listings excluded before the retained batch, using
   their own decisions and evidence versions instead of inferring why they stopped.
 - [ ] Keep a provider-mocked regression through the search stream and

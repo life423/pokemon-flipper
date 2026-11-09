@@ -8,7 +8,7 @@ import { createNewListingDiscovery } from "../../server/deals/new-listings.ts";
 import { readSearchLocally } from "../../server/search/intent.ts";
 import { readTitleByRules } from "../../server/ai/title-reader.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
-import { canAutoAnalyze, resultGroup } from "../../shared/analysis.ts";
+import { autoAnalysisBlockReason, canAutoAnalyze, resultGroup } from "../../shared/analysis.ts";
 import type { ListingSummary, ScreeningSoldEvidence } from "../../shared/types.ts";
 import type { CardRecord, Comp } from "../../server/pricing/types.ts";
 
@@ -98,11 +98,32 @@ test("missing and budget-deferred markets remain visible Sorting rows without pa
 
 test("an exact expensive slab is terminal for automatic work while raw grading upside remains eligible", async () => {
     const slab = listing("slab", { title: "Charizard Base Set 4/102 Unlimited Holo PSA 8 English", isGraded: true, currentPrice: 1000 });
-    const raw = listing("raw", { currentPrice: 1000 });
+    const raw = listing("raw", { currentPrice: 1000, cardCondition: "Near Mint",
+        images: ["front", "back", "detail"] });
     const result = await findDeals("Charizard Base Set 4/102 holo", { targets }, steps([slab, raw], factory(async row => evidence(row.isGraded))));
     assert.deepEqual(result.map(row => row.id), ["raw"], "confident preliminary price rejections no longer fill result slots");
     const candidate = result.find(row => row.id === "raw")!;
     assert.equal(candidate.screen?.status, "UNSCREENED"); assert.equal(candidate.screen?.bestCase, null); assert.equal(canAutoAnalyze(candidate), true);
+});
+
+test("a raw Buy It Now far above exact clean sales defers paid photos while preserving the listing", async () => {
+    const result = await findDeals("Charizard Base Set 4/102 holo", { targets }, steps([
+        listing("premium", { currentPrice: 260 }), listing("competitive", { currentPrice: 85 }),
+    ], factory(async () => evidence())));
+    assert.deepEqual(result.map(row => row.id), ["competitive", "premium"]);
+    const [competitive, premium] = result;
+    assert.equal(autoAnalysisBlockReason(competitive, NOW), null);
+    assert.equal(autoAnalysisBlockReason(premium, NOW), "RAW_PRICE_PREMIUM");
+    assert.equal(resultGroup(premium, null), "candidates");
+    assert.equal(premium.screen?.bestCase, null);
+    assert.equal(canAutoAnalyze({ ...premium, currentPrice: 215 }), true, "exactly twice the high sale stays eligible");
+    assert.equal(canAutoAnalyze({ ...premium, shipping: null }), true, "unknown shipping does not trigger this rule");
+    assert.equal(canAutoAnalyze({ ...premium, cardCondition: "Near Mint" }), true);
+    assert.equal(canAutoAnalyze({ ...premium, images: ["front", "back", "detail"] }), true);
+    assert.equal(autoAnalysisBlockReason({ ...premium, images: [
+        "https://i.ebayimg.com/images/g/front/s-l500.jpg", "https://i.ebayimg.com/images/g/front/s-l1600.jpg", "back",
+    ] }, NOW), "RAW_PRICE_PREMIUM", "resizing a photo does not count as a third view");
+    assert.equal(autoAnalysisBlockReason(premium, NOW + 91 * DAY), null, "stale prices cannot suppress research");
 });
 
 test("cheap First Edition Base Set leads are an explicit focused exception, never a blanket missing-price bypass", async () => {

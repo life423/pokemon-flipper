@@ -1,10 +1,10 @@
-import { RAW_CONDITIONS, type RawCondition } from "../../shared/conditions.ts";
+import { CONDITION_NAMES, RAW_CONDITIONS, type RawCondition } from "../../shared/conditions.ts";
 import type { CompSummary, Identity, RawPrice, RawPricing } from "../../shared/types.ts";
 import { variantFor } from "./raw-prices.ts";
 import { printingLabel } from "../identity/card-identity.ts";
 import { compProblem, matchesSoldTarget, summarizeComps, uniqueSoldComps } from "./sold-comps.ts";
 import type { CheckComps, Comp, FetchRawComps, PricedCard } from "./types.ts";
-import type { SoldConditionEvidence } from "../ai/sold-condition.ts";
+import type { SoldConditionEvidence, SoldConditionReadStatus } from "../ai/sold-condition.ts";
 import { readyForPricing } from "../../shared/identity.ts";
 import { MIN_MATCHED_SALES, soldMarketPrice } from "../../shared/sold-evidence.ts";
 
@@ -13,8 +13,9 @@ export { rawConditionClaim as compCondition } from "../../shared/raw-condition-c
 import { rawConditionClaim as compCondition } from "../../shared/raw-condition-claim.ts";
 
 export async function rawPricesWithSales(card: PricedCard | null, identity: Identity, {
-    fetchRawComps, checkComps, now = Date.now(), assessCondition, acquireCondition, requestedCondition, signal,
+    fetchRawComps, checkComps, now = Date.now(), assessCondition, conditionStatus, acquireCondition, requestedCondition, signal,
 }: { fetchRawComps: FetchRawComps; checkComps?: CheckComps; now?: number; assessCondition?: (sale: Comp, identity: Identity, signal?: AbortSignal) => Promise<SoldConditionEvidence | null>;
+    conditionStatus?: (sale: Comp, identity: Identity) => SoldConditionReadStatus;
     acquireCondition?: (sales: readonly Comp[], identity: Identity, signal?: AbortSignal) => Promise<{ sale: Comp; evidence: SoldConditionEvidence } | null>;
     requestedCondition?: RawCondition; signal?: AbortSignal }): Promise<RawPricing> {
     signal?.throwIfAborted();
@@ -35,13 +36,16 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
         const eligibleSale = (sale: Comp) => sale.currency === "USD" && sale.sale_type && !sale.grader && !sale.grade &&
             !/\b(psa|cgc|bgs|sgc|tag|lot|bundle)\b/i.test(sale.title) && compProblem({ ...sale, grader: "RAW", grade: "ANY" },
                 { printing: identity.printing, setName: variant.setName, finish: variant.finish, grader: "RAW", grade: "ANY", now, windowDays: 90 }) === null;
+        const titleMatches = (sale: Comp) => matchesSoldTarget(sale, { name: identity.name!, setName: variant.setName, cardNumber: identity.cardNumber });
         const fetched = await fetchRawComps(variant.recordId, variant.name, assessCondition ? { stopWhen: sales => sales.some(sale =>
-            eligibleSale(sale) && matchesSoldTarget(sale, { name: identity.name!, setName: variant.setName, cardNumber: identity.cardNumber })) } : undefined);
+            eligibleSale(sale) && titleMatches(sale)) } : undefined);
         signal?.throwIfAborted();
         let sales = uniqueSoldComps(fetched);
         const sampledSoldCopies = sales.length;
+        let titleMatchedSoldCopies = 0, uncertainPhotoReviews = 0, unusableSoldCopies = 0;
         if (assessCondition) {
             const eligible = sales.filter(eligibleSale);
+            titleMatchedSoldCopies = eligible.filter(titleMatches).length;
             const accepted = new Map<Comp, SoldConditionEvidence>();
             let cacheReadFailed = false;
             // This callback reads accepted evidence only. New photo work has
@@ -69,6 +73,11 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
             }
             sales = eligible.flatMap(sale => {
                 const assessed = accepted.get(sale);
+                if (!assessed) {
+                    const status = conditionStatus?.(sale, identity);
+                    if (status === "REVIEWED") uncertainPhotoReviews++;
+                    if (status === "UNUSABLE") unusableSoldCopies++;
+                }
                 return assessed ? [{ ...sale, photoCondition: assessed.condition, conditionEvidence: assessed.evidence, sellerCondition: compCondition(sale.title) }] : [];
             });
         }
@@ -117,11 +126,22 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
             if (summary.count >= minimum && price !== null) return [{ condition, price, updatedAt: summary.newestSale, basis: "EBAY_SOLD" as const, comps: summary }];
             return [];
         });
+        const atCondition = prices.find(price => price.condition === requestedCondition);
+        const lowerCondition = !atCondition && requestedCondition && RAW_CONDITIONS.slice(RAW_CONDITIONS.indexOf(requestedCondition) + 1)
+            .find(condition => prices.some(price => price.condition === condition));
+        const photoNote = [
+            `${titleMatchedSoldCopies} of ${sampledSoldCopies} sold records passed the title and sale checks.`,
+            `Photos verified the condition of ${sales.length} sold ${sales.length === 1 ? "copy" : "copies"}.`,
+            uncertainPhotoReviews > 0 ? `Photo reviews were inconclusive for ${uncertainPhotoReviews}.` : null,
+            unusableSoldCopies > 0 ? `${unusableSoldCopies} had unavailable or unusable listing photos.` : null,
+            requestedCondition && !atCondition ? `No verified sale established a ${CONDITION_NAMES[requestedCondition]} price.` : null,
+            lowerCondition ? `${CONDITION_NAMES[lowerCondition]} is the closest lower condition with a verified price.` : null,
+        ].filter(Boolean).join(" ");
         return { ...market, ...(prices.length ? { status: "PRICED", prices } : {
             status: "PRICE_UNAVAILABLE", reason: "The available eBay sales don't establish a raw resale price for this printing and condition.",
         }), ebayComps: summaries,
             conditionEvidence: assessCondition ? "AI_PHOTOS" : "SELLER_TEXT", reviewedSoldCopies: assessCondition ? sales.length : undefined, sampledSoldCopies,
-            evidenceNote: assessCondition ? `${sales.length} sold copies have accepted photo-condition assessments from ${sampledSoldCopies} returned records. Accepted findings are reused for unchanged photos. Matched-sale minimum for an eBay estimate: ${MIN_MATCHED_SALES}. One or two sales retain low confidence.`
+            evidenceNote: assessCondition ? photoNote
                 : "Screening uses seller-stated raw conditions. Final evaluations assess sold-copy photos where available. Up to 40 returned records over 90 days are sampled." };
     } catch {
         signal?.throwIfAborted();

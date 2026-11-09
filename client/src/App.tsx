@@ -5,7 +5,7 @@ import type { EbayUsage, Evaluation, ListingSummary, Targets } from "./types";
 import { currentPriceEvidence } from "../../shared/pricing-freshness.ts";
 import type { AiUsageDay } from "../../shared/ai-usage.ts";
 import { fetchAiUsage, ApiRequestError } from "./api";
-import { analysisConcurrency } from "../../shared/analysis.ts";
+import { analysisConcurrency, autoAnalysisBlockReason } from "../../shared/analysis.ts";
 import { matchesListingFilters } from "../../shared/listing-filters.ts";
 import { englishListingEligible } from "../../shared/card-language.ts";
 import type { ListingFilters } from "../../shared/listing-filters.ts";
@@ -783,6 +783,10 @@ export function App() {
         setPanelClosing(false);
         setSelectedId(id);
     };
+    const openResult = (listing: ListingSummary) => {
+        openPanel(listing.id);
+        if (!analyses[listing.id] && autoAnalysisBlockReason(listing, now) !== "RAW_PRICE_PREMIUM") void runAnalysis(listing);
+    };
     const budgetLeft = budget - autoQueued.current.size;
     const analysisHold = needsWiderSearch ? "Search filters changed. Run a new search to continue."
         : stopped ? "Search stopped"
@@ -1028,7 +1032,7 @@ export function App() {
                     {page === "shortlist" ? <ShortlistView entries={shortlistForDisplay} loading={shortlistLoading} error={shortlistError} refreshing={refreshingSaved} refreshErrors={refreshErrors}
                         onRetry={() => void loadShortlist()} onRefresh={refreshSaved} onRemove={removeSaved} onUpdate={updateSaved} now={now}
                         renderCard={(entry) => <DealCard listing={entry.listing} analysis={analyses[entry.id]} selected={entry.id === selectedId} now={now} years={setYearsByKey} targets={targets} minGrade={minGrade} photoReviewState={photoReviews[entry.id]}
-                            onOpen={() => { openPanel(entry.id); if (!analyses[entry.id]) void runAnalysis(entry.listing); }} />} /> : page === "listing" ? <section className={styles.linkEvaluation} aria-labelledby="link-evaluation-heading">
+                            onOpen={() => openResult(entry.listing)} />} /> : page === "listing" ? <section className={styles.linkEvaluation} aria-labelledby="link-evaluation-heading">
                         <h2 id="link-evaluation-heading">Listing evaluation</h2>
                         {linkStatus === "loading" && <div className={styles.linkLoading} role="status"><p>Reading the listing from eBay…</p><button type="button" className={styles.secondary} onClick={() => { cancelLink(); if (!directListing) setPage("search"); }}>Cancel</button></div>}
                         {linkStatus === "error" && <p role="alert" className={styles.warning}>{linkError}{directListing ? " Your previous listing is still shown below." : ""}</p>}
@@ -1184,10 +1188,7 @@ export function App() {
                                 targets={targets}
                                 selected={listing.id === selectedId}
                                 now={now}
-                                onOpen={() => {
-                                    openPanel(listing.id);
-                                    if (!analyses[listing.id]) void runAnalysis(listing);
-                                }}
+                                onOpen={() => openResult(listing)}
                             />
                         ))}
                     </div>
