@@ -130,7 +130,7 @@ test("the exact conversational holo request resolves through catalog before one 
         priceSource: () => { factories++; return source; },
         search: async (keywords, options) => { events.push("ebay"); assert.equal(keywords, "holo dark blastoise team rocket");
             assert.ok(!keywords.includes("3/82"), "derived numbers must not exclude numberless eBay titles");
-            assert.deepEqual(options.filters, { typeFilter: "FIXED_PRICE", kindFilter: "raw" }); assert.equal(options.maxResults, 200);
+            assert.deepEqual(options.filters, { typeFilter: "FIXED_PRICE", kindFilter: "raw", minPrice: 0 }); assert.equal(options.maxResults, 200);
             return { listings: rows, total: rows.length, skipped: 0 }; },
     });
     assert.deepEqual(events.slice(0, 2), ["catalog", "ebay"]); assert.equal(factories, 1);

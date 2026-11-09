@@ -73,8 +73,9 @@ export async function findDeals(search: string, {
     try { intent = await screenPrices.resolveIntent(); }
     catch (error) { if (signal?.aborted) return []; throw error; }
     if (signal?.aborted) return [];
+    const listingFilters = { ...filters, minPrice: filters?.minPrice ?? minPrice };
     const { listings, total, skipped } = await dependencies.search(marketplaceQuery(search, intent), {
-        maxResults: SOURCE_PAGE_LIMIT, signal, filters, asOf, auctionEndsWithinHours: AUTOMATIC_AUCTION_WINDOW_HOURS,
+        maxResults: SOURCE_PAGE_LIMIT, signal, filters: listingFilters, asOf, auctionEndsWithinHours: AUTOMATIC_AUCTION_WINDOW_HOURS,
         ...(newOnly || filters?.typeFilter !== "AUCTION" ? { sort: "newlyListed" as const } : {}),
         ...(newOnly ? { keepReserve: true } : {}),
     });
@@ -91,7 +92,6 @@ export async function findDeals(search: string, {
     });
     const excluded = new Set(newOnly?.excludeIds ?? []);
     const unseen = live.filter(listing => !excluded.has(listing.id));
-    const listingFilters = { ...filters, minPrice: filters?.minPrice ?? minPrice };
     const eligible = unseen.filter(listing => worthScreening(listing, listingFilters, asOf) && titleMatches(listing.title, intent) &&
         gradingMatches(listing.isGraded, intent) && !criteriaMismatch(searchAttributes(listing.title), intent, false) && literalTitleFits(listing, intent));
 

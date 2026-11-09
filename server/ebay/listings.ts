@@ -187,7 +187,16 @@ export async function searchListings(
     const kind = filters?.kindFilter && filters.kindFilter !== "all" ? filters.kindFilter : undefined;
     const endWindow = buyingOption === "AUCTION" && typeof auctionEndsWithinHours === "number" && Number.isFinite(auctionEndsWithinHours) && auctionEndsWithinHours > 0 ? auctionEndsWithinHours : undefined;
     const filterScope = buyingOption || kind || endWindow ? `:filters:${JSON.stringify([buyingOption ?? null, kind ?? null, endWindow ?? null])}` : "";
-    const key = `ebay:search:${maxResults}:${scope}:language:en:${sort ? `${sort}:` : ""}${normalizeText(search).trim()}${shippingCacheScope()}${filterScope}`;
+    // Filter BIN prices before eBay selects the bounded page, or out-of-range
+    // inventory can hide every affordable listing. Auction current bids keep
+    // their local checks; the BIN minimum must never exclude low opening bids.
+    const validPrice = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
+    const lower = buyingOption === "FIXED_PRICE" && validPrice(filters?.minPrice) && filters.minPrice > 0 ? filters.minPrice : undefined;
+    const upper = buyingOption === "FIXED_PRICE" && validPrice(filters?.maxPrice) ? filters.maxPrice : undefined;
+    if (lower !== undefined && upper !== undefined && lower > upper) return { listings: [], total: 0, skipped: 0 };
+    const priceRange = upper !== undefined ? `${lower ?? ""}..${upper}` : lower !== undefined ? String(lower) : null;
+    const priceScope = priceRange === null ? "" : `:price:USD:${priceRange}`;
+    const key = `ebay:search:${maxResults}:${scope}:language:en:${sort ? `${sort}:` : ""}${normalizeText(search).trim()}${shippingCacheScope()}${filterScope}${priceScope}`;
     const saved = await readCache<{ listings: ListingSummary[]; total: number; skipped: number }>(key, sort ? 1 / 60 : SEARCH_MAX_AGE_HOURS);
     signal?.throwIfAborted();
 
@@ -214,6 +223,7 @@ export async function searchListings(
         }
         const filter = [`buyingOptions:{${buyingOption ?? "AUCTION|FIXED_PRICE"}}`, `conditionIds:{${kind === "raw" ? UNGRADED : kind === "graded" ? GRADED : `${UNGRADED}|${GRADED}`}}`];
         if (endWindow) filter.push(`itemEndDate:[${new Date(sourceNow).toISOString()}..${new Date(sourceNow + endWindow * 3600000).toISOString()}]`);
+        if (priceRange !== null) filter.push(`price:[${priceRange}]`, "priceCurrency:USD");
         const params = new URLSearchParams({
             q: `pokemon ${search}${anyCategory ? " english" : ""}`.trim(),
             // Outside the card category, for listings filed in the wrong one.
