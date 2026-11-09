@@ -81,12 +81,44 @@ test("independent compact model selection changes cold transport while historica
     const rawSubject = listing({ condition: "Ungraded" }), raw = boundedAssessmentPlan(rawSubject);
     const rawRequest = buildBoundedAssessmentRequest(rawSubject, raw.photos, raw.mode);
     assert.equal(raw.model, BOUNDED_VISION_MODEL); assert.equal(rawRequest.model ?? BOUNDED_VISION_MODEL, raw.model);
-    assert.equal(rawRequest.maxOutputTokens, 2200); assert.equal(rawRequest.photos.length, 6);
+    assert.equal(rawRequest.maxOutputTokens, 2200); assert.equal(rawRequest.photos.length, 6); assert.equal(rawRequest.maxRetries, 0);
+    assert.match(rawRequest.prompt, /outside the RIGHT and LOWER edges of the gold artwork frame/);
+    assert.match(rawRequest.prompt, /scratches at the same location and shape/);
+    assert.doesNotMatch(compactRequest.prompt, /RIGHT and LOWER edges|scratches at the same location/);
     // Fictional fixture keys pinned before the independent model setting.
     assert.equal(compactPlan("gpt-5.6-luna").key, "bounded-assessment:gpt-5.6-luna/bounded-slab-label-prompts-1:a303468515cae536f3f5347b81fdcf84033355a8f05c6b081bd0c29c97b9de6f");
-    const historicalRaw = compatibleBoundedPlans(subject).find(plan => plan.mode === "RAW" && plan.model === "gpt-5.6-luna")!;
+    const historicalRaw = compatibleBoundedPlans(subject).find(plan => plan.version === "gpt-5.6-luna/bounded-prompts-1")!;
     assert.equal(historicalRaw.key, "bounded-assessment:gpt-5.6-luna/bounded-prompts-1:b09025387772cb68c22838f8a8976be264fb3babe507aad0cd96b63a29695b7f");
     assert.notEqual(compactPlan("gpt-6-luna").key, compactPlan("gpt-5.6-luna").key);
+});
+
+test("accepted v1 raw photos and fresh saved pricing survive the artwork prompt change", async () => {
+    const subject = listing({ title: "Venusaur Base Set 15/102 Holo English", condition: "Ungraded",
+        images: [photo(1), photo(1, 500), photo(2), photo(3)],
+        aspects: { "Card Name": "Venusaur", Set: "Base Set", "Card Number": "15/102", Language: "English", Finish: "Holo" } });
+    const [requested, ...compatible] = compatibleBoundedPlans(subject);
+    const previous = compatible.find(plan => plan.version === `${requested.model}/bounded-prompts-1`);
+    assert.ok(previous);
+    assert.equal(requested.version, `${requested.model}/bounded-prompts-2`);
+    assert.deepEqual(requested.photos, previous.photos);
+    const { evaluate, cache, calls } = harness(subject);
+    const accepted = saved(rawReading(previous.photos.length), previous.version);
+    cache.set(previous.key, structuredClone(accepted));
+
+    const result = await evaluate(subject.id);
+    assert.equal(result.assessmentVersion, previous.version);
+    assert.deepEqual(result.photoCheck?.images.map(image => image.number), [1, 3, 4]);
+    assert.deepEqual(cache.get(previous.key), accepted);
+    assert.equal(cache.has(requested.key), false);
+    assert.equal(currentPriceEvidence(result, NOW), true);
+    const before = [calls.lookup, calls.comps.length, calls.raw];
+    cache.delete(previous.key);
+    const reopened = await evaluate(subject.id, { current: { price: 60, shipping: 5, bids: 0, endTime: null } });
+    assert.equal(reopened.assessmentVersion, previous.version);
+    assert.ok(reopened.reusedSteps.includes("savedEvaluation"));
+    assert.equal(reopened.listing.price, 60);
+    assert.equal(calls.assessed.length, 0);
+    assert.deepEqual([calls.lookup, calls.comps.length, calls.raw], before);
 });
 
 test("an accepted 5.6 compact reading retains its original photo mapping without a new-model purchase or rewrite", async () => {

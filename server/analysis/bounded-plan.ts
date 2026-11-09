@@ -3,7 +3,7 @@ import type { ListingDetails } from "../ebay/listings.ts";
 import { readTitleByRules } from "../ai/title-reader.ts";
 import { graderCode, normalizeGrade } from "../identity/slab-check.ts";
 import { normalizedPhoto } from "../../shared/listing-evidence.ts";
-import { BOUNDED_REVIEW_REVISION, BOUNDED_CONDITION_REVISION, BOUNDED_SLAB_REVIEW_REVISION } from "../../shared/pricing-freshness.ts";
+import { BOUNDED_REVIEW_REVISION, LEGACY_BOUNDED_REVIEW_REVISION, BOUNDED_CONDITION_REVISION, BOUNDED_SLAB_REVIEW_REVISION } from "../../shared/pricing-freshness.ts";
 import { CONDITION_RULES_VERSION } from "../../shared/conditions.ts";
 import { BOUNDED_PHOTO_LIMIT } from "../../shared/research-policy.ts";
 export { BOUNDED_PHOTO_LIMIT } from "../../shared/research-policy.ts";
@@ -60,8 +60,8 @@ function requestsSlabLabel(listing: ListingDetails): boolean {
 export function boundedModel(mode: BoundedAssessmentMode): string {
     return mode === "RAW" ? BOUNDED_VISION_MODEL : BOUNDED_SLAB_MODEL;
 }
-function planFor(listing: ListingDetails, mode: BoundedAssessmentMode, model = boundedModel(mode)): BoundedAssessmentPlan {
-    const version = mode === "RAW" ? `${model}/bounded-prompts-${BOUNDED_REVIEW_REVISION}` : `${model}/bounded-slab-label-prompts-${BOUNDED_SLAB_REVIEW_REVISION}`;
+function planFor(listing: ListingDetails, mode: BoundedAssessmentMode, model = boundedModel(mode), rawRevision = BOUNDED_REVIEW_REVISION): BoundedAssessmentPlan {
+    const version = mode === "RAW" ? `${model}/bounded-prompts-${rawRevision}` : `${model}/bounded-slab-label-prompts-${BOUNDED_SLAB_REVIEW_REVISION}`;
     const photos = mode === "RAW" ? selectBoundedPhotos(listing.images) : uniquePhotos(listing.images).slice(0, 2);
     const conditionVersion = mode === "RAW" ? `${model}/bounded-condition-${CONDITION_RULES_VERSION}/prompts-${BOUNDED_CONDITION_REVISION}` : undefined;
     return { mode, model, version, conditionVersion, photos, key: keyFor(listing, version, photos) };
@@ -73,11 +73,12 @@ export function compatibleBoundedPlans(listing: ListingDetails): BoundedAssessme
     const requested = boundedAssessmentPlan(listing);
     // The physical holder is model evidence. A changed advisory seller
     // category must not force another assessment of an already-read slab.
-    // A model change changes cold work, not the validity of accepted older
-    // evidence. Keep historical compact and combined selectors/keys intact.
-    const rawModels = [...new Set([BOUNDED_VISION_MODEL, "gpt-5.6-luna"])];
+    // Cold work uses the current prompt. Earlier raw and compact keys still
+    // locate accepted evidence with its original photo selection.
+    const legacyRawModels = [...new Set([BOUNDED_VISION_MODEL, "gpt-5.6-luna"])];
     const slabModels = [...new Set([BOUNDED_SLAB_MODEL, BOUNDED_VISION_MODEL, "gpt-5.6-luna", "gpt-6-luna"])];
-    const candidates = [requested, ...rawModels.map(model => planFor(listing, "RAW", model)),
+    const candidates = [requested, planFor(listing, "RAW"),
+        ...legacyRawModels.map(model => planFor(listing, "RAW", model, LEGACY_BOUNDED_REVIEW_REVISION)),
         ...slabModels.map(model => planFor(listing, "SLAB_LABEL", model))];
     return [...new Map(candidates.map(plan => [plan.key, plan])).values()];
 }

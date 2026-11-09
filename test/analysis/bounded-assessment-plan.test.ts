@@ -57,20 +57,20 @@ function labelReading(): BoundedReading {
             labelText: "CGC 8.5", caseCondition: "INTACT", authenticity: "NONE_SEEN", authenticityEvidence: [], concerns: [] } } };
 }
 
-test("extracting the default raw request preserves its exact prior schema and request fingerprint", t => {
+test("the revised raw prompt pinpoints printing and surface evidence within the existing schema and budget", t => {
     const fetch = t.mock.method(globalThis, "fetch", () => assert.fail("request planning must not call a provider"));
     const before = structuredClone({ listing, photos });
     const raw = buildBoundedAssessmentRequest(listing, photos);
     assert.deepEqual(raw, buildBoundedAssessmentRequest(listing, photos, "RAW"));
-    // Captured by evaluating the existing request before module extraction.
-    // These protect reusable evidence and exact-input transport compatibility.
+    // The schema stays compatible with accepted photo observations.
     assert.equal(hash(BOUNDED_ASSESSMENT_SCHEMA), "60805b664535e9f66365297aa73984d329eefce46fce7be33193d6335d5831d6");
-    assert.equal(hash(raw), "3b64dbeba35d0e4681e810aa268e4fe5af9802f65c9acaec180aedc40f4ca983");
     assert.equal(raw.schemaName, "bounded_card_assessment");
     assert.equal(raw.maxOutputTokens, 2200);
     assert.match(raw.prompt, /at most three adjacent integer grades/);
     assert.match(raw.prompt, /permanent black ink\/marker mark/);
     assert.match(raw.prompt, /First Edition stamp area immediately below the LEFT edge/);
+    assert.match(raw.prompt, /immediately outside the RIGHT and LOWER edges of the gold artwork frame/);
+    assert.match(raw.prompt, /scratches at the same location and shape/);
     assert.match(raw.prompt, /Authenticity alerts require concrete visible/);
     assert.deepEqual({ listing, photos }, before);
     assert.equal(fetch.mock.callCount(), 0);

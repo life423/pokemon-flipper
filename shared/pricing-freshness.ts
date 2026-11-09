@@ -8,7 +8,8 @@ export const PRICING_VERSION = "ebay-resale-16";
 export const PHOTO_REVIEW_REVISION = 10;
 // Raw-condition prompting changes do not invalidate historical sold-copy categories.
 export const CONDITION_ASSESSMENT_REVISION = 2;
-export const BOUNDED_REVIEW_REVISION = 1;
+export const BOUNDED_REVIEW_REVISION = 2;
+export const LEGACY_BOUNDED_REVIEW_REVISION = 1;
 export const BOUNDED_CONDITION_REVISION = 1;
 export const BOUNDED_SLAB_REVIEW_REVISION = 1;
 export function currentPriceEvidence(evaluation: Evaluation, now = Date.now()): boolean {
@@ -23,6 +24,7 @@ export function currentPriceEvidence(evaluation: Evaluation, now = Date.now()): 
         !Object.values(evaluation.gradedPricing ?? {}).some(pricing => pricing.status === "PRICED")) return false;
     const age = now - Date.parse(evaluation.pricesCheckedAt ?? "");
     const bounded = evaluation.assessmentVersion?.endsWith(`/bounded-prompts-${BOUNDED_REVIEW_REVISION}`) === true ||
+        evaluation.assessmentVersion?.endsWith(`/bounded-prompts-${LEGACY_BOUNDED_REVIEW_REVISION}`) === true ||
         evaluation.assessmentVersion?.endsWith(`/bounded-slab-label-prompts-${BOUNDED_SLAB_REVIEW_REVISION}`) === true;
     const assessmentCurrent = bounded || evaluation.assessmentVersion?.endsWith(`/prompts-${PHOTO_REVIEW_REVISION}`) === true;
     const conditionCurrent = !evaluation.condition || evaluation.conditionVersion?.endsWith(bounded

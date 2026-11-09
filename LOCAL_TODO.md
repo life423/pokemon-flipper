@@ -88,6 +88,11 @@ Mew ex replay.
   printing conflicts and reprint checks. A third Mewtwo has an assessed raw
   condition and an unresolved price. Its back-photo limitation stays in notes
   when there is no actionable manual grading task.
+- [x] Inspect the $45 Mewtwo example that had no positive shadow finding in
+  the saved assessment. The original photos show the Unlimited frame shadow
+  and repeatable scratches. The only positive preliminary comparison assumed
+  Near Mint. Update the raw prompt's instructions for the actual frame edges
+  and repeatable surface marks. Reuse existing paid photo answers unchanged.
 - [ ] Add a replay covering listings excluded before the retained batch, using
   their own decisions and evidence versions instead of inferring why they stopped.
 - [ ] Keep a provider-mocked regression through the search stream and
@@ -163,6 +168,8 @@ Mew ex replay.
 - [x] Allow prices up to 15% over the preliminary slab purchase limit through
   verification. Preserve actual targets and take the cheapest pass's supported
   candidates ahead of newest listings that only qualify for the buffer.
+  Cache-only replays admitted 15 buffered Crown Zenith rows and two buffered
+  Scarlet & Violet 151 rows. Neither replay found a supported preliminary margin.
 - [ ] Use the lowest trustworthy, available Buy It Now total for the exact
   card, printing, finish, grading company and grade as a competition reference.
   Compare item price plus shipping. Combine completed-sale activity with
