@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { PRICING_VERSION, PHOTO_REVIEW_REVISION, CONDITION_ASSESSMENT_REVISION, currentPriceEvidence } from "../../shared/pricing-freshness.ts";
 import { cardEvaluation } from "../fixtures/card-evaluation.ts";
 import { CONDITION_RULES_VERSION } from "../../shared/conditions.ts";
+import { usableSoldReference } from "../../shared/sold-evidence.ts";
 test("saved photos do not make legacy or expired price evidence current", () => {
     const now = Date.parse("2026-10-30T20:00:00Z");
     const evaluation = cardEvaluation();
@@ -44,4 +45,25 @@ test("only retained special-tier graded evidence invalidates otherwise current p
     evaluation.rawPricing!.prices![0].comps = { ...summary, grader: "RAW", grade: "LIGHTLY_PLAYED",
         sales: [{ ...summary.sales[0], title: "Venusaur Base Set 15/102 Pristine raw LP" }] };
     assert.equal(currentPriceEvidence(evaluation, now), true, "raw sale-title behavior is unchanged");
+});
+
+test("saved Base Set Fourth Print evidence needs repricing even within its normal reuse window", () => {
+    const now = Date.parse("2026-11-05T20:00:00Z"), evaluation = cardEvaluation();
+    Object.assign(evaluation, { pricingVersion: PRICING_VERSION, pricesCheckedAt: new Date(now).toISOString(),
+        assessmentVersion: `test/prompts-${PHOTO_REVIEW_REVISION}`,
+        conditionVersion: `test/condition-${CONDITION_RULES_VERSION}/prompts-${CONDITION_ASSESSMENT_REVISION}` });
+    const source = evaluation.gradedPricing!.CGC!.byGrade![0];
+    const summary = { ...source, windowDays: 90 };
+    evaluation.slabPricing = { status: "PRICED", summary };
+    const reference = { recordId: 1, name: "Venusaur", set: "Base Set", cardNumber: "15/102", printing: "UNLIMITED" as const,
+        finish: "HOLO" as const, grader: "CGC", grade: "6", condition: null, summary };
+    assert.equal(currentPriceEvidence(evaluation, now), true);
+    assert.equal(usableSoldReference(reference, true), true);
+    const sale = summary.sales[0];
+    sale.title = "Venusaur Base Set 15/102 CGC 6 1999–2000";
+    assert.equal(currentPriceEvidence(evaluation, now), false);
+    assert.equal(usableSoldReference(reference, true), false);
+    sale.title = "1999 Venusaur Base Set 15/102 CGC 6 UK seller";
+    assert.equal(currentPriceEvidence(evaluation, now), true);
+    assert.equal(usableSoldReference(reference, true), true);
 });

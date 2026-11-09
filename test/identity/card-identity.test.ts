@@ -476,7 +476,8 @@ test("visible artwork shadow settles ordinary English Base Set Mewtwo with an un
         reprintMark: "No Base Set 2 symbol or Pikachu anniversary mark is visible in the supplied front views.",
         evidence: ["Photo 1 shows a shadow along the artwork frame."] }, {
         printedName: "Mewtwo", printedNumber, cardCount: "ONE", holder: "NONE",
-        cardMatch: { verdict: "MATCH", problems: [] }, images: [{ view: "FRONT", usable: true, isStockImage: false }],
+        cardMatch: { verdict: "MATCH", problems: [] },
+        images: [{ view: "FRONT", usable: true, isStockImage: false, obscuresCondition: true }],
         cardIdentity: { name: "Mewtwo", set: "Base Set", cardNumber: printedNumber, language: "English", finish: "HOLO",
             confidence: "HIGH", evidence: ["English text and 10/102 are visible."] },
     });
@@ -485,6 +486,7 @@ test("visible artwork shadow settles ordinary English Base Set Mewtwo with an un
         ["Mewtwo 10/102 HOLO Rare Base Set Unlimited Vintage WoTC Pokémon TCG 1999", "No visible Base Set 2 or Pikachu anniversary mark in supplied front views"],
         [listing.title, "No Base Set 2 symbol or anniversary/reprint stamp is visibly present in supplied views."],
         [listing.title, "No Pikachu anniversary stamp or Base Set 2 mark is visible; artwork shadow is visible along the lower/right artwork frame."],
+        [listing.title, "No Base Set 2 symbol, Pikachu anniversary logo, or other reprint stamp visible."],
     ]) {
         const result = await identifyCard({ ...listing, title }, { ...photos, printingMarks: { ...photos.printingMarks, reprintMark } },
             { lookupCards: lookup(record) });
@@ -498,6 +500,8 @@ test("visible artwork shadow settles ordinary English Base Set Mewtwo with an un
         ["shadowless frame", value => { value.photos.printingMarks.artBoxShadow = "ABSENT"; }],
         ["stamp visible", value => { value.photos.printingMarks.firstEditionStamp = "VISIBLE"; }],
         ["wrong printing claim", value => { value.listing.title += " 1st Edition"; }],
+        ["Fourth Print claim", value => { value.listing.aspects.Features = "1999-2000 Wizards Base Set Copyright"; }],
+        ["Fourth Print observation", value => { value.photos.printingMarks.evidence.push("Photo 1 clearly reads 1999–2000 Wizards."); }],
         ["reprint mark", value => { value.photos.printingMarks.reprintMark = "BASE_SET_2"; }],
         ["ambiguous mark", value => { value.photos.printingMarks.reprintMark = "No visible Base Set 2 symbol; another mark may be present."; }],
         ["limited reprint area", value => { value.photos.printingMarks.reprintMark = "No Base Set 2 symbol or anniversary/reprint stamp is visibly present in supplied views; lower-right area is cropped."; }],

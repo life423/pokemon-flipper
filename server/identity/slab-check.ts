@@ -81,6 +81,7 @@ export function checkSlab(
     const reasons: string[] = [];
     const concerns = [...(slab.concerns ?? [])];
     if (photoCheck.cardCount !== undefined && photoCheck.cardCount !== "ONE") reasons.push("The photos do not establish exactly one graded card.");
+    if (slab.holderConflict) reasons.push("The front and later photos show different card holders.");
 
     // Slabs skip raw-card grading, but still need a real photo of this copy.
     // A readable label in a stock image cannot establish what is being sold.

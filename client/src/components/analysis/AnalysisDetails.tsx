@@ -1,6 +1,6 @@
 import type { Evaluation, ListingSummary } from "../../types";
 import { name } from "../../format";
-import { photoEvidence } from "../../../../shared/photo-evidence.ts";
+import { hasSlabEvidence, photoEvidence, slabLabelConfidence } from "../../../../shared/photo-evidence.ts";
 import { resaleActivity, matchedSoldActivity } from "../../../../shared/liquidity.ts";
 import { GradingComparison } from "../GradingComparison";
 import { PathCard } from "./FinancialDecision";
@@ -30,15 +30,18 @@ export function AnalysisDetails({
         0
     );
     const evidence = photoEvidence(evaluation, minGrade);
+    const slab = hasSlabEvidence(evaluation);
+    const labelConfidence = slabLabelConfidence(evaluation);
     const activity = resaleActivity(evaluation, now);
     const matched = matchedSoldActivity(evaluation, now);
 
     return (
         <>
-            {evaluation.condition && <Section title="PSA and CGC comparison"><GradingComparison evaluation={evaluation} expanded /></Section>}
+            {!slab && evaluation.condition && <Section title="PSA and CGC comparison"><GradingComparison evaluation={evaluation} expanded /></Section>}
             <Section title="Photo evidence and grading confidence">
-                <p>Assessment confidence: {name(evidence.confidence)}. {evidence.coverage}.</p>
-                {!evaluation.slab && minGrade > 0 && <p>{evidence.target}</p>}
+                <p>{slab ? "Photo confidence" : "Assessment confidence"}: {name(evidence.confidence)}. {evidence.coverage}.</p>
+                {labelConfidence && <p>Slab label confidence: {name(labelConfidence)}.</p>}
+                {!slab && minGrade > 0 && <p>{evidence.target}</p>}
                 <Notes items={evidence.issues} tone="muted" />
             </Section>
 
@@ -72,9 +75,9 @@ export function AnalysisDetails({
             <ListingSection listing={listing} evaluation={evaluation} />
             {evaluation.identity && <IdentitySection identity={evaluation.identity} isSlab={Boolean(evaluation.slab)} />}
             {evaluation.slab && <SlabSection slab={evaluation.slab} pricing={evaluation.slabPricing} />}
-            {evaluation.condition && <ConditionSection evaluation={evaluation} condition={evaluation.condition} />}
+            {!slab && evaluation.condition && <ConditionSection evaluation={evaluation} condition={evaluation.condition} />}
 
-            {(evaluation.rawPricing || evaluation.gradedPricing) && (
+            {!slab && (evaluation.rawPricing || evaluation.gradedPricing) && (
                 <PricesSection raw={evaluation.rawPricing} graded={evaluation.gradedPricing} />
             )}
 

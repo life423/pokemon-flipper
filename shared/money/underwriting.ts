@@ -6,6 +6,7 @@ import { dollars, round2 } from "../format.ts";
 import { cents, meetsMoneyTargets, minimumOfferPrice, money, sellingFeeCents, taxedCents } from "./cents.ts";
 import { isRawSoldPrice, referencePriceReason, unsupportedVariantReason } from "./price-evidence.ts";
 import { soldMarketPrice } from "../sold-evidence.ts";
+import { obscuredDisclosedWear } from "../photo-evidence.ts";
 import type {
     CompSummary,
     Condition,
@@ -43,9 +44,9 @@ export interface UnderwritingInput {
     pricesCheckedAt?: string;
     deeperPhotoReview?: DeeperPhotoReview;
     listing: { price: number | null; shipping: number | null; availability?: string; title?: string;
-        buyingOption?: Evaluation["listing"]["buyingOption"]; bestOffer?: boolean };
+        buyingOption?: Evaluation["listing"]["buyingOption"]; bestOffer?: boolean; conditionNotes?: string[]; photosInListing?: number };
     identity: Identity | null;
-    condition: Pick<Condition, "rawCondition" | "gradeRange" | "authenticity"> & Partial<Pick<Condition, "creases" | "confidence" | "surface">> | null;
+    condition: Pick<Condition, "rawCondition" | "gradeRange" | "authenticity"> & Partial<Pick<Condition, "creases" | "confidence" | "surface" | "corners" | "edges">> | null;
     rawPricing?: RawPricing | null;
     gradedPricing?: Partial<Record<Grader, GradedPricing>> | null;
     slab?: Pick<Slab, "status" | "grader" | "grade" | "reasons" | "concerns"> & Partial<Pick<Slab, "labelText">> | null;
@@ -662,6 +663,8 @@ function underwriteBase(input: UnderwritingInput, config: MoneyConfig): Underwri
 }
 
 export function underwrite(input: UnderwritingInput, config: MoneyConfig = MONEY_CONFIG): Underwriting {
+    const obscuredWear = input.listing.availability !== "UNAVAILABLE" && obscuredDisclosedWear(input);
+    if (obscuredWear) return verdict("PASS", [obscuredWear]);
     const frontOnlySlab = input.frontPhotoStop === "SLAB_PRICE" && input.listing.availability !== "UNAVAILABLE";
     const frontOnlyRaw = input.frontPhotoStop === "RAW_PRICE" && input.listing.availability !== "UNAVAILABLE";
     if (frontOnlySlab && !frontSlabLoss(input, config) || frontOnlyRaw && !frontRawLoss(input, config)) {

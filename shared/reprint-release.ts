@@ -1,3 +1,5 @@
+import { setKey } from "./sets.ts";
+
 // Literal release names are cheap negative evidence for a vintage-only search.
 // This does not verify the photograph or identify an exact anniversary market.
 // A 2 followed by a collector-number denominator belongs to the card number.
@@ -20,4 +22,11 @@ export function explicitReprintSet(title: string): string | null {
 
 export function withoutReprintRelease(title: string): string {
     return RELEASES.reduce((text, [pattern]) => text.replace(pattern, " "), title);
+}
+
+// The 1999–2000 Base Set run is a separate market from ordinary Unlimited.
+export function hasBaseSetFourthPrint(set: string | null | undefined, ...claims: (string | null | undefined)[]): boolean {
+    if (!set || setKey(set) !== "base set") return false;
+    const fourthPrint = /\b((?:no|not|without)[\s-]+(?:(?:a|the)\s+)?)?(?:(?:4th|fourth|u\.?k\.?)[\s-]+print(?:ing)?|1999\s*[\p{Dash_Punctuation}/−]\s*(?:2000|00))\b/giu;
+    return claims.some(claim => claim && [...claim.matchAll(fourthPrint)].some(([, negation]) => !negation));
 }

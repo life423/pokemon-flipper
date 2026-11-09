@@ -3,6 +3,7 @@ import type { Condition, Evaluation, Identity, ListingSummary, PhotoCheck, Slab,
 import { describeRange, dollars, name, percent } from "../../format";
 import { CONDITION_AREAS, RAW_CONDITIONS, CONDITION_NAMES, CONDITION_DEFINITIONS } from "../../../../shared/conditions.ts";
 import { ceilingLabel } from "../../../../shared/format.ts";
+import { displayedRawGrade } from "../../../../shared/photo-evidence.ts";
 import { listingSignals } from "../../../../shared/signals.ts";
 import { CompsRow } from "./PricingSections";
 import { Notes, Pairs, Section } from "./primitives";
@@ -136,6 +137,7 @@ export function SlabSection({ slab, pricing }: { slab: Slab; pricing: SlabPricin
 
 export function ConditionSection({ evaluation, condition }: { evaluation: Evaluation; condition: Condition }) {
     const areas = CONDITION_AREAS;
+    const grade = displayedRawGrade(evaluation);
 
     return (
         <Section title="Condition">
@@ -143,7 +145,7 @@ export function ConditionSection({ evaluation, condition }: { evaluation: Evalua
             <details className={styles.details}><summary>Our six condition definitions</summary><dl>{RAW_CONDITIONS.map(key => <div key={key}><dt><strong>{CONDITION_NAMES[key]}</strong></dt><dd>{CONDITION_DEFINITIONS[key]}</dd></div>)}</dl></details>
             <Pairs
                 rows={[
-                    ["Grade range", condition.gradeRange ? `${describeRange(condition.gradeRange)} (${name(condition.confidence)} confidence)` : "Not supported by the photos"],
+                    ["Grade range", grade ? `${describeRange(grade.range)} (${name(grade.confidence)} confidence${grade.source === "PHOTO" ? "" : ", for reference only"})` : "Awaiting usable photo evidence"],
                     ["Raw condition", name(condition.rawCondition)],
                     ["Seller says", evaluation.listing.cardCondition ?? "Not stated"],
                     ["Creases", name(condition.creases)],

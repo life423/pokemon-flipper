@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createBoundedEvaluator, selectBoundedPhotos, boundedAssessmentKey, boundedAssessmentPlan, validateBoundedReading, BOUNDED_ASSESSMENT_VERSION, type BoundedReading } from "../../server/analysis/bounded-evaluate.ts";
+import { compatibleBoundedPlans, stagedPhotoPlan } from "../../server/analysis/bounded-plan.ts";
 import { ANALYSIS_VERSION, CONDITION_VERSION } from "../../server/analysis/legacy-evidence.ts";
 import { photoFingerprint } from "../../server/analysis/store.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
@@ -13,6 +14,7 @@ import { listingEvidenceKey } from "../../shared/listing-evidence.ts";
 import { createPrivateEvaluationStore, evaluationContextKey, PRIVATE_EVALUATION_PREFIX } from "../../server/analysis/private-evaluation.ts";
 import { createShortlistStore } from "../../server/shortlist/store.ts";
 import { createShortlistService } from "../../server/shortlist/service.ts";
+import { displayedRawGrade } from "../../shared/photo-evidence.ts";
 import { photoReviewStatus } from "../../shared/photo-review.ts";
 import { resultGroup } from "../../shared/analysis.ts";
 import { groupSearchResults } from "../../client/src/search/results.ts";
@@ -263,6 +265,27 @@ test("visible wear on a raw front keeps remaining photos eligible when grading v
     assert.deepEqual(batches, [[1], [2, 3, 4]], "the completed assessment is reused before dispatching either stage");
 });
 
+test("a completed previous photo pair survives the new grading request without a paid reread", async () => {
+    const listing = details({ bestOffer: false, images: [photo(1), photo(2)] });
+    const previous = compatibleBoundedPlans(listing).find(plan => plan.version.endsWith("/bounded-prompts-2"))!;
+    const front = reading(1);
+    front.condition!.gradeRange = null;
+    const remainder = reading(1);
+    remainder.photoCheck.images[0].view = "BACK";
+    remainder.condition!.gradeRange = null;
+    const { evaluate, cache } = harness({ details: async () => listing,
+        assess: async () => assert.fail("both previously purchased photo stages must be reused") });
+    const answeredAt = new Date(now).toISOString();
+    const stages = [[stagedPhotoPlan(listing, previous, "front"), front],
+        [stagedPhotoPlan(listing, previous, "remainder", front), remainder]] as const;
+    for (const [plan, answer] of stages) cache.set(plan.key, { ...answer, version: plan.version, answeredAt });
+
+    const result = await evaluate(listing.id);
+    assert.equal(result.assessmentVersion, previous.version);
+    assert.deepEqual(result.reusedSteps, ["frontPhotoAssessment", "remainingPhotoAssessment"]);
+    assert.equal(displayedRawGrade(result)?.source, "WEAR");
+});
+
 test("a clean rear cannot erase a severe front mark or supply a conflicting high grade", async t => {
     t.mock.method(globalThis, "fetch", () => assert.fail("staged assessment regression must use mocked providers only"));
     const listing = details({ price: 150, bestOffer: false, images: [photo(1), photo(2)],
@@ -451,10 +474,24 @@ test("a supported near-mint raw resale can proceed without numeric grading detai
     assert.equal(result.condition?.gradeRange, null);
     assert.equal(result.gradeStatus, "RAW_CONDITION_ONLY");
     assert.equal(result.underwriting?.verdict, "BUY_RAW");
+    assert.deepEqual(displayedRawGrade(result), { range: { low: 7, likely: 8, high: 9 }, confidence: "LOW", source: "WEAR" });
     assert.equal(result.rawPricing?.prices?.find(quote => quote.condition === "NEAR_MINT")?.basis, "EBAY_SOLD");
     assert.equal(result.underwriting?.best?.path, "RAW");
     assert.equal(calls.raw, 1);
     assert.equal(calls.comps, 0);
+});
+
+for (const limit of ["model", "missing back"]) test(`a low-confidence grade from ${limit} remains visible without grading-price research`, async () => {
+    const report = reading();
+    if (limit === "model") report.condition!.confidence = "LOW";
+    else report.photoCheck.images[1].usable = false;
+    const { evaluate, calls } = harness({ assess: async () => ({ result: report, usage: { inputTokens: 700, outputTokens: 450 } }) });
+    const result = await evaluate(details().id);
+    assert.equal(result.identity?.status, "IDENTIFIED");
+    assert.equal(result.condition?.gradeRange, null);
+    assert.deepEqual(displayedRawGrade(result), { range: { low: 6, likely: 7, high: 8 }, confidence: "LOW", source: "PROVISIONAL" });
+    assert.equal(calls.comps, 0);
+    assert.notEqual(result.underwriting?.verdict, "BUY_AND_GRADE");
 });
 
 test("a fresh raw resale acquires one relevant sold copy and reuses its photo evidence across live listings", async () => {
@@ -799,6 +836,79 @@ test("an existing slab verifies and prices its exact grade without estimating ra
     assert.equal(result.slab?.status, "OK"); assert.equal(result.slab?.grade, "7");
     assert.equal(result.slabPricing?.status, "PRICED");
     assert.equal(result.condition, null);
+});
+
+test("a photographed slab on a raw listing switches to label-only follow-up and ignores stray raw grades on reopen", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("slab follow-up must use mocked providers only"));
+    const listing = details({ bestOffer: false, retrievedAt: new Date(now - 1000).toISOString() });
+    const front = reading(1);
+    front.photoCheck.holder = "GRADED_SLAB";
+    front.photoCheck.slab = { present: true, grader: "PSA", grade: "8", gradeQualifier: null, certNumber: "12345678",
+        labelText: "1999 POKEMON GAME VENUSAUR-HOLO #15 NM-MT 8", caseCondition: "SCRATCHED", authenticity: "NONE_SEEN",
+        authenticityEvidence: [], concerns: ["The front of the case is scratched."] };
+    const routes: { mode?: string; photos: number[] }[] = [];
+    const { evaluate, cache, calls } = harness({ details: async () => listing, assess: async (_listing, photos, _signal, mode, stage) => {
+        routes.push({ mode, photos: photos.map(photo => photo.number) });
+        if (stage?.kind === "front") return { result: front, usage: { inputTokens: 500, outputTokens: 300 } };
+        assert.equal(stage?.kind, "remainder");
+        assert.equal(stage.front.condition, null);
+        const back = reading(photos.length);
+        back.condition = null;
+        back.photoCheck.images[0].view = "BACK";
+        return { result: back, usage: { inputTokens: 500, outputTokens: 300 } };
+    }, fetchRawComps: async () => assert.fail("a verified slab never needs raw resale research") });
+    const first = await evaluate(listing.id);
+    assert.deepEqual(routes, [{ mode: "RAW", photos: [1] }, { mode: "SLAB_LABEL", photos: [2] }]);
+    assert.equal(cache.get(stagedPhotoPlan(listing, boundedAssessmentPlan(listing), "front").key).condition, null);
+    assert.equal(first.condition, null);
+    assert.equal(first.provisionalGradeRange, undefined);
+    assert.equal(first.slab?.grade, "8");
+    assert.equal(first.slab?.caseCondition, "SCRATCHED");
+    assert.ok(first.slab?.concerns.includes("The front of the case is scratched."));
+    assert.deepEqual(first.photoCheck?.images.map(image => image.number), [1, 2]);
+    assert.equal(first.underwriting?.verdict, "BUY_GRADED");
+
+    const [snapshotKey, snapshot] = [...cache.entries()].find(([key]) => key.startsWith(PRIVATE_EVALUATION_PREFIX))!;
+    snapshot.evaluation.condition = structuredClone(front.condition);
+    snapshot.evaluation.provisionalGradeRange = front.condition!.gradeRange;
+    snapshot.evaluation.gradeStatus = "ESTIMATED";
+    const reopened = await evaluate(listing.id);
+    assert.equal(routes.length, 2);
+    assert.equal(calls.comps, 1);
+    assert.equal(reopened.condition, null);
+    assert.equal(reopened.provisionalGradeRange, undefined);
+    assert.equal(reopened.gradeStatus, "CERTIFIED_SLAB");
+    assert.equal(reopened.slab?.grade, "8");
+    assert.deepEqual(reopened.photoCheck, first.photoCheck);
+
+    // Older raw staging used a different key and selected a larger gallery.
+    // Keep the paid image mapping and disregard its stray raw grades.
+    cache.delete(snapshotKey);
+    for (const key of cache.keys()) if (key.includes("/remainder-1:")) cache.delete(key);
+    const frontKey = stagedPhotoPlan(listing, boundedAssessmentPlan(listing), "front").key;
+    cache.get(frontKey).condition = { ...front.condition, gradeRange: null };
+    const oldFront = { photoCheck: front.photoCheck, condition: cache.get(frontKey).condition };
+    const rawPlan = compatibleBoundedPlans(listing).find(plan => plan.mode === "RAW" && plan.version.endsWith("/bounded-prompts-2"))!;
+    const oldRemainder = stagedPhotoPlan(listing, rawPlan, "remainder", oldFront);
+    const oldReading = reading(oldRemainder.photos.length);
+    oldReading.photoCheck.images[0].view = "BACK";
+    const saved = { ...oldReading, version: oldRemainder.version, answeredAt: new Date(now).toISOString() };
+    cache.set(oldRemainder.key, saved);
+    const reused = await evaluate(listing.id);
+    assert.equal(routes.length, 2, "already paid for the older raw remainder");
+    assert.deepEqual(reused.photoCheck?.images.map(image => image.number), [1, 2, 3, 4]);
+    assert.equal(reused.condition, null);
+    assert.equal(reused.slab?.grade, "8");
+    assert.notEqual(saved.condition?.gradeRange, null, "reading the earlier stage does not modify it");
+
+    cache.delete(snapshotKey);
+    saved.photoCheck.images[0].view = "FRONT";
+    const conflict = await evaluate(listing.id);
+    assert.equal(conflict.condition, null);
+    assert.equal(conflict.slab?.grade, "8");
+    assert.equal(conflict.underwriting?.verdict, "NEEDS_REVIEW");
+    assert.equal(conflict.identity?.notThisCard, undefined);
+    assert.ok(conflict.slab?.reasons.includes("The front and later photos show different card holders."));
 });
 
 const sellerSlabNameIssue = "The seller's Card Name is Blastoise, but the slab label and card read Venusaur.";

@@ -6,6 +6,7 @@ import type { Evaluation, ListingSummary, Screen, Targets } from "../types.ts";
 import { withFreshListing } from "../fresh-listing.ts";
 import { applySoldPriceScreen } from "./sold-screen.ts";
 import { withoutUnsupportedRawPrices, withoutUnsupportedVariantPrices } from "./price-evidence.ts";
+import { withoutRawSlabAssessment } from "../photo-evidence.ts";
 
 // Your profit and return targets change by card, so the page re-prices
 // everything for the targets you set. The same money math runs on the
@@ -37,7 +38,7 @@ export function retargetEvaluation(evaluation: Evaluation, targets: Targets, cur
               },
           }
         : evaluation;
-    const scoped = withoutUnsupportedRawPrices(withoutUnsupportedVariantPrices(updated));
+    const scoped = withoutUnsupportedRawPrices(withoutUnsupportedVariantPrices(withoutRawSlabAssessment(updated)));
     const underwriting = underwrite(scoped, withTargets(targets));
     const repriced = { ...scoped, underwriting };
 

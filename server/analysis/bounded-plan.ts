@@ -3,7 +3,7 @@ import type { ListingDetails } from "../ebay/listings.ts";
 import { readTitleByRules } from "../ai/title-reader.ts";
 import { graderCode, normalizeGrade } from "../identity/slab-check.ts";
 import { normalizedPhoto } from "../../shared/listing-evidence.ts";
-import { BOUNDED_REVIEW_REVISION, LEGACY_BOUNDED_REVIEW_REVISION, BOUNDED_CONDITION_REVISION, BOUNDED_SLAB_REVIEW_REVISION } from "../../shared/pricing-freshness.ts";
+import { BOUNDED_REVIEW_REVISION, BOUNDED_REVIEW_REVISIONS, PREVIOUS_BOUNDED_REVIEW_REVISION, BOUNDED_CONDITION_REVISION, BOUNDED_SLAB_REVIEW_REVISION } from "../../shared/pricing-freshness.ts";
 import { CONDITION_RULES_VERSION } from "../../shared/conditions.ts";
 import { BOUNDED_PHOTO_LIMIT } from "../../shared/research-policy.ts";
 export { BOUNDED_PHOTO_LIMIT } from "../../shared/research-policy.ts";
@@ -45,7 +45,10 @@ function keyFor(listing: ListingDetails, version: string, photos: BoundedPhoto[]
 export function stagedPhotoPlan(listing: ListingDetails, plan: BoundedAssessmentPlan, stage: "front" | "remainder",
     front?: unknown): BoundedAssessmentPlan {
     const photos = stage === "front" ? plan.photos.slice(0, 1) : plan.photos.slice(1);
-    const version = `${plan.version}/${stage}-1`;
+    // The first-photo request is unchanged from revision 2.
+    const baseVersion = stage === "front" && plan.mode === "RAW"
+        ? `${plan.model}/bounded-prompts-${PREVIOUS_BOUNDED_REVIEW_REVISION}` : plan.version;
+    const version = `${baseVersion}/${stage}-1`;
     const key = keyFor(listing, version, photos, listing.images.length);
     // A corrected first observation changes the evidence supplied to the second
     // request, but prices and targets never change either photo cache key.
@@ -79,6 +82,13 @@ function planFor(listing: ListingDetails, mode: BoundedAssessmentMode, model = b
 export function boundedAssessmentPlan(listing: ListingDetails): BoundedAssessmentPlan {
     return planFor(listing, requestsSlabLabel(listing) ? "SLAB_LABEL" : "RAW");
 }
+
+// A separately accepted, full-gallery second look can be reused without
+// selecting the stronger model for ordinary analysis.
+export function boundedSecondLookPlan(listing: ListingDetails): BoundedAssessmentPlan {
+    return planFor(listing, "RAW", "gpt-5.6-terra");
+}
+
 export function compatibleBoundedPlans(listing: ListingDetails): BoundedAssessmentPlan[] {
     const requested = boundedAssessmentPlan(listing);
     // The physical holder is model evidence. A changed advisory seller
@@ -88,7 +98,8 @@ export function compatibleBoundedPlans(listing: ListingDetails): BoundedAssessme
     const legacyRawModels = [...new Set([BOUNDED_VISION_MODEL, "gpt-5.6-luna"])];
     const slabModels = [...new Set([BOUNDED_SLAB_MODEL, BOUNDED_VISION_MODEL, "gpt-5.6-luna", "gpt-6-luna"])];
     const candidates = [requested, planFor(listing, "RAW"),
-        ...legacyRawModels.map(model => planFor(listing, "RAW", model, LEGACY_BOUNDED_REVIEW_REVISION)),
+        ...(requested.mode === "RAW" && listing.images.length <= BOUNDED_PHOTO_LIMIT ? [boundedSecondLookPlan(listing)] : []),
+        ...legacyRawModels.flatMap(model => BOUNDED_REVIEW_REVISIONS.map(revision => planFor(listing, "RAW", model, revision))),
         ...slabModels.map(model => planFor(listing, "SLAB_LABEL", model))];
     return [...new Map(candidates.map(plan => [plan.key, plan])).values()];
 }

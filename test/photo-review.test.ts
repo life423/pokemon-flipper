@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { cardEvaluation } from "./fixtures/card-evaluation.ts";
 import { planDeeperPhotos, photoReviewStatus } from "../shared/photo-review.ts";
-import { photoEvidence } from "../shared/photo-evidence.ts";
+import { photoEvidence, slabLabelConfidence } from "../shared/photo-evidence.ts";
 import { retargetEvaluation } from "../shared/money/targets.ts";
 import { resultGroup } from "../shared/analysis.ts";
 import { auctionDecision } from "../shared/card-presentation.ts";
@@ -14,23 +14,58 @@ function deep(impact: DeeperPhotoReview["findings"][number]["impact"]): DeeperPh
         findings: [{ area: "IDENTITY", impact, observation: "The printing mark contradicts the initial reading.", photoNumbers: [1] }], requestedPhotos: [], usage: { inputTokens: 1, outputTokens: 1 } };
 }
 const any = { minProfit: 0, minRoi: 0 };
+test("disclosed corner and edge wear hidden by a holder is a terminal pass", () => {
+    const e = cardEvaluation(any);
+    e.listing.conditionNotes = ["Minor corner and edge wear"];
+    e.photoCheck!.holder = "TOPLOADER";
+    e.photoCheck!.cardCount = "ONE";
+    e.condition!.corners.visibility = "PARTIAL";
+    e.condition!.edges.visibility = "NOT_VISIBLE";
+
+    const rejected = retargetEvaluation(e, any);
+    assert.equal(rejected.underwriting?.verdict, "PASS");
+    assert.match(rejected.underwriting?.reasons[0] ?? "", /discloses corner and edge wear/);
+    assert.equal(rejected.underwriting?.best, null);
+    assert.equal(photoReviewStatus(rejected).needsYourReview, false);
+
+    e.listing.photosInListing++;
+    assert.notEqual(retargetEvaluation(e, any).underwriting?.best, null, "a partial gallery might still show the wear");
+    e.listing.photosInListing--;
+    e.listing.conditionNotes = ["No corner or edge wear"];
+    assert.notEqual(retargetEvaluation(e, any).underwriting?.best, null, "negated wear is not a disclosure");
+    e.listing.conditionNotes = ["Minor corner and edge wear"];
+    e.condition!.corners.visibility = e.condition!.edges.visibility = "CLEAR";
+    assert.notEqual(retargetEvaluation(e, any).underwriting?.best, null, "clear areas remain eligible for pricing");
+});
+
 test("readable verified slabs keep incidental glare as notes, but identity, case and deeper concerns still need review", () => {
     const e = cardEvaluation(); e.condition = null; e.gradingMode = "BLOCKED";
     e.modeReasons = ["The card is already graded."];
     e.photoCheck!.confidence = "LOW";
+    e.photoCheck!.holder = "GRADED_SLAB";
+    e.photoCheck!.cardCount = "ONE";
     e.photoCheck!.missingViews = ["Angled raw surface"];
     e.photoCheck!.images[0].obscuresCondition = true;
     e.photoCheck!.images[0].issues = ["Plastic reflections obscure tiny raw scratches."];
-    e.slab = { status: "OK", grader: "PSA", grade: "7", gradeQualifier: null, certNumber: "123", certUrl: null, labelText: "PSA 7", caseCondition: "SCUFFED", reasons: [], concerns: [] };
+    e.photoCheck!.slab = { present: true, grader: "PSA", grade: "7", gradeQualifier: null, certNumber: "123", labelText: "PSA 7", caseCondition: "SCRATCHED", authenticity: "NONE_SEEN", concerns: [] };
+    e.slab = { status: "OK", grader: "PSA", grade: "7", gradeQualifier: null, certNumber: "123", certUrl: null, labelText: "PSA 7", caseCondition: "SCRATCHED", reasons: [], concerns: [] };
     const status = photoReviewStatus(e);
     assert.equal(status.needsYourReview, false);
+    assert.equal(status.confidence, "LOW", "photo limitations remain visible");
+    assert.equal(slabLabelConfidence(e), "HIGH", "readable certified grade remains high confidence despite glare and case scratches");
     assert.deepEqual(status.photoNotes, ["Photo 1 (front): Plastic reflections obscure tiny raw scratches."]);
     e.slab.status = "NEEDS_REVIEW"; e.slab.reasons = ["Case is cracked."];
     assert.ok(photoReviewStatus(e).reasons.includes("Case is cracked."));
+    assert.equal(slabLabelConfidence(e), null);
     e.slab.status = "OK"; e.slab.reasons = []; e.identity!.status = "NEEDS_REVIEW"; e.identity!.reasons = ["Card number differs."];
     assert.ok(photoReviewStatus(e).reasons.includes("Card number differs."));
+    assert.equal(slabLabelConfidence(e), null);
     e.identity!.status = "IDENTIFIED"; e.deeperPhotoReview = deep("NEW_CONCERN");
     assert.equal(photoReviewStatus(e).needsYourReview, true);
+    assert.equal(slabLabelConfidence(e), null);
+    e.deeperPhotoReview = undefined;
+    e.photoCheck!.slab.grade = "6";
+    assert.equal(slabLabelConfidence(e), null, "a contradictory grade cannot get the high confidence label");
 });
 
 test("readable slab confidence and informational seller-certificate notes remain separate from manual concerns", () => {

@@ -17,6 +17,7 @@ import { gradeQualifier, hasParenthesizedGradeQualifier, hasSpecialSlabTitle } f
 import type { CompSummary, Confidence } from "../../shared/types.ts";
 import type { Comp, CompDropReason, CompVerdict, PrintingOrUnknown } from "./types.ts";
 import { jungleNoSymbolReason } from "../../shared/jungle-no-symbol.ts";
+import { hasBaseSetFourthPrint } from "../../shared/reprint-release.ts";
 
 // Shared evidence rules for raw and graded sold comparables. These functions
 // filter and summarize supplied sales without fetching prices or photos.
@@ -111,6 +112,7 @@ function titleAgrees(claim: PrintingClaim, printing: PrintingOrUnknown): boolean
 
 // Why a comp's printing doesn't match, or null when it does.
 export function printingProblem(comp: Comp, printing: PrintingOrUnknown, setName: string | null | undefined): string | null {
+    if (hasBaseSetFourthPrint(normalizeSetName(setName), comp.title, comp.variant)) return "Base Set Fourth Print";
     const claim = printingClaimFromText(comp.title);
 
     // Where the labels are known to be wrong, the title decides:

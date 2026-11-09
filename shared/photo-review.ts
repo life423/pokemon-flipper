@@ -1,11 +1,12 @@
 import type { Evaluation, ListingSummary, PhotoCheck } from "./types.ts";
-import { photoAssessmentConfidence, photoCoverage, photoIssueNotes } from "./photo-evidence.ts";
+import { hasSlabEvidence, obscuredDisclosedWear, photoAssessmentConfidence, photoCoverage, photoIssueNotes } from "./photo-evidence.ts";
 import { isRawCondition } from "./conditions.ts";
 import { priceEvidenceGap } from "./money/price-evidence.ts";
 
 export const DEEP_PHOTO_LIMIT = 24;
 export function planDeeperPhotos(check: PhotoCheck | null, photos: string[]) {
     if (!check || check.cardCount !== "ONE") return { photos: [], reason: "A completed photo check of one card is needed first." };
+    if (check.holder === "GRADED_SLAB") return { photos: [], reason: "This card already has a certified grade." };
     const seen = new Set<string>();
     const useful = check.images.filter((image) => {
         const url = photos[image.number - 1]?.replace(/\/s-l\d+\./, "/s-l1600.");
@@ -55,6 +56,8 @@ export function photoReviewStatus(evaluation: Evaluation | null, listing?: Listi
     const photoNotes = photoIssueNotes(check);
     const stop = evaluation.frontPhotoStop;
     const verdict = evaluation.underwriting?.verdict;
+    if (verdict === "PASS" && obscuredDisclosedWear(evaluation)) return { title: "AI photo review complete", confidence, checked: check.images.length,
+        total: evaluation.listing.photosInListing, reviewedAt: evaluation.answeredAt, reasons: [], photoNotes, needsYourReview: false };
     const stopped = stop && verdict === "PASS";
     const pending = (stop === "SLAB_PRICE" || stop === "RAW_PRICE") && verdict === "CANT_PRICE";
     if ((stopped || pending) && !newConcerns.length) {
@@ -70,7 +73,7 @@ export function photoReviewStatus(evaluation: Evaluation | null, listing?: Listi
     if (evaluation.identity?.status !== "IDENTIFIED") reasons.push(...(evaluation.identity?.reasons.length ? evaluation.identity.reasons : ["The exact card identity is uncertain."]));
     if (evaluation.slab?.status !== "OK" && evaluation.slab) reasons.push(...(evaluation.slab.reasons.length ? evaluation.slab.reasons : evaluation.slab.concerns.length ? evaluation.slab.concerns : ["The slab label or authenticity needs review."]));
     if (evaluation.underwriting?.verdict === "NEEDS_REVIEW" && (!deferred || evaluation.condition)) reasons.push(...(evaluation.underwriting.reasons.length ? evaluation.underwriting.reasons : ["The purchase recommendation needs review."]));
-    if (!evaluation.slab) {
+    if (!hasSlabEvidence(evaluation)) {
         const coverage = photoCoverage(check);
         const best = evaluation.underwriting?.best;
         const knownRawCondition = evaluation.condition && isRawCondition(evaluation.condition.rawCondition);
@@ -94,7 +97,7 @@ export function photoReviewStatus(evaluation: Evaluation | null, listing?: Listi
         if (authenticity && authenticity.concern !== "NONE_SEEN") reasons.push(...(authenticity.reasons.length ? authenticity.reasons : ["The photos raise an authenticity question."]));
         const grading = evaluation.underwriting?.best?.path === "GRADE";
         if (evaluation.condition && !evaluation.condition.gradeRange) {
-            (grading ? reasons : photoNotes).push("The photos do not support a numeric grade estimate.");
+            (grading ? reasons : photoNotes).push("The photos do not support using a grade for pricing.");
         } else if (evaluation.condition?.gradeRange?.likely === null) {
             (grading ? reasons : photoNotes).push("The photos do not support a single likely grade.");
         }

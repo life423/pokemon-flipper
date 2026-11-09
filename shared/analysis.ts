@@ -4,7 +4,7 @@ import { canRetryPricing } from "./pricing-retries.ts";
 import { AI_CONCURRENCY } from "./work-limits.ts";
 import { AUTOMATIC_PRICE_CEILING, withinAutomaticAuctionWindow } from "./listing-filters.ts";
 import { photoReviewStatus } from "./photo-review.ts";
-import { observedCardKind } from "./photo-evidence.ts";
+import { hasSlabEvidence, obscuredDisclosedWear, observedCardKind } from "./photo-evidence.ts";
 import { priceEvidenceGap } from "./money/price-evidence.ts";
 import { missingTextureReason } from "./grade-qualifier.ts";
 import { deferRawPremiumPhotos } from "./raw-market-context.ts";
@@ -66,6 +66,7 @@ export type ResultGroup = "deals" | "offers" | "candidates" | "review";
 
 export function resultGroup(listing: ListingSummary, evaluation: Evaluation | null, includeOffers = false, analysisFailed = false): ResultGroup | null {
     const verdict = evaluation?.underwriting?.verdict;
+    if (verdict === "PASS" && evaluation && obscuredDisclosedWear(evaluation)) return null;
     if ((evaluation?.frontPhotoStop === "SLAB_PRICE" || evaluation?.frontPhotoStop === "RAW_PRICE") && verdict === "CANT_PRICE") {
         return photoReviewStatus(evaluation).needsYourReview ? "review" : "candidates";
     }
@@ -128,6 +129,7 @@ export function analysisConcurrency(work: number, recentOutcomes: readonly boole
 export function meetsMinimumGrade(evaluation: Evaluation, minimum: number): boolean {
     if (minimum <= 0) return true;
     if (evaluation.slab) return evaluation.slab.status === "OK" && Number(evaluation.slab.grade) >= minimum;
+    if (hasSlabEvidence(evaluation)) return false;
     const range = evaluation.condition?.gradeRange;
     return Boolean(range && range.high >= minimum);
 }

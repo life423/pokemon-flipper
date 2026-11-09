@@ -92,14 +92,14 @@ test("independent compact model selection changes cold transport while historica
     assert.notEqual(compactPlan("gpt-6-luna").key, compactPlan("gpt-5.6-luna").key);
 });
 
-test("accepted v1 raw photos and fresh saved pricing survive the artwork prompt change", async () => {
+for (const revision of [1, 2]) test(`accepted v${revision} raw photos and saved pricing survive a prompt change`, async () => {
     const subject = listing({ title: "Venusaur Base Set 15/102 Holo English", condition: "Ungraded",
         images: [photo(1), photo(1, 500), photo(2), photo(3)],
         aspects: { "Card Name": "Venusaur", Set: "Base Set", "Card Number": "15/102", Language: "English", Finish: "Holo" } });
     const [requested, ...compatible] = compatibleBoundedPlans(subject);
-    const previous = compatible.find(plan => plan.version === `${requested.model}/bounded-prompts-1`);
+    const previous = compatible.find(plan => plan.version === `${requested.model}/bounded-prompts-${revision}`);
     assert.ok(previous);
-    assert.equal(requested.version, `${requested.model}/bounded-prompts-2`);
+    assert.equal(requested.version, `${requested.model}/bounded-prompts-3`);
     assert.deepEqual(requested.photos, previous.photos);
     const { evaluate, cache, calls } = harness(subject);
     const accepted = saved(rawReading(previous.photos.length), previous.version);

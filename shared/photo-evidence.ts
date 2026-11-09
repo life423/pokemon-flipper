@@ -1,4 +1,6 @@
-import type { Evaluation, PhotoCheck } from "./types.ts";
+import { isRawCondition, type RawCondition } from "./conditions.ts";
+import { readyForPricing } from "./identity.ts";
+import type { Evaluation, GradeRange, PhotoCheck } from "./types.ts";
 
 const VIEW_NAMES: Record<string, string> = { FRONT: "front", BACK: "back", FRONT_DETAIL: "front close-up", BACK_DETAIL: "back close-up" };
 
@@ -11,6 +13,37 @@ export function observedCardKind(evaluation?: Pick<Evaluation, "photoCheck"> | n
     if (check.holder === "GRADED_SLAB" && check.slab?.present) return "graded";
     if (["NONE", "SLEEVE", "TOPLOADER"].includes(check.holder) && !check.slab?.present) return "raw";
     return null;
+}
+
+export function obscuredDisclosedWear({ listing, photoCheck, condition }: {
+    listing: Partial<Pick<Evaluation["listing"], "conditionNotes" | "photosInListing">>;
+    photoCheck?: PhotoCheck | null;
+    condition?: Partial<Pick<NonNullable<Evaluation["condition"]>, "corners" | "edges">> | null;
+}): string | null {
+    if (!photoCheck || !["SLEEVE", "TOPLOADER"].includes(photoCheck.holder) || observedCardKind({ photoCheck }) !== "raw" ||
+        !listing.photosInListing || photoCheck.images.length < listing.photosInListing) return null;
+
+    const views = photoCheck.images.filter(photo => photo.usable && !photo.isStockImage && photo.view !== "OTHER");
+    const allObscured = views.every(photo => photo.obscuresCondition === true);
+    const notes = (listing.conditionNotes ?? []).flatMap(note => note.toLowerCase().split(/[.;\n]+/))
+        .filter(note => !/\b(?:no|without|free of|none)\b/.test(note));
+    const wear = /\b(corners?|edges?)(?:\s*(?:and|&|\/|or)\s*(corners?|edges?))?\s+(?:wear|whitening|chipping|damage)\b/g;
+    const areas = notes.flatMap(note => [...note.matchAll(wear)].flatMap(match => [match[1], match[2]].filter(Boolean)));
+    const obscured = (["corner", "edge"] as const).filter(area => areas.some(value => value.startsWith(area)) &&
+        (condition?.[area === "corner" ? "corners" : "edges"]?.visibility ?? (allObscured ? "NOT_VISIBLE" : "CLEAR")) !== "CLEAR");
+    if (!obscured.length) return null;
+    return `The seller discloses ${obscured.join(" and ")} wear, and the photos through the holder do not clearly show those areas. Pass unless clear photos outside the holder show the wear.`;
+}
+
+export function hasSlabEvidence(evaluation?: Pick<Evaluation, "slab" | "photoCheck"> | null): boolean {
+    return Boolean(evaluation?.slab || evaluation?.photoCheck?.holder === "GRADED_SLAB");
+}
+
+export function withoutRawSlabAssessment(evaluation: Evaluation): Evaluation {
+    if (!hasSlabEvidence(evaluation)) return evaluation;
+    const { provisionalGradeRange, conditionVersion, ...slab } = evaluation;
+    const gradeStatus = evaluation.slab?.grader && evaluation.slab.grade ? "CERTIFIED_SLAB" : "UNKNOWN_PHOTO_EVIDENCE";
+    return { ...slab, condition: null, gradingMode: "BLOCKED", gradeStatus, rawPricing: null, gradedPricing: null };
 }
 
 export function photoIssueNotes(check: PhotoCheck | null) {
@@ -35,8 +68,40 @@ export function photoAssessmentConfidence(evaluation: Evaluation) {
     // Reading a certified label does not produce a raw-condition estimate.
     // A separate price/certificate/authenticity hold must not erase the photo
     // reader's confidence; those concerns remain in the review reasons.
-    if (evaluation.slab || evaluation.photoCheck?.holder === "GRADED_SLAB") return evaluation.photoCheck?.confidence ?? "UNKNOWN";
+    if (hasSlabEvidence(evaluation)) return evaluation.photoCheck?.confidence ?? "UNKNOWN";
     return evaluation.condition?.confidence ?? "UNKNOWN";
+}
+
+export function slabLabelConfidence(evaluation: Evaluation): "HIGH" | null {
+    const { identity, photoCheck, slab } = evaluation;
+    const label = photoCheck?.slab;
+    const identityConcern = evaluation.deeperPhotoReview?.findings.some(finding => finding.area === "IDENTITY" && finding.impact === "NEW_CONCERN");
+    return slab?.status === "OK" && slab.grader && slab.grade &&
+        readyForPricing(identity) && identity?.name && !identity.notThisCard && !identityConcern &&
+        observedCardKind(evaluation) === "graded" && label?.authenticity === "NONE_SEEN" &&
+        label.grader === slab.grader && label.grade === slab.grade ? "HIGH" : null;
+}
+
+// A rough reference for older readings that only described visible wear.
+// These ranges are for display and never enter purchase math or grade filters.
+const gradesFromWear: Record<RawCondition, GradeRange> = {
+    MINT: { low: 8, likely: 9, high: 10 },
+    NEAR_MINT: { low: 7, likely: 8, high: 9 },
+    LIGHTLY_PLAYED: { low: 5, likely: 6, high: 7 },
+    MODERATELY_PLAYED: { low: 3, likely: 4, high: 5 },
+    HEAVILY_PLAYED: { low: 1, likely: 2, high: 3 },
+    DAMAGED: { low: 1, likely: 1, high: 3 },
+};
+
+export function displayedRawGrade(evaluation: Evaluation) {
+    const kind = observedCardKind(evaluation);
+    if (hasSlabEvidence(evaluation)) return null;
+    const condition = evaluation.condition;
+    if (condition?.gradeRange) return { range: condition.gradeRange, confidence: condition.confidence, source: "PHOTO" } as const;
+    if (kind !== "raw") return null;
+    if (evaluation.provisionalGradeRange) return { range: evaluation.provisionalGradeRange, confidence: "LOW", source: "PROVISIONAL" } as const;
+    if (condition && isRawCondition(condition.rawCondition)) return { range: gradesFromWear[condition.rawCondition], confidence: "LOW", source: "WEAR" } as const;
+    return { range: { low: 1, likely: null, high: 10 }, confidence: "UNKNOWN", source: "UNRESOLVED" } as const;
 }
 
 export function photoEvidence(evaluation: Evaluation, requestedGrade = 0) {
@@ -53,8 +118,8 @@ export function photoEvidence(evaluation: Evaluation, requestedGrade = 0) {
           : optimistic
             ? `${requestedGrade} is an upper-end possibility in the ${range.low}–${range.high} range${range.likely !== null ? `; ${range.likely} is the likely estimate` : "; no likely grade is supported"}.`
             : `${requestedGrade} is within the estimated ${range.low}–${range.high} range.`
-        : evaluation.condition && !range
-          ? requestedGrade > 0 ? `No numeric grade estimate supports your potential ${requestedGrade} target.` : "The photos do not support a numeric grade estimate."
+        : displayedRawGrade(evaluation) || evaluation.condition
+          ? requestedGrade > 0 ? `The photos do not establish whether this card meets your potential ${requestedGrade} target.` : "The photos do not support using a grade for pricing."
           : "The grade range is a photo estimate, not a guaranteed grading result.";
     return { confidence, coverage, issues, target, optimistic };
 }

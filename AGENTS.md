@@ -266,7 +266,10 @@ Read docs/architecture.md for the source map and reading order.
   manual review again when only prices are deferred.
 - Seller condition is a clue, not assessed condition. Keep Mint, Near Mint, LP,
   MP, HP and Damaged distinct. Numeric ranges span at most three adjacent grades;
-  likely may be unknown. Supported raw condition may have no numeric range.
+  completed raw photo requests require a likely grade. Show confidence and label
+  low-confidence or condition-only estimates as reference, outside pricing and
+  grade filters. If no observation narrows the grade, show the full scale with
+  no point estimate. Preserve older accepted photo and pricing evidence.
   Never invent calibrated odds; scenario weights remain assumptions.
   Preserve structured seller conditions when title claims differ. Explicit heavy
   play/damage or conflicting seller claims can reduce unpriced research priority,

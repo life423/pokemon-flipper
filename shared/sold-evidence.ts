@@ -1,4 +1,5 @@
 import { isRawCondition } from "./conditions.ts";
+import { hasBaseSetFourthPrint } from "./reprint-release.ts";
 import type { CompSummary, Printing, ScreeningSoldEvidence, ScreeningSoldReference } from "./types.ts";
 
 const positive = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value > 0;
@@ -24,6 +25,7 @@ export function usableSoldReference(reference: ScreeningSoldReference, slab: boo
     if (!reference.name || !reference.set || !reference.cardNumber ||
         !["FIRST_EDITION", "SHADOWLESS", "UNLIMITED"].includes(reference.printing) ||
         !["HOLO", "NON_HOLO", "REVERSE_HOLO"].includes(reference.finish)) return false;
+    if (summary.sales?.some(sale => hasBaseSetFourthPrint(reference.set, sale.title))) return false;
     if (slab) return reference.condition === null && !!normalize(reference.grader) && positive(Number(reference.grade)) &&
         normalize(summary.grader) === normalize(reference.grader) && Number(summary.grade) === Number(reference.grade);
     return reference.grader === null && reference.grade === null && normalize(summary.grader) === "RAW" &&

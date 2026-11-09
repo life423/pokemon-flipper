@@ -5,6 +5,7 @@ import { assessBoundedListing, buildBoundedAssessmentRequest, BOUNDED_ASSESSMENT
     type BoundedReading } from "../../server/ai/bounded-assessment.ts";
 import type { ListingDetails } from "../../server/ebay/listings.ts";
 import { BOUNDED_SLAB_MODEL } from "../../server/ai/policy.ts";
+import { cardEvaluation } from "../fixtures/card-evaluation.ts";
 
 const listing: ListingDetails = { id: "offline-plan", title: "Venusaur Base Set 15/102 Holo English", url: "#", price: 50, shipping: 5,
     buyingOption: "FIXED_PRICE", bids: 0, endTime: null, seller: null, condition: "Ungraded", cardCondition: "Lightly Played", conditionNotes: [],
@@ -74,6 +75,23 @@ test("the revised raw prompt pinpoints printing and surface evidence within the 
     assert.match(raw.prompt, /Authenticity alerts require concrete visible/);
     assert.deepEqual({ listing, photos }, before);
     assert.equal(fetch.mock.callCount(), 0);
+});
+
+test("completed raw photo reports require a numeric grade, including when confidence is low", () => {
+    const raw = labelReading();
+    raw.photoCheck.holder = "NONE";
+    raw.photoCheck.slab = null;
+    const condition = cardEvaluation().condition!;
+    condition.confidence = "LOW";
+    condition.authenticity = { concern: "NONE_SEEN", reasons: [], limitations: [], observations: [] };
+    const completed = buildBoundedAssessmentRequest(listing, photos);
+    const front = buildBoundedAssessmentRequest(listing, photos, "RAW", true);
+    strictObjects(completed.schema);
+    assert.equal(accepts(completed.schema, { ...raw, condition: { ...condition, gradeRange: { low: 5, likely: 6, high: 7 } } }), true);
+    assert.equal(accepts(completed.schema, { ...raw, condition: { ...condition, gradeRange: null } }), false);
+    assert.equal(accepts(completed.schema, { ...raw, condition: { ...condition, gradeRange: { low: 5, likely: null, high: 7 } } }), false);
+    assert.equal(accepts(front.schema, { ...raw, condition: { ...condition, gradeRange: null } }), true);
+    assert.equal(accepts(completed.schema, labelReading()), true, "a photographed slab can still return a null raw report");
 });
 
 test("the slab plan uses less output and schema space while retaining per-photo identity, label and case evidence", t => {

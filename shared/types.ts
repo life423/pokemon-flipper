@@ -228,6 +228,7 @@ export interface PrintingMarks {
 // What the photos show of a graded case and its label.
 export interface SlabReading {
     authenticityEvidence?: string[];
+    holderConflict?: true;
     present: boolean;
     grader: string | null;
     grade: string | null;
@@ -593,6 +594,7 @@ export interface Evaluation {
     modeReasons: string[];
     gradeStatus: string;
     condition: Condition | null;
+    provisionalGradeRange?: GradeRange;
     setAside: SetAsideAnswer[];
     identity: Identity | null;
     rawPricing: RawPricing | null;

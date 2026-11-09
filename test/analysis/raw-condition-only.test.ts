@@ -82,7 +82,7 @@ test("a supported valuable raw resale does not require or inherit a grading esti
     assert.equal(meetsMinimumGrade(evaluation, 0), true);
     assert.equal(meetsMinimumGrade(evaluation, 7), false, "unknown numeric quality cannot satisfy a potential-grade filter");
     assert.equal(describeRange(evaluation.condition!.gradeRange), "No numeric grade estimate");
-    assert.match(photoEvidence(evaluation, 7).target, /No numeric grade estimate supports/);
+    assert.match(photoEvidence(evaluation, 7).target, /photos do not establish whether/);
 });
 
 test("known damaged raw condition keeps visibility concerns as notes while unknown condition and real conflicts need review", () => {

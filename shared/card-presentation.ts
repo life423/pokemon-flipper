@@ -1,6 +1,7 @@
 import { MONEY_CONFIG } from "./money/config.ts";
 import { pathNumbers } from "./money/underwriting.ts";
 import { photoReviewStatus } from "./photo-review.ts";
+import { hasSlabEvidence } from "./photo-evidence.ts";
 import type { Evaluation, Grader, PricedPath, Targets } from "./types.ts";
 
 export function returnText(value: number | null | undefined): string {
@@ -49,7 +50,7 @@ export function auctionDecision(evaluation: Evaluation, targets: Targets = MONEY
 }
 
 export function gradingRoutes(evaluation: Evaluation) {
-    if (evaluation.slab) return [];
+    if (hasSlabEvidence(evaluation)) return [];
     return (["PSA", "CGC"] as Grader[]).map((grader) => {
         const path = evaluation.underwriting?.paths.find((entry) => entry.path === "GRADE" && entry.grader === grader);
         return { grader, range: evaluation.condition?.gradeRange ?? null,

@@ -1,5 +1,6 @@
 import type { Evaluation, ListingSummary } from "../types";
 import { name } from "../format";
+import { hasSlabEvidence, obscuredDisclosedWear, slabLabelConfidence } from "../../../shared/photo-evidence.ts";
 import { photoReviewStatus, planDeeperPhotos } from "../../../shared/photo-review.ts";
 import styles from "./PhotoReview.module.css";
 
@@ -14,13 +15,17 @@ interface Props {
 }
 export function PhotoReview({ evaluation, listing, phase, compact = false, state, onReview }: Props) {
     const status = photoReviewStatus(evaluation, listing);
+    const labelConfidence = evaluation ? slabLabelConfidence(evaluation) : null;
     const current = state?.key === evaluation?.photoReviewKey ? state : undefined;
     const deep = evaluation?.deeperPhotoReview;
+    const obscuredWear = evaluation?.underwriting?.verdict === "PASS" && obscuredDisclosedWear(evaluation);
     const plan = evaluation ? planDeeperPhotos(evaluation.photoCheck, evaluation.listing.photos ?? listing.images) : null;
     return <section className={styles.review} aria-label="AI photo review">
         <p className={styles.title}>{phase === "loading" ? "Analyzing photos and checking resale prices…" : phase === "error" ? "Listing analysis could not finish" : status.title}</p>
         {evaluation?.researchMode === "DEFERRED_LOW_RESALE" && <p className={styles.meta}>Further condition and resale research was deferred for this low-value card. Full research remains available.</p>}
         {evaluation?.photoCheck && <p className={styles.meta}>{status.checked} of {status.total} photos checked · Photo confidence: {name(status.confidence)}</p>}
+        {labelConfidence && evaluation?.slab && <p className={styles.meta}>Slab label confidence: {name(labelConfidence)} · Case: {name(evaluation.slab.caseCondition)}</p>}
+        {obscuredWear && <p className={styles.caution}>{obscuredWear}</p>}
         {status.needsYourReview && <div className={styles.caution}>
             <strong>Your review needed</strong>
             {compact ? <p>{status.reasons[0]}</p> : <ul>{status.reasons.slice(0, 4).map((reason) => <li key={reason}>{reason}</li>)}</ul>}
@@ -29,7 +34,7 @@ export function PhotoReview({ evaluation, listing, phase, compact = false, state
         {compact && deep && <p className={styles.meta}>Deeper AI review saved</p>}
         {compact && current?.status === "loading" && <p className={styles.meta} role="status">Deeper AI review in progress; initial assessment still shown.</p>}
         {compact && current?.status === "error" && <p className={styles.caution}>Deeper review failed; initial assessment kept. Open analysis for details.</p>}
-        {!compact && evaluation?.photoCheck && !evaluation.slab && <>
+        {!compact && evaluation?.photoCheck && !hasSlabEvidence(evaluation) && (!obscuredWear || deep) && <>
             {deep ? <div className={styles.deep}>
                 <h3>Deeper AI photo review</h3>
                 <p className={styles.meta}>{deep.photoNumbers.length} photos examined · saved result</p>

@@ -9,7 +9,7 @@ import { MONEY_CONFIG } from "../../../shared/money/config.ts";
 import { auctionDecision, returnText } from "../../../shared/card-presentation.ts";
 import { yearOf } from "../../../shared/sets.ts";
 import { resaleActivity } from "../../../shared/liquidity.ts";
-import { observedCardKind, photoEvidence } from "../../../shared/photo-evidence.ts";
+import { hasSlabEvidence, observedCardKind, photoEvidence } from "../../../shared/photo-evidence.ts";
 import { currentSellerMistakes } from "../../../shared/seller-mistakes.ts";
 import { AuctionSummary } from "./AuctionSummary";
 import { GradingComparison } from "./GradingComparison";
@@ -69,8 +69,8 @@ export function DealCard({ listing, analysis, assessmentNote, selected, now, onO
     const card = evaluation?.identity ?? screen?.card;
     const details = cardDetails(listing, evaluation);
     const observedKind = observedCardKind(evaluation);
-    const rawConditionApplies = observedKind === "raw" || observedKind === null && !listing.isGraded &&
-        !evaluation?.slab && !evaluation?.photoCheck?.slab?.present && evaluation?.photoCheck?.holder !== "GRADED_SLAB";
+    const slab = hasSlabEvidence(evaluation);
+    const rawConditionApplies = !slab && (observedKind === "raw" || observedKind === null && !listing.isGraded && !evaluation?.photoCheck?.slab?.present);
     const number = card?.cardNumber?.replace(/^0+(?=\d)/, "");
     const title = card?.name ? [card.name, number].filter(Boolean).join(" ") : listing.title;
     const subtitle = card?.name ? [card.set, yearOf(years, card.set), card.printing !== "UNLIMITED" ? card.printingLabel : null].filter(Boolean).join(" · ") : listing.isGraded ? "Graded card" : "Raw card";
@@ -131,9 +131,9 @@ export function DealCard({ listing, analysis, assessmentNote, selected, now, onO
         {mistakes[0] && <p className={styles.note}>{mistakes[0].detail}</p>}
         {!priceGap && best?.path === "RAW" && <p className={styles.note}>Estimated resale {dollars(best.salePrice)} · {name(best.priceCondition ?? "UNKNOWN")} · {soldEstimateBasis(rawPrice?.comps)}.</p>}
         {best?.path === "GRADED_RESALE" && evaluation?.slabPricing?.activeReference && !evaluation.slabPricing.summary?.count && <p className={styles.note}>Resale target {dollars(best.salePrice)} · below photo-checked Buy It Now competition.</p>}
-        {evaluation?.condition && <GradingComparison evaluation={evaluation} />}
-        {evaluation?.condition && claimedCondition(evaluation.listing.cardCondition) && <p className={styles.note}>Seller says: {CONDITION_NAMES[claimedCondition(evaluation.listing.cardCondition)!]} · AI assesses: {name(evaluation.condition.rawCondition)}</p>}
-        {minGrade > 0 && evidence && <p className={styles.note}>{evidence.target}</p>}
+        {!slab && evaluation?.condition && <GradingComparison evaluation={evaluation} />}
+        {!slab && evaluation?.condition && claimedCondition(evaluation.listing.cardCondition) && <p className={styles.note}>Seller says: {CONDITION_NAMES[claimedCondition(evaluation.listing.cardCondition)!]} · AI assesses: {name(evaluation.condition.rawCondition)}</p>}
+        {!slab && minGrade > 0 && evidence && <p className={styles.note}>{evidence.target}</p>}
         <dl className={styles.facts}>
             <div><dt>Seller</dt><dd>{sellerText}</dd></div>
             {rawConditionApplies && <div><dt>AI raw condition</dt><dd>{evaluation?.condition ? name(evaluation.condition.rawCondition) : "Not assessed"}</dd></div>}

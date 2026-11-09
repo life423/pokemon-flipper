@@ -107,6 +107,24 @@ test("No Symbol Jungle sales cannot inflate an ordinary Jungle market, while ord
     assert.equal(compProblem(sale(100, { title: "Venusaur Base Set 15/102 Unlimited Holo PSA 7 no symbol" }), criteria), null);
 });
 
+test("Base Set Fourth Print sales do not enter an ordinary Base Set price", () => {
+    const cgc = { ...criteria, grader: "CGC", grade: "9" };
+    const ordinary = sale(245, { grader: "CGC", grade: "9", title: "1999 Mewtwo 10/102 Base Set Unlimited Holo CGC 9" });
+    const fourth = { ...ordinary, price: 499.99, title: "1999–2000 Pokemon Mewtwo Base Set 10/102 Holo CGC 9 4th Print" };
+    const summary = summarizeComps([ordinary, fourth], cgc);
+    assert.equal(summary.count, 1);
+    assert.equal(soldMarketPrice(summary), 245);
+    assert.equal(summary.dropped["Base Set Fourth Print"], 1);
+    for (const title of ["Mewtwo 1999-00", "Mewtwo Fourth Printing", "Mewtwo U.K. Print"]) {
+        assert.equal(compProblem({ ...ordinary, title }, cgc), "Base Set Fourth Print");
+        assert.equal(compProblem({ ...ordinary, title }, { ...cgc, setName: "Base Set (Shadowless)", printing: "SHADOWLESS" }), "Base Set Fourth Print");
+        assert.equal(compProblem({ ...ordinary, title }, { ...cgc, setName: "Team Rocket" }), null);
+    }
+    assert.equal(compProblem({ ...ordinary, variant: "Unlimited Holofoil Fourth Print" }, cgc), "Base Set Fourth Print");
+    assert.equal(compProblem({ ...ordinary, title: `${ordinary.title}, not 4th print` }, cgc), null);
+    assert.equal(compProblem({ ...ordinary, title: `${ordinary.title}, UK seller` }, cgc), null);
+});
+
 test("advertised print errors do not set ordinary raw or graded sold prices", () => {
     const raw = { ...criteria, grader: "RAW", grade: "MODERATELY_PLAYED" };
     const ordinary = sale(23, { title: "Mewtwo 10/102 Base Set Holo Unlimited MP", grader: raw.grader, grade: raw.grade });

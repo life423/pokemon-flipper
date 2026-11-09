@@ -16,13 +16,13 @@ test("raw-condition facts are absent for listed and photographed slabs while act
     const item: ListingSummary = { id: "holder-card", title: "Venusaur Base Set 15/102 Holo PSA 8", currentPrice: 100, shipping: 0,
         bids: 0, isGraded: true, buyingOption: "FIXED_PRICE", endTime: null, images: [], url: "#", seller: null };
     const render = (listing: ListingSummary, analysis?: unknown) => renderToStaticMarkup(createElement(DealCard, {
-        listing, analysis, selected: false, now: Date.now(), onOpen: () => {}, years: {},
+        listing, analysis, selected: false, now: Date.now(), onOpen: () => {}, years: {}, minGrade: 7,
     }));
     for (const analysis of [undefined, { status: "loading" }, { status: "error", error: "Offline failure" }]) {
         assert.doesNotMatch(render(item, analysis), /AI raw condition|Not assessed|Certified slab/);
     }
     const slab = cardEvaluation();
-    slab.condition = null;
+    slab.listing.cardCondition = "Lightly Played";
     slab.photoCheck!.cardCount = "ONE";
     slab.photoCheck!.holder = "GRADED_SLAB";
     slab.photoCheck!.slab = { present: true, grader: "PSA", grade: "8", gradeQualifier: null, certNumber: null,
@@ -30,7 +30,9 @@ test("raw-condition facts are absent for listed and photographed slabs while act
     slab.slab = { status: "OK", grader: "PSA", grade: "8", gradeQualifier: null, certNumber: null, certUrl: null,
         labelText: "PSA 8", caseCondition: "INTACT", reasons: [], concerns: [] };
     for (const isGraded of [true, false]) {
-        assert.doesNotMatch(render({ ...item, isGraded }, { status: "done", evaluation: slab }), /AI raw condition|Not assessed|Certified slab/);
+        const html = render({ ...item, isGraded }, { status: "done", evaluation: slab });
+        assert.match(html, /Label checked: <\/span>PSA 8/);
+        assert.doesNotMatch(html, /AI raw condition|Not assessed|Certified slab|Seller says|PSA and CGC comparison|potential 7 target|photo estimate/);
     }
     const raw = cardEvaluation(); raw.photoCheck!.cardCount = "ONE";
     for (const isGraded of [true, false]) {

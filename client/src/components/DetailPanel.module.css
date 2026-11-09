@@ -53,8 +53,8 @@
 .gallery { display: grid; gap: var(--space-3); margin-block: var(--space-4) var(--space-5); min-width: 0; }
 .galleryHeader { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .galleryHeader .sectionTitle { margin: 0; }
-.photoViewport { position: relative; width: 100%; height: clamp(15rem, 48dvh, 30rem); overflow: hidden; background: color-mix(in srgb, var(--bg) 65%, var(--surface-alt)); border: 1px solid var(--border); border-radius: var(--radius-control); touch-action: none; user-select: none; }
-.photoViewport[data-zoomed="true"] { cursor: grab; }
+.photoViewport { position: relative; width: 100%; height: clamp(15rem, 48dvh, 30rem); overflow: hidden; background: color-mix(in srgb, var(--bg) 65%, var(--surface-alt)); border: 1px solid var(--border); border-radius: var(--radius-control); touch-action: pan-y; user-select: none; }
+.photoViewport[data-zoomed="true"] { touch-action: none; cursor: grab; }
 .photoViewport[data-zoomed="true"]:active { cursor: grabbing; }
 .heroPhoto { display: block; width: 100%; height: 100%; object-fit: contain; transform-origin: center; pointer-events: none; user-select: none; opacity: 0; }
 /* Fade only the incoming pixels. The zoom/pan transform stays immediate. */

@@ -4,7 +4,7 @@ import { finishClaim, type FinishClaim } from "../../shared/finish.ts";
 import { normalizeCardNumber, sameCardNumber } from "../../shared/card-number.ts";
 import { canonicalCatalogName, sameCatalogName } from "./catalog-name.ts";
 import { cardLanguageStatus } from "../../shared/card-language.ts";
-import { BASE_SET_2_TITLE, withoutReprintRelease } from "../../shared/reprint-release.ts";
+import { BASE_SET_2_TITLE, hasBaseSetFourthPrint, withoutReprintRelease } from "../../shared/reprint-release.ts";
 import { checkSlab } from "./slab-check.ts";
 import type { readTitleByRules } from "../ai/title-reader.ts";
 
@@ -558,6 +558,7 @@ const anniversaryMark = "(?:pikachu anniversary|anniversary pikachu|anniversary/
 const reprintMarks = [
     `base set 2(?: (?:mark|symbol))? or (?:visible )?${anniversaryMark}`,
     `${anniversaryMark} or (?:visible )?${baseSet2Mark}`,
+    `${baseSet2Mark}, ${anniversaryMark},? or other reprint (?:mark|logo|stamp|symbol)`,
     "(?:anniversary or other )?reprint (?:mark|logo|stamp|symbol)s?",
 ].join("|");
 const noVisibleReprint = new RegExp(
@@ -735,6 +736,7 @@ export function ordinaryBaseSetPokemonNumber(value: string | null | undefined): 
 
 function shadowConfirmsUnlimited(photos: IdentityPhotos, card: PricedCard): boolean {
     const observed = photos.cardIdentity, marks = photos.printingMarks;
+    // A reflection can hide wear while leaving the printed frame readable.
     return Boolean(marks?.artBoxShadow === "PRESENT" && marks.firstEditionStamp === "CANT_TELL" && marks.evidence?.length &&
         reprintMarksRuledOut(marks.reprintMark, "base set") && observed?.confidence === "HIGH" && observed.evidence.length &&
         normalizeSetName(observed.set) === "base set" && normalizeWords(observed.language) === "english" &&
@@ -912,6 +914,8 @@ export async function identifyCard(
     let photoSource = "photos";
     if (!slab && photo === "UNKNOWN" && setKey === "base set" &&
         [titlePrinting, itemPrinting].every(claim => claim === "UNLIMITED" || claim === "NOT_STATED") &&
+        !hasBaseSetFourthPrint(setKey, sellerListing.title, aspectText(aspects, /edition|feature|print|copyright|year/i),
+            ...(photoCheck.printingMarks?.evidence ?? [])) &&
         cardLanguageStatus(sellerListing.title, [aspects.Language, photoCheck.cardIdentity?.language]) === "ENGLISH" &&
         shadowConfirmsUnlimited(photoCheck, card)) {
         photo = "UNLIMITED";

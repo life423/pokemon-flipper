@@ -55,9 +55,9 @@ export function PhotoGallery({ images }: { images: string[] }) {
         const resize = () => update(constrainPhotoView(currentView.current, bounds()));
         const observer = new ResizeObserver(resize);
         observer.observe(element);
-        // A nonpassive native listener prevents the panel scrolling behind a
-        // deliberate wheel zoom. Once outside the photo, scrolling is normal.
+        // Trackpad pinch also arrives as Ctrl+wheel in browsers that expose it.
         const wheel = (event: WheelEvent) => {
+            if ((!event.ctrlKey && !event.metaKey) || !event.deltaY) return;
             event.preventDefault();
             const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? element.clientHeight : 1);
             zoom(currentView.current.zoom * Math.exp(-delta * 0.002), point(event.clientX, event.clientY));
@@ -74,8 +74,10 @@ export function PhotoGallery({ images }: { images: string[] }) {
 
     const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
         if (event.button !== 0 || (event.target as Element).closest("a, button, input")) return;
-        event.preventDefault();
-        event.currentTarget.focus({ preventScroll: true });
+        if (event.pointerType !== "touch") {
+            event.preventDefault();
+            event.currentTarget.focus({ preventScroll: true });
+        }
         event.currentTarget.setPointerCapture(event.pointerId);
         pointers.current.set(event.pointerId, point(event.clientX, event.clientY));
     };
@@ -162,7 +164,7 @@ export function PhotoGallery({ images }: { images: string[] }) {
             <button type="button" onClick={() => zoom(currentView.current.zoom * 1.5)} disabled={view.zoom >= PHOTO_ZOOM_MAX} aria-label="Zoom in">+</button>
             <button type="button" className={styles.photoTextButton} onClick={reset} disabled={view.zoom === 1 && view.x === 0 && view.y === 0}>Reset view</button>
         </div>
-        <p id={instructions} className={styles.small}>Pinch or scroll to zoom; drag to move. Keyboard: +/− to zoom, arrows to move, 0 to reset. At 1×, left/right change photos.</p>
+        <p id={instructions} className={styles.small}>Scroll normally to browse. Pinch, double-click, or hold Ctrl or ⌘ while scrolling to zoom. Drag to move a zoomed photo. Use +/− to zoom, arrows to move, and 0 to reset. At 1×, left and right arrows change photos.</p>
         <p className={styles.small}>Zoom enlarges the original image; it cannot recover missing detail. <a className={styles.originalPhoto} href={source} target="_blank" rel="noopener noreferrer">Open original photo ↗</a></p>
     </section>;
 }

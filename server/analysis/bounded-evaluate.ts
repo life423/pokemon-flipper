@@ -27,11 +27,13 @@ import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { rateDeal } from "../../shared/money/rating.ts";
 import { cardLanguageStatus, EnglishOnlyError } from "../../shared/card-language.ts";
 import { listingEvidenceKey } from "../../shared/listing-evidence.ts";
-import { currentPriceEvidence, PRICING_VERSION } from "../../shared/pricing-freshness.ts";
+import { BOUNDED_REVIEW_REVISION, currentPriceEvidence, PREVIOUS_BOUNDED_REVIEW_REVISION, PRICING_VERSION } from "../../shared/pricing-freshness.ts";
 import { unsupportedVariantReason, withoutUnsupportedRawPrices, withoutUnsupportedVariantPrices } from "../../shared/money/price-evidence.ts";
 import { minimumOfferPrice } from "../../shared/money/cents.ts";
 import { isRawCondition, RAW_CONDITIONS } from "../../shared/conditions.ts";
 import { withinAutomaticAuctionWindow } from "../../shared/listing-filters.ts";
+import { obscuredDisclosedWear } from "../../shared/photo-evidence.ts";
+import { withoutRawSlabAssessment } from "../../shared/photo-evidence.ts";
 import type { Evaluation, Targets } from "../../shared/types.ts";
 import type { Usage } from "./types.ts";
 import { createPrivateEvaluationStore, evaluationContextKey } from "./private-evaluation.ts";
@@ -87,6 +89,13 @@ interface Dependencies {
 function stopFailure(error: unknown) { return aiSpendingFailure(error) ?? storageFailure(error); }
 class CandidateOutsideWindow extends Error {}
 
+function readableFrontSlab(check: BoundedReading["photoCheck"]) {
+    const [front] = check.images;
+    if (check.holder !== "GRADED_SLAB" || check.cardCount !== "ONE" || front?.view !== "FRONT" || !front.usable || front.isStockImage) return null;
+    const slab = normalizeSlabReading(check.slab);
+    return slab?.present && slab.grader && slab.grade ? slab : null;
+}
+
 function combinePhotoReadings(front: BoundedReading, rest: BoundedReading): BoundedReading {
     const result = structuredClone(rest);
     const first = front.photoCheck, check = result.photoCheck;
@@ -98,6 +107,14 @@ function combinePhotoReadings(front: BoundedReading, rest: BoundedReading): Boun
         return result;
     }
     if (check.cardCount === "UNKNOWN" && first.cardCount === "ONE") check.cardCount = first.cardCount;
+    const acceptedSlab = readableFrontSlab(first);
+    if (acceptedSlab && check.holder !== "GRADED_SLAB") {
+        if (["NONE", "SLEEVE", "TOPLOADER"].includes(check.holder) && rest.photoCheck.images.some(photo => photo.view === "FRONT" && photo.usable && !photo.isStockImage)) {
+            acceptedSlab.holderConflict = true;
+        }
+        check.holder = "GRADED_SLAB";
+        check.slab = acceptedSlab;
+    }
     if (check.holder === "UNKNOWN") check.holder = first.holder;
     const priorSlab = normalizeSlabReading(first.slab);
     if (check.holder === "GRADED_SLAB" && priorSlab?.present) {
@@ -114,7 +131,8 @@ function combinePhotoReadings(front: BoundedReading, rest: BoundedReading): Boun
             slab.labelText ??= priorSlab.labelText;
             slab.certNumber ??= priorSlab.certNumber;
             slab.gradeQualifier ??= priorSlab.gradeQualifier ?? null;
-            if (priorSlab.caseCondition === "CRACKED" || slab.caseCondition === "NOT_VISIBLE") slab.caseCondition = priorSlab.caseCondition;
+            if (priorSlab.caseCondition === "CRACKED" || slab.caseCondition === "NOT_VISIBLE" || priorSlab.caseCondition === "SCRATCHED" && slab.caseCondition === "INTACT") slab.caseCondition = priorSlab.caseCondition;
+            slab.concerns = [...new Set([...priorSlab.concerns, ...slab.concerns])];
             if (priorSlab.authenticity !== "NONE_SEEN" && slab.authenticity !== "LIKELY_FAKE") {
                 slab.authenticity = priorSlab.authenticity;
                 slab.authenticityEvidence = [...(priorSlab.authenticityEvidence ?? []), ...(slab.authenticityEvidence ?? [])];
@@ -150,6 +168,7 @@ function combinePhotoReadings(front: BoundedReading, rest: BoundedReading): Boun
             marks.evidence = [...new Set([...(frontMarks.evidence ?? []), ...(marks.evidence ?? [])])];
         }
     }
+    if (check.holder === "GRADED_SLAB") result.condition = null;
     if (result.condition?.authenticity.observations) {
         const authenticity = result.condition.authenticity;
         const firstAlerts = front.condition?.authenticity.observations?.filter(item => item.judgment === "SUSPICIOUS") ?? [];
@@ -179,7 +198,7 @@ function stampNote(stamp: NonNullable<Evaluation["focusedStamp"]>): string {
 // Reapply deterministic label rules to paid evidence rather than purchasing
 // the photos again when a seller-metadata policy changes.
 function recheckSavedSlab(evaluation: Evaluation, listing: IdentityListing): { evaluation: Evaluation; needsPricing: boolean } {
-    const revised = structuredClone(evaluation);
+    const revised = withoutRawSlabAssessment(structuredClone(evaluation));
     if (revised.photoCheck?.holder !== "GRADED_SLAB") return { evaluation: revised, needsPricing: false };
     const previousStatus = revised.slab?.status;
     revised.slab = checkSlab(revised.photoCheck, listing.aspects);
@@ -231,10 +250,10 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                 money.targets.minProfit >= deferred.targets.minProfit && money.targets.minRoi >= deferred.targets.minRoi);
         };
         const finish = async () => {
-            Object.assign(evaluation, withoutUnsupportedVariantPrices(evaluation));
-            evaluation.underwriting = underwrite(evaluation); evaluation.rating = rateDeal(evaluation);
-            if (evaluation.photoCheck) await privateEvaluations.save(evaluation, privateContext);
-            return evaluation;
+            const result = withoutUnsupportedVariantPrices(withoutRawSlabAssessment(evaluation));
+            result.underwriting = underwrite(result); result.rating = rateDeal(result);
+            if (result.photoCheck) await privateEvaluations.save(result, privateContext);
+            return result;
         };
         if (ended || !listing.images.length) { evaluation.modeReasons = [ended ? "This listing is no longer available." : "The listing has no photos."]; return finish(); }
         const textureError = missingTextureReason(listing.title);
@@ -287,7 +306,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             hasFreshStampTerms(evaluation.listing, deps.now());
         const latest = legacy?.latestEvaluation?.evaluation;
         const revisedLatest = latest ? recheckSavedSlab(latest, listing) : null;
-        if (latest && !latest.frontPhotoStop && !retryableStamp(latest) && matchesPrintingClaim(latest) && !latest.pricingDeferred && !revisedLatest!.needsPricing && canReuseRawResearch(latest) && legacy?.latestEvaluation?.evidenceKey === listingEvidenceKey({ title: listing.title, images: listing.images }) && currentPriceEvidence(latest, deps.now()) && !await hasNewerSharedReading(latest)) {
+        if (latest && !latest.frontPhotoStop && !retryableStamp(latest) && matchesPrintingClaim(latest) && !latest.pricingDeferred && !revisedLatest!.needsPricing && canReuseRawResearch(revisedLatest!.evaluation) && legacy?.latestEvaluation?.evidenceKey === listingEvidenceKey({ title: listing.title, images: listing.images }) && currentPriceEvidence(revisedLatest!.evaluation, deps.now()) && !await hasNewerSharedReading(latest)) {
             if (cardLanguageStatus(listing.title, [latest.identity?.language, latest.photoCheck?.cardIdentity?.language]) === "OTHER") throw new EnglishOnlyError();
             const reused = withoutUnsupportedRawPrices(withoutUnsupportedVariantPrices(revisedLatest!.evaluation));
             reused.listing = { ...reused.listing, ...evaluation.listing, photosAnalyzed: latest.listing.photosAnalyzed };
@@ -298,7 +317,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         const remembered = await privateEvaluations.load(itemId);
         const revisedRemembered = remembered ? recheckSavedSlab(remembered.evaluation, listing) : null;
         if (remembered?.contextKey === privateContext.contextKey && !remembered.evaluation.frontPhotoStop && !retryableStamp(remembered.evaluation) &&
-            matchesPrintingClaim(remembered.evaluation) && !remembered.evaluation.pricingDeferred && !revisedRemembered!.needsPricing && canReuseRawResearch(remembered.evaluation) && (remembered.evaluation.assessmentVersion === ANALYSIS_VERSION || plans.some(plan => plan.version === remembered.evaluation.assessmentVersion)) && currentPriceEvidence(remembered.evaluation, deps.now()) && !await hasNewerSharedReading(remembered.evaluation)) {
+            matchesPrintingClaim(remembered.evaluation) && !remembered.evaluation.pricingDeferred && !revisedRemembered!.needsPricing && canReuseRawResearch(revisedRemembered!.evaluation) && (remembered.evaluation.assessmentVersion === ANALYSIS_VERSION || plans.some(plan => plan.version === remembered.evaluation.assessmentVersion)) && currentPriceEvidence(revisedRemembered!.evaluation, deps.now()) && !await hasNewerSharedReading(remembered.evaluation)) {
             const reused = withoutUnsupportedRawPrices(withoutUnsupportedVariantPrices(revisedRemembered!.evaluation));
             if (cardLanguageStatus(listing.title, [reused.identity?.language, reused.photoCheck?.cardIdentity?.language]) === "OTHER") throw new EnglishOnlyError();
             reused.listing = { ...reused.listing, ...evaluation.listing, photosAnalyzed: reused.listing.photosAnalyzed };
@@ -401,6 +420,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             if (hardFailure) throw hardFailure;
             if (!rawOnly) {
                 prices.gradedPricing = {};
+
                 for (const grader of GRADERS) try {
                     prices.gradedPricing[grader] = await gradedPricesFor(card, identity, condition.gradeRange, { grader, now: deps.now(),
                         fetchComps: (...args) => guarded(() => deps.fetchComps(...args)), cachedChecks: (...args) => guarded(() => deps.compChecks(...args)) });
@@ -530,7 +550,8 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                             if (!sponsor.needed()) continue;
                             const accepted = await withAiUsageContext(sponsor.context, () => deps.assess(listing, photos, readingSignal, plan.mode, stage));
                             const reading = validateBoundedReading(accepted.result, photos.length, plan.mode);
-                            if (stage?.kind === "front" && reading.condition) reading.condition.gradeRange = null;
+                            if (reading.photoCheck.holder === "GRADED_SLAB") reading.condition = null;
+                            else if (stage?.kind === "front" && reading.condition) reading.condition.gradeRange = null;
                             const answeredAt = new Date(deps.now()).toISOString();
                             // Keep accepted evidence even if every browser stops.
                             await deps.save(key, { ...reading, version: plan.version, answeredAt, usage: accepted.usage });
@@ -555,7 +576,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                         ({ ...item, photoNumber: photos[item.photoNumber - 1].number }));
                 }
                 evaluation.photoCheck = applyPhotoCheckRules(reading.photoCheck, listing.images.length);
-                evaluation.condition = reading.condition;
+                evaluation.condition = reading.photoCheck.holder === "GRADED_SLAB" ? null : reading.condition;
                 evaluation.assessmentVersion = plan.version;
                 evaluation.conditionVersion = plan.conditionVersion;
                 evaluation.answeredAt = answeredAt;
@@ -569,9 +590,32 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                     const first = await assess(frontPlan, () => readStage(frontPlan), "frontPhotoAssessment", { kind: "front" });
                     applyReading(first);
                     if (await finishAfterFront()) return finish();
-                    const remainder = stagedPhotoPlan(listing, requestedPlan, "remainder", first.reading);
-                    const rest = await assess(remainder, () => readStage(remainder), "remainingPhotoAssessment", { kind: "remainder", front: first.reading });
-                    answer = { ...rest, plan: requestedPlan, reading: combinePhotoReadings(first.reading, rest.reading) };
+                    // Cache metadata is not part of the first photo's findings.
+                    // Earlier keys could include it when that first stage was reused.
+                    const originalFront = { photoCheck: first.reading.photoCheck, condition: first.reading.condition };
+                    const slab = readableFrontSlab(originalFront.photoCheck);
+                    const front = slab ? { ...originalFront, condition: null } : originalFront;
+                    const nextPlan = slab && requestedPlan.mode === "RAW" ? plans.find(plan => plan.mode === "SLAB_LABEL")! : requestedPlan;
+                    const remainder = stagedPhotoPlan(listing, nextPlan, "remainder", front);
+                    const previous = requestedPlan.mode === "RAW"
+                        ? plans.find(plan => plan.version === `${requestedPlan.model}/bounded-prompts-${PREVIOUS_BOUNDED_REVIEW_REVISION}`) : undefined;
+                    const earlierPlan = previous ?? requestedPlan;
+                    const rest = await assess(remainder, async () => {
+                        const current = await readStage(remainder);
+                        if (current) return current;
+                        if (nextPlan !== requestedPlan) {
+                            const saved = await readStage(stagedPhotoPlan(listing, requestedPlan, "remainder", originalFront));
+                            if (saved) return saved;
+                        }
+                        if (previous) {
+                            const saved = await readStage(stagedPhotoPlan(listing, previous, "remainder", originalFront));
+                            if (saved) return saved;
+                        }
+                        return first.cached ? readStage(stagedPhotoPlan(listing, earlierPlan, "remainder", first.reading)) : null;
+                    }, "remainingPhotoAssessment", { kind: "remainder", front });
+                    const sourcePlan = rest.plan.version === remainder.version ? nextPlan :
+                        rest.plan.version === `${requestedPlan.version}/remainder-1` ? requestedPlan : earlierPlan;
+                    answer = { ...rest, plan: sourcePlan, reading: combinePhotoReadings(front, rest.reading) };
                     evaluation.modeReasons.push("Checked the first photo before requesting the remaining selected views.");
                 } else answer = await assess(requestedPlan, readShared, "boundedPhotoAssessment");
 
@@ -607,8 +651,13 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             // Insufficient detail for numeric grading need not erase obvious
             // raw wear, such as a crease. Structural/identity/slab checks stay
             // independent, and the original paid reading remains unchanged.
-            const source = mode.mode === "BLOCKED" ? { ...evaluation.condition, gradeRange: null } : evaluation.condition;
+            const source = evaluation.condition;
             const condition = applyConditionRules(source, mode.mode, { closeUps: hasCloseUps(check), photoCount: listing.images.length });
+            const hasRequiredGrade = evaluation.assessmentVersion?.endsWith(`/bounded-prompts-${BOUNDED_REVIEW_REVISION}`);
+            if (condition && source.gradeRange && (mode.mode === "BLOCKED" || hasRequiredGrade && condition.confidence === "LOW")) {
+                evaluation.provisionalGradeRange = source.gradeRange;
+                condition.gradeRange = null;
+            }
             evaluation.condition = mode.mode === "BLOCKED" && condition?.rawCondition === "UNKNOWN" ? null : condition;
             if (mode.mode === "BLOCKED" && evaluation.condition) evaluation.modeReasons.push("The photos support a raw-condition assessment; numeric grading remains unavailable.");
         } else evaluation.condition = null;
@@ -619,6 +668,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         const card = check.cardIdentity;
         const aspects = { ...listing.aspects };
         if (card?.confidence === "HIGH") for (const [field, value] of [["Card Name", card.name], ["Set", card.set], ["Card Number", card.cardNumber], ["Language", card.language], ["Finish", card.finish === "UNKNOWN" ? null : card.finish]]) if (value && !aspects[field!]) aspects[field!] = value;
+        if (obscuredDisclosedWear(evaluation)) return finish();
         const identify = (reading: typeof check) => deps.identify({ ...listing, aspects }, reading, { lookupCards: query => guarded(() => deps.lookup(query)), readTitle: readTitleByRules,
             ...(legacyResolution?.confirmation ? { photoIdentity: legacyResolution.confirmation } : {}) });
         const identified = await identify(check);
