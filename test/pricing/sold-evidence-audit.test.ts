@@ -4,6 +4,9 @@ import { compProblem, summarizeComps, uniqueSoldComps, type CompCriteria } from 
 import { compsForGrade } from "../../server/pricing/graded-comps.ts";
 import type { Comp, PricedCard } from "../../server/pricing/types.ts";
 import type { Identity } from "../../shared/types.ts";
+import { soldMarketPrice } from "../../shared/sold-evidence.ts";
+import { gradedResalePath } from "../../shared/money/underwriting.ts";
+import { MONEY_CONFIG } from "../../shared/money/config.ts";
 
 const now = Date.parse("2026-11-03T12:00:00Z");
 const criteria: CompCriteria = { printing: "UNLIMITED", setName: "Base Set", finish: "HOLO", grader: "PSA", grade: "7", now };
@@ -12,6 +15,37 @@ const sale = (price: number, overrides: Partial<Comp> = {}): Comp => ({
     variant: "Unlimited Holofoil", grader: "PSA", grade: "7", grade_qualifier: null,
     attribution: "exact", currency: "USD", sale_type: "fixed_price", listing_url: null,
     ...overrides,
+});
+
+test("four newest distinct sales within 48 hours drive the current price and show an observed move", () => {
+    const at = (price: number, hours: number) => sale(price, { id: `sale-${hours}`, sold_at: new Date(now - hours * 3_600_000).toISOString() });
+    const latest = at(120, 1);
+    const sales = [at(50, 50), at(90, 48), at(100, 24), latest, at(80, 20 * 24), at(110, 4),
+        at(80, 2 * 24 + 1), { ...latest }, at(1500, 3)];
+    const summary = summarizeComps(sales, criteria);
+    assert.deepEqual(summary.marketEstimate, { price: 105, method: "RECENT_FOUR", recentTrendPercent: 21.05 });
+    assert.equal(summary.low, 50);
+    assert.equal(summary.high, 120);
+    assert.equal(summary.dropped["price far from the other sales"], 1);
+    const path = gradedResalePath({ price: 60, shipping: 0 }, summary, 0, MONEY_CONFIG);
+    assert.equal(path.status, "PRICED");
+    if (path.status === "PRICED") assert.equal(path.salePrice, 105);
+    const tooOld = summarizeComps(sales.filter(comp => comp.sold_at !== at(90, 48).sold_at), criteria);
+    assert.equal(tooOld.marketEstimate?.method, "RECENCY_WEIGHTED_MEDIAN");
+});
+
+test("sparse exact markets weight newer sales in either direction and preserve legacy medians", () => {
+    const age = (days: number) => new Date(now - days * 86_400_000).toISOString();
+    const older = [sale(100, { sold_at: age(40) }), sale(110, { sold_at: age(60) })];
+    for (const price of [70, 150]) {
+        const summary = summarizeComps([...older, sale(price, { sold_at: age(3) })], criteria);
+        assert.equal(soldMarketPrice(summary), price);
+        assert.notEqual(summary.median, price);
+        assert.equal(summary.marketEstimate?.method, "RECENCY_WEIGHTED_MEDIAN");
+        const { marketEstimate: _estimate, ...legacy } = summary;
+        assert.equal(soldMarketPrice(legacy), summary.median);
+    }
+    assert.equal(soldMarketPrice(summarizeComps([sale(100), sale(110)], criteria)), 105);
 });
 
 test("sold corrections follow provider revision and confirmation evidence rather than the highest amount", () => {

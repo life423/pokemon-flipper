@@ -30,13 +30,15 @@ flowchart TD
 1. Normal HTTP search and **Find new listings** use the bounded path in
    `find-deals.ts`. Query parsing uses saved and local rules first. A short
    text request can clean up phrasing the rules leave behind while preserving
-   explicit card criteria. The scan uses one page of up to 200 eBay results, local/cached metadata
-   exclusions and at most 50 retained matching rows. Confident preliminary
-   price exclusions free slots for later summaries from that same 200-summary
-   window. Refill batches share one screening session and its allowance; they
-   never fetch another source page just to fill slots. New-inventory scans also
-   exclude previously seen IDs. Buy It Now results prefer newly listed inventory;
-   automatic auctions must fall within the fixed search-start 12-hour window.
+   explicit card criteria. The initial page uses up to 200 eBay summaries,
+   local/cached metadata exclusions and at most 50 retained matching rows.
+   A Buy It Now search starts with newly listed inventory. If fewer than three
+   candidates clear preliminary financial screening and some inventory has yet
+   to be screened, one additional page samples lower delivered prices. Both
+   passes share the same sold-price session, deduplicate researched IDs and
+   retain at most 50 results. The extra request preserves the eBay daily reserve.
+   Find new listings stays on the newest page and excludes previously seen IDs.
+   Automatic auctions must fall within the fixed search-start 12-hour window.
 2. Before candidates are emitted to the browser, `price-first.ts` runs shared
    sold research with at most four candidates in flight. Its source permits
    128 uncached PKMNPrices requests including catalog work, and adaptive reads of
@@ -52,7 +54,7 @@ flowchart TD
    eBay Browse. After sold research, automatic photo searches can make one
    bounded text call for tied Buy It Now candidates. Explicit seller disclosures
    can move a row later within that tie without changing its eligibility or price.
-   Both text calls share the search's $0.10 AI ceiling with photos. The retired broad-discovery and automatic pricing-recovery
+   Both text calls share the search's $0.25 AI ceiling with photos. The retired broad-discovery and automatic pricing-recovery
    branches are no longer alternative search paths.
 3. Exact slab grader, grade, printing and finish scopes stay separate. Medians
    rank candidates; one or more matched sales within 90 days in one
@@ -70,7 +72,7 @@ flowchart TD
    request, except the existing focused-review exception for a raw First Edition
    Base Set lead priced at $10 or less. The browser considers eligible loaded
    rows with two assessments in flight, reuses saved evidence first and shares
-   the persistent AI cap of up to $0.10 per search. Fifty metadata rows do not imply fifty paid
+   the persistent AI cap of up to $0.25 per search. Fifty metadata rows do not imply fifty paid
    assessments. All nested Browse work shares the separate 100-request ceiling for new searches
    per search and account-wide daily quota protection.
 5. A direct listing link resolves only that listing. Shortlist load/save uses
@@ -160,7 +162,7 @@ All paths below are relative to the repository root.
 | Responsibility | Main files | Boundary |
 | --- | --- | --- |
 | HTTP routes and stream messages | `server/app.ts`, `client/src/api.ts` | Keep transport validation and cancellation separate from valuation. |
-| Normal search | `server/deals/search.ts`, `find-deals.ts` | One source page and one bounded pipeline for HTTP and diagnostics; no legacy broad-discovery branch. |
+| Normal search | `server/deals/search.ts`, `find-deals.ts` | One bounded pipeline for HTTP and diagnostics with a conditional lower-priced Buy It Now pass. |
 | New-inventory scan and history | `server/deals/new-listings.ts`, `server/search/history.ts` | Deduplicate before provider work; preserve the newest-search cache and reserve. |
 | Query interpretation and criteria | `server/search/intent.ts`, `server/search/relevance.ts`, `shared/search-criteria.ts` | Seller keywords and requested slab grades are not verified photo evidence. |
 | Local metadata screening | `server/deals/screen-listing.ts` | Saved/local readings only, without new AI or listing-detail calls. `prescreen.ts` remains behind the compatibility pricing-retry endpoint, not normal admission. |

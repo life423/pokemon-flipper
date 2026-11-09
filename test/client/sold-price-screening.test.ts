@@ -64,7 +64,7 @@ test("sold-price UI keeps preliminary evidence separate from assessed prices and
         assert.match(detail, /market context, not a condition-matched raw valuation/);
         assert.match(detail, /Raw · Unspecified/);
         assert.match(detail, /median \$120\.00/);
-        assert.match(detail, /preliminary market evidence, not a verified valuation/);
+        assert.match(detail, /This evidence is used for preliminary screening/);
         for (const html of [card, detail]) assert.doesNotMatch(html, /Est\. net profit|Estimated resale|Unverified screening ceiling|Likely estimate|Your review needed/);
         assert.deepEqual(listing, before);
     });
@@ -98,11 +98,12 @@ test("sold-price UI keeps preliminary evidence separate from assessed prices and
         const value = summary("PSA", "8");
         const preliminary = renderToStaticMarkup(createElement(CompsRow, { summary: value, sampleLimit: 20, screening: true }));
         const existing = renderToStaticMarkup(createElement(CompsRow, { summary: value }));
-        assert.match(preliminary, /at most 20 returned rows per lookup/);
-        assert.match(preliminary, /preliminary market evidence, not a verified valuation/);
-        assert.doesNotMatch(preliminary, /at most 40|The median drives the estimate/);
-        assert.match(existing, /at most 40 returned rows per lookup/);
-        assert.match(existing, /The median drives the estimate/);
+        assert.match(preliminary, /at most 20 results sampled per lookup/);
+        assert.match(preliminary, /This evidence is used for preliminary screening/);
+        assert.doesNotMatch(preliminary, /at most 40/);
+        assert.match(existing, /at most 40 results sampled per lookup/);
+        assert.match(existing, /Based on the eBay sold median/);
+        assert.doesNotMatch(existing, /preliminary screening/);
         const empty = renderToStaticMarkup(createElement(CompsRow, { summary: summary("PSA", "8", 120, 0), screening: true, sampleLimit: 20 }));
         assert.match(empty, /No verified sales/);
         assert.doesNotMatch(empty, /median \$|Range \$|NaN/);

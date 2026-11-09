@@ -245,6 +245,48 @@ test("observed Cosmos Holo metadata needs a full number and written catalog rele
     }
 });
 
+test("151's observed MEW release code reconciles extra name words and preserves printed Mew", () => {
+    const set = "Scarlet & Violet 151";
+    for (const [title, name, number] of [
+        ["PSA 9 Alakazam ex #065 2023 Pokemon EN Scarlet & Violet 151 MEW Mint", "alakazam ex", "065"],
+        ["Poliwhirl Illustration Rare Pokemon Scarlet & Violet 151 MEW PSA 9 MINT", "poliwhirl", null],
+        ["Charmander 2023 Pokemon Scarlet Violet 151 MEW EN #004 Reverse Holo PSA 9", "charmander", "004"],
+        ["Mew ex 151/165 Scarlet & Violet 151 MEW PSA 9", "mew ex", "151/165"],
+    ]) {
+        const reading = readTitleByRules(title);
+        assert.equal(reading.cardNumber, number);
+        assert.equal(resolveScreeningName({ title, set, claims: [reading.cardName, name] }), name, title);
+    }
+    for (const [title, name, release] of [
+        [`${set} MEW PSA 9`, "mew", set],
+        [`${set} MEW ex 151/165 PSA 9`, "mew ex", set],
+        [`Alakazam ex #065 ${set} MEW EN raw`, "alakazam ex mew", set],
+        [`Alakazam ex #065 ${set} Mew PSA 9`, "alakazam ex mew", set],
+        ["Alakazam ex #065 Paldean Fates MEW PSA 9", "alakazam ex mew", "Paldean Fates"],
+    ]) {
+        assert.equal(resolveScreeningName({ title, set: release, claims: [readTitleByRules(title, [release]).cardName] }), name, title);
+    }
+});
+
+test("151 illustration-rare abbreviations require a written release, matching collector fraction and slab grade", () => {
+    const set = "Scarlet & Violet 151";
+    for (const [title, name, number] of [
+        ["Pokemon TCG Psyduck Sv: Scarlet & Violet 151 175/165 IR Holo ENG 2023 PSA 9", "psyduck", "175/165"],
+        ["Pokemon TCG - Dragonair 181/165 2023 Scarlet & Violet 151 IR PSA 9", "dragonair", "181/165"],
+        ["Pokémon TCG Charmander 168/165 Scarlet & Violet 151 English IR PSA 9", "charmander", "168/165"],
+        ["The Pokémon Company Poliwhirl 176/165 Sv: Scarlet & Violet 151 IR Holo PSA 9", "poliwhirl", "176/165"],
+    ]) {
+        const reading = readTitleByRules(title);
+        assert.equal(reading.cardNumber, number);
+        assert.equal(reading.cardName, name, title);
+        assert.equal(resolveScreeningName({ title, set, claims: [name, `${name} ir`] }), name, title);
+    }
+    for (const title of [
+        `Psyduck ${set} 054/165 IR PSA 9`, `Psyduck ${set} 175/197 IR PSA 9`, `Psyduck ${set} #175 IR PSA 9`,
+        `Psyduck ${set} 175/165 IR raw`, `Psyduck ${set} 175/165 IR's PSA 9`, "Psyduck Obsidian Flames 175/165 IR PSA 9",
+    ]) assert.notEqual(readTitleByRules(title).cardName, "psyduck", title);
+});
+
 test("observed gallery release and rarity metadata reconcile literal and saved slab names", () => {
     for (const [name, number, wording, polluted] of [
         ["Diancie", "GG13/GG70", "Pokemon CRZ GG13/GG70 Crown Zenith Galarian Gallery Diancie Full Art PSA 9", "crz diancie"],

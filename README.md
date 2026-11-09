@@ -2,7 +2,7 @@
 
 Find eBay Pokémon card listings worth flipping, priced to the exact printing, with a max bid for every one.
 
-Search for a card or inspect a listing link. The app checks identity, price evidence and estimated costs before presenting a purchase limit. New browser profiles start with Any profit and Any ROI. A Deal still requires positive net profit. Current HTTP searches admit up to **50 matching metadata rows**, with a persistent AI cap of up to **$0.10 per search** and **100 Browse-request cap per new search**. Displayed listings and paid assessments have separate limits.
+Search for a card or inspect a listing link. The app checks identity, price evidence and estimated costs before presenting a purchase limit. New browser profiles start with Any profit and Any ROI. A Deal still requires positive net profit. Current HTTP searches admit up to **50 matching metadata rows**, with a persistent AI cap of up to **$0.25 per search** and **100 Browse-request cap per new search**. Displayed listings and paid assessments have separate limits.
 
 > **The question it answers:** *At this price, is this card worth buying to resell?*
 
@@ -26,14 +26,16 @@ Search for a card or inspect a listing link. The app checks identity, price evid
 
 ## How a search works
 
-Current HTTP searches fetch one page of up to 200 listings, apply free format,
-card-type, price and auction-window exclusions, then admit at most 50 matching
-metadata rows. Preliminary interpretation uses saved metadata or local rules.
+Current HTTP searches start with one page of up to 200 listings, apply free
+format, card-type, price and auction-window exclusions, then retain at most 50
+matching metadata rows. Preliminary interpretation uses saved metadata or
+local rules.
 Before emitting those candidates to the browser, a price-first stage gathers
 recent matched eBay sold records through PKMNPrices, reusing the configured
-SQL/file cache. It uses no AI or additional eBay requests. Buy It Now searches
-prioritize newly listed inventory. Normal searches and **Find new listings**
-use this same stage; automatic broad discovery and pricing recovery remain off.
+SQL/file cache. Sold screening itself uses no AI or additional eBay requests.
+Buy It Now searches start with the newest listings. A normal Buy It Now search
+can check one lower-priced page if too few promising candidates emerge.
+**Find new listings** stays focused on new inventory.
 
 Sold screening processes at most four candidates concurrently and permits at
 most 32 uncached PKMNPrices requests, including catalog lookups, within the
@@ -222,6 +224,18 @@ eBay fees, sales tax, shipping costs, PSA and CGC service levels, and default ta
 | `npm start` | Runs the production build |
 | `npm run evaluate -- <eBay link>` | Refreshes one listing's terms, reuses paid evidence and uses the app's bounded raw/slab evaluator |
 | `npx tsx scripts/bounded-search-benchmark.ts --help` | Shows the explicit one-search diagnostic and provider-blocked cache replay; no provider work from help |
+| `npx tsx scripts/review-search-diagnostic.ts --replay <report.json> <original-search-uuid>` | Summarizes a saved search into a review packet without provider calls |
+
+Completed browser searches automatically save their retained listing decisions
+and, when there are listings to review, request one short text review under a
+separate AI allowance of up to $0.25. Suggestions and their listing references
+are saved locally in `data/search-diagnostics/index.json` for Codex to verify
+against the code and cached evidence. The newest 50 searches are kept for up to
+30 days. The review sends only decision codes, counts and anonymous examples.
+
+For an older diagnostic packet, use `--live` in place of `--replay`. This CLI
+review requires shared SQL storage and uses the original search's remaining
+AI budget.
 
 ## Project layout
 
@@ -265,9 +279,9 @@ Everything is TypeScript. The server runs through [tsx](https://tsx.is), and the
   eBay requests. Lower targets can qualify additional automatic analyses within
   the current AI budget. Widening the minimum Buy It Now price requires an explicit
   **Rerun search** to include previously excluded listings.
-- Development searches fetch one page of up to 200 results, apply free exclusions,
-  and admit at most 50 matching metadata rows. These slots do not consume AI or
-  listing-detail calls merely by being displayed. Automatic assessment reuses
+- Development searches start with one page of up to 200 results, apply free
+  exclusions, and retain at most 50 matching metadata rows across both passes.
+  Displaying these rows makes no AI or listing-detail calls. Automatic assessment reuses
   saved evidence and spends only within the separate search budgets; the loaded
   sample does not establish complete eBay coverage.
 - Each Browse request reserves a call at the transport boundary. A ledger shared by local instances of the same eBay account reconciles provider usage without resetting spent calls. Optional lookups preserve the last 10%; no Browse request is sent after exhaustion. Cached evidence remains usable. Provider reset times determine the reset; without a reported reset, accounting conservatively uses a 24-hour window.
@@ -275,7 +289,7 @@ Everything is TypeScript. The server runs through [tsx](https://tsx.is), and the
 eBay raises the limit through its free [Application Growth Check](https://developer.ebay.com/grow/application-growth-check).
 
 **OpenAI.** A persistent guard at the SDK transport boundary enforces a maximum
-of **$0.10 per search** across concurrent stages, retries and process restarts.
+of **$0.25 per search** across concurrent stages, retries and process restarts.
 Existing search accounts keep their original limits, spending and reservations.
 Paid processing is operator-controlled. Fresh installations, missing or invalid
 controls/ledgers and unsupported model or cache pricing fail closed; starting

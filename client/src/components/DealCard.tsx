@@ -19,7 +19,8 @@ import { cardDetails } from "../../../shared/card-details.ts";
 import { claimedCondition, CONDITION_NAMES } from "../../../shared/conditions.ts";
 import { isResearchDeferred, photoReviewStatus } from "../../../shared/photo-review.ts";
 import { SoldPriceScreening } from "./SoldPriceScreening";
-import { priceEvidenceGap } from "../../../shared/money/price-evidence.ts";
+import { isRawSoldPrice, priceEvidenceGap } from "../../../shared/money/price-evidence.ts";
+import { soldEstimateBasis } from "./analysis/PricingSections";
 
 interface Props {
     index?: number;
@@ -49,6 +50,8 @@ export function DealCard({ listing, analysis, assessmentNote, selected, now, onO
     const deferred = Boolean(priceGap) || isResearchDeferred(evaluation);
     const priceReview = Boolean(priceGap && evaluation && photoReviewStatus(evaluation).needsYourReview);
     const best = evaluation?.underwriting?.best;
+    const rawPrice = best?.path === "RAW" ? evaluation?.rawPricing?.prices?.find(price =>
+        price.condition === best.priceCondition && price.price === best.salePrice && isRawSoldPrice(price)) : undefined;
     const verdict = evaluation?.underwriting?.verdict;
     const deal = !priceGap && verdict?.startsWith("BUY");
     const auction = listing.buyingOption === "AUCTION";
@@ -123,7 +126,7 @@ export function DealCard({ listing, analysis, assessmentNote, selected, now, onO
         {pricePending && <p className={styles.notice}>Unusually low price. Awaiting photo verification.</p>}
         {offer && offerNumbers && <p className={styles.notice}>Offer {dollars(offer.offer)} · est. profit {signed(offerNumbers.profit)} if accepted. Acceptance is unknown.</p>}
         {mistakes[0] && <p className={styles.note}>{mistakes[0].detail}</p>}
-        {!priceGap && best?.path === "RAW" && <p className={styles.note}>Estimated resale {dollars(best.salePrice)} · {name(best.priceCondition ?? "UNKNOWN")} · eBay sold median.</p>}
+        {!priceGap && best?.path === "RAW" && <p className={styles.note}>Estimated resale {dollars(best.salePrice)} · {name(best.priceCondition ?? "UNKNOWN")} · {soldEstimateBasis(rawPrice?.comps)}.</p>}
         {best?.path === "GRADED_RESALE" && evaluation?.slabPricing?.activeReference && !evaluation.slabPricing.summary?.count && <p className={styles.note}>Resale target {dollars(best.salePrice)} · below photo-checked Buy It Now competition.</p>}
         {evaluation?.condition && <GradingComparison evaluation={evaluation} />}
         {evaluation?.condition && claimedCondition(evaluation.listing.cardCondition) && <p className={styles.note}>Seller says: {CONDITION_NAMES[claimedCondition(evaluation.listing.cardCondition)!]} · AI assesses: {name(evaluation.condition.rawCondition)}</p>}

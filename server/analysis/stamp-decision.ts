@@ -2,7 +2,7 @@ import { cardLanguageStatus } from "../../shared/card-language.ts";
 import { withTargets } from "../../shared/money/targets.ts";
 import { underwrite } from "../../shared/money/underwriting.ts";
 import type { Evaluation, Identity, PhotoCheck, Printing, Targets, Underwriting } from "../../shared/types.ts";
-import { normalizeSetName, readyForPricing, sameCardNumber, sameSetFamily, type identifyCard } from "../identity/card-identity.ts";
+import { normalizeSetName, ordinaryBaseSetPokemonNumber, readyForPricing, reprintMarksRuledOut, sameCardNumber, sameSetFamily, type identifyCard } from "../identity/card-identity.ts";
 import { sameCatalogName } from "../identity/catalog-name.ts";
 import type { PricedCard } from "../pricing/types.ts";
 
@@ -37,43 +37,16 @@ function hasScopedPrices(prices: ScenarioPrices, identity: Identity): boolean {
     return Object.values(prices.gradedPricing ?? {}).every(graded => graded.status !== "PRICED" || graded.printing === identity.printing);
 }
 
-const baseSet2Mark = "base set 2 (?:mark|symbol)";
-const anniversaryMark = "(?:pikachu anniversary|anniversary pikachu|anniversary/pikachu reprint) (?:mark|logo|stamp|symbol)";
-const reprintMarks = [
-    `${baseSet2Mark} or (?:visible )?${anniversaryMark}`,
-    `${anniversaryMark} or (?:visible )?${baseSet2Mark}`,
-    "(?:anniversary or other )?reprint (?:mark|logo|stamp|symbol)s?",
-].join("|");
-const noVisibleReprint = new RegExp(
-    `^(?:no (?:${reprintMarks}) (?:is |are )?(?:visible|seen|present)|no visible (?:${reprintMarks}))` +
-    "(?: in (?:the )?(?:supplied )?(?:front )?(?:views?|images?|photos?))?$"
-);
-
-function reprintMarksRuledOut(mark: string | undefined, set: string): boolean {
-    if (mark === "NONE_SEEN") return true;
-    // Bounded assessments also report this field in prose. Accept a complete
-    // negative finding, with an optional explicit statement about applicability.
-    const [observation, ...qualifiers] = (mark ?? "").toLowerCase().trim().split(";").map(text => text.trim().replace(/\.$/, ""));
-    if (!noVisibleReprint.test(observation)) return false;
-    if (qualifiers.length === 0) return true;
-    return qualifiers.length === 1 && (
-        (set === "neo discovery" && qualifiers[0] === "base set 2 mark not applicable/seen") ||
-        (set === "team rocket" && qualifiers[0] === "those marks are not applicable evidence for this team rocket card")
-    );
-}
-
 export function stampCandidate(evaluation: Evaluation) {
     const { photoCheck, identity, condition } = evaluation;
     const card = photoCheck?.cardIdentity;
     const marks = photoCheck?.printingMarks;
     const set = normalizeSetName(card?.set);
-    const number = card?.cardNumber?.match(/^0*([1-9][0-9]?)\s*\/\s*(102|82|75)$/);
+    const number = card?.cardNumber?.match(/^0*([1-9][0-9]?)\s*\/\s*(82|75)$/);
     const collector = Number(number?.[1]);
-    // Base Set Pokémon are numbers 1–69. Machamp's starter-deck printings
-    // need separate rules. The other sets are limited to their ordinary
-    // Pokémon holos, which share the same artwork/stamp layout.
-    const base = (set === "base set" || set === "base set shadowless") && number?.[2] === "102" &&
-        collector <= 69 && collector !== 8 && marks?.artBoxShadow === "ABSENT";
+    // The other sets are limited to their ordinary Pokémon holos, which
+    // share the same artwork and stamp layout.
+    const base = (set === "base set" || set === "base set shadowless") && ordinaryBaseSetPokemonNumber(card?.cardNumber) && marks?.artBoxShadow === "ABSENT";
     const rocket = set === "team rocket" && number?.[2] === "82" && collector <= 14 && card?.finish === "HOLO";
     const neo = set === "neo discovery" && number?.[2] === "75" && collector <= 17 && card?.finish === "HOLO";
     if ((!base && !rocket && !neo) || !photoCheck || photoCheck.cardCount !== "ONE" ||

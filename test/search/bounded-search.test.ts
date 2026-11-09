@@ -38,21 +38,20 @@ test("local bounded metadata transcribes explicit names and numbers without inve
     assert.deepEqual(readSearchLocally("1999 base set holo").sets, ["Base Set"]);
 });
 
-test("bounded search admits50 matching metadata rows from one newest BIN page without paid preliminary work", async t => {
+test("bounded BIN search retains fifty unresolved rows without paid preliminary work across both source orders", async t => {
     const fetch = t.mock.method(globalThis, "fetch", async () => { assert.fail("only the injected source may run; AI and price providers cannot dispatch"); });
-    let sources = 0;
+    const sorts: string[] = [];
     let summary: SearchSummary | undefined;
     const emitted: ListingSummary[] = [];
     const page = Array.from({ length: 200 }, (_, index) => row(String(index)));
     const result = await findDeals("1999 Base Set Charizard holo", {
         filters: { typeFilter: "FIXED_PRICE" }, onStart: value => { summary = value; }, onListing: value => { emitted.push(value); } }, noPaidSteps(async (query, settings) => {
-            sources++;
+            sorts.push(settings.sort);
             assert.match(query, /charizard/);
             assert.equal(settings.maxResults, 200);
-            assert.equal(settings.sort, "newlyListed");
             return { listings: page, total: 5000, skipped: 0 };
         }));
-    assert.equal(sources, 1);
+    assert.deepEqual(sorts, ["newlyListed", "price"]);
     assert.equal(fetch.mock.callCount(), 0);
     // Results retain source order; concurrent cache reads can emit in any
     // completion order. Verify identical records without assuming timing.
@@ -61,7 +60,10 @@ test("bounded search admits50 matching metadata rows from one newest BIN page wi
     assert.equal(result.length, 50);
     assert.equal(summary?.mode, "development");
     assert.equal(summary?.count, 50);
-    assert.equal(summary?.deferred, 150);
+    assert.equal(summary?.found, 200);
+    assert.equal(summary?.screened, 100);
+    assert.equal(summary?.deferred, 100);
+    assert.deepEqual(summary?.pricePass, { status: "COMPLETE", newListings: 0, candidates: 0 });
     assert.ok(result.every(listing => !canAutoAnalyze(listing)), "missing sold prices cannot authorize paid photos");
     assert.ok(result.every(listing => listing.screen?.soldEvidence?.status === "UNAVAILABLE"));
     assert.ok(result.every(listing => listing.screen?.status === "UNSCREENED" && listing.screen.bestCase === null));

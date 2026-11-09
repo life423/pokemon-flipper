@@ -1,12 +1,13 @@
 import "../fixtures/isolated-data.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { findDeals } from "../../server/deals/find-deals.ts";
+import { findDeals, type SearchSummary } from "../../server/deals/find-deals.ts";
 import { prioritizeListingText } from "../../server/deals/listing-text-priority.ts";
 import { screenListingWithoutAi } from "../../server/deals/screen-listing.ts";
 import { readTitleByRules } from "../../server/ai/title-reader.ts";
 import { readSearchLocally } from "../../server/search/intent.ts";
-import { canAutoAnalyze } from "../../shared/analysis.ts";
+import { EbayBudgetError } from "../../server/ebay/daily-budget.ts";
+import { canAutoAnalyze, resultGroup } from "../../shared/analysis.ts";
 import { analysisPriority, compareAnalysisPriority } from "../../shared/analysis-priority.ts";
 import { sellerConditionClues } from "../../shared/raw-condition-claim.ts";
 import { EnglishOnlyError } from "../../shared/card-language.ts";
@@ -140,4 +141,119 @@ test("text screening reorders equally ranked photo candidates without changing e
 test("the search skips listing text screening when automatic photos are off", async () => {
     const steps = offlineSearchSteps([listing()], { prioritizeText: async () => assert.fail("no automatic photo queue to prioritize") });
     assert.equal((await findDeals("Charizard Base Set holo", { automaticPhotos: false }, steps)).length, 1);
+});
+
+const slabQuery = "Charizard Base Set 4/102 Unlimited holo PSA 8";
+const slab = (id: string, currentPrice = 80) =>
+    listing("Charizard Base Set 4/102 Unlimited Holo English PSA 8", { id, currentPrice, isGraded: true });
+const slabSales: ScreeningSoldEvidence = { status: "AVAILABLE", exactScope: true, note: "Exact recent sold evidence", references: [{
+    recordId: 1, name: "Charizard", set: "Base Set", cardNumber: "4/102", printing: "UNLIMITED", finish: "HOLO",
+    grader: "PSA", grade: "8", condition: null,
+    summary: { grader: "PSA", grade: "8", windowDays: 90, count: 3, median: 100, low: 90, high: 110,
+        newestSale: new Date(Date.now() - 86400000).toISOString(), confidence: "MEDIUM", dropped: {}, sales: [] },
+}] };
+const binFilters = { typeFilter: "FIXED_PRICE", kindFilter: "graded", minPrice: 25, maxPrice: 125 } as const;
+
+test("a weak newest BIN pass admits a cheaper candidate even with all matching slots filled", async () => {
+    const cheap = slab("cheap-deferred", 40);
+    const newest = [...Array.from({ length: 50 }, (_, index) => slab(`newest-${index}`)), cheap];
+    const duplicate = { ...newest[0], currentPrice: 35 };
+    const newCheap = slab("cheap-new", 42);
+    const wrongSet = { ...slab("wrong-set", 30), title: "Charizard Base Set 2 4/130 Unlimited Holo English PSA 8" };
+    const lookup = offlineSearchSteps([]).soldScreening!();
+    const queried: Array<[string, string | undefined]> = [];
+    const checked: string[] = [];
+    let screeningSessions = 0;
+    const emitted: ListingSummary[] = [];
+    let summary: SearchSummary | undefined;
+    const result = await findDeals(slabQuery, {
+        filters: binFilters, automaticPhotos: true, onListing: row => emitted.push(row), onStart: value => { summary = value; },
+    }, offlineSearchSteps([], {
+        search: async (query, options) => {
+            queried.push([query, options?.sort]);
+            assert.deepEqual(options?.filters, binFilters);
+            assert.equal(options?.maxResults, 200);
+            if (options?.sort === "price") {
+                assert.equal(options.keepReserve, true);
+                assert.equal(checked.length, 50, "sold screening decides whether a second search is worthwhile");
+                return { listings: [wrongSet, duplicate, { ...cheap, currentPrice: 39 }, newCheap], total: 250, skipped: 0 };
+            }
+            return { listings: newest, total: 250, skipped: 0 };
+        },
+        soldScreening: () => {
+            screeningSessions++;
+            return async (row, intent) => {
+                checked.push(row.id);
+                return row.id === cheap.id || row.id === newCheap.id ? slabSales : lookup(row, intent);
+            };
+        },
+    }));
+    assert.deepEqual(queried.map(([, sort]) => sort), ["newlyListed", "price"]);
+    assert.equal(queried[0][0], queried[1][0]);
+    assert.equal(screeningSessions, 1);
+    assert.deepEqual(checked, [...newest.map(row => row.id), newCheap.id]);
+    assert.equal(result.length, 50);
+    assert.deepEqual(emitted, result);
+    assert.deepEqual(result.filter(canAutoAnalyze).map(row => row.id), [cheap.id, newCheap.id]);
+    assert.equal(resultGroup(result.find(row => row.id === cheap.id)!, null), "candidates");
+    assert.equal(result.find(row => row.id === cheap.id)?.currentPrice, cheap.currentPrice);
+    assert.equal(result.find(row => row.id === duplicate.id)?.currentPrice, newest[0].currentPrice);
+    assert.equal(summary?.pricePass?.status, "COMPLETE");
+    assert.equal(summary?.pricePass?.candidates, 2);
+    assert.equal(summary?.found, 53);
+    assert.equal(summary?.deferred, 0);
+});
+
+test("the cheaper pass is skipped for new inventory, enough candidates, or a complete source page", async () => {
+    for (const { newOnly, supported, total } of [
+        { newOnly: undefined, supported: true, total: 250 },
+        { newOnly: { excludeIds: [] }, supported: false, total: 250 },
+        { newOnly: undefined, supported: false, total: 3 },
+    ]) {
+        const newest = [slab("one", 40), slab("two", 41), slab("three", 42)];
+        let requests = 0;
+        const result = await findDeals(slabQuery, { filters: binFilters, newOnly, automaticPhotos: true }, offlineSearchSteps([], {
+            search: async (_query, options) => {
+                requests++;
+                assert.equal(options?.sort, "newlyListed");
+                return { listings: newest, total, skipped: 0 };
+            },
+            ...(supported ? { soldScreening: () => async () => slabSales } : {}),
+        }));
+        assert.equal(requests, 1);
+        assert.equal(result.length, newest.length);
+        assert.equal(result.filter(canAutoAnalyze).length, supported ? newest.length : 0);
+    }
+});
+
+test("cheaper listings with preliminary margin can displace newest slab verification near misses", async () => {
+    const nearMisses = Array.from({ length: 50 }, (_, index) => slab(`near-miss-${index}`, 80));
+    const cheap = slab("cheaper-with-margin", 40);
+    let summary: SearchSummary | undefined;
+    const result = await findDeals(slabQuery, { filters: binFilters, onStart: value => { summary = value; } }, offlineSearchSteps([], {
+        soldScreening: () => async () => slabSales,
+        search: async (_query, options) => ({ listings: options?.sort === "price" ? [cheap] : nearMisses, total: 250, skipped: 0 }),
+    }));
+    assert.equal(result.length, 50);
+    assert.equal(result[0].id, cheap.id);
+    assert.equal(result.filter(canAutoAnalyze).length, 50);
+    assert.equal(summary?.pricePass?.candidates, 1);
+});
+
+test("eBay reserve denial on the optional cheaper pass keeps newest BIN results", async () => {
+    const newest = slab("newest");
+    const sorts: Array<string | undefined> = [];
+    let summary: SearchSummary | undefined;
+    const result = await findDeals(slabQuery, {
+        filters: binFilters, automaticPhotos: true, onStart: value => { summary = value; },
+    }, offlineSearchSteps([], {
+        search: async (_query, options) => {
+            sorts.push(options?.sort);
+            if (options?.sort === "price") throw new EbayBudgetError("Extra searches paused to preserve today's reserve.");
+            return { listings: [newest], total: 250, skipped: 0 };
+        },
+    }));
+    assert.deepEqual(sorts, ["newlyListed", "price"]);
+    assert.deepEqual(result.map(row => row.id), [newest.id]);
+    assert.equal(summary?.pricePass?.status, "UNAVAILABLE");
 });

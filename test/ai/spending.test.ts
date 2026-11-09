@@ -45,24 +45,24 @@ test("concurrent reservations and restart cannot overcommit a single search cap"
     assert.equal((await book(directory)).searches[context.searchId].heldNanoUsd, 870000, "restart cannot refund pending/uncertain billed work");
 });
 
-test("raising the cap to ten cents preserves existing search limits and reservations", async () => {
-    const { directory, guard, context } = await fixture(0.02);
-    await guard.reserve(body, context);
+test("raising the cap to twenty-five cents preserves existing search limits and reservations", async () => {
+    const { directory, guard, context } = await fixture(0.10);
+    const request = { ...body, model: "gpt-5.6-terra", max_output_tokens: 5000 };
+    await guard.reserve(request, context);
     const original = await book(directory);
-    await guard.configure({ paused: false, perSearchCapUsd: 0.10 });
+    await guard.configure({ paused: false, perSearchCapUsd: 0.25 });
     assert.deepEqual(await book(directory), original);
 
     const restarted = createAiSpendingGuard({ directory, preflight: proof });
-    assert.equal((await restarted.summary(context.searchId)).capUsd, 0.02);
-    const request = { ...body, model: "gpt-5.6-terra", max_output_tokens: 5000 };
+    assert.equal((await restarted.summary(context.searchId)).capUsd, 0.10);
     await assert.rejects(restarted.reserve(request, context), denied("AI_BUDGET"));
 
     const fresh = { searchId: randomUUID() };
-    assert.ok(await restarted.reserve(request, fresh));
+    for (let i = 0; i < 4; i++) assert.ok(await restarted.reserve(request, fresh));
     await assert.rejects(restarted.reserve(request, fresh), denied("AI_BUDGET"));
     const budget = await restarted.summary(fresh.searchId);
-    assert.equal(budget.capUsd, 0.10);
-    assert.equal(budget.committedUsd, 0.06025);
+    assert.equal(budget.capUsd, 0.25);
+    assert.equal(budget.committedUsd, 0.241);
 });
 
 test("unknown billing retains its hold; complete known usage reconciles once without losing restart safety", async () => {
@@ -221,7 +221,7 @@ test("a fresh data directory is paused and cannot make even one unconfigured pai
     const directory = await fs.mkdtemp(path.join(isolatedDataDir, "fresh-install-"));
     const guard = createAiSpendingGuard({ directory });
     const status = await guard.status();
-    assert.equal(status.enabled, true); assert.equal(status.paused, true); assert.equal(status.configured, false); assert.equal(status.perSearchCapUsd, 0.10);
+    assert.equal(status.enabled, true); assert.equal(status.paused, true); assert.equal(status.configured, false); assert.equal(status.perSearchCapUsd, 0.25);
     let dispatches = 0;
     t.mock.method(globalThis, "fetch", async () => { dispatches++; throw new Error("Fresh install must never dispatch"); });
     // Exercise the real default SDK transport against a directory whose entire
@@ -232,7 +232,7 @@ test("a fresh data directory is paused and cannot make even one unconfigured pai
     t.after(() => { if (previous === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = previous; });
     await assert.rejects(runStructured({ step: "Fresh install guard fixture", schemaName: "search_intent", prompt: "Offline", photos: [], schema: { type: "object", properties: {}, additionalProperties: false } }), denied("AI_PAUSED"));
     assert.equal(dispatches, 0);
-    await assert.rejects(guard.configure({ paused: false, perSearchCapUsd: 0.11 }), /between \$0 and \$0\.10/);
+    await assert.rejects(guard.configure({ paused: false, perSearchCapUsd: 0.26 }), /between \$0 and \$0\.25/);
 });
 
 test("remote preflight releases the file lock and a concurrent pause prevents reservation", async () => {

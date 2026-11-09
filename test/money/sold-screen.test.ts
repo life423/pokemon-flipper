@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { applySoldPriceScreen } from "../../shared/money/sold-screen.ts";
 import { MONEY_CONFIG, type MoneyConfig } from "../../shared/money/config.ts";
 import { analysisPriority } from "../../shared/analysis-priority.ts";
-import { canAutoAnalyze } from "../../shared/analysis.ts";
+import { canAutoAnalyze, resultGroup } from "../../shared/analysis.ts";
 import { retargetScreen } from "../../shared/money/targets.ts";
 import type { ListingSummary, ScreeningSoldEvidence, ScreeningSoldReference } from "../../shared/types.ts";
 
@@ -57,12 +57,35 @@ test("a slab's upper sold value permits assessment even when its median fails th
 });
 
 test("a clearly overpriced exact slab is excluded using fees, shipping and targets before AI", () => {
-    const result = applySoldPriceScreen(listing({ currentPrice: 260 }), evidence(), { config }).screen;
+    const result = applySoldPriceScreen(listing({ currentPrice: 290 }), evidence(), { config }).screen;
     assert.equal(result.status, "DROPPED");
     assert.equal(result.needsAnalysis, undefined);
-    assert.equal(result.bestCase?.profit, 41.6);
+    assert.equal(result.bestCase?.profit, 11.6);
     assert.equal(result.requiresOffer, false);
     assert.match(result.reason!, /upper recent matched sold price/);
+});
+
+test("a 15% buffer above the preliminary ceiling admits slab verification only", () => {
+    const source = evidence();
+    const endTime = new Date(Date.now() + 60_000).toISOString();
+    for (const buyingOption of ["FIXED_PRICE", "AUCTION"] as const) {
+        const terms = listing({ currentPrice: 289.34, buyingOption, endTime: buyingOption === "AUCTION" ? endTime : null, images: ["photo"] });
+        const within = applySoldPriceScreen(terms, source, { config });
+        assert.equal(within.screen.status, "CANDIDATE");
+        assert.equal(within.screen.bestCase?.maxBid, 251.6);
+        assert.equal(within.screen.bestCase?.profit, 12.26);
+        assert.equal(within.screen.requiresOffer, false);
+        assert.match(within.screen.reason!, /within 15% above the preliminary limit/);
+        assert.equal(canAutoAnalyze(within), true);
+        assert.equal(resultGroup(within, null), "candidates");
+        if (buyingOption === "AUCTION") assert.equal(canAutoAnalyze({ ...within, endTime: new Date(Date.now() + 13 * 3_600_000).toISOString() }), false);
+        const outside = applySoldPriceScreen({ ...terms, currentPrice: 289.35 }, source, { config });
+        assert.equal(outside.screen.status, "DROPPED");
+        assert.equal(canAutoAnalyze(outside), false);
+    }
+    const noCeiling = applySoldPriceScreen(listing({ currentPrice: 0.01, shipping: 400 }), source, { config });
+    assert.equal(noCeiling.screen.bestCase?.maxBid, 0);
+    assert.equal(noCeiling.screen.status, "DROPPED");
 });
 
 test("unknown purchase shipping cannot cause a false exclusion", () => {
@@ -81,13 +104,18 @@ test("conditional offers are opt-in, limited to ten percent, and never apply to 
     const original = reference();
     const source = evidence([reference({ summary: { ...original.summary, median: 90, low: 80, high: 100 } })]);
     const terms = listing({ currentPrice: 110, shipping: 0, bestOffer: true });
-    assert.equal(applySoldPriceScreen(terms, source, { config: noFees }).screen.status, "DROPPED");
+    const optedOut = applySoldPriceScreen(terms, source, { config: noFees }).screen;
+    assert.equal(optedOut.status, "CANDIDATE");
+    assert.equal(optedOut.requiresOffer, false);
     const offered = applySoldPriceScreen(terms, source, { config: noFees, includeOffers: true }).screen;
     assert.equal(offered.status, "CANDIDATE");
     assert.equal(offered.requiresOffer, true);
     assert.match(offered.reason!, /only if the seller accepts/);
-    assert.equal(applySoldPriceScreen({ ...terms, currentPrice: 112 }, source, { config: noFees, includeOffers: true }).screen.status, "DROPPED");
-    assert.equal(applySoldPriceScreen({ ...terms, buyingOption: "AUCTION" }, source, { config: noFees, includeOffers: true }).screen.status, "DROPPED");
+    for (const outsideOfferPolicy of [{ ...terms, currentPrice: 112 }, { ...terms, buyingOption: "AUCTION" as const }]) {
+        const screened = applySoldPriceScreen(outsideOfferPolicy, source, { config: noFees, includeOffers: true }).screen;
+        assert.equal(screened.status, "CANDIDATE");
+        assert.equal(screened.requiresOffer, false);
+    }
 });
 
 test("unsettled editions, finishes or slab grades retain research without assigning a profitable market", () => {
@@ -209,7 +237,7 @@ test("sale evidence stays public and immutable while each owner's targets and co
     const before = JSON.stringify(source);
     const easy = applySoldPriceScreen(listing(), source, { config, targets: { minProfit: 0, minRoi: 0 } });
     const strict = applySoldPriceScreen(listing(), source, { config, targets: { minProfit: 100, minRoi: 0 } });
-    const taxed = applySoldPriceScreen(listing(), source, { config: { ...config, buying: { ...config.buying, salesTaxRate: 0.1 } } });
+    const taxed = applySoldPriceScreen(listing(), source, { config: { ...config, buying: { ...config.buying, salesTaxRate: 0.2 } } });
     assert.equal(easy.screen.status, "CANDIDATE");
     assert.equal(strict.screen.status, "DROPPED");
     assert.equal(taxed.screen.status, "DROPPED");

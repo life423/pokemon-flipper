@@ -359,6 +359,11 @@ export interface CompSale {
 
 export interface CompSummary {
     mean?: number | null;
+    marketEstimate?: {
+        price: number;
+        method: "RECENT_FOUR" | "RECENCY_WEIGHTED_MEDIAN";
+        recentTrendPercent?: number;
+    };
     windowDays?: number;
     grader: string;
     grade: number | string;

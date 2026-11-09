@@ -1,0 +1,206 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import {
+    SEARCH_DIAGNOSTIC_OUTCOMES, SEARCH_DIAGNOSTIC_REASONS,
+    type SearchDiagnosticDiscovery, type SearchDiagnosticResult, type SearchDiagnosticRow,
+} from "../../shared/search-diagnostic.ts";
+import { DEVELOPMENT_SEARCH_LIMIT } from "../../shared/research-policy.ts";
+import { writeJsonAtomic } from "../lib/atomic-json.ts";
+import { withFileLease } from "../lib/file-lease.ts";
+import { DATA_DIR } from "../lib/paths.ts";
+import { StorageUnavailableError } from "../storage/index.ts";
+
+const SEARCH_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const LISTING_ID = /^[\w|\-]{1,120}$/;
+const MAX_SEARCHES = 50;
+const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const MAX_RECORD_SIZE = 64 * 1024;
+
+export interface SavedSearchDiagnosticDiscovery {
+    searchId: string;
+    savedAt: string;
+    discovery: SearchDiagnosticDiscovery;
+}
+
+export interface SavedSearchDiagnostic<T> extends SavedSearchDiagnosticDiscovery {
+    rows: SearchDiagnosticRow[];
+    data: T;
+}
+
+interface Entry<T> extends SavedSearchDiagnosticDiscovery {
+    snapshot?: SavedSearchDiagnostic<T>;
+    result?: SearchDiagnosticResult;
+}
+interface Ledger<T> { version: 1; entries: Entry<T>[] }
+
+export class SearchDiagnosticInputError extends Error {}
+
+export function isSearchDiagnosticId(value: unknown): value is string {
+    return typeof value === "string" && SEARCH_ID.test(value);
+}
+
+function requireSearchId(value: unknown): asserts value is string {
+    if (!isSearchDiagnosticId(value)) throw new SearchDiagnosticInputError("A valid completed search ID is required.");
+}
+
+function count(value: unknown): value is number {
+    return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function discoveryRecord(value: SearchDiagnosticDiscovery): SearchDiagnosticDiscovery {
+    const { total, found, screened, priceExcluded, skipped, deferred, previouslySeen, pricePass, retainedIds } = value;
+    if (![total, found, skipped, deferred].every(count) ||
+        ![screened, priceExcluded, previouslySeen].every(number => number === undefined || count(number)) ||
+        !Array.isArray(retainedIds) || retainedIds.length > DEVELOPMENT_SEARCH_LIMIT ||
+        retainedIds.some(id => typeof id !== "string" || !LISTING_ID.test(id)) || new Set(retainedIds).size !== retainedIds.length ||
+        pricePass !== undefined && (!pricePass || !["COMPLETE", "UNAVAILABLE"].includes(pricePass.status) ||
+            !count(pricePass.newListings) || !count(pricePass.candidates))) {
+        throw new SearchDiagnosticInputError("Completed search discovery has invalid diagnostic totals or retained listings.");
+    }
+    return { total, found, skipped, deferred,
+        ...(screened === undefined ? {} : { screened }),
+        ...(priceExcluded === undefined ? {} : { priceExcluded }),
+        ...(previouslySeen === undefined ? {} : { previouslySeen }),
+        ...(pricePass === undefined ? {} : { pricePass: { status: pricePass.status, newListings: pricePass.newListings, candidates: pricePass.candidates } }),
+        retainedIds: [...retainedIds] };
+}
+
+export function validateSearchDiagnosticRows(value: unknown, retainedIds: readonly string[]): SearchDiagnosticRow[] {
+    if (!Array.isArray(value) || value.length !== retainedIds.length || value.length > DEVELOPMENT_SEARCH_LIMIT) {
+        throw new SearchDiagnosticInputError("The diagnostic must account for every listing retained in this search.");
+    }
+    const retained = new Set(retainedIds);
+    const rows = new Map<string, SearchDiagnosticRow>();
+    for (const row of value) {
+        if (!row || typeof row !== "object" || Array.isArray(row)) throw new SearchDiagnosticInputError("A diagnostic row is invalid.");
+        const { id, outcome, reason, photoChecked, priced, profit } = row;
+        if (typeof id !== "string" || !retained.has(id) || rows.has(id) ||
+            !SEARCH_DIAGNOSTIC_OUTCOMES.includes(outcome) || !SEARCH_DIAGNOSTIC_REASONS.includes(reason) ||
+            photoChecked !== undefined && typeof photoChecked !== "boolean" || priced !== undefined && typeof priced !== "boolean" ||
+            profit !== undefined && (typeof profit !== "number" || !Number.isFinite(profit))) {
+            throw new SearchDiagnosticInputError("A diagnostic row has an unexpected listing ID, outcome, or reason.");
+        }
+        // Explicitly project the allowed fields. Seller text and provider
+        // errors never become part of the saved record or a model prompt.
+        rows.set(id, { id, outcome, reason,
+            ...(photoChecked === undefined ? {} : { photoChecked }),
+            ...(priced === undefined ? {} : { priced }),
+            ...(profit === undefined ? {} : { profit }) });
+    }
+    return retainedIds.map(id => rows.get(id)!);
+}
+
+function validateEntry<T>(entry: Entry<T>) {
+    requireSearchId(entry.searchId);
+    if (typeof entry.savedAt !== "string" || !Number.isFinite(Date.parse(entry.savedAt))) throw new Error("Invalid search timestamp.");
+    discoveryRecord(entry.discovery);
+    if (entry.snapshot) {
+        const snapshot = entry.snapshot;
+        if (snapshot.searchId !== entry.searchId || typeof snapshot.savedAt !== "string" ||
+            !Number.isFinite(Date.parse(snapshot.savedAt)) || !Object.hasOwn(snapshot, "data")) throw new Error("Invalid diagnostic snapshot.");
+        validateSearchDiagnosticRows(snapshot.rows, entry.discovery.retainedIds);
+    }
+    if (entry.result && (!entry.snapshot || entry.result.searchId !== entry.searchId ||
+        !["complete", "skipped", "unavailable"].includes(entry.result.status))) throw new Error("Invalid diagnostic review.");
+}
+
+export function createSearchDiagnosticStore<T>({
+    directory = path.join(DATA_DIR, "search-diagnostics"), now = Date.now, maxAgeMs = MAX_AGE_MS, maxSearches = MAX_SEARCHES,
+}: { directory?: string; now?: () => number; maxAgeMs?: number; maxSearches?: number } = {}) {
+    if (!Number.isSafeInteger(maxSearches) || maxSearches < 1 || maxSearches > MAX_SEARCHES ||
+        !Number.isSafeInteger(maxAgeMs) || maxAgeMs < 1 || maxAgeMs > MAX_AGE_MS) throw new RangeError("Invalid search diagnostic retention.");
+    const file = path.join(directory, "index.json");
+    const read = async (): Promise<Ledger<T>> => {
+        try {
+            const value = JSON.parse(await fs.readFile(file, "utf8")) as Ledger<T>;
+            if (value?.version !== 1 || !Array.isArray(value.entries) || value.entries.length > MAX_SEARCHES ||
+                new Set(value.entries.map(entry => entry.searchId)).size !== value.entries.length) {
+                throw new Error("Invalid search diagnostic index.");
+            }
+            value.entries.forEach(validateEntry);
+            return value;
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, entries: [] };
+            throw new StorageUnavailableError("Saved search diagnostics could not be read. The original record was kept.", { cause: error });
+        }
+    };
+    const active = (entry: Entry<T>, at = now()) => Date.parse(entry.savedAt) > at - maxAgeMs;
+    async function find(searchId: string): Promise<Entry<T> | null> {
+        requireSearchId(searchId);
+        return (await read()).entries.find(entry => entry.searchId === searchId && active(entry)) ?? null;
+    }
+    async function edit<R>(change: (entries: Entry<T>[], at: number) => R): Promise<R> {
+        return withFileLease(file, async () => {
+            const at = now();
+            const book = await read();
+            const before = JSON.stringify(book);
+            const entries = book.entries.filter(entry => active(entry, at));
+            const result = change(entries, at);
+            const retained = entries.slice(0, maxSearches);
+            const updated = { version: 1, entries: retained };
+            if (before !== JSON.stringify(updated)) await writeJsonAtomic(file, updated);
+            return result;
+        }, { timeoutError: () => new StorageUnavailableError("Saved search diagnostics are busy.") });
+    }
+    const discoveryFrom = ({ searchId, savedAt, discovery }: Entry<T>) => ({ searchId, savedAt, discovery });
+    function snapshotFrom(entry: Entry<T>): SavedSearchDiagnostic<T> | null {
+        if (!entry.snapshot) return null;
+        const discovery = discoveryRecord(entry.discovery);
+        return { ...entry.snapshot, discovery, rows: validateSearchDiagnosticRows(entry.snapshot.rows, discovery.retainedIds) };
+    }
+    function requireRecordSize(value: unknown) {
+        if (Buffer.byteLength(JSON.stringify(value), "utf8") > MAX_RECORD_SIZE) throw new Error("The search diagnostic exceeds its saved size limit.");
+    }
+    return {
+        async saveDiscovery(searchId: string, discovery: SearchDiagnosticDiscovery): Promise<SavedSearchDiagnosticDiscovery> {
+            requireSearchId(searchId);
+            const clean = discoveryRecord(discovery);
+            return edit((entries, at) => {
+                const previous = entries.find(entry => entry.searchId === searchId);
+                if (previous) return discoveryFrom(previous);
+                const entry = { searchId, savedAt: new Date(at).toISOString(), discovery: clean };
+                entries.unshift(entry);
+                return entry;
+            });
+        },
+        async loadDiscovery(searchId: string): Promise<SavedSearchDiagnosticDiscovery | null> {
+            const entry = await find(searchId);
+            return entry ? discoveryFrom(entry) : null;
+        },
+        async saveSnapshot(searchId: string, rows: unknown, data: T): Promise<SavedSearchDiagnostic<T> | null> {
+            requireSearchId(searchId);
+            return edit((entries, at) => {
+                const entry = entries.find(entry => entry.searchId === searchId);
+                if (!entry) return null;
+                const cleanRows = validateSearchDiagnosticRows(rows, entry.discovery.retainedIds);
+                const previous = snapshotFrom(entry);
+                if (previous) return previous;
+                const snapshot = { ...discoveryFrom(entry), savedAt: new Date(at).toISOString(), rows: cleanRows, data };
+                requireRecordSize(snapshot);
+                entry.snapshot = snapshot;
+                return snapshot;
+            });
+        },
+        async loadSnapshot(searchId: string): Promise<SavedSearchDiagnostic<T> | null> {
+            const entry = await find(searchId);
+            return entry ? snapshotFrom(entry) : null;
+        },
+        async saveResult(searchId: string, result: SearchDiagnosticResult): Promise<SearchDiagnosticResult | null> {
+            requireSearchId(searchId);
+            if (result.searchId !== searchId) throw new SearchDiagnosticInputError("The review belongs to another search.");
+            return edit(entries => {
+                const entry = entries.find(entry => entry.searchId === searchId);
+                if (!entry?.snapshot) return null;
+                // Across app processes, an unavailable result can arrive before
+                // the caller holding the paid request finishes saving its answer.
+                if (entry.result && !(entry.result.status === "unavailable" && result.status === "complete")) return entry.result;
+                requireRecordSize(result);
+                entry.result = result;
+                return result;
+            });
+        },
+        async loadResult(searchId: string): Promise<SearchDiagnosticResult | null> {
+            return (await find(searchId))?.result ?? null;
+        },
+    };
+}

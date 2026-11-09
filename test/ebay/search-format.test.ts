@@ -25,6 +25,7 @@ test("a bounded Buy It Now search reaches affordable inventory beyond 200 out-of
         const range = params.get("filter")!.match(/(?:^|,)price:\[([^\]]+)\]/)?.[1];
         const [minimum, maximum] = range?.includes("..") ? range.split("..") : [range, undefined];
         const matched = inventory.filter(row => Number(row.price.value) >= Number(minimum || 0) && Number(row.price.value) <= (maximum ? Number(maximum) : Infinity));
+        if (params.get("sort") === "price") matched.sort((a, b) => Number(a.price.value) - Number(b.price.value));
         return Response.json({ total: matched.length, itemSummaries: matched.slice(0, Number(params.get("limit"))) });
     });
     const run = (minPrice: number, maxPrice?: number) => findDeals(query, {
@@ -43,13 +44,16 @@ test("a bounded Buy It Now search reaches affordable inventory beyond 200 out-of
     assert.deepEqual((await run(0, 100)).map(row => row.id), ["v1|affordable|0", "v1|cheap|0"]);
     assert.match(requests[1].get("filter")!, /price:\[\.\.100\],priceCurrency:USD/);
     assert.equal((await run(50, 600)).length, 50);
-    assert.match(requests[2].get("filter")!, /price:\[50\.\.600\],priceCurrency:USD/);
+    assert.deepEqual(requests.slice(2).map(params => params.get("sort")), ["newlyListed", "price"]);
+    assert.ok(requests.slice(2).every(params => /price:\[50\.\.600\],priceCurrency:USD/.test(params.get("filter")!)));
+    assert.equal((await run(50, 600)).length, 50);
+    assert.equal(requests.length, 4, "both source orders reuse their respective caches");
     await run(50);
-    assert.match(requests[3].get("filter")!, /price:\[50\],priceCurrency:USD/);
+    assert.ok(requests.slice(4).every(params => /price:\[50\],priceCurrency:USD/.test(params.get("filter")!)));
     await run(0);
-    assert.doesNotMatch(requests[4].get("filter")!, /price:/);
+    assert.ok(requests.slice(6).every(params => !params.get("filter")!.includes("price:")));
     assert.deepEqual(await run(100, 50), []);
-    assert.equal(requests.length, 5, "wider and unbounded ranges cannot reuse a narrower page");
+    assert.equal(requests.length, 8, "wider and unbounded ranges cannot reuse a narrower page");
 });
 
 test("BIN price bounds never become auction or mixed-search source filters", async t => {

@@ -93,7 +93,7 @@ test("known damaged raw condition keeps visibility concerns as notes while unkno
     const status = photoReviewStatus(damaged);
     assert.equal(status.needsYourReview, false);
     assert.ok(status.photoNotes.includes("No usable photo shows the whole back."));
-    assert.ok(status.photoNotes.includes("Every usable whole-front photo has obscured detail."));
+    assert.ok(status.photoNotes.includes("The only usable front overview has limited detail."));
     assert.equal(damaged.condition!.rawCondition, "DAMAGED");
     const unknown = structuredClone(damaged);
     unknown.condition!.rawCondition = "UNKNOWN";

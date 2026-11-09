@@ -156,6 +156,7 @@ test("literal modern names reach exact sold-price exclusion before buying labels
         ["Mewtwo GX", "Shining Legends", "78/73", "2017 POKEMON SUN & Moon - Shining Legends - MEWTWO GX - #78/73 PSA 9"],
         ["Medicham V", "Evolving Skies", "186/203", "2021 POKEMON SWORD & SHIELD EVOLVING SKIES #186 FULL ART/MEDICHAM V PSA 9 Mint"],
         ["Rayquaza VMAX", "Evolving Skies", "111/203", "2021 POKEMON SWORD & SHIELD EVOLVING SKIES #111 FULL ART/RAYQUAZA VMAX PSA 9"],
+        ["Mew VMAX", "Fusion Strike", "269/264", "MEW VMAX POKEMON 269/264 2021 FUSION STRIKE MINT PSA 9 NEW CERT CLEAN"],
     ]) {
         const wanted: SearchIntent = { ...intent, cardName: name, sets: [set], cardNumber: number, titleWords: [name.split(" ")[0].toLowerCase()] };
         const { run, calls } = harness({ cards: [card({ name: `${name} (Alternate Full Art)`, setName: catalogSet, cardNumber: number })],
@@ -177,6 +178,16 @@ test("literal modern names reach exact sold-price exclusion before buying labels
     }
 });
 
+test("terminal slab cert note requires an observed numeric grade, full number, and written release", () => {
+    const set = "Fusion Strike";
+    for (const title of [
+        "Mew VMAX 269/264 PSA 9 new cert clean",
+        `Mew VMAX 269 ${set} PSA 9 new cert clean`,
+        `Mew VMAX 269/264 ${set} new cert clean`,
+        `Mew VMAX 269/264 ${set} PSA 9 new cert clean variation`,
+    ]) assert.notEqual(readTitleByRules(title, [set]).cardName, "mew vmax", title);
+});
+
 test("anchored slab metadata reaches one exact sold market and rejects overpricing without paid labels", async t => {
     t.mock.method(globalThis, "fetch", () => assert.fail("slab metadata cleanup must use only mocked price data"));
     for (const [name, number, title, polluted] of [
@@ -185,8 +196,12 @@ test("anchored slab metadata reaches one exact sold market and rejects overprici
         ["Simisear VSTAR", "GG37/GG70", "Pokemon CRZ GG37/GG70 Crown Zenith Galarian Gallery Simisear VSTAR Full Art PSA 9", "crz simisear vstar"],
         ["Mew", "GG10/GG70", "Pokemon TCG SWSH Crown Zenith Mew GG10/GG70 Holo UR CGC 10 EN 2023", "mew ur"],
         ["Mew", "GG10/GG70", "POKEMON Crown Zenith MEW GG10/GG70 Galarian Gallery Holo CGC 10 GEM MINT", "mew galarian gallery"],
+        ["Raikou V", "GG41/GG70", "2023 Pokemon Sword and Shield Crown Zenith Galarian Gallery Raikou V #GG41 PSA 9", "sword and shield raikou v"],
+        ["Suicune V", "GG38/GG70", "2023 Pokémon Suicune V GG38 Crown Zenith Galarian Gallery FA Holo PSA 9", "suicune v fa"],
+        ["Mew", "GG10/GG70", "The Pokémon Company 2023 Mew Crown Zenith Galarian Gallery Holo FA GG10 PSA 9", "mew fa"],
     ]) {
         const set = "Crown Zenith Galarian Gallery", reading = readTitleByRules(title), grader = reading.grader!, grade = reading.grade!;
+        assert.equal(reading.cardNumber, title.includes(number) ? number : number.split("/")[0], "keep the collector number as written");
         const wanted: SearchIntent = { ...intent, cardName: null, sets: ["Crown Zenith"], cardNumber: null, titleWords: [], graded: true };
         const { run, calls } = harness({ cards: [card({ name, setName: `SWSH: Crown Zenith: Galarian Gallery`, cardNumber: number, variants: [variant("Holofoil")] })],
             graded: async () => three({ title: `${name} ${set} ${number} Holo ${grader} ${grade}`, grader, grade, variant: "Holofoil" }) });
@@ -211,6 +226,41 @@ test("anchored slab metadata reaches one exact sold market and rejects overprici
         }
         assert.equal(calls.graded.length, 1, "special tiers never borrow ordinary-grade prices");
     }
+});
+
+test("partial Gallery numbers only clean slab title metadata with the written release and supported prefix", () => {
+    const set = "Crown Zenith Galarian Gallery";
+    for (const title of [
+        "Suicune V GG38 FA PSA 9",
+        "Suicune V GG38 Crown Zenith FA PSA 9",
+        `Suicune V TG38 ${set} FA PSA 9`,
+        `Suicune V GG71 ${set} FA PSA 9`,
+        `Suicune V GG38 ${set} FA Holo`,
+    ]) assert.equal(readTitleByRules(title, [set]).cardName, "suicune v fa", title);
+    assert.equal(readTitleByRules(`Suicune VSTAR GG38 ${set} FA PSA 9`, [set]).cardName, "suicune vstar");
+});
+
+test("short Gallery titles recover exact slab research and keep incompatible numbers or releases separate", async () => {
+    const set = "Crown Zenith Galarian Gallery";
+    const wanted: SearchIntent = { ...intent, cardName: null, sets: [set], cardNumber: null, titleWords: [], graded: true };
+    const title = "Suicune V GG38/GG70 Full Art Galarian Gallery PSA 9 Mint 2023 Pokemon SWSH";
+    const { run, calls } = harness({ cards: [card({ name: "Suicune V", setName: `SWSH: Crown Zenith: Galarian Gallery`, cardNumber: "GG38/GG70", variants: [variant("Holofoil")] })],
+        graded: async () => [sale({ title: "Crown Zenith #GG38 Suicune V Full art PSA 9 2023 Pokemon TCG SWSH", grader: "PSA", grade: "9", variant: "Holofoil" })] });
+    const reading = readTitleByRules(title);
+    assert.deepEqual([reading.set, reading.cardName, reading.cardNumber], [set, "suicune v", "GG38/GG70"]);
+    const subject = await screenListingWithoutAi(listing({ title, isGraded: true, images: ["front", "back"] }), wanted,
+        undefined, async value => readTitleByRules(value));
+    const evidence = await run(subject, wanted);
+    assert.equal(evidence.exactScope, true);
+    assert.equal(evidence.references[0].summary.count, 1);
+    const candidate = applySoldPriceScreen(subject, evidence);
+    assert.equal(canAutoAnalyze(candidate), true);
+    assert.equal(resultGroup(candidate, null), "candidates");
+    assert.equal(calls.graded.length, 1);
+    assert.equal(readTitleByRules(title.replace("GG38/GG70", "TG38/TG70")).set, null);
+    assert.equal(readTitleByRules(title.replace("GG38/GG70", "GG38/GG71")).set, null);
+    assert.equal(readTitleByRules(title.replace("Galarian Gallery", "Evolving Skies Galarian Gallery")).set, "Evolving Skies");
+    assert.equal(readTitleByRules("2023 PSA 9 FA Cheren’s Care #GG58 Full Art Galarian Gallery Pokemon TCG SWSH CZ").cardName, "cheren's care");
 });
 
 test("four-word slab names reach exact catalog research without borrowing omitted sets or dropping form words", async t => {

@@ -70,6 +70,36 @@ test("existing catalog and sold pages stay usable with zero new-request allowanc
     assert.deepEqual(source.stats(), { requests: 0, limit: 0 });
 });
 
+test("a saved GG64/70 listing finds the catalog's exact GG64/GG70 PSA 9 sales", async t => {
+    offline(t);
+    t.mock.method(globalThis, "fetch", () => assert.fail("the saved catalog and sales must need no provider request"));
+    const set = { id: 82003, name: "SWSH: Crown Zenith: Galarian Gallery" };
+    const card = { id: 82064, name: "Melony", number: "GG64", total_set_number: "GG70", set, prices: [{ currency: "USD", variant: "Holofoil" }] };
+    await writeCache("pkmnprices:/sets?name=Galarian&language=English&per_page=50", { data: [set] });
+    await writeCache(`pkmnprices:/cards?set_id=${set.id}&name=melony&per_page=20`, { data: [card] });
+    await writeCache(`pkmnprices:/cards/${card.id}?currency=usd`, card);
+    const sold: Comp = { ...sale(1), title: "Melony GG64/70 Crown Zenith Galarian Gallery PSA 9", sold_at: new Date(clock - 86_400_000).toISOString(),
+        variant: "Holofoil", grader: "PSA", grade: "9", grade_qualifier: null, attribution: "exact", listing_url: "https://www.ebay.com/itm/123" };
+    await writeCache(`pkmnprices:${gradedPath(card.id, "PSA", 9, "Holofoil")}`, { data: [sold] });
+    const source = createScreeningPriceSource({ maxRequests: 0 });
+    const title = "Pokemon Melony (GG64/70) Crown Zenith Galarian Gallery PSA 9";
+    const subject: ListingSummary = { id: "saved-melony", title, isGraded: true, currentPrice: 30, shipping: 4.99,
+        bids: 0, buyingOption: "FIXED_PRICE", endTime: null, images: [], url: "https://www.ebay.com/itm/123", seller: null };
+    const intent: SearchIntent = { cardName: null, sets: ["Crown Zenith Galarian Gallery"], cardNumber: null, printing: null,
+        graded: true, titleWords: [], source: "rules" };
+    const run = createSoldScreening({ now: () => clock, source });
+    const result = await run(subject, intent);
+    assert.equal(result.status, "AVAILABLE");
+    assert.equal(result.exactScope, true);
+    assert.deepEqual(result.references.map(reference => [reference.cardNumber, reference.grader, reference.grade, reference.summary.count]),
+        [["GG64/GG70", "PSA", "9", 1]]);
+    for (const number of ["GG65/70", "GG64/71", "GG64/TG70", "TG64/70", "64/70"]) {
+        const wrong = await run({ ...subject, title: title.replace("GG64/70", number) }, intent);
+        assert.equal(wrong.status, "UNAVAILABLE", number);
+    }
+    assert.deepEqual(source.stats(), { requests: 0, limit: 0 });
+});
+
 test("screening reuses cached final-valuation pages when the first page has no confirmed match", async t => {
     offline(t);
     const id = 82102;

@@ -303,6 +303,16 @@ test("promo numbers keep their letters", () => {
     assert.equal(sameCardNumber("TG01/TG30", "TG1/TG30"), true);
 });
 
+test("the Galarian Gallery shorthand preserves other collector numbers and totals", () => {
+    assert.equal(sameCardNumber("GG64/70", "GG64/GG70"), true);
+    assert.equal(sameCardNumber("gg01 / 070", "GG1/GG70"), true);
+    for (const number of ["GG65/70", "GG64/71", "GG64/TG70", "TG64/70", "64/70"]) {
+        assert.equal(sameCardNumber(number, "GG64/GG70"), false, number);
+    }
+    assert.equal(sameCardNumber("GG71/70", "GG71/GG70"), false);
+    assert.equal(sameCardNumber("TG1/30", "TG1/TG30"), false);
+});
+
 function dateNumberCase(name = "Dark Alakazam", numerator = 1, month = "Jan") {
     const fraction = `${numerator}/82`;
     const listing = { title: `${name} 2000 Pokemon Team Rocket #${numerator} Holo PSA 9`,
@@ -455,6 +465,52 @@ test("photo marks map to a printing, and unclear marks stay unknown", () => {
     assert.equal(photoPrinting({ firstEditionStamp: "NOT_PRESENT", artBoxShadow: "CANT_TELL" }, other), "UNLIMITED");
     assert.equal(photoPrinting({ firstEditionStamp: "CANT_TELL", artBoxShadow: "PRESENT" }, other), "UNKNOWN");
     assert.equal(photoPrinting(undefined, other), "UNKNOWN");
+});
+
+test("visible artwork shadow settles ordinary English Base Set Mewtwo with an unreadable stamp area", async () => {
+    const printedNumber = "10/102";
+    const record = { ...BASE_CHARIZARD, name: "Mewtwo", cardNumber: "010/102" };
+    const listing = { ...charizardListing("Mewtwo ~ Pokémon Base Set ~ 10/102 ~ 60 HP ~ LP ~ Holo ~ 1999 ~ WOTC"),
+        aspects: { Set: "Base Set", "Card Number": printedNumber, "Card Name": "Mewtwo", Language: "English", Finish: "Holo" } };
+    const photos = photoCheck({ firstEditionStamp: "CANT_TELL", artBoxShadow: "PRESENT",
+        reprintMark: "No Base Set 2 symbol or Pikachu anniversary mark is visible in the supplied front views.",
+        evidence: ["Photo 1 shows a shadow along the artwork frame."] }, {
+        printedName: "Mewtwo", printedNumber, cardCount: "ONE", holder: "NONE",
+        cardMatch: { verdict: "MATCH", problems: [] }, images: [{ view: "FRONT", usable: true, isStockImage: false }],
+        cardIdentity: { name: "Mewtwo", set: "Base Set", cardNumber: printedNumber, language: "English", finish: "HOLO",
+            confidence: "HIGH", evidence: ["English text and 10/102 are visible."] },
+    });
+    for (const [title, reprintMark] of [
+        [listing.title, photos.printingMarks.reprintMark],
+        ["Mewtwo 10/102 HOLO Rare Base Set Unlimited Vintage WoTC Pokémon TCG 1999", "No visible Base Set 2 or Pikachu anniversary mark in supplied front views"],
+    ]) {
+        const result = await identifyCard({ ...listing, title }, { ...photos, printingMarks: { ...photos.printingMarks, reprintMark } },
+            { lookupCards: lookup(record) });
+        assert.equal(result.identity.status, "IDENTIFIED");
+        assert.equal(result.identity.printing, "UNLIMITED");
+        assert.equal(result.identity.evidence?.photoSource, "Artwork frame shadow");
+        assert.ok(readyForPricing(result.identity));
+    }
+    for (const [label, update] of [
+        ["ambiguous frame", value => { value.photos.printingMarks.artBoxShadow = "CANT_TELL"; }],
+        ["shadowless frame", value => { value.photos.printingMarks.artBoxShadow = "ABSENT"; }],
+        ["stamp visible", value => { value.photos.printingMarks.firstEditionStamp = "VISIBLE"; }],
+        ["wrong printing claim", value => { value.listing.title += " 1st Edition"; }],
+        ["reprint mark", value => { value.photos.printingMarks.reprintMark = "BASE_SET_2"; }],
+        ["ambiguous mark", value => { value.photos.printingMarks.reprintMark = "No visible Base Set 2 symbol; another mark may be present."; }],
+        ["stock front", value => { value.photos.images[0].isStockImage = true; }],
+        ["Machamp", value => {
+            value.listing.title = "Machamp 8/102 Base Set Holo";
+            value.listing.aspects["Card Name"] = value.photos.printedName = value.photos.cardIdentity.name = value.record.name = "Machamp";
+            value.listing.aspects["Card Number"] = value.photos.printedNumber = value.photos.cardIdentity.cardNumber = value.record.cardNumber = "8/102";
+        }],
+    ]) {
+        const value = structuredClone({ listing, photos, record });
+        update(value);
+        const result = await identifyCard(value.listing, value.photos, { lookupCards: lookup(value.record) });
+        assert.equal(result.identity.status, "NEEDS_REVIEW", label);
+        assert.equal(result.identity.printing, "UNKNOWN", label);
+    }
 });
 
 test("printing evidence that all agrees is accepted", () => {

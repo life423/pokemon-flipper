@@ -1,11 +1,13 @@
 import { dollars } from "../format.ts";
 import type { AuctionOutlook, CompSummary, MoneyPath, UsualPrice } from "../types.ts";
+import { soldMarketPrice } from "../sold-evidence.ts";
 
 // What the listing usually sells for, as listed: a slab's recent sales
 // at its grade, or a raw card's market price in its condition.
 export function usualPrice(paths: MoneyPath[], slabSales: CompSummary | null | undefined): UsualPrice | null {
     if (slabSales) {
-        return slabSales.median ? { price: slabSales.median, sales: slabSales.sales.map((sale) => sale.price) } : null;
+        const price = soldMarketPrice(slabSales);
+        return price === null ? null : { price, sales: slabSales.sales.map((sale) => sale.price) };
     }
 
     const raw = paths.find((path) => path.path === "RAW");

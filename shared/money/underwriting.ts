@@ -4,6 +4,7 @@ import { RAW_CONDITIONS, isRawCondition } from "../conditions.ts";
 import { dollars, round2 } from "../format.ts";
 import { cents, meetsMoneyTargets, money, sellingFeeCents, taxedCents } from "./cents.ts";
 import { isRawSoldPrice, referencePriceReason, unsupportedVariantReason } from "./price-evidence.ts";
+import { soldMarketPrice } from "../sold-evidence.ts";
 import type {
     CompSummary,
     Condition,
@@ -101,7 +102,7 @@ type GradePrices =
     | { ok: true; prices: Record<number, { price: number; filledFrom: number | null }> }
     | { ok: false; reason: string };
 
-// The median sold price for each grade in the range. A grade with no
+// The sold market estimate for each grade in the range. A grade with no
 // verified sales may use the nearest lower observed grade only while the
 // observed range is nondecreasing. A lower-grade premium is not a floor
 // for an unobserved grade. Complete nonmonotonic ranges remain priceable.
@@ -109,8 +110,9 @@ export function pricesByGrade(byGrade: CompSummary[], { low, high }: Pick<GradeR
     const known = new Map<number, number>();
 
     for (const summary of byGrade) {
-        if (summary.count > 0 && typeof summary.median === "number" && Number.isFinite(summary.median) && summary.median > 0) {
-            known.set(Number(summary.grade), summary.median);
+        const price = soldMarketPrice(summary);
+        if (summary.count > 0 && price !== null) {
+            known.set(Number(summary.grade), price);
         }
     }
 
@@ -356,9 +358,10 @@ export function gradedResalePath(
     config: MoneyConfig
 ): MoneyPath {
     const label = `Resell as ${comps.grader} ${comps.grade}`;
+    const salePrice = soldMarketPrice(comps);
 
-    if (!Number.isFinite(comps.count) || !(comps.count > 0) || comps.median === null || comps.low === null ||
-        !Number.isFinite(comps.median) || !Number.isFinite(comps.low) || comps.median <= 0 || comps.low <= 0 || comps.low > comps.median) {
+    if (!Number.isFinite(comps.count) || !(comps.count > 0) || salePrice === null || comps.low === null ||
+        !Number.isFinite(comps.low) || comps.low <= 0 || comps.low > salePrice) {
         return unavailablePath("GRADED_RESALE", label, `No verified ${comps.grader} ${comps.grade} sales.`);
     }
 
@@ -366,14 +369,14 @@ export function gradedResalePath(
         {
             path: "GRADED_RESALE",
             label,
-            expectedNet: netFromSale(comps.median, "graded", config.selling),
+            expectedNet: netFromSale(salePrice, "graded", config.selling),
             downsideNet: netFromSale(comps.low, "graded", config.selling),
             fixedCosts: 0,
             listing,
             shipping,
             config,
         },
-        { salePrice: comps.median }
+        { salePrice }
     );
 }
 

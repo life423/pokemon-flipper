@@ -4,7 +4,7 @@ import { hasSpecialSlabTitle } from "./grade-qualifier.ts";
 import { isRawSoldPrice } from "./money/price-evidence.ts";
 
 // Pricing changes do not invalidate paid photo/condition assessments.
-export const PRICING_VERSION = "ebay-resale-15";
+export const PRICING_VERSION = "ebay-resale-16";
 export const PHOTO_REVIEW_REVISION = 10;
 // Raw-condition prompting changes do not invalidate historical sold-copy categories.
 export const CONDITION_ASSESSMENT_REVISION = 2;

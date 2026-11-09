@@ -12,8 +12,9 @@ import { createSharedWork } from "../lib/shared-work.ts";
 import { storageFailure } from "../lib/storage-failure.ts";
 import { StorageUnavailableError } from "../storage/index.ts";
 import { aiSpendingFailure } from "../ai/spending.ts";
-import { identifyCard, readyForPricing, printingClaimFromAspects } from "../identity/card-identity.ts";
+import { corroboratedSlabName, identifyCard, readyForPricing, printingClaimFromAspects, type IdentityListing } from "../identity/card-identity.ts";
 import { checkSlab } from "../identity/slab-check.ts";
+import { readTitleByRules } from "../ai/title-reader.ts";
 import { lookupCards, fetchComps, fetchRawComps } from "../pricing/pkmnprices.ts";
 import { gradedPricesFor, compsForGrade } from "../pricing/graded-comps.ts";
 import { rawPricesWithSales, compCondition } from "../pricing/raw-comps.ts";
@@ -92,14 +93,15 @@ function stampNote(stamp: NonNullable<Evaluation["focusedStamp"]>): string {
 
 // Reapply deterministic label rules to paid evidence rather than purchasing
 // the photos again when a seller-metadata policy changes.
-function recheckSavedSlab(evaluation: Evaluation, aspects: Record<string, string>): { evaluation: Evaluation; needsPricing: boolean } {
+function recheckSavedSlab(evaluation: Evaluation, listing: IdentityListing): { evaluation: Evaluation; needsPricing: boolean } {
     const revised = structuredClone(evaluation);
     if (revised.photoCheck?.holder !== "GRADED_SLAB") return { evaluation: revised, needsPricing: false };
     const previousStatus = revised.slab?.status;
-    revised.slab = checkSlab(revised.photoCheck, aspects);
+    revised.slab = checkSlab(revised.photoCheck, listing.aspects);
     const pricing = revised.slabPricing;
     const priced = pricing?.status === "PRICED" && pricing.grader === revised.slab.grader && pricing.grade === revised.slab.grade;
-    return { evaluation: revised, needsPricing: revised.slab.status === "OK" && !priced && previousStatus !== "OK" };
+    const retryName = revised.identity?.status === "NEEDS_REVIEW" && corroboratedSlabName(listing, revised.photoCheck, readTitleByRules);
+    return { evaluation: revised, needsPricing: revised.slab.status === "OK" && !priced && (previousStatus !== "OK" || Boolean(retryName)) };
 }
 
 export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
@@ -188,7 +190,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         const retryableStamp = (saved: Evaluation) => !saved.focusedStamp && Boolean(stampCandidate(saved)) &&
             hasFreshStampTerms(evaluation.listing, deps.now());
         const latest = legacy?.latestEvaluation?.evaluation;
-        const revisedLatest = latest ? recheckSavedSlab(latest, listing.aspects) : null;
+        const revisedLatest = latest ? recheckSavedSlab(latest, listing) : null;
         if (latest && !retryableStamp(latest) && matchesPrintingClaim(latest) && !latest.pricingDeferred && !revisedLatest!.needsPricing && legacy?.latestEvaluation?.evidenceKey === listingEvidenceKey({ title: listing.title, images: listing.images }) && currentPriceEvidence(latest, deps.now()) && !await hasNewerSharedReading(latest)) {
             if (cardLanguageStatus(listing.title, [latest.identity?.language, latest.photoCheck?.cardIdentity?.language]) === "OTHER") throw new EnglishOnlyError();
             const reused = withoutUnsupportedRawPrices(withoutUnsupportedVariantPrices(revisedLatest!.evaluation));
@@ -198,7 +200,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             await privateEvaluations.save(reused, privateContext); return reused;
         }
         const remembered = await privateEvaluations.load(itemId);
-        const revisedRemembered = remembered ? recheckSavedSlab(remembered.evaluation, listing.aspects) : null;
+        const revisedRemembered = remembered ? recheckSavedSlab(remembered.evaluation, listing) : null;
         if (remembered?.contextKey === privateContext.contextKey && !retryableStamp(remembered.evaluation) &&
             matchesPrintingClaim(remembered.evaluation) && !remembered.evaluation.pricingDeferred && !revisedRemembered!.needsPricing && (remembered.evaluation.assessmentVersion === ANALYSIS_VERSION || plans.some(plan => plan.version === remembered.evaluation.assessmentVersion)) && currentPriceEvidence(remembered.evaluation, deps.now()) && !await hasNewerSharedReading(remembered.evaluation)) {
             const reused = withoutUnsupportedRawPrices(withoutUnsupportedVariantPrices(revisedRemembered!.evaluation));
@@ -337,7 +339,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                 throw error;
             }
         };
-        const identify = (reading: typeof check) => deps.identify({ ...listing, aspects }, reading, { lookupCards: query => guarded(() => deps.lookup(query)),
+        const identify = (reading: typeof check) => deps.identify({ ...listing, aspects }, reading, { lookupCards: query => guarded(() => deps.lookup(query)), readTitle: readTitleByRules,
             ...(legacyResolution?.confirmation ? { photoIdentity: legacyResolution.confirmation } : {}) });
         const identified = await identify(check);
         if (hardFailure) throw hardFailure;

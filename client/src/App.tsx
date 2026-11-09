@@ -16,7 +16,7 @@ import { looksLikeListingLink, parseListingLink } from "../../shared/listing-lin
 import { withResolvedCriteria } from "../../shared/search-criteria.ts";
 import { applyPricingRetry, PRICING_RETRY_LIMIT } from "../../shared/pricing-retries.ts";
 import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.ts";
-import { evaluateListing, fetchEbayUsage, fetchSetYears, reviewListingPhotos, streamDeals, streamNewDeals, fetchShortlist, saveListing, removeSavedListing, updateSavedListing, refreshSavedListings, resolveListingLink, retryPricingBatch, type DealsMessage } from "./api";
+import { evaluateListing, fetchEbayUsage, fetchSetYears, reviewListingPhotos, streamDeals, streamNewDeals, fetchShortlist, saveListing, removeSavedListing, updateSavedListing, refreshSavedListings, resolveListingLink, retryPricingBatch, saveSearchDiagnostic, type DealsMessage } from "./api";
 import type { ShortlistEntry } from "../../shared/shortlist.ts";
 import { ShortlistView } from "./components/ShortlistView";
 import { AiBudgetStatus } from "./components/AiBudgetStatus";
@@ -27,6 +27,7 @@ import { DealCard } from "./components/DealCard";
 import { PricingRetries } from "./components/PricingRetries";
 import { EmptyState } from "./components/EmptyState";
 import { SearchProgress, type SearchPhase } from "./components/SearchProgress";
+import { SearchReview } from "./components/SearchReview";
 import {
     ArrowIcon,
     ClockIcon,
@@ -42,10 +43,11 @@ import { filterSearchResults, groupSearchResults, sortSearchResults, countSearch
 import { ALL, AUTO_KEY, RECENT_KEY, RECENT_LIMIT, STARTER_SEARCHES, readRecentSearches, readTargets, readAutoSetting, readResultsSetting, targetText } from "./search/settings";
 import { analysisBlockPolicy, describeIntent, describeUsage, type AnalysisBlockCode } from "./search/presentation";
 import { automaticListingBlock, describeListingBlock } from "./search/analysis-admission";
+import { searchDiagnosticRows } from "./search/diagnostic";
 import styles from "./App.module.css";
 
 // The views, in order, and what each is called everywhere it appears.
-const VIEWS: View[] = ["all", "deals", "offers", "candidates", "review"];
+const VIEWS: View[] = ["all", "deals", "offers", "candidates", "review", "losses"];
 
 // The search shortcut, as this keyboard writes it.
 const SHORTCUT = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘ K" : "Ctrl K";
@@ -125,6 +127,7 @@ export function App() {
 
     const lastQuery = useRef("");
     const [searchStatus, setSearchStatus] = useState<"idle" | "checking" | "done" | "error">("idle");
+    const [completedSearchRunId, setCompletedSearchRunId] = useState<string | null>(null);
     const [searchError, setSearchError] = useState("");
     const [analysisBlocked, setAnalysisBlocked] = useState("");
     const [analysisBlockCode, setAnalysisBlockCode] = useState<AnalysisBlockCode | null>(null);
@@ -620,7 +623,9 @@ export function App() {
 
 
         const id = ++searchId.current;
-        searchRunId.current = crypto.randomUUID();
+        const runId = crypto.randomUUID();
+        searchRunId.current = runId;
+        setCompletedSearchRunId(null);
         setAiUsage(null);
         setUsage(previous => previous ? { ...previous, searchBudget: undefined } : previous);
         searchAbort.current?.abort();
@@ -663,10 +668,13 @@ export function App() {
                 }
             };
             const filters = { typeFilter, kindFilter, maxPrice: maxPrice === "" ? undefined : Number(maxPrice) };
-            if (onlyNew) await streamNewDeals(text, { minPrice: Math.max(0, Number(minPrice) || 0), signal: controller.signal, targets, includeOffers, automaticPhotos: autoSetting !== 0, filters, searchRunId: searchRunId.current, knownIds: rawListings.map((listing) => listing.id) }, receive);
-            else await streamDeals(text, { maxResults: resultsSetting, minPrice: Number(minPrice) || 0, signal: controller.signal, targets, includeOffers, automaticPhotos: autoSetting !== 0, filters, searchRunId: searchRunId.current }, receive);
+            if (onlyNew) await streamNewDeals(text, { minPrice: Math.max(0, Number(minPrice) || 0), signal: controller.signal, targets, includeOffers, automaticPhotos: autoSetting !== 0, filters, searchRunId: runId, knownIds: rawListings.map((listing) => listing.id) }, receive);
+            else await streamDeals(text, { maxResults: resultsSetting, minPrice: Number(minPrice) || 0, signal: controller.signal, targets, includeOffers, automaticPhotos: autoSetting !== 0, filters, searchRunId: runId }, receive);
 
-            if (searchId.current === id) setSearchStatus("done");
+            if (searchId.current === id) {
+                setCompletedSearchRunId(runId);
+                setSearchStatus("done");
+            }
             refreshUsage();
         } catch (error) {
             refreshUsage();
@@ -739,7 +747,8 @@ export function App() {
     );
 
     const groups = useMemo(() => groupSearchResults(filtered, analyses, includeOffers, newIds), [filtered, analyses, includeOffers, newIds]);
-    const alternatives = useMemo(() => groups.deals.length ? [] : selectDealAlternatives(filtered, analyses, targets, now), [groups.deals.length, filtered, analyses, targets, now]);
+    const alternatives = useMemo(() => groups.deals.length ? [] : selectDealAlternatives(filtered, analyses, targets, now, includeOffers),
+        [groups.deals.length, filtered, analyses, targets, now, includeOffers]);
 
     const visible = useMemo(() => sortSearchResults(groups[view], analyses, sort, targets, now), [groups, view, sort, analyses, targets, now]);
 
@@ -804,6 +813,7 @@ export function App() {
         candidates: "No cards are waiting to be sorted or assessed.",
         offers: "No offer opportunities within 10% of asking. Seller acceptance is never assumed.",
         review: "Nothing needs review.",
+        losses: "No completed assessments show a supported loss at the asking price or current bid.",
         all: "No listings match the filters.",
     };
 
@@ -832,6 +842,17 @@ export function App() {
     const aiTarget = Math.max(Math.min(counts.candidates, budget), startedAnalyses.length);
     const aiDone = startedAnalyses.filter((analysis) => analysis.status !== "loading").length;
     const aiBusy = counts.analyzing > 0 || (!analysisPaused.current && counts.waiting > 0 && budgetLeft > 0);
+    const scopedListings = newMode ? listings.filter(listing => newIds.has(listing.id)) : listings;
+    const waitingForReview = !analysisPaused.current && budgetLeft > 0 &&
+        scopedListings.some(listing => !analyses[listing.id] && !listingBlock(listing));
+    const reviewReady = searchStatus === "done" && !stopped && !waitingForReview && !pricingBusy &&
+        scopedListings.every(({ id }) => rawAnalyses[id]?.status !== "loading" &&
+            !activeAnalyses.current.has(id) && !activePhotoReviews.current.has(id));
+    function reviewSearch(runId: string, signal: AbortSignal) {
+        const waitingReason = needsWiderSearch ? "FILTERS_CHANGED" : analysisBlocked ? analysisBlockCode ?? "ANALYSIS_PAUSED"
+            : autoSetting === 0 ? "AUTO_OFF" : budgetLeft <= 0 ? "AUTO_LIMIT" : "NOT_ASSESSED";
+        return saveSearchDiagnostic(runId, searchDiagnosticRows(scopedListings, analyses, groups, listingBlock, waitingReason), signal);
+    }
     const phase: SearchPhase =
         searchStatus === "error"
             ? "error"
@@ -864,6 +885,8 @@ export function App() {
             {newMode ? <p>Loaded a window of {summary.found} newest listings. Skipped {summary.previouslySeen ?? 0} already seen; retained {summary.count} unseen listings.{(summary.deferred ?? 0) > 0 ? ` Another ${summary.deferred} remain in this window for a later scan.` : ""} This scan does not cover all eBay inventory.</p> : <p>
                 eBay reports {summary.total.toLocaleString()} results. Loaded {summary.found.toLocaleString()} listings and retained {summary.count.toLocaleString()} after preliminary screening. This limited window does not cover all eBay inventory.
             </p>}
+            {summary.pricePass?.status === "COMPLETE" && <p>The lower-priced pass added {summary.pricePass.newListings} unique listings to discovery and {summary.pricePass.candidates} candidates for assessment.</p>}
+            {summary.pricePass?.status === "UNAVAILABLE" && <p>The lower-priced pass was unavailable. Results from the newest listings are shown.</p>}
             {summary.screened !== undefined && <p>Checked sold-price evidence for {summary.screened} listings; {summary.priceExcluded ?? 0} were above the supported buying limit and excluded before photo analysis. Missing price evidence remains in Sorting.</p>}
             {(summary.priceExcluded ?? 0) > 0 && <p>Changing profit, ROI or offer settings updates loaded listings only. Run a new search to reconsider excluded listings with different targets.</p>}
             <p>
@@ -998,6 +1021,10 @@ export function App() {
                         setAnalysisBlocked(""); setAnalysisBlockCode(null); setBudget(autoSetting);
                         if (page === "listing" && directListing) void runAnalysis(directListing);
                     }} />}
+                    {completedSearchRunId && !stopped && <div hidden={page !== "search"}>
+                        <SearchReview key={completedSearchRunId} ready={page === "search" && reviewReady}
+                            onReview={(signal) => reviewSearch(completedSearchRunId, signal)} />
+                    </div>}
                     {page === "shortlist" ? <ShortlistView entries={shortlistForDisplay} loading={shortlistLoading} error={shortlistError} refreshing={refreshingSaved} refreshErrors={refreshErrors}
                         onRetry={() => void loadShortlist()} onRefresh={refreshSaved} onRemove={removeSaved} onUpdate={updateSaved} now={now}
                         renderCard={(entry) => <DealCard listing={entry.listing} analysis={analyses[entry.id]} selected={entry.id === selectedId} now={now} years={setYearsByKey} targets={targets} minGrade={minGrade} photoReviewState={photoReviews[entry.id]}
@@ -1100,16 +1127,21 @@ export function App() {
                                     {counts.waiting > 0 && <p>{counts.waiting} still await assessment{analysisBlocked ? " because paid AI is paused or budget-limited" : " in Sorting"}. An unassessed card is not a confirmed deal.</p>}
                                     {alternatives.length > 0 && <div className={styles.alternatives}>
                                         <p><strong>Best available options</strong></p>
-                                        <ul>{alternatives.map(({ listing, label, profit, roi }) => <li key={listing.id}>
+                                        <ul>{alternatives.map(({ listing, label, profit, roi, offerPrice }) => <li key={listing.id}>
                                             <button type="button" className={`${styles.secondary} ${styles.alternative}`} onClick={() => openPanel(listing.id)}>
                                                 <strong>{listing.title}</strong>
-                                                <span>{label} · {dollars(listing.currentPrice)} {listing.buyingOption === "AUCTION" ? "current bid" : "asking"}</span>
-                                                {profit !== null && <span>{dollars(profit)} modeled profit · {percent(roi)} ROI</span>}
+                                                <span>{offerPrice === undefined ? label : `Offer ${dollars(offerPrice)} · seller acceptance required`} · {dollars(listing.currentPrice)} {listing.buyingOption === "AUCTION" ? "current bid" : "asking"}</span>
+                                                {profit !== null && <span>{dollars(profit)} modeled profit{offerPrice === undefined ? "" : " if accepted"} · {percent(roi)} ROI</span>}
                                             </button>
                                         </li>)}</ul>
                                     </div>}
                                 </div>
-                                <button type="button" className={styles.secondary} onClick={() => withViewTransition(() => setView("candidates"))}>Open Sorting</button>
+                                <div className={styles.progressButtons}>
+                                    <button type="button" className={styles.secondary} onClick={() => withViewTransition(() => setView("candidates"))}>Open Sorting</button>
+                                    {groups.losses.length > 0 && <button type="button" className={styles.secondary} onClick={() => withViewTransition(() => setView("losses"))}>
+                                        View projected losses ({groups.losses.length})
+                                    </button>}
+                                </div>
                             </div>
                         ) : searchStatus === "checking" && view === "deals" ? (
                             <EmptyState
@@ -1123,6 +1155,9 @@ export function App() {
 
                     {view === "all" && visible.length > 0 && <p className={styles.discoveryNote}>
                         {visible.length} matching {visible.length === 1 ? "listing" : "listings"} in the loaded results, including passes and unfinished assessments. Known wrong cards and junk are excluded. {filtered.filter((listing) => evaluationOf(analyses[listing.id])?.photoCheck).length} AI photo reviews complete; other cards remain preliminary. Each development scan admits at most {DEVELOPMENT_SEARCH_LIMIT} matching listings; the number fully assessed depends on saved evidence and the AI budget for this search.
+                    </p>}
+                    {view === "losses" && visible.length > 0 && <p className={styles.discoveryNote}>
+                        Completed assessments with an estimated net loss at the asking price or current bid.
                     </p>}
                     <div className={styles.results}>
                         {/* Before the first results: placeholders in the shape of cards. */}

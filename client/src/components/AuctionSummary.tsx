@@ -2,11 +2,15 @@ import { MONEY_CONFIG } from "../../../shared/money/config.ts";
 import type { Evaluation, Targets } from "../types";
 import { dollars, timeLeft } from "../format";
 import { auctionDecision, returnText } from "../../../shared/card-presentation.ts";
+import { priceEvidenceGap } from "../../../shared/money/price-evidence.ts";
 import styles from "./DecisionSummary.module.css";
 
 export function AuctionSummary({ evaluation, targets, now }: { evaluation: Evaluation; targets: Targets; now: number }) {
     const decision = auctionDecision(evaluation, targets, now);
-    const result = decision.overLimit ? decision.atCurrent : decision.atCeiling;
+    const noProfitableBid = decision.status === "UNPRICED" && decision.atCurrent && decision.atCurrent.profit < 0 &&
+        evaluation.underwriting?.verdict === "PASS" && !priceEvidenceGap(evaluation);
+    const showCurrent = decision.overLimit || noProfitableBid;
+    const result = showCurrent ? decision.atCurrent : decision.atCeiling;
     const cautious = decision.provisional || decision.anyTargets || decision.ended || decision.overLimit;
     return <div className={styles.auction}>
         <div className={styles.amounts}>
@@ -14,10 +18,10 @@ export function AuctionSummary({ evaluation, targets, now }: { evaluation: Evalu
             <div><span className={styles.label}>Max snipe bid</span><strong className={styles.limit}>{dollars(decision.ceiling)}</strong></div>
         </div>
         <p className={styles.status}>
-            {decision.status === "ENDED" ? "Auction ended" : decision.status === "OVER_LIMIT" ? "Already above your limit — pass at this price." : decision.status === "UNPRICED" ? "No reliable bid limit yet. Finish the photo and pricing checks." : decision.provisional ? "Provisional limit — your review is needed because photo or grading uncertainty remains." : decision.anyTargets ? "Set a profit or ROI target to require a larger margin." : "Use the bid limit as your maximum snipe for the selected resale route."}
+            {decision.status === "ENDED" ? "Auction ended" : decision.status === "OVER_LIMIT" ? "Already above your limit — pass at this price." : noProfitableBid ? "No bid price meets your targets." : decision.status === "UNPRICED" ? "No reliable bid limit yet. Finish the photo and pricing checks." : decision.provisional ? "Provisional limit — your review is needed because photo or grading uncertainty remains." : decision.anyTargets ? "Set a profit or ROI target to require a larger margin." : "Use the bid limit as your maximum snipe for the selected resale route."}
         </p>
         {result && <div className={styles.scenario}>
-            <p className={styles.label}>{decision.overLimit ? "At current bid" : "If won for"} {dollars(result.price)} · {evaluation.underwriting?.best?.label}</p>
+            <p className={styles.label}>{showCurrent ? "At current bid" : "If won for"} {dollars(result.price)} · {evaluation.underwriting?.best?.label}</p>
             <dl className={styles.facts}>
                 <div><dt>Est. net {result.profit < 0 ? "loss" : "profit"}</dt><dd className={result.profit < 0 ? styles.loss : cautious ? styles.caution : styles.gain}>{dollars(Math.abs(result.profit))}</dd></div>
                 <div><dt>Total invested</dt><dd>{dollars(result.cost)}</dd></div>

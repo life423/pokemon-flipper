@@ -36,7 +36,7 @@ export interface AiReservation { ledgerId: string; searchId: string; attemptId: 
 // number in seller data, request metadata, JSON length or image dimensions.
 interface Options { directory?: string; preflight?: (body: unknown) => Promise<AiInputProof> }
 const NANO_USD = 1_000_000_000;
-export const AI_SEARCH_HARD_CAP_USD = 0.10;
+export const AI_SEARCH_HARD_CAP_USD = 0.25;
 export const MAX_STANDARD_INPUT_TOKENS = 272_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // USD / million tokens, represented exactly as nano-USD / token. Only the

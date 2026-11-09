@@ -25,6 +25,14 @@ Success means real, evidence-supported profitable cards reaching Deals.
 Loaded rows, completed checks or lower spending alone do not establish success.
 Never manufacture Deals or inflate prices to satisfy a count.
 
+When improving search, read the latest completed automatic review in
+`data/search-diagnostics/index.json` before requesting another paid scan. Treat
+the review as a proposal, verify its cited listing IDs against saved evidence
+and code, and replay the relevant decisions before changing provider policy.
+The user wants this work to proceed without routine input. The app runs one
+short text review per completed search with retained listings, with a separate
+AI allowance of up to $0.25. Keep reports and listing evidence out of commits.
+
 Prioritize raw resale, existing slab resale and raw-to-grade equally. Fresh
 underpriced Buy It Now listings and supported auction snipe limits are key.
 Grading may tie capital up for 90 days or more; preserve useful CGC and PSA plays
@@ -40,12 +48,14 @@ evidence details when they help an informed choice.
 
 Read docs/architecture.md for the source map and reading order.
 
-- Search and Find new listings share one bounded pipeline: one page of up to
-  200 eBay summaries, saved/local metadata screening, at most 50 matching rows,
-  then shared sold-price research before automatic photo work. Do not revive
-  retired broad discovery or a second evaluator through a diagnostic CLI.
-  Confident price exclusions free slots for later summaries in that same window;
-  refills share one screening session and its allowance. Excluded rows require
+- Search and Find new listings share one bounded pipeline with up to 200 eBay
+  summaries in the initial page and at most 50 retained matching rows. For a
+  normal Buy It Now search, fewer than three preliminary margin candidates
+  can trigger one lower-price page when there is more inventory to screen.
+  The two passes deduplicate listing research, share one sold-price session,
+  and respect the same provider allowances. The extra page keeps the eBay daily
+  reserve. Do not revive retired broad discovery or a second evaluator through
+  a diagnostic CLI. Confident price exclusions free slots. Excluded rows require
   a new search after relaxing targets; local retargeting covers retained rows.
 - A named English set/card/finish query can resolve its collector number before
   eBay admission, using complete catalog coverage in the same screening session.
@@ -149,13 +159,13 @@ Read docs/architecture.md for the source map and reading order.
 
 ## Spending, storage and reuse
 
-- Preserve the persistent **$0.10 OpenAI generation ceiling per search ID**.
+- Preserve the persistent **$0.25 OpenAI generation ceiling per search ID**.
   Automatic/explicit follow-ups and nested stages share the ID and guard.
   Exact final-input preflight, maximum input/output reservation and unknown-charge
   holds are required. Invalid state/config fails closed. Cache hits do not reset
   the allowance; brainstorming is not authorization to raise it.
-- The user explicitly raised the cap for new search accounts to $0.10 on
-  November 8. Preserve the limits, charges and holds of existing accounts.
+- The user explicitly raised the cap for new search accounts to $0.25 on
+  November 9. Preserve the limits, charges and holds of existing accounts.
   Prefer saved/local interpretation. A bounded text request may remove
   remaining conversational phrasing while preserving literal criteria. After
   sold screening, one bounded text request can reorder tied Buy It Now photo

@@ -32,6 +32,9 @@ import { storageFailure } from "./lib/storage-failure.ts";
 import { aiSpending } from "./ai/spending.ts";
 import { priceResearchSummary, withPriceResearchSignal } from "./pricing/research-budget.ts";
 import { dailyProviderUsage } from "./lib/provider-usage.ts";
+import type { SearchSummary } from "./deals/find-deals.ts";
+import { completeSearchDiagnostic, loadDiagnosticResult, saveDiagnosticDiscovery } from "./analysis/search-diagnostics.ts";
+import { isSearchDiagnosticId, SearchDiagnosticInputError } from "./analysis/search-diagnostic-store.ts";
 
 const app = express();
 
@@ -105,6 +108,40 @@ app.get("/api/ai-usage", async (req, res) => {
     catch { res.status(500).json({ error: "Search usage could not be read. Provider operations are unchanged." }); }
 });
 
+async function recordDiagnosticDiscovery(req: express.Request, summary: SearchSummary | undefined, retainedIds: Set<string>) {
+    const id = req.get("X-Pokemon-Flipper-Search-Id");
+    if (!summary || !isSearchDiagnosticId(id)) return;
+    await saveDiagnosticDiscovery(id, { ...summary, retainedIds: [...retainedIds] }).catch(error => {
+        console.error("Completed search diagnostic could not be saved", error);
+    });
+}
+
+app.get("/api/search-diagnostic", async (req, res) => {
+    const id = req.query.searchId;
+    if (!isSearchDiagnosticId(id)) { res.status(400).json({ error: "A valid completed search ID is required." }); return; }
+    try {
+        const report = await loadDiagnosticResult(id);
+        if (report) res.json(report);
+        else res.status(404).json({ error: "This search has no saved review yet." });
+    } catch {
+        res.status(503).json({ error: "The saved search review could not be read." });
+    }
+});
+
+app.post("/api/search-diagnostic", async (req, res) => {
+    const id = req.get("X-Pokemon-Flipper-Search-Id");
+    if (!isSearchDiagnosticId(id)) { res.status(400).json({ error: "A valid completed search ID is required." }); return; }
+    try {
+        const result = await completeSearchDiagnostic(id, req.body?.rows);
+        if (res.destroyed) return;
+        if (result) res.json(result);
+        else res.status(404).json({ error: "This completed search is no longer available for review." });
+    } catch (error) {
+        if (!res.destroyed) res.status(error instanceof SearchDiagnosticInputError ? 400 : 503)
+            .json({ error: error instanceof SearchDiagnosticInputError ? error.message : "The search diagnostic could not be saved." });
+    }
+});
+
 app.post("/api/pricing/retry", async (req, res) => {
     const controller = new AbortController();
     res.on("close", () => controller.abort());
@@ -160,13 +197,17 @@ app.post("/api/deals/new", async (req, res) => {
     res.setHeader("Content-Type", "application/x-ndjson");
     const send = (message: object) => res.write(`${JSON.stringify(message)}\n`);
     const controller = new AbortController();
+    const retained = new Set<string>();
+    let discovery: SearchSummary | undefined;
     res.on("close", () => controller.abort());
     try {
         const query = typeof req.body?.query === "string" ? req.body.query.trim() : "";
         const known: unknown = req.body?.knownIds ?? [];
         if (!query || query.length > 300 || !Array.isArray(known) || known.length > 500 || known.some((id) => typeof id !== "string" || id.length > 120)) throw new Error("A search and up to 500 known listing IDs are required.");
         await discoverNewListings(query, { signal: controller.signal, filters: readListingFilters(req.query), targets: searchTargets(req), includeOffers: req.query.offers === "1", automaticPhotos: req.query.autoPhotos === "1", minPrice: Math.max(0, Number(req.query.min) || 0),
-            onStart: (summary) => send({ type: "start", ...summary }), onListing: (listing) => send({ type: "listing", listing }) }, known as string[]);
+            onStart: (summary) => { discovery = summary; send({ type: "start", ...summary }); },
+            onListing: (listing) => { retained.add(listing.id); send({ type: "listing", listing }); } }, known as string[]);
+        if (!controller.signal.aborted) await recordDiagnosticDiscovery(req, discovery, retained);
         send({ type: "done" });
     } catch (error) { if (!controller.signal.aborted) send({ type: "error", error: (error as Error).message }); }
     res.end();
@@ -194,7 +235,7 @@ app.get("/api/ebay-usage", async (req, res) => {
     res.json(await ebayUsage());
 });
 
-// Current search pipeline: one live page, matching metadata and sold evidence.
+// Current search pipeline: newest inventory, optional cheaper BINs, and sold evidence.
 // Full photo assessments are requested separately within the same search budget.
 app.get("/api/deals", async (req, res) => {
     res.setHeader("Content-Type", "application/x-ndjson");
@@ -204,6 +245,7 @@ app.get("/api/deals", async (req, res) => {
     // A stopped search (the page closed the connection) stops the work too.
     const stopped = new AbortController();
     const seen = new Set<string>();
+    let discovery: SearchSummary | undefined;
     res.on("close", () => stopped.abort());
 
     try {
@@ -214,9 +256,10 @@ app.get("/api/deals", async (req, res) => {
             includeOffers: req.query.offers === "1",
             automaticPhotos: req.query.autoPhotos === "1",
             minPrice: Number(req.query.min) || 0,
-            onStart: (summary) => send({ type: "start", ...summary }),
+            onStart: (summary) => { discovery = summary; send({ type: "start", ...summary }); },
             onListing: (listing) => { seen.add(listing.id); send({ type: "listing", listing }); },
         });
+        if (!stopped.signal.aborted) await recordDiagnosticDiscovery(req, discovery, seen);
         await searchHistory.remember(searchText(req), Math.max(0, Number(req.query.min) || 0), [...seen], readListingFilters(req.query)).catch((error) => console.error("Search history was not saved", error));
         send({ type: "done" });
     } catch (error) {

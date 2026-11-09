@@ -3,6 +3,7 @@ import type { ShortlistEntry, RefreshResult } from "../../shared/shortlist.ts";
 import type { PricingRetryResult } from "../../shared/pricing-retries.ts";
 import type { AiUsageDay } from "../../shared/ai-usage.ts";
 import type { ListingFilters } from "../../shared/listing-filters.ts";
+import type { SearchDiagnosticResult, SearchDiagnosticRow } from "../../shared/search-diagnostic.ts";
 
 function filterQuery(filters?: ListingFilters): string {
     const query = new URLSearchParams();
@@ -26,6 +27,15 @@ export function fetchAiUsage(searchRunId?: string): Promise<AiUsageDay> { return
 const searchHeaders = (searchRunId: string = crypto.randomUUID()): Record<string, string> => ({ "X-Pokemon-Flipper-Search-Id": searchRunId });
 export class ApiRequestError extends Error {
     constructor(message: string, readonly retryable = false, readonly retryAfterMs = 1500, readonly code?: string) { super(message); }
+}
+
+export function saveSearchDiagnostic(searchRunId: string, rows: SearchDiagnosticRow[], signal: AbortSignal): Promise<SearchDiagnosticResult> {
+    return request("/api/search-diagnostic", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...searchHeaders(searchRunId) },
+        body: JSON.stringify({ rows }),
+        signal,
+    });
 }
 
 export function retryPricingBatch(tickets: string[], targets: Targets, includeOffers: boolean, signal: AbortSignal, searchRunId?: string): Promise<PricingRetryResult> {
@@ -57,7 +67,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export type DealsMessage =
-    | { type: "start"; total: number; found: number; count: number; skipped: number; intent: SearchIntent; mode?: "new" | "development"; deferred?: number; previouslySeen?: number; screened?: number; priceExcluded?: number }
+    | { type: "start"; total: number; found: number; count: number; skipped: number; intent: SearchIntent; mode?: "new" | "development"; deferred?: number; previouslySeen?: number; screened?: number; priceExcluded?: number; pricePass?: { status: "COMPLETE" | "UNAVAILABLE"; newListings: number; candidates: number } }
     | { type: "listing"; listing: ListingSummary }
     | { type: "done" }
     | { type: "error"; error: string };

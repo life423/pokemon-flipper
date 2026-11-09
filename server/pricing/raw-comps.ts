@@ -6,7 +6,7 @@ import { compProblem, matchesSoldTarget, summarizeComps, uniqueSoldComps } from 
 import type { CheckComps, Comp, FetchRawComps, PricedCard } from "./types.ts";
 import type { SoldConditionEvidence } from "../ai/sold-condition.ts";
 import { readyForPricing } from "../../shared/identity.ts";
-import { MIN_MATCHED_SALES } from "../../shared/sold-evidence.ts";
+import { MIN_MATCHED_SALES, soldMarketPrice } from "../../shared/sold-evidence.ts";
 
 // Seller text only bootstraps screening; final valuations inspect sold photos.
 export { rawConditionClaim as compCondition } from "../../shared/raw-condition-claim.ts";
@@ -113,14 +113,15 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
             // evidence. Keep the legacy title-only floor until its final-price
             // compatibility path is retired; seller text cannot gain admission.
             const minimum = assessCondition ? MIN_MATCHED_SALES : 3;
-            if (summary.count >= minimum && summary.median !== null) return [{ condition, price: summary.median, updatedAt: summary.newestSale, basis: "EBAY_SOLD" as const, comps: summary }];
+            const price = soldMarketPrice(summary);
+            if (summary.count >= minimum && price !== null) return [{ condition, price, updatedAt: summary.newestSale, basis: "EBAY_SOLD" as const, comps: summary }];
             return [];
         });
         return { ...market, ...(prices.length ? { status: "PRICED", prices } : {
             status: "PRICE_UNAVAILABLE", reason: "The available eBay sales don't establish a raw resale price for this printing and condition.",
         }), ebayComps: summaries,
             conditionEvidence: assessCondition ? "AI_PHOTOS" : "SELLER_TEXT", reviewedSoldCopies: assessCondition ? sales.length : undefined, sampledSoldCopies,
-            evidenceNote: assessCondition ? `${sales.length} sold copies have accepted photo-condition assessments from ${sampledSoldCopies} returned records. Accepted findings are reused for unchanged photos. Matched-sale minimum for an eBay median: ${MIN_MATCHED_SALES}; one or two sales retain LOW confidence.`
+            evidenceNote: assessCondition ? `${sales.length} sold copies have accepted photo-condition assessments from ${sampledSoldCopies} returned records. Accepted findings are reused for unchanged photos. Matched-sale minimum for an eBay estimate: ${MIN_MATCHED_SALES}. One or two sales retain low confidence.`
                 : "Screening uses seller-stated raw conditions. Final evaluations assess sold-copy photos where available. Up to 40 returned records over 90 days are sampled." };
     } catch {
         signal?.throwIfAborted();

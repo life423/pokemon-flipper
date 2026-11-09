@@ -29,14 +29,15 @@ export function deeperPhotoConcerns(evaluation: Pick<Evaluation, "deeperPhotoRev
     return evaluation.deeperPhotoReview?.findings.filter((finding) => finding.impact === "NEW_CONCERN").map((finding) => finding.observation) ?? [];
 }
 
-function wholeSideCoverageNote(side: "front" | "back", obscured: boolean, reviewed: number, total: number): string {
+function wholeSideCoverageNote(side: "front" | "back", overviews: number, reviewed: number, total: number): string {
     const unreviewed = Math.max(0, total - reviewed);
-    if (!unreviewed) return obscured
-        ? `Every usable whole-${side} photo has obscured detail.`
-        : `No usable photo shows the whole ${side}.`;
+    if (!unreviewed) {
+        if (!overviews) return `No usable photo shows the whole ${side}.`;
+        return overviews === 1 ? `The only usable ${side} overview has limited detail.` : `Every usable whole-${side} photo has obscured detail.`;
+    }
     const scope = `among the ${reviewed} reviewed ${reviewed === 1 ? "photo" : "photos"}`;
     const remaining = `${unreviewed} listing ${unreviewed === 1 ? "photo was" : "photos were"} not reviewed.`;
-    return obscured
+    return overviews
         ? `Every usable whole-${side} view ${scope} has obscured detail; ${remaining}`
         : `No usable whole-${side} view ${scope}; ${remaining}`;
 }
@@ -64,19 +65,19 @@ export function photoReviewStatus(evaluation: Evaluation | null, listing?: Listi
         const best = evaluation.underwriting?.best;
         const knownRawCondition = evaluation.condition && isRawCondition(evaluation.condition.rawCondition);
         const completedPricePass = evaluation.underwriting?.verdict === "PASS" && best?.status === "PRICED";
+        const rawPriceMissing = evaluation.underwriting?.verdict === "CANT_PRICE" && !evaluation.condition?.gradeRange && priceEvidenceGap(evaluation);
         // A useful raw-condition assessment can support as-is resale without
         // proving every grading detail. Keep the exact coverage limitations
         // visible, without making them a grading hold on a raw resale or an
-        // already rejected purchase. Genuine uncertainty below remains review.
-        const coverageNotes = deferred || knownRawCondition && (best?.path === "RAW" || completedPricePass) ? photoNotes : reasons;
+        // already rejected purchase. When grading has no numeric estimate and
+        // only a raw sold price is missing, the back view is a note as well.
+        const coverageNotes = deferred || knownRawCondition && (best?.path === "RAW" || completedPricePass || rawPriceMissing) ? photoNotes : reasons;
         // A sampled gallery can establish a limitation of the reviewed photos,
         // but cannot establish that the seller omitted that view altogether.
         const reviewed = check.images.length;
         const total = evaluation.listing.photosInListing;
-        if (!coverage.fronts) coverageNotes.push(wholeSideCoverageNote("front", false, reviewed, total));
-        else if (!coverage.clearFronts) coverageNotes.push(wholeSideCoverageNote("front", true, reviewed, total));
-        if (!coverage.backs) coverageNotes.push(wholeSideCoverageNote("back", false, reviewed, total));
-        else if (!coverage.clearBacks) coverageNotes.push(wholeSideCoverageNote("back", true, reviewed, total));
+        if (!coverage.clearFronts) coverageNotes.push(wholeSideCoverageNote("front", coverage.fronts, reviewed, total));
+        if (!coverage.clearBacks) coverageNotes.push(wholeSideCoverageNote("back", coverage.backs, reviewed, total));
         if (!evaluation.condition && !deferred) reasons.push("AI could not support a raw-condition or grade estimate.");
         else if (evaluation.condition?.rawCondition === "UNKNOWN") reasons.push("AI could not support a raw-condition estimate.");
         const authenticity = evaluation.condition?.authenticity;

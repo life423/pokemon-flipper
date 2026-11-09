@@ -179,6 +179,33 @@ function median(values: number[]): number {
     return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
+function marketEstimate(sales: Comp[], now: number): CompSummary["marketEstimate"] {
+    if (!sales.length) return undefined;
+    const observations = sales.map(({ price, sold_at }) => ({ price, age: now - Date.parse(sold_at) }));
+    const recent = observations.filter(({ age }) => age <= 2 * DAY_MS).sort((a, b) => a.age - b.age).slice(0, 4);
+    const rounded = (price: number) => Math.round(price * 100) / 100;
+    if (recent.length === 4) {
+        const newest = (recent[0].price + recent[1].price) / 2;
+        const previous = (recent[2].price + recent[3].price) / 2;
+        return { price: rounded((newest + previous) / 2), method: "RECENT_FOUR",
+            ...(recent[1].age < recent[2].age ? { recentTrendPercent: rounded((newest / previous - 1) * 100) } : {}) };
+    }
+
+    // Keep a robust middle price for sparse markets. Newer observations move
+    // it up or down, while actual sales still establish the downside and high.
+    const ranked = observations.sort((a, b) => a.price - b.price)
+        .map(({ price, age }) => ({ price, weight: age <= 7 * DAY_MS ? 3 : age <= 30 * DAY_MS ? 2 : 1 }));
+    const totalWeight = ranked.reduce((sum, sale) => sum + sale.weight, 0);
+    let cumulative = 0;
+    for (const [index, { price, weight }] of ranked.entries()) {
+        cumulative += weight;
+        if (cumulative * 2 >= totalWeight) return {
+            price: cumulative * 2 === totalWeight ? rounded((price + ranked[index + 1].price) / 2) : price,
+            method: "RECENCY_WEIGHTED_MEDIAN",
+        };
+    }
+}
+
 function confidenceFor(count: number): Confidence {
     if (count >= 5) return "HIGH";
     if (count >= 3) return "MEDIUM";
@@ -226,6 +253,7 @@ export function summarizeComps(
     }
 
     const prices = kept.map((comp) => comp.price).sort((a, b) => a - b);
+    const estimate = marketEstimate(uniqueSoldComps(kept), criteria.now);
 
     return {
         grader: criteria.grader,
@@ -233,6 +261,7 @@ export function summarizeComps(
         count: kept.length,
         median: prices.length > 0 ? median(prices) : null,
         mean: prices.length > 0 ? Math.round(prices.reduce((sum, price) => sum + price, 0) / prices.length * 100) / 100 : null,
+        ...(estimate ? { marketEstimate: estimate } : {}),
         low: prices[0] ?? null,
         high: prices.at(-1) ?? null,
         newestSale: kept.map((comp) => comp.sold_at).sort().at(-1) ?? null,

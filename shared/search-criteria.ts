@@ -4,6 +4,7 @@ import { isPrinting } from "./identity.ts";
 import { setKey } from "./sets.ts";
 import { explicitReprintSet } from "./reprint-release.ts";
 import { observedCardKind } from "./photo-evidence.ts";
+import { compareCardNumbers } from "./card-number.ts";
 
 type Finish = NonNullable<SearchIntent["finish"]>;
 const GRADER = "(?:psa|cgc|bgs|sgc|tag)";
@@ -98,15 +99,6 @@ function confirmedPhotoCard(evaluation: Evaluation): PhotoCardReading | null {
         evaluation.photoCheck.images.some(image => image.usable && !image.isStockImage && (image.view === "FRONT" || image.view === "FRONT_DETAIL")) ? photo : null;
 }
 
-function numberMismatch(a: string | null | undefined, b: string | null | undefined): boolean {
-    const parts = (value: string | null | undefined) => String(value ?? "").toUpperCase().replace(/\s|^#/g, "").split("/").map(part => {
-        const match = part.match(/^([A-Z-]*?)0*(\d+)([A-Z]*)$/);
-        return match ? `${match[1]}:${Number(match[2])}:${match[3]}` : null;
-    });
-    const x = parts(a), y = parts(b);
-    return Boolean(x[0] && y[0] && (x[0] !== y[0] || x[1] && y[1] && x[1] !== y[1]));
-}
-
 // Seller metadata cannot keep a photo-identified wrong release in Review.
 // Only settled facts exclude a copy; unclear photos remain an evidence gap.
 export function evaluatedIdentityMismatch(evaluation: Evaluation, intent: SearchIntent): ListingSummary["match"] | null {
@@ -117,7 +109,7 @@ export function evaluatedIdentityMismatch(evaluation: Evaluation, intent: Search
     const wantedSets = intent.sets.map(searchSetFamily).filter(Boolean);
     const cardSet = card?.set ? searchSetFamily(card.set) : "";
     if (cardSet && wantedSets.length && !wantedSets.includes(cardSet)) return "OTHER_SET";
-    if (intent.cardNumber && numberMismatch(intent.cardNumber, card?.cardNumber)) return "OTHER_CARD";
+    if (compareCardNumbers(intent.cardNumber, card?.cardNumber) === false) return "OTHER_CARD";
     if (card?.name && !/^(?:unknown|not (?:known|visible|stated))$/i.test(card.name) && intent.titleWords.length) {
         const words = (value: string) => value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
             .replace(/♀/g, " female ").replace(/♂/g, " male ").replace(/[^a-z0-9]+/g, " ").trim();

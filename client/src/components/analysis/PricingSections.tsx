@@ -5,8 +5,22 @@ import { isRawSoldPrice } from "../../../../shared/money/price-evidence.ts";
 import { Pairs, Section } from "./primitives";
 import styles from "../DetailPanel.module.css";
 
+export function soldEstimateBasis(summary?: CompSummary): string {
+    switch (summary?.marketEstimate?.method) {
+        case "RECENT_FOUR": return "average of the four latest matched eBay sales within 48 hours";
+        case "RECENCY_WEIGHTED_MEDIAN": return "eBay sold median weighted toward newer sales";
+        default: return "eBay sold median";
+    }
+}
+
 export function CompsRow({ summary, sampleLimit = 40, screening = false }: { summary: CompSummary; sampleLimit?: number; screening?: boolean }) {
     const dropped = Object.entries(summary.dropped);
+    const estimate = summary.marketEstimate;
+    const priceLabel = estimate ? `estimate ${dollars(estimate.price)}` : `median ${dollars(summary.median)}`;
+    const change = estimate?.recentTrendPercent;
+    const trend = change == null ? null : change === 0
+        ? "The two pairs of sales averaged about the same price."
+        : `The newest two sales averaged ${Math.abs(change)}% ${change > 0 ? "above" : "below"} the prior two.`;
 
     return (
         <details className={styles.details}>
@@ -16,15 +30,22 @@ export function CompsRow({ summary, sampleLimit = 40, screening = false }: { sum
                 </span>
                 <span className={styles.compStats}>
                     {summary.count > 0
-                        ? `${summary.count} ${summary.count === 1 ? "sale" : "sales"}, median ${dollars(summary.median)}, ${name(summary.confidence)}${summary.checkedByAI ? ", checked by AI" : ""}`
+                        ? `${summary.count} ${summary.count === 1 ? "sale" : "sales"}, ${priceLabel}, ${name(summary.confidence)}${summary.checkedByAI ? ", checked by AI" : ""}`
                         : "No verified sales"}
                 </span>
             </summary>
 
             {summary.count > 0 && (
-                <p className={styles.small}>
-                    {summary.mean != null ? `Average ${dollars(summary.mean)}. ` : ""}Range {dollars(summary.low)} to {dollars(summary.high)}. Newest sale {summary.newestSale}.{summary.windowDays ? ` Up to ${summary.windowDays} days of recent sales; at most ${sampleLimit} returned rows per lookup are sampled. ${screening ? "This is preliminary market evidence, not a verified valuation." : "The median drives the estimate."}` : ""}
-                </p>
+                <>
+                    <p className={styles.small}>
+                        Based on the {soldEstimateBasis(summary)}. Observed sale range {dollars(summary.low)} to {dollars(summary.high)}.
+                        {summary.mean != null && ` Full-sample average ${dollars(summary.mean)}.`}
+                        {summary.newestSale && ` Latest sale ${summary.newestSale}.`}
+                        {summary.windowDays ? ` Up to ${summary.windowDays} days of sales, with at most ${sampleLimit} results sampled per lookup.` : ""}
+                        {screening && " This evidence is used for preliminary screening."}
+                    </p>
+                    {trend && <p className={styles.small}>{trend}</p>}
+                </>
             )}
 
             {dropped.length > 0 && (
@@ -69,7 +90,7 @@ export function PricesSection({
                         <Pairs rows={RAW_CONDITIONS.map(condition => {
                             const price = raw.prices?.find(entry => entry.condition === condition && isRawSoldPrice(entry));
                             return [CONDITION_NAMES[condition], !price ? "No supported price"
-                                : `${dollars(price.price)} · eBay sold median${price.comps ? ` (${price.comps.count} ${raw.conditionEvidence === "AI_PHOTOS" ? "photo-assessed " : ""}sales)` : ""}`];
+                                : `${dollars(price.price)} · ${soldEstimateBasis(price.comps)}${price.comps ? ` (${price.comps.count} ${raw.conditionEvidence === "AI_PHOTOS" ? "photo-assessed " : ""}${price.comps.count === 1 ? "sale" : "sales"} in sample)` : ""}`];
                         })} />
                     ) : (
                         <p className={styles.muted}>{raw.reason}</p>

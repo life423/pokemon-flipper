@@ -10,7 +10,7 @@ import { StorageUnavailableError } from "../storage/index.ts";
 import { explicitReprintSet, withoutReprintRelease } from "../../shared/reprint-release.ts";
 import { rawConditionClaim } from "../../shared/raw-condition-claim.ts";
 import { CONDITION_NAMES } from "../../shared/conditions.ts";
-import { stripListingNameBoilerplate } from "../identity/screening-name.ts";
+import { GALLERY_TITLE, hasGalleryNumber, stripListingNameBoilerplate } from "../identity/screening-name.ts";
 import { setKey } from "../../shared/sets.ts";
 import { cardNumberIn } from "../identity/card-identity.ts";
 import { cachedSetNames } from "../search/set-catalog.ts";
@@ -113,6 +113,8 @@ const LITERAL_SETS = ["Crown Zenith Galarian Gallery", "Scarlet & Violet 151", "
 const escapePattern = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 function literalSet(title: string, knownSetNames: readonly string[]) {
     const explicit = explicitReprintSet(title);
+    const gallery = !explicit && hasGalleryNumber(title) && new RegExp(GALLERY_TITLE, "i").test(title)
+        ? { set: "Crown Zenith Galarian Gallery", pattern: new RegExp(GALLERY_TITLE, "ig") } : null;
     const names = explicit ? [explicit] : [...LITERAL_SETS, ...knownSetNames].sort((a, b) => setKey(b).length - setKey(a).length);
     for (const set of names) {
         const key = setKey(set);
@@ -120,7 +122,7 @@ function literalSet(title: string, knownSetNames: readonly string[]) {
         const pattern = new RegExp(`\\b${key.split(" ").map(escapePattern).join("[^a-z0-9]+")}\\b`, "ig");
         if (explicit || pattern.test(normalizeText(title))) return { set, pattern };
     }
-    return null;
+    return gallery;
 }
 export function readTitleByRules(title: string, knownSetNames: readonly string[] = []): TitleReading {
     const attributes = searchAttributes(title);

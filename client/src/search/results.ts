@@ -9,8 +9,9 @@ import { matchesListingFilters } from "../../../shared/listing-filters.ts";
 import { englishListingEligible } from "../../../shared/card-language.ts";
 import { photoReviewStatus } from "../../../shared/photo-review.ts";
 import { priceEvidenceGap } from "../../../shared/money/price-evidence.ts";
+import { numbersAtOffer, offerFor } from "../../../shared/money/offer.ts";
 
-export type View = ResultGroup | "all" | "new";
+export type View = ResultGroup | "all" | "new" | "losses";
 
 export type SortKey = "best" | "overlooked" | "ending" | "priceLow" | "priceHigh";
 export type TypeFilter = "all" | "AUCTION" | "FIXED_PRICE";
@@ -70,14 +71,19 @@ export function filterSearchResults({ listings, analyses, filters: { typeFilter,
 
 export function groupSearchResults(filtered: ListingSummary[], analyses: Record<string, AnalysisState>, includeOffers: boolean, newIds: ReadonlySet<string>): ResultGroups {
     const grouped: Record<ResultGroup, ListingSummary[]> = { deals: [], offers: [], candidates: [], review: [] };
+    const losses: ListingSummary[] = [];
 
     for (const listing of filtered) {
         const evaluation = evaluationOf(analyses[listing.id]);
         const group = resultGroup(listing, evaluation, includeOffers, analyses[listing.id]?.status === "error");
         if (group) grouped[group].push(listing);
+        const best = evaluation?.underwriting?.best;
+        if (evaluation?.underwriting?.verdict === "PASS" && (group === null || group === "offers") &&
+            evaluation.researchMode !== "DEFERRED_LOW_RESALE" && evaluation.listing.availability !== "UNAVAILABLE" &&
+            best?.status === "PRICED" && Number.isFinite(best.profit) && best.profit < 0) losses.push(listing);
     }
 
-    return { ...grouped, all: filtered, new: filtered.filter((listing) => newIds.has(listing.id)) };
+    return { ...grouped, losses, all: filtered, new: filtered.filter((listing) => newIds.has(listing.id)) };
 }
 
 export function sortSearchResults(listings: ListingSummary[], analyses: Record<string, AnalysisState>, sort: SortKey, targets: Targets, now: number): ListingSummary[] {
@@ -106,10 +112,16 @@ export function sortSearchResults(listings: ListingSummary[], analyses: Record<s
     return [...listings].sort(sort === "best" ? compareBest : sort === "overlooked" ? compareOverlooked : SORTS[sort]);
 }
 
-export interface DealAlternative { listing: ListingSummary; label: "Below your targets" | "Resale not yet verified"; profit: number | null; roi: number | null }
+export interface DealAlternative {
+    listing: ListingSummary;
+    label: "Below your targets" | "Resale not yet verified" | "Best Offer";
+    profit: number | null;
+    roi: number | null;
+    offerPrice?: number;
+}
 // The caller supplies current filtered rows and evaluations retargeted to the
 // user's controls. Alternatives never change the Deals group or start research.
-export function selectDealAlternatives(filtered: ListingSummary[], analyses: Record<string, AnalysisState>, targets: Targets, now: number): DealAlternative[] {
+export function selectDealAlternatives(filtered: ListingSummary[], analyses: Record<string, AnalysisState>, targets: Targets, now: number, includeOffers = false): DealAlternative[] {
     const alternatives: DealAlternative[] = [];
     for (const listing of filtered) {
         const evaluation = evaluationOf(analyses[listing.id]), best = evaluation?.underwriting?.best;
@@ -118,7 +130,16 @@ export function selectDealAlternatives(filtered: ListingSummary[], analyses: Rec
             evaluation && (evaluation.slab?.status === "LIKELY_FAKE" || evaluation.condition?.authenticity.concern === "LIKELY_FAKE" || photoReviewStatus(evaluation).needsYourReview)) continue;
         const gap = priceEvidenceGap(evaluation);
         if (evaluation?.underwriting?.verdict === "PASS" && !gap) {
-            if (best?.status === "PRICED" && Number.isFinite(best.profit) && best.profit > 0 && evaluation.researchMode !== "DEFERRED_LOW_RESALE") {
+            if (best?.status !== "PRICED" || evaluation.researchMode === "DEFERRED_LOW_RESALE") continue;
+            const offer = includeOffers && resultGroup(listing, evaluation, includeOffers) === "offers" ? offerFor(listing, best.maxBid) : null;
+            if (offer) {
+                const outcome = numbersAtOffer(best, offer);
+                if (Number.isFinite(outcome.profit) && outcome.profit > 0) {
+                    alternatives.push({ listing, label: "Best Offer", offerPrice: offer.offer, ...outcome });
+                    continue;
+                }
+            }
+            if (Number.isFinite(best.profit) && best.profit > 0) {
                 alternatives.push({ listing, label: "Below your targets", profit: best.profit, roi: best.roi });
             }
             continue;

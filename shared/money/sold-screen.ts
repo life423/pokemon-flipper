@@ -3,7 +3,8 @@ import type { ListingSummary, Screen, ScreeningSoldEvidence, ScreeningSoldRefere
 import { MONEY_CONFIG, type MoneyConfig } from "./config.ts";
 import { offerPlan, offerWorthMaking } from "./offer.ts";
 import { bestPath, gradingTier, netFromSale, pathNumbers } from "./underwriting.ts";
-import { hasExactSoldScope, usableSoldReference } from "../sold-evidence.ts";
+import { cents } from "./cents.ts";
+import { hasExactSoldScope, soldMarketPrice, usableSoldReference } from "../sold-evidence.ts";
 
 type SoldScreenListing = Pick<ListingSummary, "currentPrice" | "shipping" | "isGraded" | "buyingOption" | "bestOffer" | "screen">;
 interface SoldScreenOptions {
@@ -14,6 +15,7 @@ interface SoldScreenOptions {
 
 const positive = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value > 0;
 const normalize = (value: unknown) => String(value ?? "").trim().toUpperCase();
+const VERIFICATION_BUFFER_PERCENT = 15n;
 
 function label(reference: ScreeningSoldReference, slab: boolean): string {
     return slab ? `Preliminary ${normalize(reference.grader)} ${reference.grade} resale` :
@@ -34,7 +36,7 @@ function gradingLead(listing: SoldScreenListing, evidence: ScreeningSoldEvidence
         for (const reference of references) {
             const grader = reference.grader;
             if ((grader !== "PSA" && grader !== "CGC") || Number(reference.grade) !== grade) continue;
-            const salePrice = reference.summary.median!;
+            const salePrice = soldMarketPrice(reference.summary)!;
             const tier = gradingTier(grader, salePrice, config.grading);
             if (!tier) continue;
             const numbers = pathNumbers({ price, shipping, expectedNet: netFromSale(reference.summary.low ?? salePrice, "graded", config.selling),
@@ -47,7 +49,7 @@ function gradingLead(listing: SoldScreenListing, evidence: ScreeningSoldEvidence
 
 // Price-first admission, not a deal verdict. Slab exclusion uses the highest
 // recent sold amount in one explicit scope, whereas queue priority uses its
-// median. Raw sold-condition buckets supply context only: neither a seller's
+// market estimate. Raw sold-condition buckets supply context only: neither a seller's
 // condition nor a hypothetical numeric grade is assigned to the live card.
 // This module intentionally has no dependency on targets.ts: local retargeting
 // delegates here and reuses the same retained public references.
@@ -117,7 +119,7 @@ export function applySoldPriceScreen<T extends SoldScreenListing>(
         label: label(reference, listing.isGraded),
         path: listing.isGraded ? "GRADED_RESALE" as const : "RAW" as const,
         rawCondition: reference.condition ?? undefined,
-        expectedNet: netFromSale(reference.summary.median!, kind, config.selling),
+        expectedNet: netFromSale(soldMarketPrice(reference.summary)!, kind, config.selling),
         downsideNet: positive(reference.summary.low) ? netFromSale(reference.summary.low, kind, config.selling) : undefined,
         fixedCosts: 0,
         compCount: reference.summary.count,
@@ -135,7 +137,7 @@ export function applySoldPriceScreen<T extends SoldScreenListing>(
         auction: listing.buyingOption === "AUCTION",
         bestOffer: listing.bestOffer === true,
         usual: listing.isGraded ? {
-            price: references[0].summary.median!,
+            price: soldMarketPrice(references[0].summary)!,
             sales: references[0].summary.sales.map((sale) => sale.price).filter(positive),
         } : null,
     };
@@ -162,12 +164,18 @@ export function applySoldPriceScreen<T extends SoldScreenListing>(
     screen.bestCase = { label: upper.label, maxBid: upper.maxBid, profit: upper.profit, roi: upper.roi };
     screen.requiresOffer = !upper.clears && options.includeOffers === true && listing.buyingOption === "FIXED_PRICE" &&
         listing.bestOffer === true && offerWorthMaking(offerPlan(price, upper.maxBid));
-    screen.status = upper.clears || screen.requiresOffer ? "CANDIDATE" : "DROPPED";
+    // Allow a near miss to reach verification while keeping the actual ceiling
+    // and modeled financial outcome intact. Compare exact whole cents.
+    const maxCents = cents(upper.maxBid), priceCents = cents(price);
+    const withinVerificationBuffer = maxCents > 0 && Number.isSafeInteger(priceCents) &&
+        BigInt(priceCents) * 100n <= BigInt(maxCents) * (100n + VERIFICATION_BUFFER_PERCENT);
+    screen.status = upper.clears || screen.requiresOffer || withinVerificationBuffer ? "CANDIDATE" : "DROPPED";
     if (screen.status === "DROPPED") {
         screen.needsAnalysis = undefined;
-        screen.reason = "Above target even using the upper recent matched sold price after purchase and sale costs. This preliminary screen does not require paid photo analysis.";
+        screen.reason = "The price is outside the verification buffer based on the upper recent matched sold price after purchase and sale costs.";
     } else screen.reason = screen.requiresOffer
         ? "Preliminary opportunity only if the seller accepts an offer within 10% of asking; photos and the slab label still need confirmation."
-        : "The upper recent matched sold price leaves possible room; this is preliminary and the slab label still needs confirmation.";
+        : upper.clears ? "The upper recent matched sold price leaves possible room; this is preliminary and the slab label still needs confirmation."
+        : `The price is within ${VERIFICATION_BUFFER_PERCENT}% above the preliminary limit. It misses your targets at this price and is eligible for slab verification.`;
     return finish();
 }

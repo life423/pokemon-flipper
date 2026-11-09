@@ -1,6 +1,7 @@
 import type { Evaluation, PricedPath, RawPrice } from "../types.ts";
 import { jungleNoSymbolReason, type JungleVariantContext } from "../jungle-no-symbol.ts";
 import { missingTextureReason } from "../grade-qualifier.ts";
+import { soldMarketPrice } from "../sold-evidence.ts";
 
 type PriceEvidence = Partial<Pick<Evaluation, "rawPricing" | "slabPricing">> & JungleVariantContext;
 
@@ -24,7 +25,7 @@ export function withoutUnsupportedVariantPrices(evaluation: Evaluation): Evaluat
 export function isRawSoldPrice(price: RawPrice): boolean {
     return Number.isFinite(price.price) && price.price > 0 && (price.basis === "EBAY_SOLD" ||
         price.basis === undefined && price.comps?.grader === "RAW" && price.comps.grade === price.condition &&
-        price.comps.count > 0 && price.comps.median === price.price);
+        price.comps.count > 0 && soldMarketPrice(price.comps) === price.price);
 }
 
 export function withoutUnsupportedRawPrices(evaluation: Evaluation): Evaluation {

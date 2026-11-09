@@ -49,3 +49,22 @@ test("saved unsupported raw prices are hidden from the card and analysis", async
     assert.doesNotMatch(render(FinancialDecision), /Max price|Below your price limit/);
     assert.doesNotMatch(render(AnalysisDetails, { onReanalyze() {}, minGrade: 0, reviewing: false }), /Suggested offer|Walk away above|Est\. profit if accepted/);
 });
+
+test("a supported auction loss shows the current bid scenario even when no profitable bid exists", async t => {
+    const server = await createServer({ configFile: path.resolve("client/vite.config.js"), envFile: false, appType: "custom", logLevel: "silent",
+        server: { middlewareMode: true, hmr: false, watch: null } });
+    t.after(() => server.close());
+    const { AuctionSummary } = await server.ssrLoadModule("/src/components/AuctionSummary.tsx");
+    const value = cardEvaluation();
+    value.listing.shipping = 0;
+    value.gradedPricing = null;
+    value.rawPricing!.prices[0].price = 5;
+    value.underwriting = underwrite(value);
+    assert.equal(value.underwriting.verdict, "PASS");
+    assert.equal(value.underwriting.best?.maxBid, 0);
+    const markup = renderToStaticMarkup(createElement(AuctionSummary, { evaluation: value, targets: MONEY_CONFIG.targets, now: Date.now() }));
+    assert.match(markup, /No bid price meets your targets/);
+    assert.match(markup, /At current bid \$36\.60/);
+    assert.match(markup, /Est\. net loss/);
+    assert.match(markup, /\$41\.65/);
+});

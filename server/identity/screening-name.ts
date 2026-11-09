@@ -16,6 +16,14 @@ const GRADED_ARTIST_SUFFIX = /\s+(?:kagemaru\s+)?himeno\s*$/i;
 const CERT_NUMBER = /\bcert(?:ification)?\b(?:\s+(?:number|no\.?))?[\s:#]+\d{7,10}(?![\w./])/gi;
 const NM_MT = /\bnm\s*[-–—]\s*mt\b(?!['’]|\s*\+)/gi;
 const ART_DESCRIPTION = /\b(?:(?:alternate|alt)(?:[\s/-]+full)?[\s-]+art|full(?:[\s/-]+(?:alternate|alt))?[\s-]+art|(?:special[\s-]+)?illustration[\s-]+rare)\b(?!['’])(?:\s*\/\s*)?/gi;
+const FULL_ART_ABBREVIATION = /\bFA\b(?!['’])(?:\s*\/\s*)?/gi;
+const SET_151 = "scarlet violet 151";
+const RELEASE_CODE_151 = new RegExp(String.raw`(?<=\bscarlet\s*(?:&|and)?\s*violet\s+151\s+)MEW\b(?=\s+(?:en(?:g(?:lish)?)?|mint|${GRADER})\b)`, "gi");
+export const GALLERY_TITLE = String.raw`\b(?:crown\s+zenith[\s:–—-]+)?galarian\s+gallery\b`;
+export function hasGalleryNumber(title: string): boolean {
+    return /^GG(?:0?[1-9]|[1-6]\d|70)(?:\/(?:GG)?70)?$/i.test(cardNumberIn(title) ?? "");
+}
+
 // These release codes are publisher metadata only beside the corresponding
 // written release and an explicit collector fraction, never a promo number.
 const SWORD_SHIELD_RELEASES = Object.entries(SWORD_SHIELD_RELEASE_CODES).map(([release, code]) => ({
@@ -77,11 +85,19 @@ export function stripListingNameBoilerplate(value: string, title = value, set?: 
     // number, numeric grade and written release also anchor publisher metadata.
     // This does not infer a denominator or loosen other rarity/printing rules.
     const partialNumber = cardNumberIn(title);
-    if (release && (fullNumber || graded && /^\d{1,3}[a-z]?$/i.test(partialNumber ?? ""))) {
+    const galleryNumber = graded && hasGalleryNumber(title);
+    const gallery = galleryNumber && setKey(set ?? "") === "crown zenith galarian gallery" &&
+        new RegExp(GALLERY_TITLE, "i").test(title);
+    const crownZenith = release && /\bcrown\s+zenith\b/i.test(title);
+    if (gallery || release && (fullNumber || crownZenith && galleryNumber || graded && /^\d{1,3}[a-z]?$/i.test(partialNumber ?? ""))) {
         const era = /\b(?:sword(?:\s*(?:&|and)\s*|\s+)shield|swsh)\b(?!['’])/gi;
-        cleaned = cleaned.replace(era, " ").replace(release.code, " ");
-        for (const pattern of [era, release.code]) for (const match of title.matchAll(pattern)) cleaned = removeObservedWords(cleaned, match, title);
+        const patterns = [era, ...(release ? [release.code] : []), ...(gallery ? [/\bCZ\s*[.!]?\s*$/gi] : [])];
+        for (const pattern of patterns) {
+            cleaned = cleaned.replace(pattern, " ");
+            for (const match of title.matchAll(pattern)) cleaned = removeObservedWords(cleaned, match, title);
+        }
     }
+    const descriptions = gallery && !fullNumber ? [FULL_ART_ABBREVIATION] : [];
     if (fullNumber) {
         // A catalog release and full printed number anchor this observed foil
         // descriptor. Remove only excess source words, preserving a separate
@@ -103,6 +119,7 @@ export function stripListingNameBoilerplate(value: string, title = value, set?: 
             const metadata = [/\bcosmos[ -]+holo(?:graphic|foil)?\b/gi];
             const grader = graded ? searchAttributes(title).grader : null;
             if (!graded) metadata.push(/\b(?:nm|near[ -]+mint)\s+clean\s*[.!]?\s*$/gi);
+            if (graded) metadata.push(/\bnew\s+cert\s+clean\s*[.!]?\s*$/gi);
             if (grader === "CGC" || grader === "BGS") metadata.push(/\bwith\s+sub[ -]?grades\s*[.!]?\s*$/gi);
             for (const pattern of metadata) for (const match of title.matchAll(pattern)) cleaned = removeObservedWords(cleaned, match, title);
         }
@@ -121,16 +138,18 @@ export function stripListingNameBoilerplate(value: string, title = value, set?: 
         // They never erase an unanchored name or a promo/partial number.
         const scarletViolet = /\bscarlet\s*(?:&|and)?\s*violet\b/i.test(title);
         const paldeanFates = setKey(set ?? "") === "paldean fates" && writtenRelease?.test(title);
-        const descriptions = graded ? [
-            ...(release || scarletViolet ? [/\bFA\b(?!['’])(?:\s*\/\s*)?/gi] : []),
+        const numbered151 = setKey(set ?? "") === SET_151 && writtenRelease?.test(title) && /^0*(?:16[6-9]|17\d|18[0-2])\/0*165$/.test(partialNumber ?? "");
+        if (graded) descriptions.push(
+            ...(release || scarletViolet ? [FULL_ART_ABBREVIATION] : []),
             ...(scarletViolet ? [/\bSIR\b(?!['’])(?:\s*\/\s*)?/gi, /\bSV\b(?!['’])(?=\s*:?\s*Scarlet\s*(?:&|and)?\s*Violet\b)/gi] : []),
             ...(paldeanFates ? [/\b(?:SV|SIR|FA)\b(?!['’])(?:\s*\/\s*)?/g] : []),
-        ] : [];
-        for (const description of descriptions) {
-            const observed = [...title.matchAll(description)];
-            if (observed.length) cleaned = cleaned.replace(description, " ");
-            for (const match of observed) cleaned = removeObservedWords(cleaned, match, title);
-        }
+            ...(numbered151 ? [/\bIR\b(?!['’])(?:\s*\/\s*)?/gi] : []),
+        );
+    }
+    for (const description of descriptions) {
+        const observed = [...title.matchAll(description)];
+        if (observed.length) cleaned = cleaned.replace(description, " ");
+        for (const match of observed) cleaned = removeObservedWords(cleaned, match, title);
     }
     const artist = graded ? title.match(GRADED_ARTIST_SUFFIX) : null;
     if (artist) cleaned = removeObservedWords(cleaned, artist, title);
@@ -145,6 +164,14 @@ export function stripListingNameBoilerplate(value: string, title = value, set?: 
 
 function cleanedClaim(claim: string, title: string, set?: string | null): string {
     let value = stripListingNameBoilerplate(claim, title, set);
+    // In 151 listings, MEW before language, condition or grader can be the release
+    // code. Only reconcile an extra occurrence in an already read name; Mew
+    // itself or Mew followed by a printed form stays intact.
+    if (setKey(set ?? "") === SET_151 && screeningNameKey(value) !== "mew" && new RegExp(GRADE_SPAN.source, "i").test(title)) {
+        for (const match of title.matchAll(RELEASE_CODE_151)) {
+            if (match[0] === "MEW") value = removeObservedWords(value, match, title);
+        }
+    }
     const outsideGrades = title.replace(GRADE_SPAN, " ");
     // The literal reader already removes the grader/number, but post-grade
     // descriptors can survive as "ex-mt" or "-mt". Remove just those observed

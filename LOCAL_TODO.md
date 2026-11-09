@@ -1,6 +1,6 @@
 # Pokémon Flipper — current to-do list
 
-Updated November 8, 2026. This file is tracked at the user's request. It is the
+Updated November 9, 2026. This file is tracked at the user's request. It is the
 current index, not a chronological work log. LOCAL_PLAN.md and dated docs retain
 research details; Git retains earlier versions of this list. Credentials,
 provider payloads, photos and data/ stay excluded. No computer handoff is pending.
@@ -39,6 +39,13 @@ provider payloads, photos and data/ stay excluded. No computer handoff is pendin
   the raw Mew follow-through cost 0.56404 cents, remained Sorting with no manual
   hold, and reopened free. No production second source or model change added.
   These diagnostics do not complete the verified BIN milestone above.
+- [x] Validate the conditional lower-price pass through the live browser queue.
+  Crown Zenith Galarian Gallery PSA 9 at Any profit and Any ROI found 122
+  additional unique summaries and five additional assessment candidates.
+  The completed run screened 151, excluded 98 on price, and assessed 19.
+  Sixteen priced below break-even and three needed evidence. Deals stayed at
+  zero. Both attempts shared one search account and used 3.41686 cents of AI,
+  23 Browse requests and 141 PKMNPrices requests with 381 reported credits.
 
 ## Deal debugging and remaining audit fixes
 
@@ -53,9 +60,36 @@ Mew ex replay.
   the real browser queue with mocked endpoints. Run one live Mew ex search.
   It reached zero Deals. The saved replay recovered 28 additional price
   exclusions before photos.
-- [ ] Persist a small per-search diagnostic record and link it to versioned
-  replay inputs with bounded retention. Preserve the original search account,
-  row decisions, phase counts, provider outcomes and remaining budgets.
+- [x] Run a text-only OpenAI review on the saved Crown Zenith diagnostic and
+  have Codex verify its proposed tasks. The review cost 0.04358 cents under the
+  original search cap. Of 322 unique summaries, 171 did not reach sold-price
+  screening; the saved run cannot break down their individual exclusion reasons.
+  Of 50 retained rows, 31 lacked usable sold evidence and 19 were assessed.
+- [x] Save the completed search's retained listing decisions, funnel totals,
+  provider usage and original search ID. Run one automatic text review with
+  its own allowance of up to $0.25 and save numbered listing references for
+  Codex. Keep up to 50 recent scans for 30 days.
+- [x] Use the automatic review on a live Crown Zenith Gallery PSA 9 search.
+  Of 151 screened, 103 were excluded on price and 48 remained. The 19 priced
+  listings projected losses. The review identified 20 unresolved markets.
+  Fix the short Gallery title and GG collector-number alias. A cache-only
+  replay ruled out Suicune, Adaman and Gardenia before a photo charge using
+  exact sold prices. Roxanne's exact 180-day provider lookup returned zero
+  confirmed transactions. The review cost 0.03253 cents separately.
+- [x] Run a broad Scarlet & Violet 151 PSA 9 check. Of 134 screened, 34
+  were excluded on price. The 50 retained rows did not reach photos. The
+  automatic review prioritized matching, and a replay recovered 11 names
+  from release-code and illustration-rare title abbreviations. Replaying
+  all 50 retained rows with cached prices yielded three verification leads
+  and zero supported preliminary margins. The live review cost 0.03286 cents.
+- [x] Replay the two Unlimited Mewtwo examples with saved photos. A clearly
+  observed artwork-frame shadow can settle ordinary English Base Set printing
+  even when the stamp area is unreadable. Keep the Machamp exception, actual
+  printing conflicts and reprint checks. A third Mewtwo has an assessed raw
+  condition and an unresolved price. Its back-photo limitation stays in notes
+  when there is no actionable manual grading task.
+- [ ] Add a replay covering listings excluded before the retained batch, using
+  their own decisions and evidence versions instead of inferring why they stopped.
 - [ ] Keep a provider-mocked regression through the search stream and
   evaluation endpoints for supported profit, loss and mixed stop reasons.
 - [ ] Fix the confirmed `Base Set 2/102` ambiguity in both the shared reprint
@@ -65,6 +99,15 @@ Mew ex replay.
   Keep an open question about cached evidence after a deferred market in a
   multi-market search. A local fixture reproduces order dependence, while
   the Blastoise and Mew replays did not implicate it.
+- [x] Let a readable slab label, agreeing title and exact catalog match
+  outweigh a conflicting seller Card Name field. Saved PSA 9 assessments
+  repriced Mew GG10 and Cynthia’s Ambition GG60 at projected losses of $59.62
+  and $30.40. Conflicting names and grades still went to review. The replay
+  used saved photo, catalog and sold evidence without paid provider calls.
+- [ ] Test a focused slab-label follow-up when an unexamined photo could supply
+  the grader, grade or certificate and matched sales could support a positive
+  margin. Magmortar GG03 is a negative example: its PSA 9 scenario would
+  still lose money, so a new photo call was not justified on that evidence.
 - [ ] Document local reproduction and refresh the tracked environment template
   to match port 3017 and current settings. Preserve the loopback API boundary.
 - [ ] Complete the bounded price-only retry below, then validate a verified
@@ -79,14 +122,17 @@ Mew ex replay.
 - [x] Shared Azure SQL Basic provider/assessment caches; persistent per-search
   OpenAI and provider request accounting; exact input/output reservations;
   cancellation and accepted-response saving.
-- [x] $0.10 generation cap for new search accounts, 100 actual eBay Browse
+- [x] $0.25 generation cap for new search accounts, 100 actual eBay Browse
   requests per new search, 128 uncached screening/256 all-stage PKMN requests.
   Existing ledgers retain their limits and spent/unknown counts. PKMN's 20,000
   daily credits and eBay's daily quota are separate from AI dollars. Daily
   depletion warnings exist. Fresh installs still require operator setup.
-- [x] Up to 200 source summaries, 50 retained matching rows, price-exclusion
-  refill, visible listing-format/raw/graded/purchase-price controls, English-only
-  scope, and a fixed search-start next-12-hours automatic auction window.
+- [x] Up to 200 source summaries per discovery pass and 50 retained matching
+  rows. Buy It Now searches start newest-first and can add one lower-priced
+  pass when fewer than three candidates clear preliminary financial screening
+  and inventory remains. Both passes share sold research and deduplicate rows.
+  Listing format, raw/graded and purchase-price controls remain visible. Search
+  is English-only, with a fixed next-12-hours window for automatic auctions.
 - [x] Shared sold-price screening before photos, confirmed transaction filters,
   bounded sparse pagination, safe legacy cache/cursor reuse and exact graded
   matching. One applicable sale can support sparse research/LOW-confidence
@@ -109,6 +155,20 @@ Mew ex replay.
   retained JavaScript build/tool configuration is not automatically legacy code.
 
 ## Pricing accuracy and economical evidence recovery
+
+- [x] Weight newer exact sales for resale estimates. Use the average of the
+  four newest distinct matched transactions when all closed within 48 hours.
+  Show the newest pair versus the prior pair when their order is known. Keep
+  the observed range and the existing identity, condition and sale checks.
+- [x] Allow prices up to 15% over the preliminary slab purchase limit through
+  verification. Preserve actual targets and take the cheapest pass's supported
+  candidates ahead of newest listings that only qualify for the buffer.
+- [ ] Use the lowest trustworthy, available Buy It Now total for the exact
+  card, printing, finish, grading company and grade as a competition reference.
+  Compare item price plus shipping. Combine completed-sale activity with
+  competing listings for a resale-speed estimate. A current ask alone does
+  not establish a completed sale, a time to sell, or a profitable raw-to-grade
+  route before the raw copy has a supported grade.
 
 - [x] Audit other ways matched evidence and profitable results disappear. Keep
   the raw resale route open when a lower-condition estimate or grading falls

@@ -52,6 +52,7 @@ const VIEW_ICONS: Record<View, ReactNode> = {
     offers: <DollarIcon />,
     candidates: <ClockIcon />,
     review: <ReviewIcon />,
+    losses: <TrendIcon />,
     all: <GridIcon />,
 };
 
@@ -61,6 +62,7 @@ const VIEW_NAMES: Record<View, string> = {
     offers: "Offers",
     candidates: "Sorting",
     review: "Needs attention",
+    losses: "Projected losses",
     all: "All matching",
 };
 function Segmented<T extends string>({

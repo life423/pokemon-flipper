@@ -115,6 +115,8 @@ test("equivalent photo wording keeps completed profitable slabs in Deals while o
             different: { name: "Lugia V", set: "Sword & Shield—Lost Origin" } },
         { name: "Nidoran Male", set: "Evolutions", number: "43/108", words: ["nidoran", "male"],
             matching: { name: "Nidoran♂", set: "Evolutions" }, different: { name: "Nidoran♀", set: "Evolutions" } },
+        { name: "Melony", set: "Crown Zenith Galarian Gallery", number: "GG64/70", words: ["melony"],
+            matching: { name: "Melony", set: "Crown Zenith Galarian Gallery", cardNumber: "GG64/GG70" }, different: { cardNumber: "GG65/GG70" } },
     ];
     for (const { name, set, number, words, matching, different } of cases) {
         const item = listing(name, { title: `${name} ${set} ${number} PSA 9`, isGraded: true });
@@ -126,7 +128,7 @@ test("equivalent photo wording keeps completed profitable slabs in Deals while o
         const intent = { ...holoIntent, cardName: name, sets: [set], cardNumber: number, titleWords: words,
             finish: null, graded: true, grader: "PSA", minGrade: 9, maxGrade: 9 };
         const analyses = { [item.id]: done(value) };
-        value.photoCheck!.cardIdentity = { ...matching, cardNumber: number, finish: "UNKNOWN", language: "English", confidence: "HIGH", evidence: [] };
+        value.photoCheck!.cardIdentity = { cardNumber: number, ...matching, finish: "UNKNOWN", language: "English", confidence: "HIGH", evidence: [] };
         assert.deepEqual(groupSearchResults(filter([item], analyses, {}, "search", intent), analyses, false, new Set()).deals, [item]);
         Object.assign(value.photoCheck!.cardIdentity, different);
         assert.deepEqual(filter([item], analyses, {}, "search", intent), []);
@@ -440,12 +442,37 @@ test("the completed Chansey loss leaves Sorting and attention without deleting p
     assert.deepEqual(groups.review, []);
     assert.deepEqual(groups.deals, []);
     assert.deepEqual(groups.offers, []);
+    assert.deepEqual(ids(groups.losses), [chansey.id]);
     assert.deepEqual(ids(groups.all), [chansey.id]);
     assert.equal(analyses[chansey.id].evaluation, assessed, "paid evidence remains available unchanged");
     const counts = countSearchResults({ listings: [chansey], analyses, page: "search", newMode: false, newIds: new Set() });
     assert.equal(counts.waiting, 0);
     assert.equal(counts.analyzing, 0);
     assert.equal(counts.unchecked, 0, "stale preliminary metadata cannot make a completed loss unfinished again");
+});
+
+test("Projected losses excludes positive passes, missing evidence, and stale reference prices", () => {
+    const loss = listing("loss"), belowTarget = listing("below-target"), pending = listing("pending");
+    const reference = listing("reference"), deferred = listing("deferred"), unavailable = listing("unavailable");
+    const positive = evaluation(belowTarget, 180);
+    positive.underwriting = underwrite(positive, { ...MONEY_CONFIG, targets: { minProfit: 100, minRoi: 0 } });
+    assert.equal(positive.underwriting.verdict, "PASS");
+    assert.ok(positive.underwriting.best!.profit > 0);
+    const referenceLoss = evaluation(reference, 20);
+    Object.assign(referenceLoss.rawPricing!.prices[0], { basis: "TCGPLAYER" });
+    const deferredLoss = evaluation(deferred, 20);
+    deferredLoss.researchMode = "DEFERRED_LOW_RESALE";
+    const unavailableLoss = evaluation(unavailable, 20);
+    unavailableLoss.listing.availability = "UNAVAILABLE";
+    const rows = [loss, belowTarget, pending, reference, deferred, unavailable];
+    const analyses = {
+        [loss.id]: done(evaluation(loss, 20)), [belowTarget.id]: done(positive),
+        [reference.id]: done(referenceLoss), [deferred.id]: done(deferredLoss), [unavailable.id]: done(unavailableLoss),
+    };
+    const groups = groupSearchResults(rows, analyses, false, new Set());
+    assert.deepEqual(ids(groups.losses), [loss.id]);
+    assert.deepEqual(groups.deals, []);
+    assert.deepEqual(groups.all, rows);
 });
 
 test("Sorting contains genuinely unfinished candidates while unresolved identity, pricing and errors stay in attention", () => {
@@ -521,6 +548,24 @@ test("empty Deals alternatives prefer positive results below targets and omit lo
     assert.equal(alternatives[0].profit, positive.underwriting.best!.profit);
     assert.equal(alternatives[1].profit, null); assert.equal(alternatives[1].roi, null);
     assert.deepEqual(groupSearchResults(filtered, analyses, false, new Set()).deals, [], "alternatives do not become Deals");
+});
+
+test("empty Deals shows a realistic offer's conditional outcome only when offers are enabled", () => {
+    const offer = listing("offer-only", { bestOffer: true });
+    const lowball = listing("requires-lowball", { bestOffer: true });
+    const assessed = evaluation(offer, 128);
+    const analyses = { [offer.id]: done(assessed), [lowball.id]: done(evaluation(lowball, 100)) };
+    const rows = [offer, lowball];
+    assert.ok(assessed.underwriting!.best!.profit < 0);
+    assert.deepEqual(selectDealAlternatives(rows, analyses, targets, NOW), []);
+
+    const [alternative, ...others] = selectDealAlternatives(rows, analyses, targets, NOW, true);
+    assert.deepEqual(others, []);
+    assert.equal(alternative.listing.id, offer.id);
+    assert.equal(alternative.label, "Best Offer");
+    assert.equal(alternative.offerPrice, 90);
+    assert.ok(alternative.profit! > 0 && alternative.roi! > 0);
+    assert.deepEqual(groupSearchResults(rows, analyses, true, new Set()).deals, []);
 });
 
 test("unfinished and reference-only alternatives expose no optimistic profit and require no provider work", t => {

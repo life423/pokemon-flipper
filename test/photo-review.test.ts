@@ -187,6 +187,32 @@ test("partial raw-resale coverage remains an accurately scoped note rather than 
     assert.ok(!status.photoNotes.includes("No usable photo shows the whole back."));
 });
 
+test("the four-photo Mewtwo's supported raw condition leaves missing sold prices in sorting", () => {
+    const evaluation = cardEvaluation();
+    evaluation.listing.photosInListing = evaluation.listing.photosAnalyzed = 4;
+    evaluation.condition!.rawCondition = "MODERATELY_PLAYED";
+    evaluation.condition!.confidence = "LOW";
+    evaluation.condition!.gradeRange = null;
+    evaluation.rawPricing = { status: "PRICE_UNAVAILABLE", reason: "No accepted condition-matched sold price." };
+    evaluation.photoCheck!.images = [
+        { number: 1, view: "FRONT", usable: true, isStockImage: false, obscuresCondition: false, issues: ["Some glare and mild blur, but identity and lower text are readable."] },
+        { number: 2, view: "BACK", usable: true, isStockImage: false, obscuresCondition: true, issues: ["Glare and image cropping; most of the back is visible."] },
+        { number: 3, view: "BACK_DETAIL", usable: true, isStockImage: false, obscuresCondition: true, issues: ["Close-up is cropped and does not show the complete back or all edges."] },
+        { number: 4, view: "BACK_DETAIL", usable: true, isStockImage: false, obscuresCondition: true, issues: ["Close-up is upside down, cropped, and glare-heavy."] },
+    ];
+    const value = retargetEvaluation(evaluation, any);
+    assert.equal(value.underwriting?.verdict, "CANT_PRICE");
+    const status = photoReviewStatus(value);
+    assert.equal(status.needsYourReview, false);
+    assert.ok(status.photoNotes.includes("The only usable back overview has limited detail."));
+    assert.ok(status.photoNotes.includes("Photo 2 (back): Glare and image cropping; most of the back is visible."));
+    assert.equal(resultGroup({} as never, value), "candidates");
+    value.identity!.status = "NEEDS_REVIEW";
+    value.identity!.reasons = ["The photographed collector number conflicts with the listing."];
+    assert.ok(photoReviewStatus(value).reasons.includes(value.identity!.reasons[0]));
+    assert.equal(resultGroup({} as never, value), "review");
+});
+
 test("overall identity, authenticity and purchase holds still require review with clear full-card coverage", () => {
     const identity = mixedCoverageEvaluation(); identity.identity!.status = "NEEDS_REVIEW"; identity.identity!.reasons = ["The card number differs."];
     assert.ok(photoReviewStatus(identity).reasons.includes("The card number differs."));
