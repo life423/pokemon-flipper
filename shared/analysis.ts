@@ -95,6 +95,7 @@ export function resultGroup(listing: ListingSummary, evaluation: Evaluation | nu
     }
     if (evaluation?.researchMode === "DEFERRED_LOW_RESALE") return photoReviewStatus(evaluation).needsYourReview ? "review" : null;
     if (verdict?.startsWith("BUY")) return "deals";
+    if (evaluation?.frontPhotoStop === "SLAB_PRICE" && verdict === "CANT_PRICE") return "candidates";
     if (verdict === "NEEDS_REVIEW" || verdict === "CANT_PRICE") return "review";
     if (evaluation && !verdict) return "review";
     // An incomplete check is unresolved, never a priced rejection or a queued analysis.

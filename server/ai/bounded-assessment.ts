@@ -76,5 +76,20 @@ Authenticity alerts require concrete visible suspicious manufacture/alteration o
     };
 }
 
-export const assessBoundedListing = (listing: ListingDetails, photos: readonly BoundedPhoto[], signal?: AbortSignal, mode: BoundedAssessmentMode = "RAW") =>
-    runStructured<BoundedReading>({ ...buildBoundedAssessmentRequest(listing, photos, mode), dispatchSignal: signal });
+export type BoundedPhotoStage = { kind: "front" } | { kind: "remainder"; front: BoundedReading };
+
+export const assessBoundedListing = (listing: ListingDetails, photos: readonly BoundedPhoto[], signal?: AbortSignal,
+    mode: BoundedAssessmentMode = "RAW", stage?: BoundedPhotoStage) => {
+    const request = buildBoundedAssessmentRequest(listing, photos, mode);
+    if (stage?.kind === "front") {
+        request.step = "Front photo assessment";
+        request.maxOutputTokens = mode === "SLAB_LABEL" ? 1100 : 1400;
+        request.prompt += `
+This is the first listing photo only. Check whether it actually shows a usable front. Focus on readable identity, printing, any slab label, and clearly visible material defects or authenticity concerns. Do not assume it is the front or guess what the back looks like. Leave the numeric grade range null. Keep each observation short and specific.`;
+    } else if (stage?.kind === "remainder") {
+        request.step = "Remaining listing photos";
+        request.prompt += `
+A prior check of the first listing photo is supplied below as evidence. The first image is not included again. Use its observations alongside the new images to assess the same card and give one combined condition and identity. Carry forward supported front facts where the new views do not contradict them. Treat the prior check as provisional and preserve material disagreements rather than guessing. The images array and numbered authenticity observations must describe only the NEW input images. Mention any material concern from the prior image in the condition summary. Prior evidence: ${JSON.stringify(stage.front)}`;
+    }
+    return runStructured<BoundedReading>({ ...request, dispatchSignal: signal });
+};

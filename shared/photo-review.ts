@@ -53,6 +53,11 @@ export function photoReviewStatus(evaluation: Evaluation | null, listing?: Listi
     const newConcerns = deeperPhotoConcerns(evaluation);
     const reasons = [...newConcerns];
     const photoNotes = photoIssueNotes(check);
+    if (evaluation.frontPhotoStop && evaluation.underwriting?.verdict === "PASS" && !newConcerns.length) {
+        return { title: "Assessment stopped after the front photo", confidence, checked: check.images.length,
+            total: evaluation.listing.photosInListing, reviewedAt: evaluation.answeredAt,
+            reasons: [], photoNotes: [...new Set([...evaluation.underwriting.reasons, ...photoNotes])], needsYourReview: false };
+    }
     // A readable, accepted label can have informational seller-data notes.
     // The slab validator retains material label/case/authenticity conflicts as
     // review reasons; presentation never discards them by matching their text.
@@ -96,7 +101,7 @@ export function photoReviewStatus(evaluation: Evaluation | null, listing?: Listi
         photoNotes.push(...evaluation.modeReasons.map(reason => `Assessment note: ${reason}`));
     }
     const concerns = reasons.length > 0;
-    return { title: deferred && !evaluation.condition ? "AI identity check complete" : "AI photo review complete", confidence, checked: check.images.length,
+    return { title: evaluation.frontPhotoStop ? "Front photo checked" : deferred && !evaluation.condition ? "AI identity check complete" : "AI photo review complete", confidence, checked: check.images.length,
         total: evaluation.listing.photosInListing, reviewedAt: evaluation.answeredAt,
         reasons: [...new Set(reasons)], photoNotes: [...new Set(photoNotes)], needsYourReview: concerns };
 }

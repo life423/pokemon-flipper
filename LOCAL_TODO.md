@@ -112,6 +112,11 @@ Mew ex replay.
   now explains the gap and skips a new sold-photo check when the remaining
   relevant sale amounts cannot meet the user's targets. Saved photos remain
   reusable if the targets or purchase terms improve.
+- [x] Check the first Buy It Now photo before sending other views. Stop for
+  a supported slab loss or decisive front identity/authenticity evidence.
+  Reuse saved front observations after a price change or cancellation.
+  Keep grading possibilities open when raw front wear alone cannot price
+  the whole deal. Validate the dispatch order with provider mocks.
 - [ ] Finish auditing other raw Blastoise stops. Separate genuine printing
   conflicts from photo errors, and preserve explicit anniversary marks even
   when the model does not mark the entire listing a mismatch.

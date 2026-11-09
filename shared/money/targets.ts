@@ -32,6 +32,7 @@ export function retargetEvaluation(evaluation: Evaluation, targets: Targets, cur
                   bids: current.bids,
                   endTime: current.endTime,
                   buyingOption: current.buyingOption,
+                  bestOffer: current.bestOffer ?? evaluation.listing.bestOffer,
                   seller: current.seller ?? evaluation.listing.seller,
               },
           }

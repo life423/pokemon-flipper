@@ -38,9 +38,19 @@ export function selectBoundedPhotos(urls: readonly string[]): BoundedPhoto[] {
 export function boundedClaims(listing: ListingDetails) {
     return Object.fromEntries(EVALUATION_CLAIM_FIELDS.filter(field => listing.aspects[field]).map(field => [field, listing.aspects[field]]));
 }
-function keyFor(listing: ListingDetails, version: string, photos: BoundedPhoto[]): string {
-    const input = [version, listing.title.trim(), boundedClaims(listing), listing.images.map(normalizedPhoto), photos.map(photo => [photo.number, normalizedPhoto(photo.url)])];
+function keyFor(listing: ListingDetails, version: string, photos: BoundedPhoto[], gallery: string[] | number = listing.images.map(normalizedPhoto)): string {
+    const input = [version, listing.title.trim(), boundedClaims(listing), gallery, photos.map(photo => [photo.number, normalizedPhoto(photo.url)])];
     return `bounded-assessment:${version}:${createHash("sha256").update(JSON.stringify(input)).digest("hex")}`;
+}
+export function stagedPhotoPlan(listing: ListingDetails, plan: BoundedAssessmentPlan, stage: "front" | "remainder",
+    front?: unknown): BoundedAssessmentPlan {
+    const photos = stage === "front" ? plan.photos.slice(0, 1) : plan.photos.slice(1);
+    const version = `${plan.version}/${stage}-1`;
+    const key = keyFor(listing, version, photos, listing.images.length);
+    // A corrected first observation changes the evidence supplied to the second
+    // request, but prices and targets never change either photo cache key.
+    return { ...plan, photos, version, key: front === undefined ? key
+        : `${key}:${createHash("sha256").update(JSON.stringify(front)).digest("hex")}` };
 }
 export function boundedAssessmentKey(listing: ListingDetails): string {
     return keyFor(listing, BOUNDED_ASSESSMENT_VERSION, selectBoundedPhotos(listing.images));

@@ -89,7 +89,8 @@ export function AnalysisDetails({
                         : "The initial analysis reused saved AI assessments."}
                 </p>
                 {priceEvidenceGap(evaluation) ? <p className={styles.small}>Price evidence is incomplete. Saved photo findings can be reused when matched sales become available.</p> : <button type="button" className={styles.secondary} onClick={onReanalyze} disabled={reviewing}>
-                    {evaluation.researchMode && evaluation.researchMode !== "FULL" ? "Run full research (paid; reuse photos)" : "Reanalyze full listing (paid)"}
+                    {evaluation.frontPhotoStop === "SLAB_PRICE" && evaluation.underwriting?.verdict === "CANT_PRICE" ? "Check remaining photos (paid)"
+                        : evaluation.researchMode && evaluation.researchMode !== "FULL" ? "Run full research (paid; reuse photos)" : "Reanalyze full listing (paid)"}
                 </button>}
             </footer>
         </>

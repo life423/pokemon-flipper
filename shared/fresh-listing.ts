@@ -11,6 +11,6 @@ export function withFreshListing(current: ListingSummary, evaluation: Evaluation
     return { ...current, title: listing.title, url: listing.url, currentPrice: listing.price, shipping: listing.shipping,
         listedAt: listing.listedAt ?? current.listedAt, createdAt: listing.createdAt ?? current.createdAt,
         listedAttributes: searchAttributes(listing.title, listing.aspects),
-        bids: listing.bids, endTime: listing.endTime, buyingOption: listing.buyingOption, images: listing.photos ?? current.images,
+        bids: listing.bids, endTime: listing.endTime, buyingOption: listing.buyingOption, bestOffer: listing.bestOffer ?? current.bestOffer, images: listing.photos ?? current.images,
         seller: listing.seller, availability: listing.availability, termsCheckedAt: checked, screen: undefined, match: undefined, mistakes: undefined };
 }

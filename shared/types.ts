@@ -550,6 +550,7 @@ export interface DeeperPhotoReview {
 export interface Evaluation {
     pricingDeferred?: { provider: "PKMNPRICES"; note: string; identityLookupPending?: boolean };
     researchMode?: "FULL" | "FOCUSED_LOW_RESALE" | "DEFERRED_LOW_RESALE";
+    frontPhotoStop?: "SLAB_PRICE" | "AUTHENTICITY";
     conditionVersion?: string;
     assessmentVersion?: string;
     pricingVersion?: string;
@@ -574,6 +575,7 @@ export interface Evaluation {
         price: number | null;
         shipping: number | null;
         buyingOption: BuyingOption;
+        bestOffer?: boolean;
         bids: number;
         endTime: string | null;
         photos?: string[];

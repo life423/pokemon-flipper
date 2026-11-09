@@ -127,8 +127,16 @@ Read docs/architecture.md for the source map and reading order.
   rows can include work blocked before paid assessment. Reuse saved evidence
   first. Keep per-listing reasons tied to the queue's eligibility checks and
   count loaded listings separately from completed assessments.
-- Raw requests combine identity/condition across at most six selected photos.
-  Compact slab-label requests use the first two unique photos and null condition.
+- Buy It Now assessments with current provider listing-format metadata check
+  the primary photo first. If a readable slab's exact recent matched sold high
+  still loses money under fresh verified terms, and Best Offer is unavailable,
+  stop there. A clearly corroborated counterfeit or foreign front can also
+  stop. Raw wear or missing back detail alone cannot establish a financial
+  rejection. Otherwise send only the remaining selected views, together with
+  the first observations. Both stages share the existing search cap and cache
+  independently. Complete older readings remain reusable.
+- Raw assessment covers at most six selected photos. Compact slab-label
+  assessment covers the first two unique photos and null condition.
   Slab model selection has a separate optional override; defaults are unchanged.
   Compatible readers retain older compact models across selection and rollback.
   Actual photographed holder/grader/grade determines resale, not seller category.

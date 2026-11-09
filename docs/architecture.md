@@ -85,11 +85,18 @@ flowchart TD
    stored snapshots; selected refresh checks current eBay terms without starting
    new paid photo work. These paths do not silently launch a broad search.
 6. `bounded-plan.ts` uses seller metadata only to choose requested work. RAW
-   preserves the original combined request, six-photo selector and cache key,
-   with a 2,200-token output maximum. SLAB_LABEL checks the first two unique
-   photos using a separate version/schema and a 1,600-token output maximum;
+   selects up to six photos and preserves the original combined cache key.
+   Full raw requests have a 2,200-token output maximum. SLAB_LABEL selects
+   the first two unique photos using a separate schema and a 1,600-token maximum;
    condition must be null and no future grade or raw category is requested.
    Both retain exact-input preflight and the same persistent spending guard.
+   For Buy It Now listings with provider listing-format metadata, a new
+   assessment starts with the primary photo. Verified fresh purchase terms,
+   an exact photographed slab label and a loss even at the high end of
+   recent matched sales can finish the evaluation there. Otherwise the
+   remaining views receive the first observations as text. Both requests
+   share the existing budget, with reusable observations keyed independently
+   from purchase terms. Earlier complete readings still bypass both stages.
 7. Before dispatch, the evaluator considers valid compatible combined and
    compact shared readings, choosing the newest answer with its source selector
    and original photo indices. Strong full legacy evidence retains priority.

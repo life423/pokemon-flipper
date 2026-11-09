@@ -15,6 +15,7 @@ import { createShortlistStore } from "../../server/shortlist/store.ts";
 import { createShortlistService } from "../../server/shortlist/service.ts";
 import { photoReviewStatus } from "../../shared/photo-review.ts";
 import { resultGroup } from "../../shared/analysis.ts";
+import { retargetEvaluation } from "../../shared/money/targets.ts";
 import { seedRawSoldCopies } from "../fixtures/raw-sold-copies.ts";
 import { createSoldConditionAcquirer, type SoldConditionReading } from "../../server/ai/sold-condition.ts";
 import { drainSharedWork } from "../../server/lib/shared-work.ts";
@@ -180,6 +181,152 @@ test("one bounded raw assessment produces priced outcomes without historical pho
     assert.ok(result.underwriting?.paths.some(path => path.status === "PRICED"));
     assert.equal(result.usage.length, 1);
     assert.equal(result.photoReviewKey, undefined, "a bounded answer cannot authorize the legacy full-record deeper endpoint");
+});
+
+test("an exact overpriced slab stops after its front photo and reuses that reading after a price drop", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("staged assessment regression must use mocked providers only"));
+    const listing = details({ price: 950, shipping: 4, bestOffer: false, condition: "Graded",
+        retrievedAt: new Date(now - 1000).toISOString(),
+        aspects: { ...details().aspects, "Professional Grader": "PSA", Grade: "8" } });
+    const batches: number[][] = [];
+    const { evaluate } = harness({ details: async () => ({ ...listing }), assess: async (_listing, photos, _signal, _mode, stage) => {
+        batches.push(photos.map(photo => photo.number));
+        assert.equal(stage?.kind, photos[0].number === 1 ? "front" : "remainder");
+        const answer = reading(photos.length);
+        answer.condition = null;
+        answer.photoCheck.holder = "GRADED_SLAB";
+        answer.photoCheck.slab = { present: true, grader: "PSA", grade: "8", gradeQualifier: null, certNumber: "12345678",
+            labelText: "1999 POKEMON GAME VENUSAUR-HOLO #15 NM-MT 8", caseCondition: "INTACT", authenticity: "NONE_SEEN",
+            authenticityEvidence: [], concerns: [] };
+        answer.photoCheck.images.forEach((image, index) => { image.view = photos[index].number === 1 ? "FRONT" : "BACK"; });
+        return { result: answer, usage: { inputTokens: 500, outputTokens: 300 } };
+    }, fetchRawComps: async () => assert.fail("a verified slab never needs raw resale research") });
+    const targets = { minProfit: 0, minRoi: 0 };
+    const expensive = await evaluate(listing.id, { automatic: true, targets });
+    assert.deepEqual(batches, [[1]], "the back cannot change the loss at the current price");
+    assert.deepEqual(expensive.photoCheck?.images.map(image => image.number), [1]);
+    assert.equal(expensive.listing.photosAnalyzed, 1);
+    assert.equal(expensive.frontPhotoStop, "SLAB_PRICE");
+    assert.equal(expensive.underwriting?.verdict, "PASS");
+    assert.ok((expensive.underwriting?.best?.profit ?? 0) < 0);
+    assert.equal(resultGroup({ ...listing, currentPrice: listing.price, isGraded: true }, retargetEvaluation(expensive, targets)), null);
+    assert.equal(photoReviewStatus(expensive).title, "Assessment stopped after the front photo");
+    assert.equal(photoReviewStatus(expensive).needsYourReview, false);
+    assert.deepEqual(expensive.usage.map(usage => usage.step), ["frontPhotoAssessment"]);
+
+    listing.price = 25;
+    const locallyRepriced = retargetEvaluation({ ...expensive, listing: { ...expensive.listing, price: listing.price } }, targets);
+    assert.equal(locallyRepriced.underwriting?.verdict, "CANT_PRICE", "lower terms cannot make a front-only report a Deal");
+    const cheaper = await evaluate(listing.id, { automatic: true, targets });
+    assert.deepEqual(batches, [[1], [2]], "a price change can make a back photo useful without repeating the front");
+    assert.deepEqual(cheaper.photoCheck?.images.map(image => image.number), [1, 2]);
+    assert.equal(cheaper.underwriting?.verdict, "BUY_GRADED");
+    assert.deepEqual(cheaper.usage.map(usage => usage.step), ["remainingPhotoAssessment"]);
+});
+
+test("visible wear on a raw front keeps remaining photos eligible when grading value is unresolved", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("staged assessment regression must use mocked providers only"));
+    const listing = details({ bestOffer: false, retrievedAt: new Date(now - 1000).toISOString() });
+    const batches: number[][] = [];
+    const { evaluate } = harness({ details: async () => ({ ...listing }), assess: async (_listing, photos, _signal, _mode, stage) => {
+        batches.push(photos.map(photo => photo.number));
+        if (stage?.kind === "remainder") {
+            assert.equal(stage.front.photoCheck.images.length, 1);
+            assert.equal(stage.front.condition?.surface.observations[0], "Visible holo scratches on the front.");
+        }
+        const answer = reading(photos.length);
+        answer.condition!.rawCondition = "LIGHTLY_PLAYED";
+        answer.condition!.surface.severity = "MINOR";
+        answer.condition!.surface.observations = ["Visible holo scratches on the front."];
+        if (photos.length === 1) answer.condition!.gradeRange = null;
+        const views = ["FRONT", "BACK", "FRONT_DETAIL", "BACK_DETAIL"] as const;
+        answer.photoCheck.images.forEach((image, index) => { image.view = views[photos[index].number - 1]; });
+        return { result: answer, usage: { inputTokens: 500, outputTokens: 300 } };
+    } });
+    const result = await evaluate(listing.id, { automatic: true });
+    assert.deepEqual(batches, [[1], [2, 3, 4]]);
+    assert.deepEqual(result.photoCheck?.images.map(image => image.number), [1, 2, 3, 4]);
+    assert.equal(result.listing.photosAnalyzed, 4);
+    assert.equal(result.identity?.status, "IDENTIFIED");
+    assert.equal(result.underwriting?.verdict, "BUY_AND_GRADE");
+    assert.deepEqual(result.usage.map(usage => usage.step), ["frontPhotoAssessment", "remainingPhotoAssessment"]);
+    const reused = await evaluate(listing.id, { automatic: true });
+    assert.equal(reused.usage.length, 0);
+    assert.deepEqual(batches, [[1], [2, 3, 4]], "the completed assessment is reused before dispatching either stage");
+});
+
+test("a clean rear cannot erase a severe front mark or supply a conflicting high grade", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("staged assessment regression must use mocked providers only"));
+    const listing = details({ price: 150, bestOffer: false, images: [photo(1), photo(2)],
+        retrievedAt: new Date(now - 1000).toISOString() });
+    const batches: number[][] = [];
+    const observation = "Permanent black marker covers part of the holo artwork.";
+    let sales: Comp[] = [];
+    const { evaluate, cache, calls } = harness({ details: async () => listing, fetchRawComps: async () => sales,
+        assess: async (_listing, photos) => {
+            batches.push(photos.map(photo => photo.number));
+            const answer = reading(1);
+            if (photos[0].number === 1) {
+                answer.condition!.rawCondition = "DAMAGED";
+                answer.condition!.gradeRange = null;
+                answer.condition!.surface = { visibility: "CLEAR", severity: "SEVERE", observations: [observation] };
+            } else {
+                answer.photoCheck.images[0].view = "BACK";
+                answer.condition!.rawCondition = "NEAR_MINT";
+                answer.condition!.gradeRange = { low: 8, likely: 9, high: 10 };
+            }
+            return { result: answer, usage: { inputTokens: 500, outputTokens: 300 } };
+        },
+    });
+    sales = seedRawSoldCopies(cache, listing, "DAMAGED", 45, now);
+    const result = await evaluate(listing.id, { automatic: true });
+    assert.deepEqual(batches, [[1], [2]]);
+    assert.equal(result.condition?.rawCondition, "DAMAGED");
+    assert.equal(result.condition?.gradeRange, null);
+    assert.deepEqual(result.condition?.surface.observations, [observation]);
+    assert.equal(calls.comps, 0, "the contradictory rear grade must not trigger graded price research");
+    assert.equal(result.underwriting?.verdict, "PASS");
+    assert.equal(result.underwriting?.best?.priceCondition, "DAMAGED");
+});
+
+test("a saved combined assessment bypasses both photo stages", async () => {
+    const listing = details({ bestOffer: false, retrievedAt: new Date(now - 1000).toISOString() });
+    const { evaluate, cache } = harness({ details: async () => listing,
+        assess: async () => assert.fail("accepted photos must bypass both paid stages") });
+    cache.set(boundedAssessmentKey(listing), { ...reading(), version: BOUNDED_ASSESSMENT_VERSION,
+        answeredAt: new Date(now - 2000).toISOString(), usage: { inputTokens: 700, outputTokens: 500 } });
+    const result = await evaluate(listing.id, { automatic: true });
+    assert.equal(result.listing.photosAnalyzed, 4);
+    assert.ok(result.reusedSteps.includes("boundedPhotoAssessment"));
+    assert.deepEqual(result.usage, []);
+});
+
+test("Stop keeps the accepted front photo and prevents the remaining paid review", async () => {
+    const listing = details({ bestOffer: false, retrievedAt: new Date(now - 1000).toISOString() });
+    let started!: () => void, release!: () => void;
+    const began = new Promise<void>(resolve => { started = resolve; });
+    const accepted = new Promise<void>(resolve => { release = resolve; });
+    const batches: number[][] = [];
+    const { evaluate, calls } = harness({ details: async () => ({ ...listing }), assess: async (_listing, photos) => {
+        batches.push(photos.map(photo => photo.number));
+        if (batches.length === 1) { started(); await accepted; }
+        const answer = reading(photos.length);
+        const views = ["FRONT", "BACK", "FRONT_DETAIL", "BACK_DETAIL"] as const;
+        answer.photoCheck.images.forEach((image, index) => { image.view = views[photos[index].number - 1]; });
+        return { result: answer, usage: { inputTokens: 500, outputTokens: 300 } };
+    } });
+    const stopped = new AbortController();
+    const pending = evaluate(listing.id, { automatic: true, signal: stopped.signal });
+    await began; stopped.abort(); release();
+    await assert.rejects(pending, { name: "AbortError" });
+    assert.deepEqual(await drainSharedWork(), { complete: true, pending: 0 });
+    assert.deepEqual(batches, [[1]]);
+    assert.equal(calls.raw + calls.comps, 0);
+
+    const resumed = await evaluate(listing.id, { automatic: true });
+    assert.deepEqual(batches, [[1], [2, 3, 4]]);
+    assert.equal(resumed.listing.photosAnalyzed, 4);
+    assert.equal(resumed.usage.length, 1);
 });
 
 test("insufficient numeric grading detail retains obvious raw damage without inventing a resale price", async t => {
@@ -652,12 +799,21 @@ test("expired inventory and explicit non-English listings start no assessment", 
 });
 
 test("foreign photo findings save once and stop before market research on later requests too", async () => {
-    const other = reading(); other.photoCheck.cardIdentity!.language = "Japanese";
-    const { evaluate, calls, cache } = harness({ assess: async () => { calls.assessed++; return { result: other, usage: { inputTokens: 700, outputTokens: 450 } }; } });
-    await assert.rejects(evaluate("v1|foreign-photo|0"), EnglishOnlyError);
-    assert.equal(cache.size, 1);
-    await assert.rejects(evaluate("v1|foreign-photo|0"), EnglishOnlyError);
-    assert.equal(calls.assessed, 1); assert.equal(calls.comps, 0); assert.equal(calls.raw, 0);
+    for (const staged of [false, true]) {
+        const listing = details(staged ? { bestOffer: false, retrievedAt: new Date(now - 1000).toISOString() } : {});
+        const batches: number[][] = [];
+        const { evaluate, calls, cache } = harness({ details: async () => listing, assess: async (_listing, photos) => {
+            batches.push(photos.map(photo => photo.number));
+            const other = reading(photos.length);
+            other.photoCheck.cardIdentity!.language = "Japanese";
+            return { result: other, usage: { inputTokens: 700, outputTokens: 450 } };
+        } });
+        await assert.rejects(evaluate(listing.id), EnglishOnlyError);
+        assert.equal(cache.size, 1);
+        await assert.rejects(evaluate(listing.id), EnglishOnlyError);
+        assert.deepEqual(batches, staged ? [[1]] : [[1, 2, 3, 4]]);
+        assert.equal(calls.comps, 0); assert.equal(calls.raw, 0);
+    }
 });
 
 test("seller metadata cannot turn an unknown photographed card language into a confirmed deal", async () => {

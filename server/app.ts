@@ -271,7 +271,7 @@ app.get("/api/deals", async (req, res) => {
     res.end();
 });
 
-// HTTP development uses one bounded visual assessment and saved evidence.
+// The evaluator bounds visual work and reuses saved evidence.
 // Refreshing current terms never discards unchanged paid photo evidence.
 app.post("/api/listings/:id/evaluate", async (req, res) => {
     const stopped = new AbortController();
