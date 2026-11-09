@@ -8,6 +8,7 @@ import { readCache, writeCache } from "../../server/lib/cache.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
 import { MODEL } from "../../server/ai/openai.ts";
 import { canAutoAnalyze } from "../../shared/analysis.ts";
+import { explicitReprintSet } from "../../shared/reprint-release.ts";
 import type { ListingSummary } from "../../shared/types.ts";
 
 const row = (id: string, title = "Charizard Base Set 4/102 Holo English", extra: Partial<ListingSummary> = {}): ListingSummary => ({
@@ -122,6 +123,31 @@ test("explicit reprint releases are excluded before bounded slots without paid i
     assert.equal(readTitleByRules(page[0].title).set, "30th Celebration");
     assert.equal(readTitleByRules(page[0].title).cardName, "charizard");
     assert.equal(readTitleByRules("Charizard Celebration 4/102").set, "Celebrations");
+});
+
+test("Base Set followed by the Blastoise collector fraction stays in the original market", async t => {
+    const fetch = t.mock.method(globalThis, "fetch", async () => assert.fail("collector-number disambiguation cannot call a provider"));
+    const title = "Blastoise Base Set 2/102 Holo English";
+    const spaced = "Blastoise Base Set 2 / 102 Holo English";
+    const page = [row("original", title), row("original-spaced", spaced),
+        row("reprint", "Blastoise Base Set 2 2/102 Holo English"),
+        row("reprint-roman", "Blastoise Base Set II 2/102 Holo English"),
+        row("reprint-separated", "Blastoise Base Set 2 / 2/130 Holo English")];
+    for (const listing of page) {
+        const reprint = listing.id.startsWith("reprint");
+        assert.equal(explicitReprintSet(listing.title), reprint ? "Base Set 2" : null);
+        const reading = readTitleByRules(listing.title, ["Base Set 2", "Base Set II"]);
+        const number = listing.id === "reprint-separated" ? "2/130" : "2/102";
+        assert.deepEqual([reading.cardName, reading.set, reading.cardNumber], ["blastoise", reprint ? "Base Set 2" : "Base Set", number]);
+    }
+    const saved = { kind: "SINGLE_CARD", cardName: "Blastoise", set: "Base Set 2", cardNumber: "2", language: "English", grader: null, grade: null, condition: null };
+    const cacheKey = `title-reading:v6:${MODEL}:${title.toLowerCase()}`;
+    await writeCache(cacheKey, saved);
+    const result = await findDeals(title, {}, { ...noPaidSteps(async () => ({ listings: page, total: page.length, skipped: 0 })), readTitle: readTitleWithoutAi });
+    assert.deepEqual(result.map(listing => listing.id), ["original", "original-spaced"]);
+    assert.ok(result.every(listing => listing.screen?.card?.set === "Base Set" && listing.screen.card.cardNumber === "2/102"));
+    assert.deepEqual(await readCache(cacheKey, 24), saved, "accepted cached metadata stays intact");
+    assert.equal(fetch.mock.callCount(), 0);
 });
 
 test("literal reprint names correct an old seller-derived title cache without more AI", async t => {

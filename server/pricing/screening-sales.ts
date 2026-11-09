@@ -20,7 +20,7 @@ import { sellerConditionClues } from "../../shared/raw-condition-claim.ts";
 type Source = { lookupCards: LookupCards; fetchComps: FetchComps; fetchRawComps: FetchRawComps; fetchSoldPage?: FetchSoldPage };
 type Finish = ScreeningSoldReference["finish"];
 interface Market { record: CardRecord; printing: ScreeningSoldReference["printing"]; finish: Finish; labels: string[] }
-interface MarketEvidence { references: ScreeningSoldReference[]; complete: boolean; issue: "BUDGET" | "UNAVAILABLE" | null }
+interface MarketEvidence { references: ScreeningSoldReference[]; issue: "BUDGET" | "UNAVAILABLE" | null }
 const FINISHES = ["HOLO", "NON_HOLO", "REVERSE_HOLO"];
 const DAY_MS = 86_400_000;
 const hasMatchedSales = (references: ScreeningSoldReference[]) => references.some(reference => usableSoldReference(reference, reference.grader !== null));
@@ -119,7 +119,7 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
                     break;
                 }
             }
-            return { references: accepted, complete: issue === null, issue };
+            return { references: accepted, issue };
         });
     };
 
@@ -204,11 +204,15 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
             }
             if (!markets.size) return evidence;
             evidence.exactScope = !intentOnly && !queryScoped && markets.size === 1 && (!unknownVariant || Boolean(printing && finish));
+            let incomplete: MarketEvidence["issue"] = null;
             for (const market of markets.values()) {
                 const result = await marketReferences(market, grader, grade);
                 evidence.references.push(...result.references);
-                if (!result.complete) return incompleteEvidence(evidence, result.issue === "BUDGET");
+                // Another printing can have a saved response even when this
+                // market cannot finish. The source still guards new requests.
+                if (result.issue && (incomplete === null || result.issue === "BUDGET")) incomplete = result.issue;
             }
+            if (incomplete) return incompleteEvidence(evidence, incomplete === "BUDGET");
             evidence.status = hasMatchedSales(evidence.references) ? "AVAILABLE" : "UNAVAILABLE";
             if (evidence.status === "UNAVAILABLE" && evidence.exactScope) {
                 const market = markets.values().next().value!;

@@ -666,6 +666,11 @@ test("a reprint in the title, or another card number, overrules the item details
         null
     );
     assert.equal(titleContradiction("Lugia 009/111 Neo Genesis Holo 9/10 condition", "Neo Genesis", "9/111"), null);
+    assert.equal(titleContradiction("Blastoise Base Set 2 / 102 Holo English", "Base Set", "2/102"), null);
+    assert.match(titleContradiction("Blastoise Base Set 2 2/102 Holo English", "Base Set", "2/102") ?? "", /base set 2/);
+    assert.match(titleContradiction("Blastoise Base Set II 2/102 Holo English", "Base Set", "2/102") ?? "", /base set ii/);
+    assert.equal(titleContradiction("Blastoise Base Set II 2/130 Holo English", "Base Set 2", "2/130"), null);
+    assert.match(titleContradiction("Blastoise Base Set 2 / 2/130 Holo English", "Base Set 2", "3/130") ?? "", /2\/130/);
 });
 
 test("a database may put a series name in front of a set, except Base Set", () => {
@@ -806,6 +811,7 @@ test("a reprint's mark in the photos means it isn't the card the title says", ()
     assert.match(reprintShown("CELEBRATIONS_25TH", "Base Set") ?? "", /Celebrations/);
     assert.equal(reprintShown("CELEBRATIONS_25TH", "Celebrations: Classic Collection"), null);
     assert.match(reprintShown("BASE_SET_2", "Base Set") ?? "", /Base Set 2/);
+    assert.equal(reprintShown("BASE_SET_2", "Base Set II"), null);
     assert.equal(reprintShown("NONE_SEEN", "Base Set"), null);
     assert.equal(reprintShown("CANT_TELL", "Base Set"), null);
 });

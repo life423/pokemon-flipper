@@ -109,7 +109,8 @@ const cacheKey = (title: string) => `title-reading:v${READER_VERSION}:${MODEL}:$
 
 // These are literal phrases, not a complete catalog or a number-to-set lookup.
 // Unrecognized sets and names remain unresolved for the actual photo assessment.
-const LITERAL_SETS = ["Crown Zenith Galarian Gallery", "Scarlet & Violet 151", "Neo Revelation", "Neo Discovery", "Gym Challenge", "Evolving Skies", "Brilliant Stars", "Lost Origin", "Team Rocket", "Neo Genesis", "Neo Destiny", "Gym Heroes", "Crown Zenith", "Base Set 2", "Legendary Collection", "Celebrations", "Aquapolis", "Expedition", "Skyridge", "Fossil", "Jungle", "Base Set"];
+const LITERAL_SETS = ["Crown Zenith Galarian Gallery", "Scarlet & Violet 151", "Neo Revelation", "Neo Discovery", "Gym Challenge", "Evolving Skies", "Brilliant Stars", "Lost Origin", "Team Rocket", "Neo Genesis", "Neo Destiny", "Gym Heroes", "Crown Zenith", "Legendary Collection", "Celebrations", "Aquapolis", "Expedition", "Skyridge", "Fossil", "Jungle", "Base Set"];
+const BASE_SET_2_KEY = /^base set (?:2|ii)$/;
 const escapePattern = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 function literalSet(title: string, knownSetNames: readonly string[]) {
     const explicit = explicitReprintSet(title);
@@ -118,7 +119,8 @@ function literalSet(title: string, knownSetNames: readonly string[]) {
     const names = explicit ? [explicit] : [...LITERAL_SETS, ...knownSetNames].sort((a, b) => setKey(b).length - setKey(a).length);
     for (const set of names) {
         const key = setKey(set);
-        if (!key) continue;
+        // Even a catalog name must use the explicit reprint check for this set.
+        if (!key || !explicit && BASE_SET_2_KEY.test(key)) continue;
         const pattern = new RegExp(`\\b${key.split(" ").map(escapePattern).join("[^a-z0-9]+")}\\b`, "ig");
         if (explicit || pattern.test(normalizeText(title))) return { set, pattern };
     }
@@ -128,7 +130,8 @@ export function readTitleByRules(title: string, knownSetNames: readonly string[]
     const attributes = searchAttributes(title);
     const matchedSet = literalSet(title, knownSetNames);
     const set = matchedSet?.set ?? null;
-    const number = cardNumberIn(title);
+    const withoutRelease = withoutReprintRelease(title);
+    const number = cardNumberIn(withoutRelease);
     const language = cardLanguageStatus(title);
     const excluded = exclusionReason({ title, itemId: "local-title|0" });
     // Preserve this reader's Excellent->LP and Mint->NM vocabulary while
@@ -137,13 +140,13 @@ export function readTitleByRules(title: string, knownSetNames: readonly string[]
     const condition = claim ? CONDITION_NAMES[claim === "MINT" ? "NEAR_MINT" : claim] : null;
     // Only use a compact literal name after removing explicit metadata. This
     // does not claim that an unknown phrase is a canonical Pokemon identity.
-    const name = normalizeText(stripListingNameBoilerplate(withoutReprintRelease(title), title, set))
+    const name = normalizeText(stripListingNameBoilerplate(withoutRelease, title, set))
         .replace(matchedSet?.pattern ?? /$^/, " ")
-        .replace(number ? new RegExp(escapePattern(number), "ig") : /$^/, " ")
+        .replace(number ? new RegExp(number.split("/").map(escapePattern).join("\\s*/\\s*"), "ig") : /$^/, " ")
         .replace(/\b(?:psa|cgc|bgs|sgc|tag)\s*(?:[-–—]\s*)?(?:(?:gem|mint|mt|nm|near|ex|excellent|vg|very|good|poor|fair|pristine|black|label)[ -]+){0,5}(?:10|[1-9](?:\.5)?)?\b/ig, " ")
         .replace(/\b(?:pokemon|pok[eé]mon|tcg|cards?|english|eng|en|holo(?:graphic)?|non[ -]?holo|reverse|rare|ultra|secret|unlimited|shadowless|first edition|1st edition|wotc|vintage|raw|ungraded|graded|near mint|lightly played|moderately played|heavily played|damaged|mint|nm|lp|mp|hp|dmg|excellent|condition|collection|collectible|collectibles|promos?|with|from|the|for|please|show me|find me|looking for|i want|some|any|all)\b/ig, " ")
         .replace(/\b(?:19|20)\d{2}\b|\b\d+(?:\.\d+)?\b|[#|,;:()[\]]/g, " ")
-        .replace(/(?:^|\s)[-–—]+(?=\s|$)/g, " ")
+        .replace(/(?:^|\s)[-–—/]+(?=\s|$)/g, " ")
         .replace(/\s+/g, " ").trim();
     const nameWords = name.split(" ");
     // Numbered printed names such as Origin Forme Dialga VSTAR need four
@@ -167,7 +170,11 @@ export async function readTitleWithoutAi(title: string, signal?: AbortSignal): P
         // A literal incompatible release must not disappear because an older
         // title reading copied the seller's incorrect Base Set specifics.
         const explicitSet = explicitReprintSet(title);
-        return explicitSet ? { ...saved, set: explicitSet } : saved;
+        if (explicitSet) return { ...saved, set: explicitSet };
+        if (saved.set && BASE_SET_2_KEY.test(setKey(saved.set)) && cardNumberIn(title) === "2/102" && literalSet(title, [])?.set === "Base Set") {
+            return { ...saved, set: "Base Set", cardNumber: "2/102" };
+        }
+        return saved;
     }
     const knownSetNames = await cachedSetNames();
     signal?.throwIfAborted();

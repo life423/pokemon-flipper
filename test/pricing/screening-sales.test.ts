@@ -869,18 +869,21 @@ test("unknown residual words and lookalike name forms never trigger fallback cat
     assert.equal(result.status, "UNAVAILABLE"); assert.equal(calls.raw.length, 0);
 });
 
-test("bounded price exhaustion defers missing markets while retaining accepted sparse or complete facts", async () => {
-    const { run, calls } = harness({ cards: [card({ variants: [variant(), variant("1st Edition Holofoil", "FIRST_EDITION")] })], raw: async (_id, label) => {
-        if (label.startsWith("1st")) throw new ScreeningPriceBudgetError();
-        return three();
-    } });
-    const subject = listing({ title: "Charizard Base Set 4/102 Holo" });
-    const result = await run(subject, intent);
-    assert.equal(result.status, "AVAILABLE"); assert.equal(result.exactScope, false); assert.equal(result.references.length, 1);
-    assert.equal(result.references[0].summary.count, 3);
-    assert.match(result.note, /partial market context/);
-    await run(subject, intent);
-    assert.equal(calls.lookup, 1); assert.equal(calls.raw.length, 2, "a later row cannot repurchase a failed market within this search");
+test("budget deferral in either printing order preserves matched sales as partial market context", async () => {
+    const unlimited = variant(), firstEdition = variant("1st Edition Holofoil", "FIRST_EDITION");
+    for (const variants of [[unlimited, firstEdition], [firstEdition, unlimited]]) {
+        const { run, calls } = harness({ cards: [card({ variants })], raw: async (_id, label) => {
+            if (label === firstEdition.name) throw new ScreeningPriceBudgetError();
+            return three();
+        } });
+        const subject = listing({ title: "Charizard Base Set 4/102 Holo" });
+        const result = await run(subject, intent);
+        assert.equal(result.status, "AVAILABLE"); assert.equal(result.exactScope, false);
+        assert.deepEqual(result.references.map(reference => [reference.printing, reference.summary.count]), [["UNLIMITED", 3]]);
+        assert.match(result.note, /partial market context/);
+        await run(subject, intent);
+        assert.equal(calls.lookup, 1); assert.equal(calls.raw.length, 2, "a later row cannot repurchase a failed market within this search");
+    }
 });
 
 test("partial slab references survive budget or provider deferral without becoming an exact exclusion scope", async () => {

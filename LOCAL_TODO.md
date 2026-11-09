@@ -97,13 +97,14 @@ Mew ex replay.
   their own decisions and evidence versions instead of inferring why they stopped.
 - [ ] Keep a provider-mocked regression through the search stream and
   evaluation endpoints for supported profit, loss and mixed stop reasons.
-- [ ] Fix the confirmed `Base Set 2/102` ambiguity in both the shared reprint
-  reader and the literal title reader. Preserve real Base Set 2 titles.
+- [x] Keep `Base Set 2/102` in the original market through reprint screening,
+  title parsing, saved title reuse and final identity. Explicit Base Set 2 and
+  Base Set II remain separate.
 - [ ] Resolve remaining market identity examples using exact catalog evidence.
   Start with `Bubble Mew`, `Special Illustration`, and `Contender`.
-  Keep an open question about cached evidence after a deferred market in a
-  multi-market search. A local fixture reproduces order dependence, while
-  the Blastoise and Mew replays did not implicate it.
+- [x] Keep usable sales from later printings when an earlier market cannot
+  finish. Incomplete scopes remain ineligible for price exclusions. Both
+  catalog orders now preserve the same matched sales under simulated deferral.
 - [x] Let a readable slab label, agreeing title and exact catalog match
   outweigh a conflicting seller Card Name field. Saved PSA 9 assessments
   repriced Mew GG10 and Cynthia’s Ambition GG60 at projected losses of $59.62
@@ -172,10 +173,10 @@ Mew ex replay.
   Scarlet & Violet 151 rows. Neither replay found a supported preliminary margin.
 - [ ] Use the lowest trustworthy, available Buy It Now total for the exact
   card, printing, finish, grading company and grade as a competition reference.
-  Compare item price plus shipping. Combine completed-sale activity with
-  competing listings for a resale-speed estimate. A current ask alone does
-  not establish a completed sale, a time to sell, or a profitable raw-to-grade
-  route before the raw copy has a supported grade.
+  Start with saved label assessments and fresh, available listing terms with
+  known shipping. Deduplicate relisted slabs and expire the comparison using
+  the terms check time. Use matched completed sales for resale value and
+  activity; show the cheapest verified delivered ask as competition.
 
 - [x] Audit other ways matched evidence and profitable results disappear. Keep
   the raw resale route open when a lower-condition estimate or grading falls
@@ -222,9 +223,6 @@ Mew ex replay.
   screening, raw and slab pricing. Honor provider revision timestamps and newer
   retractions; do not choose the highest amount or best target fit. Pricing
   revision 14 retains paid photo versions. All 1,024 isolated tests pass.
-- [ ] Add verified cheapest matching available BIN competition as a separate
-  resale ceiling. Reuse rows/accepted labels; include delivered terms, seller
-  caution and availability. Asking prices remain distinct from completed sales.
 - [x] Replay 12 intent phrases and fix free parsing of spelled-out slab grades
   and spaced "Reverse Holo Foil" or "Non Holo Foil" wording.
 - [x] Run a single bounded text check on saved catalog candidates. It identified

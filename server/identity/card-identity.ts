@@ -4,6 +4,7 @@ import { finishClaim, type FinishClaim } from "../../shared/finish.ts";
 import { normalizeCardNumber, sameCardNumber } from "../../shared/card-number.ts";
 import { canonicalCatalogName, sameCatalogName } from "./catalog-name.ts";
 import { cardLanguageStatus } from "../../shared/card-language.ts";
+import { BASE_SET_2_TITLE, withoutReprintRelease } from "../../shared/reprint-release.ts";
 import { checkSlab } from "./slab-check.ts";
 import type { readTitleByRules } from "../ai/title-reader.ts";
 
@@ -535,7 +536,7 @@ export function lookAlikeProblem(
 const REPRINT_MARKS: Record<string, { name: string; sets: string[] }> = {
     CELEBRATIONS_25TH: { name: "the 2021 Celebrations reprint", sets: ["celebration"] },
     ANNIVERSARY_30TH: { name: "the 2026 30th Celebration reprint", sets: ["30th"] },
-    BASE_SET_2: { name: "Base Set 2", sets: ["base set 2"] },
+    BASE_SET_2: { name: "Base Set 2", sets: ["base set 2", "base set ii"] },
     WORLD_CHAMPIONSHIPS: { name: "a World Championships deck", sets: ["world championship"] },
     OTHER_STAMP: { name: "a stamped special printing", sets: ["promo"] },
 };
@@ -595,7 +596,7 @@ const REPRINT_MARKERS: [RegExp, string[] | null][] = [
     [/\bclassic collection\b/, ["classic collection", "celebration"]],
     [/\b\d+(st|nd|rd|th) anniversary\b/, ["celebration", "classic collection", "anniversary"]],
     [/\bevolutions\b/, ["evolutions"]],
-    [/\bbase set 2\b/, ["base set 2"]],
+    [BASE_SET_2_TITLE, REPRINT_MARKS.BASE_SET_2.sets],
     [/\blegendary collection\b/, ["legendary collection"]],
     [/\bmcdonald'?s\b/, ["mcdonald"]],
     [NOVELTY, null],
@@ -620,7 +621,7 @@ export function titleContradiction(title: string, setName: string | null, cardNu
         }
     }
 
-    const numbers = [...text.matchAll(TITLE_NUMBERS)]
+    const numbers = [...withoutReprintRelease(text).matchAll(TITLE_NUMBERS)]
         .filter((match) => Number(match[2]) > 10)
         .map((match) => `${match[1]}/${match[2]}`);
 
