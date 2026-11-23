@@ -2,8 +2,9 @@ import type { ReactNode, Ref, RefObject } from "react";
 import type { EbayUsage, Targets } from "../types";
 import type { AiUsageDay } from "../../../shared/ai-usage.ts";
 import type { ResultGroups, View, SortKey, SearchFilters, TypeFilter, KindFilter } from "./results";
-import { ALL, AUTO_OPTIONS, RESULT_OPTIONS } from "./settings";
+import { ALL, AUTO_OPTIONS } from "./settings";
 import { DEVELOPMENT_SEARCH_LIMIT } from "../../../shared/research-policy.ts";
+import type { MarketplaceOrder } from "../../../shared/listing-filters.ts";
 import { MAX_OFFER_DISCOUNT_PERCENT } from "../../../shared/money/cents.ts";
 import { describeUsage } from "./presentation";
 import { withViewTransition } from "../motion";
@@ -26,9 +27,11 @@ interface SearchControlsProps {
     };
     filters: SearchFilters & {
         sort: SortKey;
+        marketplaceOrder: MarketplaceOrder;
         setTypeFilter: (value: TypeFilter) => void;
         setKindFilter: (value: KindFilter) => void;
         setSort: (value: SortKey) => void;
+        setMarketplaceOrder: (value: MarketplaceOrder) => void;
         changeMinPrice: (value: string) => void;
         setMaxPrice: (value: string) => void;
         changeMinGrade: (value: number) => void;
@@ -37,10 +40,8 @@ interface SearchControlsProps {
     settings: {
         includeOffers: boolean;
         autoSetting: number;
-        resultsSetting: number;
         changeIncludeOffers: (value: boolean) => void;
         changeAutoSetting: (value: number) => void;
-        changeResultsSetting: (value: number) => void;
     };
     drawer: { drawerOpen: boolean; setDrawerOpen: (open: boolean) => void };
     usage: EbayUsage | null;
@@ -92,9 +93,9 @@ function Segmented<T extends string>({
 
 export function SearchControls({ showSearchOptions = false, hidden, idle, views, filters, target, settings, drawer, usage, aiUsage }: SearchControlsProps) {
     const { view, availableViews, groups, allTab, setView } = views;
-    const { typeFilter, kindFilter, sort, minPrice, maxPrice, minGrade, setTypeFilter, setKindFilter, setSort, changeMinPrice, setMaxPrice, changeMinGrade } = filters;
+    const { typeFilter, kindFilter, sort, marketplaceOrder, minPrice, maxPrice, minGrade, setTypeFilter, setKindFilter, setSort, setMarketplaceOrder, changeMinPrice, setMaxPrice, changeMinGrade } = filters;
     const { targets, targetInputs, changeTarget } = target;
-    const { includeOffers, autoSetting, resultsSetting, changeIncludeOffers, changeAutoSetting, changeResultsSetting } = settings;
+    const { includeOffers, autoSetting, changeIncludeOffers, changeAutoSetting } = settings;
     const { drawerOpen, setDrawerOpen } = drawer;
 
     // A view's count, in its color when it holds something worth a look:
@@ -163,6 +164,13 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
                         <option value="graded">Graded cards</option>
                     </select>
                 </label>
+                {typeFilter !== "AUCTION" && <label className={styles.field}>
+                    <span>eBay search order</span>
+                    <select value={marketplaceOrder} onChange={({ target: { value } }) => setMarketplaceOrder(value === "lowest" ? "lowest" : "newest")}>
+                        <option value="newest">Newest first</option>
+                        <option value="lowest">Lowest price first</option>
+                    </select>
+                </label>}
                 <label className={styles.field}>
                     <span>Minimum Buy It Now price</span>
                     <span className={styles.affix}><span>$</span><input type="number" min="0" inputMode="decimal" placeholder="Any" value={minPrice} onChange={(event) => changeMinPrice(event.target.value)} /></span>
@@ -175,7 +183,7 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
 
     return (
         <>
-            {showSearchOptions && <div className={styles.searchOptions} role="group" aria-label="Search options">
+            {showSearchOptions && <div className={styles.searchOptions} data-marketplace-order={typeFilter !== "AUCTION" || undefined} role="group" aria-label="Search options">
                 {purchaseFields}
                 <p className={styles.preferenceNote}>English cards only. Up to {DEVELOPMENT_SEARCH_LIMIT} matching listings per scan. Recent sales guide which listings the app assesses first. Identity and condition remain preliminary until photo assessment. All prices by default. The minimum applies to Buy It Now and the maximum to both formats.</p>
             </div>}
@@ -289,7 +297,7 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
                     <p className={styles.usage}>English cards only. Listings with unconfirmed language remain preliminary.</p>
                     {!showSearchOptions && purchaseFields}
                     <label className={styles.field}>
-                        <span>Sort</span>
+                        <span>Sort results</span>
                         <select
                             value={sort}
                             onChange={(event) => {
@@ -319,16 +327,6 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
                     <label className={styles.offerToggle}>
                         <span>Include deals requiring a Best Offer<small>Up to {MAX_OFFER_DISCOUNT_PERCENT}% below asking. The seller would need to accept.</small></span>
                         <input type="checkbox" role="switch" checked={includeOffers} onChange={(event) => changeIncludeOffers(event.target.checked)} />
-                    </label>
-                    <label className={styles.field}>
-                        <span>Matching listings per search</span>
-                        <select value={resultsSetting} onChange={(event) => changeResultsSetting(Number(event.target.value))}>
-                            {RESULT_OPTIONS.map((option) => (
-                                <option key={option} value={option}>
-                                    {option === 1000 ? "1,000 (more eBay requests)" : option}
-                                </option>
-                            ))}
-                        </select>
                     </label>
                     <label className={styles.field}>
                         <span>AI photo assessments</span>

@@ -23,6 +23,15 @@ test("old and future sales do not imply current liquidity; raw market prices imp
     assert.equal(resaleActivity({ underwriting: { best: { path: "RAW" } } }, now).recentSales, null);
 });
 
+test("a lower grade used for pricing does not count as matched liquidity at the estimated grade", () => {
+    const evaluation = {
+        underwriting: { best: { path: "GRADE", grader: "PSA", outlook: [{ grade: 9, filledFrom: 8 }] } },
+        condition: { gradeRange: { low: 8, likely: 9, high: 9 } },
+        gradedPricing: { PSA: { byGrade: [{ grader: "PSA", grade: 8, sales: sales(20) }] } },
+    };
+    assert.equal(resaleActivity(evaluation, now).recentSales, null);
+});
+
 test("matched liquidity counts unique dated sales in 7/30/90-day windows", () => {
     const sale = (days: number, url: string) => ({ soldAt: new Date(now - days * 86400000).toISOString(), url, price: 100 });
     const result = matchedSoldActivity({ slab: {}, slabPricing: { summary: { grader: "PSA", grade: "7", windowDays: 90,

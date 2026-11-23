@@ -23,7 +23,7 @@ export const validSearchRequest: RequestHandler = (req, res, next) => {
     const query = req.method === "POST" ? req.body?.query : req.query.q;
     const error = typeof query !== "string" || !query.trim() || query.trim().length > 300
         ? "Enter a search between 1 and 300 characters."
-        : ["min", "max", "profit", "roi"].some(field => {
+        : ["min", "max", "ceiling", "profit", "roi"].some(field => {
             const value = req.query[field];
             if (value === undefined) return false;
             return typeof value !== "string" || !value.trim() || !Number.isFinite(Number(value)) || Number(value) < 0 || field === "max" && Number(value) < 1;

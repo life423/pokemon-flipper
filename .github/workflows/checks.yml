@@ -1,0 +1,32 @@
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm ci --omit=dev
+      - run: |
+          export POKEMON_FLIPPER_STORAGE=file
+          export POKEMON_FLIPPER_DATA_DIR="$(mktemp -d)"
+          export PORT=3017
+          node --import tsx scripts/start.mjs &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true; wait "$server_pid" || true; rm -rf "$POKEMON_FLIPPER_DATA_DIR"' EXIT
+          curl --fail --silent --show-error --retry 10 --retry-connrefused http://127.0.0.1:3017/ >/dev/null

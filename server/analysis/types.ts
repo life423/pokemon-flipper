@@ -1,4 +1,4 @@
-import type { Condition, DeeperPhotoReview, PhotoCheck, Evaluation } from "../../shared/types.ts";
+import type { BuyingOption, Condition, DeeperPhotoReview, PhotoCheck, Evaluation } from "../../shared/types.ts";
 
 export type GradingMode = "FULL" | "LIMITED" | "BLOCKED";
 
@@ -11,6 +11,9 @@ export interface CurrentState {
     shipping: number | null;
     bids: number;
     endTime: string | null;
+    termsCheckedAt?: string;
+    buyingOption?: BuyingOption;
+    bestOffer?: boolean;
 }
 
 export interface Usage {

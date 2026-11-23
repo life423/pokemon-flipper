@@ -11,7 +11,7 @@ test("vision assessments receive the assessment model and room for structured ph
         assert.equal(aiPolicy(step).model, VISION_MODEL);
         assert.equal(aiPolicy(step).effort, "medium");
     }
-    for (const step of ["comp_check", "title_readings", "search_intent", "photo_card"]) assert.equal(aiPolicy(step).model, TEXT_MODEL);
+    for (const step of ["comp_check", "marketplace_query_assistance", "listing_text_priority"]) assert.equal(aiPolicy(step).model, TEXT_MODEL);
     assert.ok(aiPolicy("photo_check").maxOutputTokens >= 8192);
 });
 

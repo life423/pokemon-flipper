@@ -21,9 +21,11 @@ test("untrusted websites, simple GETs and invalid search values cannot reach pro
     }
     assert.equal(providerCalls, 0);
     const headers = { "X-Pokemon-Flipper": "1", Origin: base };
-    for (const query of ["", "?q=", "?q=%20", "?q=" + "a".repeat(301), "?q=charizard&min=Infinity", "?q=charizard&min=-1", "?q=charizard&max=0", "?q=charizard&roi=NaN"]) assert.equal((await fetch(base + "/api/deals" + query, { headers })).status, 400);
+    for (const query of ["", "?q=", "?q=%20", "?q=" + "a".repeat(301), "?q=charizard&min=Infinity", "?q=charizard&min=-1", "?q=charizard&max=0", "?q=charizard&roi=NaN", "?q=charizard&ceiling=Infinity", "?q=charizard&ceiling=50&ceiling=100"]) assert.equal((await fetch(base + "/api/deals" + query, { headers })).status, 400);
+    const newSearch = { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ query: "new holo cards" }) };
+    assert.equal((await fetch(base + "/api/deals/new?ceiling=-1", newSearch)).status, 400);
     assert.equal(providerCalls, 0);
     assert.equal((await fetch(base + "/api/deals?q=charizard&profit=0&roi=0&min=0&max=400", { headers })).status, 200);
-    assert.equal((await fetch(base + "/api/deals/new", { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ query: "new holo cards" }) })).status, 200);
+    assert.equal((await fetch(base + "/api/deals/new?ceiling=100", newSearch)).status, 200);
     assert.equal(providerCalls, 2);
 });

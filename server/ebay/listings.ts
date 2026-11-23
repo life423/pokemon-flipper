@@ -1,12 +1,15 @@
-import { ebayGet, EbayError } from "./api.ts";
-import { exclusionReason, normalizeText } from "./filters.ts";
+import { configuredShippingZip, ebayGet, EbayError } from "./api.ts";
+import { listingExclusion, normalizeText } from "./filters.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { ebayUsage, EbayBudgetError } from "./usage.ts";
-import { createSingleFlight } from "../lib/single-flight.ts";
+import { createSharedWork } from "../lib/shared-work.ts";
+import { getAiUsageContext } from "../ai/usage-context.ts";
+import { EbaySearchBudgetError } from "./search-budget.ts";
 import { photoEvidenceKey, searchPhotosFitDetails } from "../../shared/listing-evidence.ts";
 import type { BuyingOption, ListingSummary, Seller } from "../../shared/types.ts";
 import type { ListingFilters } from "../../shared/listing-filters.ts";
 import { cardLanguageStatus, EnglishOnlyError } from "../../shared/card-language.ts";
+import type { SourceRejectionReason } from "../../shared/search-diagnostic.ts";
 
 // Toys & Hobbies > Collectible Card Games > CCG Individual Cards
 export const CCG_INDIVIDUAL_CARDS = "183454";
@@ -20,26 +23,21 @@ const PAGE_SIZE = 200;
 
 // eBay limits requests per day, so answers are saved. A search is saved
 // briefly, since its prices move. A listing's details (photos, item
-// specifics, seller) hardly change, so they're saved for a week; its
-// price always comes from a search.
+// specifics, seller) are saved for a week. Purchase terms come from
+// whichever provider response was observed more recently.
 const SEARCH_MAX_AGE_HOURS = 10 / 60;
 export const DETAILS_MAX_AGE_HOURS = 24 * 7;
 
-// Detail requests this server has sent to eBay, for the logs.
-let detailRequests = 0;
-const shareDetails = createSingleFlight();
+const shareSearches = createSharedWork();
+const shareDetails = createSharedWork();
 
 // Quotes are destination-specific. Adding/changing a ZIP must not reuse a
 // quote (or a missing quote) fetched for another destination.
 export function shippingCacheScope(): string {
-    const zip = process.env.EBAY_SHIP_TO_ZIP?.trim();
+    const zip = configuredShippingZip();
     return zip ? `:ship-to:${encodeURIComponent(zip)}` : "";
 }
 export const listingCacheKey = (itemId: string) => `ebay:item:${itemId}${shippingCacheScope()}`;
-
-export function detailRequestCount(): number {
-    return detailRequests;
-}
 
 interface Amount {
     value: string;
@@ -64,7 +62,8 @@ interface EbayItem {
     condition?: string;
     image?: { imageUrl: string };
     additionalImages?: { imageUrl: string }[];
-    shippingOptions?: { shippingCost?: Amount }[];
+    shippingOptions?: { shippingCost?: Amount; shippingCostType?: string;
+        shipToLocationUsedForEstimate?: { country?: string; postalCode?: string } }[];
     categories?: { categoryId: string }[];
     seller?: { username?: string; feedbackPercentage?: string; feedbackScore?: number };
     localizedAspects?: { name: string; value: string }[];
@@ -86,7 +85,7 @@ export interface ListingDetails {
     url: string;
     images: string[];
     price: number | null;
-    // null when shipping is CALCULATED and eBay has no ship-to ZIP.
+    // null when eBay does not supply a usable delivery quote.
     shipping: number | null;
     buyingOption: BuyingOption;
     bids: number;
@@ -132,6 +131,21 @@ function listingDates(item: EbayItem) {
     return { ...(listedAt ? { listedAt } : {}), ...(createdAt ? { createdAt } : {}) };
 }
 
+function quotedShipping(item: EbayItem): number | null {
+    const zip = configuredShippingZip();
+    for (const option of item.shippingOptions ?? []) {
+        if (option.shippingCostType === "CALCULATED" && !zip) continue;
+        const destination = option.shipToLocationUsedForEstimate;
+        if (destination?.country && destination.country !== "US") continue;
+        const quotedZip = destination?.postalCode?.split("-")[0];
+        // eBay can mask digits in the echoed postal code.
+        if (quotedZip && (!zip || quotedZip.length !== 5 || ![...quotedZip].every((digit, index) => digit === "*" || digit === zip[index]))) continue;
+        const amount = toAmount(option.shippingCost);
+        if (amount !== null) return amount;
+    }
+    return null;
+}
+
 // What buying it costs right now: the current bid for an auction, the
 // price otherwise, and the quoted shipping.
 function priceDetails(item: EbayItem) {
@@ -140,7 +154,7 @@ function priceDetails(item: EbayItem) {
 
     return {
         price: toAmount(isAuction ? (item.currentBidPrice ?? item.price) : item.price),
-        shipping: toAmount(item.shippingOptions?.[0]?.shippingCost),
+        shipping: quotedShipping(item),
         buyingOption,
         bestOffer: item.buyingOptions?.includes("BEST_OFFER") ?? false,
         bids: item.bidCount ?? 0,
@@ -149,22 +163,49 @@ function priceDetails(item: EbayItem) {
     };
 }
 
-function toListing(item: EbayItem): ListingSummary {
+function structuredCondition(item: EbayItem) {
+    const fields: Record<string, string> = {};
+    const conditionNotes: string[] = [];
+    for (const descriptor of item.conditionDescriptors ?? []) {
+        const content = descriptor.values?.[0]?.content;
+        if (typeof content === "string" && content.trim()) fields[descriptor.name] = content;
+        for (const value of descriptor.values ?? []) {
+            for (const note of value.additionalInfo ?? []) {
+                if (typeof note === "string" && note.trim()) conditionNotes.push(note);
+            }
+        }
+    }
+    return { fields, cardCondition: fields["Card Condition"] ?? null, conditionNotes };
+}
+
+function toListing(item: EbayItem, termsCheckedAt: string): ListingSummary {
     const { price, ...rest } = priceDetails(item);
+    const { cardCondition, conditionNotes } = structuredCondition(item);
 
     return {
         id: item.itemId,
         title: item.title,
         currentPrice: price,
+        termsCheckedAt,
         ...rest,
         ...listingDates(item),
+        ...(cardCondition ? { cardCondition } : {}),
+        ...(conditionNotes.length ? { conditionNotes } : {}),
         isGraded: item.conditionId === GRADED,
-        bestOffer: item.buyingOptions?.includes("BEST_OFFER") ?? false,
         categoryId: item.categories?.[0]?.categoryId,
         seller: toSeller(item.seller),
         images: photosOf(item),
         url: item.itemWebUrl,
     };
+}
+
+interface SearchResult {
+    listings: ListingSummary[];
+    total: number;
+    skipped: number;
+    // Earlier cache entries contain only the aggregate skipped count.
+    rejections?: { id: string; reason: SourceRejectionReason }[];
+    unidentifiable?: number;
 }
 
 export async function searchListings(
@@ -179,7 +220,7 @@ export async function searchListings(
         auctionEndsWithinHours,
         asOf = Date.now(),
     }: { maxResults?: number; anyCategory?: boolean; keepReserve?: boolean; signal?: AbortSignal; sort?: "newlyListed" | "price"; filters?: ListingFilters; auctionEndsWithinHours?: number; asOf?: number } = {}
-): Promise<{ listings: ListingSummary[]; total: number; skipped: number }> {
+): Promise<SearchResult> {
     if (cardLanguageStatus(search) === "OTHER") throw new EnglishOnlyError();
     const scope = anyCategory ? "any" : "cards";
     signal?.throwIfAborted();
@@ -193,74 +234,110 @@ export async function searchListings(
     const validPrice = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
     const lower = buyingOption === "FIXED_PRICE" && validPrice(filters?.minPrice) && filters.minPrice > 0 ? filters.minPrice : undefined;
     const upper = buyingOption === "FIXED_PRICE" && validPrice(filters?.maxPrice) ? filters.maxPrice : undefined;
-    if (lower !== undefined && upper !== undefined && lower > upper) return { listings: [], total: 0, skipped: 0 };
+    if (lower !== undefined && upper !== undefined && lower > upper) return { listings: [], total: 0, skipped: 0, rejections: [] };
     const priceRange = upper !== undefined ? `${lower ?? ""}..${upper}` : lower !== undefined ? String(lower) : null;
     const priceScope = priceRange === null ? "" : `:price:USD:${priceRange}`;
     const key = `ebay:search:${maxResults}:${scope}:language:en:${sort ? `${sort}:` : ""}${normalizeText(search).trim()}${shippingCacheScope()}${filterScope}${priceScope}`;
-    const saved = await readCache<{ listings: ListingSummary[]; total: number; skipped: number }>(key, sort ? 1 / 60 : SEARCH_MAX_AGE_HOURS);
-    signal?.throwIfAborted();
+    const load = async (signal: AbortSignal): Promise<SearchResult> => {
+        const saved = await readCache<SearchResult>(key, sort ? 1 / 60 : SEARCH_MAX_AGE_HOURS);
+        signal.throwIfAborted();
 
-    if (saved) return saved;
+        if (saved) return saved;
 
-    // The few search requests are refused only when the day's allowance is gone.
-    const usage = await ebayUsage();
+        // The few search requests are refused only when the day's allowance is gone.
+        const usage = await ebayUsage();
 
-    if (usage && usage.remaining < Math.ceil(maxResults / PAGE_SIZE)) {
-        throw new EbayBudgetError("eBay's daily limit is used up. It resets at midnight Pacific.");
-    }
-
-    const listings: ListingSummary[] = [];
-    const seen = new Set<string>();
-    let total = 0;
-    // Junk the free rules dropped: lots, sealed product, merch, fakes.
-    let skipped = 0;
-    const sourceNow = asOf;
-
-    for (let offset = 0; offset < maxResults; offset += PAGE_SIZE) {
-        signal?.throwIfAborted();
-        if (keepReserve && (await ebayUsage())?.braking) {
-            throw new EbayBudgetError("Saving the rest of today's eBay allowance; extra searches paused.");
+        if (usage && usage.remaining < Math.ceil(maxResults / PAGE_SIZE)) {
+            throw new EbayBudgetError("eBay's daily limit is used up. It resets at midnight Pacific.");
         }
-        const filter = [`buyingOptions:{${buyingOption ?? "AUCTION|FIXED_PRICE"}}`, `conditionIds:{${kind === "raw" ? UNGRADED : kind === "graded" ? GRADED : `${UNGRADED}|${GRADED}`}}`];
-        if (endWindow) filter.push(`itemEndDate:[${new Date(sourceNow).toISOString()}..${new Date(sourceNow + endWindow * 3600000).toISOString()}]`);
-        if (priceRange !== null) filter.push(`price:[${priceRange}]`, "priceCurrency:USD");
-        const params = new URLSearchParams({
-            q: `pokemon ${search}${anyCategory ? " english" : ""}`.trim(),
-            // Outside the card category, for listings filed in the wrong one.
-            ...(anyCategory ? {} : { category_ids: CCG_INDIVIDUAL_CARDS, aspect_filter: `categoryId:${CCG_INDIVIDUAL_CARDS},Language:{English}` }),
-            filter: filter.join(","),
-            limit: String(PAGE_SIZE),
-            offset: String(offset),
-            ...(sort ? { sort } : {}),
-        });
 
-        const page = await ebayGet<{ itemSummaries?: EbayItem[]; total?: number }>(
-            `/buy/browse/v1/item_summary/search?${params}`, { signal, keepReserve }
-        );
-        signal?.throwIfAborted();
-        const items = page.itemSummaries ?? [];
-        total = page.total ?? total;
+        const listings: ListingSummary[] = [];
+        const seen = new Set<string>();
+        const rejections = new Map<string, SourceRejectionReason>();
+        let unidentifiable = 0;
+        let total = 0;
+        // Junk the free rules dropped: lots, sealed product, merch, fakes.
+        let skipped = 0;
 
-        for (const item of items) {
-            if (seen.has(item.itemId)) continue;
+        for (let offset = 0; offset < maxResults; offset += PAGE_SIZE) {
+            signal.throwIfAborted();
+            if (keepReserve && (await ebayUsage())?.braking) {
+                throw new EbayBudgetError("Saving the rest of today's eBay allowance; extra searches paused.");
+            }
+            const filter = [`buyingOptions:{${buyingOption ?? "AUCTION|FIXED_PRICE"}}`, `conditionIds:{${kind === "raw" ? UNGRADED : kind === "graded" ? GRADED : `${UNGRADED}|${GRADED}`}}`];
+            if (endWindow) filter.push(`itemEndDate:[${new Date(asOf).toISOString()}..${new Date(asOf + endWindow * 3600000).toISOString()}]`);
+            if (priceRange !== null) filter.push(`price:[${priceRange}]`, "priceCurrency:USD");
+            const params = new URLSearchParams({
+                q: `pokemon ${search}${anyCategory ? " english" : ""}`.trim(),
+                // Outside the card category, for listings filed in the wrong one.
+                ...(anyCategory ? {} : { category_ids: CCG_INDIVIDUAL_CARDS, aspect_filter: `categoryId:${CCG_INDIVIDUAL_CARDS},Language:{English}` }),
+                filter: filter.join(","),
+                limit: String(PAGE_SIZE),
+                offset: String(offset),
+                ...(sort ? { sort } : {}),
+            });
 
-            if (exclusionReason(item) !== null || cardLanguageStatus(item.title, item.localizedAspects?.filter(aspect => aspect.name.toLowerCase() === "language").map(aspect => aspect.value)) === "OTHER") {
-                skipped += 1;
-                continue;
+            const page = await ebayGet<{ itemSummaries?: EbayItem[]; total?: number }>(
+                `/buy/browse/v1/item_summary/search?${params}`, { signal, keepReserve }
+            );
+            signal.throwIfAborted();
+            const termsCheckedAt = new Date().toISOString();
+            const items = page.itemSummaries ?? [];
+            total = page.total ?? total;
+
+            for (const item of items) {
+                if (seen.has(item.itemId)) continue;
+
+                if (typeof item.itemId !== "string" || !/^[\w|\-]{1,120}$/.test(item.itemId)) {
+                    unidentifiable++;
+                    skipped += 1;
+                    continue;
+                }
+                const exclusion = listingExclusion(item);
+                const language = exclusion ? null : cardLanguageStatus(item.title,
+                    item.localizedAspects?.filter(aspect => aspect.name.toLowerCase() === "language").map(aspect => aspect.value));
+                const reason = exclusion ?? (language === "OTHER" ? "OTHER_LANGUAGE" : null);
+                if (reason) {
+                    skipped += 1;
+                    rejections.set(item.itemId, reason);
+                    continue;
+                }
+
+                seen.add(item.itemId);
+                rejections.delete(item.itemId);
+                listings.push(toListing(item, termsCheckedAt));
             }
 
-            seen.add(item.itemId);
-            listings.push(toListing(item));
+            if (items.length < PAGE_SIZE || offset + PAGE_SIZE >= total) break;
         }
 
-        if (items.length < PAGE_SIZE || offset + PAGE_SIZE >= total) break;
+        console.log(`Search ${JSON.stringify(search)}: eBay has ${total}; kept ${listings.length} single cards`);
+
+        const result: SearchResult = { listings, total, skipped,
+            rejections: Array.from(rejections, ([id, reason]) => ({ id, reason })),
+            ...(unidentifiable ? { unidentifiable } : {}),
+        };
+        await writeCache(key, result);
+        return result;
+    };
+
+    const { searchId } = getAiUsageContext();
+    // A shared one-page response uses the initiating search's allowance.
+    // Multi-page work stays with its search ID, and reserve policies stay separate.
+    const sharedKey = JSON.stringify([key, keepReserve, maxResults > PAGE_SIZE ? searchId : null]);
+    for (;;) {
+        const outcome = await shareSearches(sharedKey, async workSignal => {
+            try { return { result: await load(workSignal) }; }
+            catch (error) {
+                if (!(error instanceof EbaySearchBudgetError)) throw error;
+                return { error, searchId };
+            }
+        }, signal);
+        if (outcome.result) return structuredClone(outcome.result);
+        if (outcome.searchId === searchId) throw outcome.error;
+        // A different search can still pay for this page if the initiating
+        // search could not reserve it. All waiting searches can share that work.
     }
-
-    console.log(`Search ${JSON.stringify(search)}: eBay has ${total}; kept ${listings.length} single cards`);
-
-    await writeCache(key, { listings, total, skipped });
-
-    return { listings, total, skipped };
 }
 
 // A listing's details, saved for a week. maxAgeHours: 0 always asks eBay.
@@ -268,10 +345,11 @@ export async function searchListings(
 // (the free check's bulk lookups); a deliberate analysis still asks.
 export async function getListingDetails(
     itemId: string,
-    { maxAgeHours = DETAILS_MAX_AGE_HOURS, keepReserve = false, expectedPhotos, expectedTitle, allowEndedCache = false }: {
-        maxAgeHours?: number; keepReserve?: boolean; expectedPhotos?: readonly string[]; expectedTitle?: string; allowEndedCache?: boolean;
+    { maxAgeHours = DETAILS_MAX_AGE_HOURS, keepReserve = false, expectedPhotos, expectedTitle, allowEndedCache = false, signal }: {
+        maxAgeHours?: number; keepReserve?: boolean; expectedPhotos?: readonly string[]; expectedTitle?: string; allowEndedCache?: boolean; signal?: AbortSignal;
     } = {}
 ): Promise<ListingDetails> {
+    signal?.throwIfAborted();
     const key = listingCacheKey(itemId);
 
     if (maxAgeHours > 0) {
@@ -280,23 +358,24 @@ export async function getListingDetails(
             (expectedPhotos === undefined || (saved.searchPhotoKey !== undefined
                 ? saved.searchPhotoKey === photoEvidenceKey(expectedPhotos)
                 : searchPhotosFitDetails(expectedPhotos, saved.images)))) {
+            signal?.throwIfAborted();
             if (expectedPhotos !== undefined && saved.searchPhotoKey === undefined) {
                 saved.searchPhotoKey = photoEvidenceKey(expectedPhotos);
                 await writeCache(key, saved);
             }
+            signal?.throwIfAborted();
             return saved;
         }
     }
 
-    if (keepReserve && (await ebayUsage())?.braking) {
-        throw new EbayBudgetError("Saving the rest of today's eBay allowance.");
-    }
-
+    signal?.throwIfAborted();
     const evidence = expectedPhotos === undefined ? "" : photoEvidenceKey(expectedPhotos);
-    return shareDetails(JSON.stringify([itemId, expectedTitle, evidence]), async () => {
-        detailRequests += 1;
+    return shareDetails(JSON.stringify([key, expectedTitle, evidence, keepReserve]), async workSignal => {
+        const usage = keepReserve ? await ebayUsage() : null;
+        workSignal.throwIfAborted();
+        if (usage?.braking) throw new EbayBudgetError("Saving the rest of today's eBay allowance.");
         let details: ListingDetails;
-        try { details = await fetchListingDetails(itemId, keepReserve); }
+        try { details = await fetchListingDetails(itemId, keepReserve, workSignal); }
         catch (error) {
             if (error instanceof EbayError && [404, 410].includes(error.status)) {
                 const previous = await readCache<ListingDetails>(key, DETAILS_MAX_AGE_HOURS);
@@ -307,19 +386,12 @@ export async function getListingDetails(
         if (expectedPhotos !== undefined) details.searchPhotoKey = evidence;
         await writeCache(key, details);
         return details;
-    });
+    }, signal);
 }
 
-async function fetchListingDetails(itemId: string, keepReserve = false): Promise<ListingDetails> {
-    const item = await ebayGet<EbayItem>(`/buy/browse/v1/item/${encodeURIComponent(itemId)}`, { keepReserve });
-    const descriptors = item.conditionDescriptors ?? [];
-
-    // eBay's structured condition fields, as item specifics.
-    const conditionFields: Record<string, string> = {};
-    for (const descriptor of descriptors) {
-        const content = descriptor.values?.[0]?.content;
-        if (content) conditionFields[descriptor.name] = content;
-    }
+async function fetchListingDetails(itemId: string, keepReserve: boolean, signal: AbortSignal): Promise<ListingDetails> {
+    const item = await ebayGet<EbayItem>(`/buy/browse/v1/item/${encodeURIComponent(itemId)}`, { keepReserve, signal });
+    const { fields, cardCondition, conditionNotes } = structuredCondition(item);
 
     return {
         retrievedAt: new Date().toISOString(),
@@ -334,13 +406,11 @@ async function fetchListingDetails(itemId: string, keepReserve = false): Promise
         ...listingDates(item),
         seller: toSeller(item.seller),
         condition: item.condition ?? null,
-        cardCondition: conditionFields["Card Condition"] ?? null,
-        conditionNotes: descriptors.flatMap((descriptor) =>
-            (descriptor.values ?? []).flatMap((value) => value.additionalInfo ?? [])
-        ),
+        cardCondition,
+        conditionNotes,
         aspects: {
             ...Object.fromEntries((item.localizedAspects ?? []).map((aspect) => [aspect.name, aspect.value])),
-            ...conditionFields,
+            ...fields,
         },
     };
 }

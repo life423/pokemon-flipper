@@ -49,7 +49,10 @@ const dateOf = (value: string | null | undefined) => typeof value === "string" &
 
 export function DealCard({ listing, analysis, assessmentNote, selected, now, onOpen, years, index = 0, transitionName, minGrade = 0, targets = MONEY_CONFIG.targets, includeOffers, photoReviewState, saved, saving, onSave }: Props) {
     const evaluation = analysis?.status === "done" ? analysis.evaluation : null;
+    const pricingExpired = analysis?.status === "done" && analysis.pricingExpired;
     const priceGap = priceEvidenceGap(evaluation);
+    const shippingPending = evaluation?.underwriting?.shippingUnconfirmed;
+    const shipping = evaluation ? evaluation.listing.shipping : listing.shipping;
     const deferred = Boolean(priceGap) || isResearchDeferred(evaluation);
     const priceReview = Boolean(priceGap && evaluation && photoReviewStatus(evaluation).needsYourReview);
     const best = evaluation?.underwriting?.best;
@@ -76,6 +79,8 @@ export function DealCard({ listing, analysis, assessmentNote, selected, now, onO
     const subtitle = card?.name ? [card.set, yearOf(years, card.set), card.printing !== "UNLIMITED" ? card.printingLabel : null].filter(Boolean).join(" · ") : listing.isGraded ? "Graded card" : "Raw card";
     const [badge, tone] = analysis?.status === "loading" ? ["Analyzing", "pending"]
         : analysis?.status === "error" ? ["Analysis failed", "watch"]
+        : pricingExpired ? ["Prices need refresh", "quiet"]
+        : shippingPending ? ["Shipping unconfirmed", "quiet"]
         : deferred ? [priceReview ? "Your review needed" : priceGap ? "Price unconfirmed" : "Research deferred", priceReview ? "watch" : "quiet"]
         : decision?.status === "ENDED" ? ["Ended", "quiet"]
         : decision?.status === "OVER_LIMIT" ? ["Over limit", "pass"]
@@ -114,16 +119,16 @@ export function DealCard({ listing, analysis, assessmentNote, selected, now, onO
         {priceGap ? <p className={styles.note}>{priceGap}</p> : evaluation?.underwriting?.verdict === "CANT_PRICE" && <p className={styles.note}>{evaluation.underwriting.reasons[0]}</p>}
         {!evaluation && screen?.soldEvidence && <SoldPriceScreening listing={listing} compact />}
         {!evaluation && !screen?.soldEvidence && screen?.status === "UNSCREENED" && <p className={styles.note}>{screen.pricingIssue?.kind === "RATE_LIMIT" ? "Pricing paused for provider cooldown." : screen.pricingIssue?.kind === "TEMPORARY" ? "Price lookup temporarily unavailable." : screen.pricingIssue?.kind === "CREDITS" ? "Pricing unavailable. Check provider credits." : screen.pricingIssue?.kind === "CONFIG" ? "Pricing unavailable. Check provider setup." : screen.reason}</p>}
-        {deferred ? <div className={styles.money}><div><span className={styles.label}>{auction ? "Current bid" : "Asking price"}</span><strong className={styles.price}>{dollars(listing.currentPrice)}</strong></div></div> : auction && evaluation ? <AuctionSummary evaluation={evaluation} targets={targets} now={now} /> : <>
+        {deferred || pricingExpired ? <div className={styles.money}><div><span className={styles.label}>{auction ? "Current bid" : "Asking price"}</span><strong className={styles.price}>{dollars(listing.currentPrice)}</strong></div></div> : auction && evaluation ? <AuctionSummary evaluation={evaluation} targets={targets} now={now} /> : <>
             <div className={styles.money}>
                 <div><span className={styles.label}>{auction ? "Current bid" : "Asking price"}</span><strong className={styles.price}>{dollars(listing.currentPrice)}</strong></div>
-                {best && <div><span className={styles.label}>Est. net {best.profit < 0 ? "loss" : "profit"} at asking</span><strong className={best.profit >= 0 ? styles.gain : styles.loss}>{dollars(Math.abs(best.profit))}</strong><span className={styles.label}>{returnText(best.cost > 0 ? best.profit / best.cost : null)} return on total cost</span></div>}
+                {best && <div><span className={styles.label}>{shippingPending ? "Modeled" : "Est."} net {best.profit < 0 ? "loss" : "profit"} at asking</span><strong className={shippingPending ? undefined : best.profit >= 0 ? styles.gain : styles.loss}>{dollars(Math.abs(best.profit))}</strong><span className={styles.label}>{returnText(best.cost > 0 ? best.profit / best.cost : null)} return on total cost</span></div>}
             </div>
             {best && <p className={styles.note}>{best.label} · total invested {dollars(best.cost)} · includes tax, shipping{best.path === "GRADE" ? " and grading" : ""}. Sale fees are included in net profit.</p>}
-            {ceiling != null && <p className={styles.limit}>{best ? ceilingLabel(listing.buyingOption) : "Unverified screening ceiling"}: {dollars(ceiling)}</p>}
-            <p className={styles.note}>{auction ? `${timeLeft(listing.endTime, now) ?? "End time unavailable"} · ${listing.bids} bids · ` : ""}{listing.shipping === null ? !evaluation && screen?.soldEvidence
+            {ceiling != null && <p className={styles.limit}>{shippingPending ? "Provisional max price" : best ? ceilingLabel(listing.buyingOption) : "Unverified screening ceiling"}: {dollars(ceiling)}</p>}
+            <p className={styles.note}>{auction ? `${timeLeft(listing.endTime, now) ?? "End time unavailable"} · ${listing.bids} bids · ` : ""}{shipping === null ? !evaluation && screen?.soldEvidence
                 ? "Shipping not quoted · preliminary screening excludes shipping; confirm before buying"
-                : `Shipping not quoted · ${dollars(MONEY_CONFIG.buying.assumedShippingWhenUnknown)} assumed in estimates` : listing.shipping === 0 ? "Free shipping" : `${dollars(listing.shipping)} shipping`}</p>
+                : `Shipping not quoted · ${dollars(MONEY_CONFIG.buying.assumedShippingWhenUnknown)} assumed in estimates` : shipping === 0 ? "Free shipping" : `${dollars(shipping)} shipping`}</p>
         </>}
         {pricePending && <p className={styles.notice}>Unusually low price. Awaiting photo verification.</p>}
         {offer && offerNumbers && <p className={styles.notice}>Open at {dollars(offer.offer)} · walk away above {dollars(offer.walkAway)} · est. profit {signed(offerNumbers.profit)} if accepted.</p>}

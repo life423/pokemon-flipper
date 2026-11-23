@@ -32,12 +32,35 @@ flowchart TD
    text request can clean up phrasing the rules leave behind while preserving
    explicit card criteria. The initial page uses up to 200 eBay summaries,
    local/cached metadata exclusions and at most 50 retained matching rows.
-   A Buy It Now search starts with newly listed inventory. If fewer than three
-   candidates clear preliminary financial screening and some inventory has yet
-   to be screened, one additional page samples lower delivered prices. Both
-   passes share the same sold-price session, deduplicate researched IDs and
-   retain at most 50 results. The extra request preserves the eBay daily reserve.
-   Find new listings stays on the newest page and excludes previously seen IDs.
+   An exact slab Buy It Now search with a verified matched sale in the last
+   30 days derives an item-price ceiling using the existing fee and target math.
+   Its initial eBay request applies the lower of that ceiling and the user's
+   price filter, using the selected eBay order. Shipping is verified when evaluating a
+   candidate. An explicitly supplied collector fraction uses just its numerator
+   in the eBay query to catch shorthand titles, while exact search intent and
+   label verification still use the full card identity. The same sold research
+   session supports both discovery and screening.
+   If an exact slab Buy It Now search retains no listings, one lowest-price
+   Browse page and up to three detail reads can show the lowest checked
+   delivered ask and the purchase ceiling at its quoted shipping. This
+   optional check uses the same search account and daily reserve. It reuses
+   compatible saved slab evidence and labels matches based on listing details.
+   The comparison stays outside the Deals queue and does not set resale value.
+   A Buy It Now search defaults to newly listed inventory and can start with
+   eBay's lowest-price order. The local result sort only reorders loaded rows.
+   If the display fills
+   before three candidates clear preliminary financial screening, research can
+   continue within the fetched page. When a second page is warranted, it
+   samples lower prices. Both passes share the same sold-price session,
+   deduplicate researched IDs and retain at most 50 results. The search reports
+   unresolved rows that fell outside that display limit. Listing coverage shows
+   each fetched, identifiable listing that was rejected, was never screened,
+   or was screened outside the display limit. It saves these decisions under
+   the search ID. Older cached pages may have partial coverage. The extra
+   request preserves the eBay daily reserve.
+   With Best Offers enabled, a thin exact-slab result can include listings
+   within the offer discount range in that additional pass. Find new listings
+   keeps newest-first ordering and excludes previously seen IDs.
    Automatic auctions must fall within the fixed search-start 12-hour window.
 2. Before candidates are emitted to the browser, `price-first.ts` runs shared
    sold research with at most four candidates in flight. Its source permits
@@ -60,8 +83,9 @@ flowchart TD
    rank candidates; one or more matched sales within 90 days in one
    explicit scope can reject a listing using the upper observed resale value
    after costs. A 180-day fallback can inform priority but cannot hard-reject.
-   Unknown purchase shipping uses $0 for conservative exclusion and is disclosed;
-   it is not a confirmed free-delivery quote. Changing targets reapplies the same
+   Unknown purchase shipping uses $0 for conservative exclusion. A Buy It Now
+   estimate stays provisional until the configured destination has a usable
+   shipping quote. Changing targets reapplies the same
    retained references locally rather than fetching sales again.
    Raw sold-title condition buckets remain separate priority references, without
    assigning the live card a condition or numeric grade. Unspecified-condition
@@ -149,6 +173,11 @@ flowchart TD
    once eligible evidence is found; raw research retains its first two-page
    window, with sparse recovery up to four pages per source-label lookup.
    Page eligibility performs no paid comp checks; final comp checks run once.
+   When at least three matched Buy It Now sales fall within 30 days, the resale
+   estimate uses the median of the newest five available. With fewer direct
+   sales, the existing recency estimate can use other confirmed transactions.
+   Comparisons retain their sale format. Slab auction bid references prefer
+   observed auction prices when present.
    Raw resale first reads accepted sold-copy condition observations. When no
    suitable match exists, a same-condition seller-clue cohort merits research
    when any sale could cover the current purchase costs; otherwise consider the

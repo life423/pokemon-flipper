@@ -74,8 +74,10 @@ export function groupSearchResults(filtered: ListingSummary[], analyses: Record<
     const losses: ListingSummary[] = [];
 
     for (const listing of filtered) {
-        const evaluation = evaluationOf(analyses[listing.id]);
-        const group = resultGroup(listing, evaluation, includeOffers, analyses[listing.id]?.status === "error");
+        const analysis = analyses[listing.id];
+        const evaluation = evaluationOf(analysis);
+        const group = analysis?.status === "done" && analysis.pricingExpired && !photoReviewStatus(evaluation).needsYourReview
+            ? "candidates" : resultGroup(listing, evaluation, includeOffers, analysis?.status === "error");
         if (group) grouped[group].push(listing);
         const best = evaluation?.underwriting?.best;
         if (evaluation?.underwriting?.verdict === "PASS" && (group === null || group === "offers") &&

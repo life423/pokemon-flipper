@@ -1,6 +1,6 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { ALL, AUTO_KEY, DEFAULT_AUTO, DEFAULT_RESULTS, readAutoSetting, readResultsSetting, readTargets, targetText } from "../../client/src/search/settings.ts";
+import { ALL, AUTO_KEY, DEFAULT_AUTO, readAutoSetting, readTargets, targetText } from "../../client/src/search/settings.ts";
 import { BOUNDED_AUTO_CONCURRENCY, DEVELOPMENT_SEARCH_LIMIT } from "../../shared/research-policy.ts";
 
 function storage(t: TestContext, entries: Record<string, string> = {}) {
@@ -25,25 +25,18 @@ test("profit and ROI default to Any and preserve saved targets", t => {
     assert.deepEqual(targetText(readTargets()), { minProfit: "50", minRoi: "25" });
 });
 
-test("fresh settings display50 metadata results independently of budgeted automatic assessment", t => {
+test("automatic assessment defaults to on and uses a separate concurrency limit", t => {
     storage(t);
     assert.equal(DEVELOPMENT_SEARCH_LIMIT, 50);
-    assert.equal(DEFAULT_RESULTS, 50);
-    assert.equal(readResultsSetting(), 50);
     assert.equal(DEFAULT_AUTO, ALL);
     assert.equal(readAutoSetting(), ALL);
-    assert.ok(BOUNDED_AUTO_CONCURRENCY < DEVELOPMENT_SEARCH_LIMIT, "metadata count must not start50 simultaneous detail/photo workflows");
+    assert.ok(BOUNDED_AUTO_CONCURRENCY < DEVELOPMENT_SEARCH_LIMIT);
 });
 
-test("old3and25 result limits migrate to50 without turning manual-only AI back on", t => {
-    const saved = storage(t, { results: "3", [AUTO_KEY]: "0" });
-    assert.equal(readResultsSetting(), 50);
-    assert.equal(saved.get("results"), "50");
+test("manual-only assessment stays off across visits", t => {
+    const saved = storage(t, { [AUTO_KEY]: "0" });
     assert.equal(readAutoSetting(), 0);
     assert.equal(saved.get(AUTO_KEY), "0");
-    saved.set("results", "25");
-    assert.equal(readResultsSetting(), 50);
-    assert.equal(saved.get("results"), "50");
 });
 
 test("old numeric AI defaults migrate to automatic budgeted work rather than promising that many paid assessments", t => {

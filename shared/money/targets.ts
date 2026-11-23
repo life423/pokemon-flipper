@@ -19,6 +19,9 @@ export function withTargets(targets: Targets, config: MoneyConfig = MONEY_CONFIG
 // An analyzed listing: every path, the verdict, and the rating, redone.
 export function retargetEvaluation(evaluation: Evaluation, targets: Targets, current?: ListingSummary): Evaluation {
     if (current) current = withFreshListing(current, evaluation);
+    // A search summary can have a title-derived condition. Only a details
+    // snapshot includes the seller's disclosure list, even if it is empty.
+    const conditionNotes = current?.termsCheckedAt && current.availability ? current.conditionNotes : undefined;
     // Keep the saved photo assessment, but use the latest search's purchase
     // terms. A missing shipping quote falls back to the listing details,
     // just as it does when the server evaluates a search result.
@@ -28,12 +31,15 @@ export function retargetEvaluation(evaluation: Evaluation, targets: Targets, cur
               listing: {
                   ...evaluation.listing,
                   availability: current.availability ?? evaluation.listing.availability,
+                  termsCheckedAt: current.termsCheckedAt ?? evaluation.listing.termsCheckedAt,
                   price: current.currentPrice,
                   shipping: current.termsCheckedAt ? current.shipping : current.shipping ?? evaluation.listing.shipping,
                   bids: current.bids,
                   endTime: current.endTime,
                   buyingOption: current.buyingOption,
                   bestOffer: current.bestOffer ?? evaluation.listing.bestOffer,
+                  cardCondition: conditionNotes !== undefined && current.cardCondition !== undefined ? current.cardCondition : evaluation.listing.cardCondition,
+                  conditionNotes: conditionNotes ?? evaluation.listing.conditionNotes,
                   seller: current.seller ?? evaluation.listing.seller,
               },
           }
@@ -56,7 +62,7 @@ export function retargetScreen(
     current?: Pick<ListingSummary, "shipping" | "isGraded" | "buyingOption" | "bestOffer">
 ): Screen {
     if (screen.soldEvidence) {
-        if (current && screen.soldEvidence.gradingReferences?.length) {
+        if (current && (screen.soldEvidence.status === "AVAILABLE" || screen.soldEvidence.gradingReferences?.length)) {
             return applySoldPriceScreen({ ...current, currentPrice: price, screen }, screen.soldEvidence, { targets, config, includeOffers }).screen;
         }
         if (screen.soldEvidence.status !== "AVAILABLE" || !screen.money || price === null) return screen;

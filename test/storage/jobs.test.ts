@@ -14,8 +14,7 @@ test("completed and uncertain dispatched jobs are returned without authorizing a
         const result = await jobs.claimTask({ key: "photo:one", type: "photo", inputHash: "a".repeat(64), ownerId: "worker-2" });
         assert.equal(result.claimed, false); assert.equal(result.state, state);
         assert.deepEqual(result.result, state === "COMPLETED" ? { saved: true } : null);
-        assert.match(statement, /state='PENDING' OR state='RUNNING' AND lease_until<=@now/);
-        assert.ok(!statement.includes("state='DISPATCHED' AND lease_until"));
+        assert.match(statement, /state='PENDING' AND lease_until IS NULL OR state IN \('PENDING','RUNNING'\) AND lease_until<=@now/);
         assert.match(statement, /WITH\(UPDLOCK,HOLDLOCK\)/);
         assert.match(statement, /task_hash=CONVERT\(char\(64\),@hash\)/);
         assert.doesNotMatch(statement, /task_hash=@hash/);
@@ -31,6 +30,9 @@ test("dispatch requires the active unpaid lease and stopping cannot requeue a pa
     await jobs.releaseTask("photo:one", "worker-1");
     assert.match(commands[1]!, /state='RUNNING'/);
     assert.ok(!commands[1]!.includes("state='DISPATCHED'"));
+    await assert.rejects(jobs.deferRateLimitedTask("photo:one", "lost-worker", 1000), { code: "STORAGE_UNAVAILABLE" });
+    assert.match(commands[2]!, /lease_until=DATEADD\(millisecond,CONVERT\(int,@delayMs\),@now\)/);
+    assert.match(commands[2]!, /lease_owner=@owner AND task_type='AI_GENERATION' AND state='DISPATCHED'/);
 });
 
 test("accepted results save under their owner and corrupted completed results fail closed", async () => {

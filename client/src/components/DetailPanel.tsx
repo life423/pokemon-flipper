@@ -1,9 +1,11 @@
 import { useEffect, useRef } from "react";
-import type { AnalysisState } from "../analysis-state";
+import type { AnalysisState, PriceRefreshState } from "../analysis-state";
 import type { ListingSummary, Targets } from "../types";
 import { useNow } from "../useNow";
 import { useDialog } from "../useDialog";
 import { MONEY_CONFIG } from "../../../shared/money/config.ts";
+import { priceEvidenceGap } from "../../../shared/money/price-evidence.ts";
+import { readyForPricing } from "../../../shared/identity.ts";
 import { PhotoGallery } from "./PhotoGallery";
 import { PhotoReview, type DeeperReviewState } from "./PhotoReview";
 import { SoldPriceScreening } from "./SoldPriceScreening";
@@ -20,6 +22,8 @@ interface Props {
     now: number;
     onClose: () => void;
     onAnalyze: (fresh: boolean) => void;
+    onRefreshPrices?: () => void;
+    priceRefresh?: PriceRefreshState;
     minGrade?: number;
     targets?: Targets;
     includeOffers: boolean;
@@ -30,8 +34,15 @@ interface Props {
     saving?: boolean;
 }
 
-export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closing = false, minGrade = 0, targets = MONEY_CONFIG.targets, includeOffers, photoReviewState, onPhotoReview, onSave, saved, saving }: Props) {
+export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, onRefreshPrices, priceRefresh, closing = false, minGrade = 0, targets = MONEY_CONFIG.targets, includeOffers, photoReviewState, onPhotoReview, onSave, saved, saving }: Props) {
     const unavailable = listing.availability === "UNAVAILABLE" || Boolean(listing.endTime && Date.parse(listing.endTime) <= now);
+    const evaluation = analysis?.status === "done" ? analysis.evaluation : null;
+    const pricingExpired = analysis?.status === "done" && analysis.pricingExpired;
+    const canRefreshPrices = onRefreshPrices && !unavailable && evaluation?.photoCheck &&
+        (readyForPricing(evaluation.identity) || evaluation.pricingDeferred?.identityLookupPending) &&
+        (pricingExpired || priceEvidenceGap(evaluation) || evaluation.underwriting?.verdict === "CANT_PRICE");
+    const refreshingPrices = priceRefresh?.status === "loading";
+    const reviewing = photoReviewState?.status === "loading" || refreshingPrices;
     // A new listing opens at the top of the panel.
     const panel = useRef<HTMLElement>(null);
 
@@ -63,10 +74,18 @@ export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closin
                 {analysis?.status !== "done" && <SoldPriceScreening listing={listing} />}
 
                 {analysis?.status === "done" && <FinancialDecision evaluation={analysis.evaluation} targets={targets} now={now} />}
+                {(canRefreshPrices || priceRefresh) && <div className={styles.cta}>
+                    {canRefreshPrices && <>
+                        <p>Check current listing terms and sold prices using the saved photo assessment. This uses marketplace requests and no new AI.</p>
+                        <button type="button" className={styles.primary} disabled={reviewing} onClick={onRefreshPrices}>{refreshingPrices ? "Refreshing pricing…" : "Refresh pricing"}</button>
+                    </>}
+                    {priceRefresh?.status === "error" && <p role="alert" className={styles.bad}>Pricing refresh failed. {priceRefresh.message} Your saved assessment is still shown.</p>}
+                    {priceRefresh?.status === "done" && <p role="status">{priceRefresh.message}</p>}
+                </div>}
                 {includeOffers && !unavailable && analysis?.status === "done" && <OfferSection listing={listing} evaluation={analysis.evaluation} />}
                 <PhotoReview listing={listing} evaluation={analysis?.status === "done" ? analysis.evaluation : null}
                     phase={analysis?.status === "loading" || analysis?.status === "error" ? analysis.status : undefined}
-                    state={photoReviewState} onReview={unavailable ? undefined : onPhotoReview} />
+                    state={photoReviewState} onReview={unavailable || refreshingPrices ? undefined : onPhotoReview} />
                 {unavailable && <p className={styles.bad}>Saved analysis only. This listing is unavailable or ended.</p>}
 
                 {!analysis && !unavailable && (
@@ -98,8 +117,8 @@ export function DetailPanel({ listing, analysis, now, onClose, onAnalyze, closin
                         evaluation={analysis.evaluation}
                         now={now}
                         minGrade={minGrade}
-                        onReanalyze={() => onAnalyze(!analysis.evaluation.researchMode || analysis.evaluation.researchMode === "FULL")}
-                        reviewing={photoReviewState?.status === "loading" || unavailable}
+                        onReanalyze={unavailable ? undefined : () => onAnalyze(Boolean(pricingExpired) || !analysis.evaluation.researchMode || analysis.evaluation.researchMode === "FULL")}
+                        reviewing={reviewing}
                     />
                 )}
                 </div>

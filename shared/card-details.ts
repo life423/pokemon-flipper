@@ -1,5 +1,6 @@
 import type { Evaluation, ListingSummary } from "./types.ts";
 import { finishIn, searchAttributes } from "./search-criteria.ts";
+import { observedCardKind } from "./photo-evidence.ts";
 
 export function cardDetails(listing: ListingSummary, evaluation: Evaluation | null) {
     const listed = listing.listedAttributes ?? searchAttributes(listing.title);
@@ -7,7 +8,8 @@ export function cardDetails(listing: ListingSummary, evaluation: Evaluation | nu
     if (!evaluation) return { source: "Listed", grade: listing.isGraded ? namedGrade(listed.grader, listed.grade) : "Raw", finish: finishName(listed.finish) };
     const slab = evaluation.slab;
     const photographed = evaluation.photoCheck?.slab;
-    const graded = listing.isGraded || Boolean(photographed?.present) || Boolean(slab);
+    const observed = observedCardKind(evaluation);
+    const graded = observed ? observed === "graded" : listing.isGraded || Boolean(photographed?.present) || Boolean(slab);
     const finish = finishIn(evaluation.identity?.finish ?? "") ?? finishIn(evaluation.photoCheck?.cardIdentity?.finish ?? "");
     return {
         source: graded ? slab?.status === "OK" ? "Label checked" : "Review needed" : "Photo assessed",

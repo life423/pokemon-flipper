@@ -10,6 +10,7 @@ import { canAutoAnalyze, resultGroup } from "../../shared/analysis.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
 import type { SoldScreeningFactory } from "../../server/deals/price-first.ts";
 import type { ListingSummary, ScreeningSoldEvidence } from "../../shared/types.ts";
+import type { SourceDispositionRow } from "../../shared/search-diagnostic.ts";
 import type { CardRecord, Comp } from "../../server/pricing/types.ts";
 
 const NOW = Date.now();
@@ -42,8 +43,10 @@ test("a worthwhile 51st listing refills fifty price exclusions using one page an
     } }); };
     const rows = [...Array.from({ length: 50 }, (_, i) => row(String(i))), row("worthwhile", 40)];
     const snapshots: SearchSummary[] = [], emitted: ListingSummary[] = [];
+    const dispositions: SourceDispositionRow[] = [];
     const dependencies = steps(rows, prices);
-    const result = await findDeals(query, { targets, onStart: value => snapshots.push(value), onListing: value => emitted.push(value) }, {
+    const result = await findDeals(query, { targets, onStart: value => snapshots.push(value), onListing: value => emitted.push(value),
+        onSourceDisposition: value => dispositions.push(value) }, {
         ...dependencies, search: async (text, options) => { sourcePages++; assert.equal(options?.maxResults, 200); return dependencies.search(); },
     });
     assert.deepEqual(result.map(value => value.id), ["worthwhile"]); assert.deepEqual(emitted, result);
@@ -51,9 +54,10 @@ test("a worthwhile 51st listing refills fifty price exclusions using one page an
     assert.equal(sourcePages, 1); assert.equal(factories, 1); assert.equal(catalogs, 1); assert.equal(soldPages, 1);
     assert.equal(snapshots.at(-1)?.count, 1); assert.equal(snapshots.at(-1)?.screened, 51); assert.equal(snapshots.at(-1)?.priceExcluded, 50);
     assert.equal(snapshots.at(-1)?.deferred, 0); assert.equal(transport.mock.callCount(), 0);
+    assert.deepEqual(dispositions, rows.slice(0, 50).map(value => ({ id: value.id, outcome: "REJECTED", reason: "SOLD_PRICE_EXCLUDED" })));
 });
 
-test("refill stops at fifty retained rows and a deferred price budget is not renewed by another batch", async () => {
+test("refill retains fifty rows and a deferred price budget is not renewed by another batch", async () => {
     let factories = 0, checked = 0;
     const prices: SoldScreeningFactory = () => { factories++; return async () => {
         checked++;
@@ -62,10 +66,11 @@ test("refill stops at fifty retained rows and a deferred price budget is not ren
     const rows = Array.from({ length: 200 }, (_, i) => row(String(i)));
     let summary: SearchSummary | undefined;
     const result = await findDeals(query, { targets, onStart: value => { summary = value; } }, steps(rows, prices));
-    assert.equal(factories, 1); assert.equal(checked, 100); assert.equal(result.length, 50);
+    assert.equal(factories, 1); assert.equal(checked, 200); assert.equal(result.length, 50);
     assert.deepEqual(result.map(value => value.id), rows.slice(50, 100).map(value => value.id));
     assert.ok(result.every(value => value.screen?.soldEvidence?.status === "DEFERRED" && !canAutoAnalyze(value) && resultGroup(value, null) === "candidates"));
-    assert.equal(summary?.priceExcluded, 50); assert.equal(summary?.screened, 100); assert.equal(summary?.deferred, 100);
+    assert.equal(summary?.priceExcluded, 50); assert.equal(summary?.screened, 200); assert.equal(summary?.deferred, 0);
+    assert.equal(summary?.unresolvedOverflow, 100);
 });
 
 test("even a source returning excess rows cannot refill beyond the original two hundred summary window", async () => {

@@ -2,10 +2,17 @@ import { dollars } from "../format.ts";
 import type { AuctionOutlook, CompSummary, MoneyPath, UsualPrice } from "../types.ts";
 import { soldMarketPrice } from "../sold-evidence.ts";
 
-// What the listing usually sells for, as listed: a slab's recent sales
-// at its grade, or a raw card's market price in its condition.
+// Auction outcomes are a better bid reference when available. A market
+// reference still helps when we only have other formats or a raw price.
 export function usualPrice(paths: MoneyPath[], slabSales: CompSummary | null | undefined): UsualPrice | null {
     if (slabSales) {
+        const auctions = slabSales.sales.filter((sale) => sale.saleType === "auction")
+            .map((sale) => sale.price).sort((a, b) => a - b);
+        if (auctions.length) {
+            const middle = Math.floor(auctions.length / 2);
+            const price = auctions.length % 2 ? auctions[middle] : (auctions[middle - 1] + auctions[middle]) / 2;
+            return { price, sales: auctions };
+        }
         const price = soldMarketPrice(slabSales);
         return price === null ? null : { price, sales: slabSales.sales.map((sale) => sale.price) };
     }

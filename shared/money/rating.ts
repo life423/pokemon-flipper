@@ -23,7 +23,7 @@ const MIN_FEEDBACK_PERCENT = 98;
 type RatingInput = Pick<
     Evaluation,
     "listing" | "underwriting" | "condition" | "gradingMode" | "gradedPricing" | "slabPricing" | "rawPricing"
->;
+> & Partial<Pick<Evaluation, "identity">>;
 
 // The sold comps behind the winning path's prices. Grades priced from a
 // lower grade's sales are left out: they add no sales of their own.
@@ -50,7 +50,7 @@ function compsBehind(evaluation: RatingInput, best: PricedPath): CompSummary[] {
 export function rateDeal(evaluation: RatingInput): Rating | null {
     const underwriting = evaluation.underwriting;
 
-    if (!underwriting?.verdict.startsWith("BUY") || !underwriting.best || referencePriceReason(evaluation, underwriting.best)) return null;
+    if (evaluation.listing.availability === "UNKNOWN" || !underwriting?.verdict.startsWith("BUY") || !underwriting.best || referencePriceReason(evaluation, underwriting.best)) return null;
 
     const { best } = underwriting;
     const { listing } = evaluation;

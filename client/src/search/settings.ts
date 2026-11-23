@@ -1,6 +1,5 @@
 import type { Targets } from "../types";
 import { MONEY_CONFIG } from "../../../shared/money/config.ts";
-import { DEVELOPMENT_SEARCH_LIMIT } from "../../../shared/research-policy.ts";
 
 // Recent searches, newest first, offered before the next search.
 export const RECENT_KEY = "recentSearches";
@@ -42,19 +41,6 @@ export const targetText = (targets: Targets) => ({
     minProfit: targets.minProfit === 0 ? "" : String(targets.minProfit),
     minRoi: targets.minRoi === 0 ? "" : String(Math.round(targets.minRoi * 100)),
 });
-
-export const RESULT_OPTIONS = [DEVELOPMENT_SEARCH_LIMIT];
-export const DEFAULT_RESULTS = DEVELOPMENT_SEARCH_LIMIT;
-
-export function readResultsSetting(): number {
-    try {
-        const saved = Number(localStorage.getItem("results"));
-        if (saved === 3 || saved === 25) { localStorage.setItem("results", String(DEFAULT_RESULTS)); return DEFAULT_RESULTS; }
-        return RESULT_OPTIONS.includes(saved) ? saved : DEFAULT_RESULTS;
-    } catch {
-        return DEFAULT_RESULTS;
-    }
-}
 
 export function readAutoSetting(): number {
     try {

@@ -8,6 +8,7 @@ import { priceResearchSummary, reservePriceRequest, withPriceResearchSignal, Pri
 import { getAiUsageContext, withAiUsageContext } from "../../server/ai/usage-context.ts";
 import { readCache } from "../../server/lib/cache.ts";
 import { PRICE_SCREEN_REQUEST_LIMIT } from "../../shared/research-policy.ts";
+import { withSavedProviderEvidence } from "../../server/lib/saved-provider-evidence.ts";
 
 let clock = Date.now();
 function offline(t: { after(run: () => void): void; mock: { method(...args: any[]): unknown } }) {
@@ -48,21 +49,40 @@ test("catalog, screening and final raw/slab requests share one ledger while cach
     assert.deepEqual(source.stats(), { requests: 4, limit: PRICE_SCREEN_REQUEST_LIMIT });
 });
 
+test("saved replay uses cached sales and stops cache misses before the request ledger", async t => {
+    offline(t);
+    let calls = 0;
+    t.mock.method(globalThis, "fetch", async () => { calls++; return response({ data: [sold(1)] }); });
+    await fetchRawComps(91011, "Unlimited Holofoil");
+    const before = await priceResearchSummary();
+    const misses: string[] = [];
+    await withSavedProviderEvidence(provider => misses.push(provider), async () => {
+        assert.equal((await fetchRawComps(91011, "Unlimited Holofoil")).length, 1);
+        await assert.rejects(fetchRawComps(91012, "Unlimited Holofoil"), /Saved evidence is missing for PKMNPRICES/);
+    });
+    assert.deepEqual(misses, ["PKMNPRICES"]);
+    assert.deepEqual(await priceResearchSummary(), before);
+    assert.equal(calls, 1);
+    assert.equal((await fetchRawComps(91012, "Unlimited Holofoil")).length, 1);
+    assert.equal((await priceResearchSummary())?.used, 2);
+});
+
 test("simultaneous preliminary and final reads share one exact sold-page attempt even with no preliminary allowance", async t => {
     offline(t); let calls = 0, started = deferred<void>(), answer = deferred<Response>();
     t.mock.method(globalThis, "fetch", async () => { calls++; started.resolve(); return answer.promise; });
-    for (const [index, [screeningFirst, maximum]] of ([[true, 1], [false, 1], [true, 0]] as const).entries()) {
+    for (const [index, [screeningFirst, maximum]] of ([[true, 1], [false, 1], [false, 0]] as const).entries()) {
         started = deferred<void>(); answer = deferred<Response>();
         const source = createScreeningPriceSource({ maxRequests: maximum });
         const id = 91100 + index;
         const preliminary = () => source.fetchRawComps(id, "Unlimited Holofoil");
         const final = () => fetchRawComps(id, "Unlimited Holofoil");
-        const work = screeningFirst ? [preliminary(), final()] : [final(), preliminary()];
+        const first = screeningFirst ? preliminary() : final();
         await started.promise;
+        const work = Promise.all([first, screeningFirst ? final() : preliminary()]);
         await new Promise(resolve => setTimeout(resolve, 10));
-        assert.equal(calls, index + 1, "overlapping stages may not purchase the same page twice");
         answer.resolve(response({ data: [sold(1)] }));
-        assert.deepEqual((await Promise.all(work)).map(sales => sales.length), [1, 1]);
+        assert.deepEqual((await work).map(sales => sales.length), [1, 1]);
+        assert.equal(calls, index + 1, "overlapping stages may not purchase the same page twice");
         assert.ok(source.stats().requests <= maximum);
         if (maximum === 0) assert.equal(source.stats().requests, 0);
     }

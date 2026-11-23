@@ -3,13 +3,15 @@
 import { createHash } from "node:crypto";
 import { EBAY_SEARCH_BROWSE_LIMIT } from "../../server/ebay/search-budget.ts";
 import { PRICE_RESEARCH_LIMIT } from "../../server/pricing/research-budget.ts";
-import { BOUNDED_VISION_MODEL } from "../../server/ai/policy.ts";
+import { BOUNDED_VISION_MODEL, TEXT_MODEL } from "../../server/ai/policy.ts";
 
 export const BENCHMARK_TRANSPORT_LIMITS = Object.freeze({ ebayBrowse: EBAY_SEARCH_BROWSE_LIMIT, prices: PRICE_RESEARCH_LIMIT, aiGeneration: 25, aiPreflight: 25 });
 type BenchmarkLimits = { -readonly [Key in keyof typeof BENCHMARK_TRANSPORT_LIMITS]: number };
 export type BenchmarkService = keyof typeof BENCHMARK_TRANSPORT_LIMITS | "ebayAnalytics" | "ebayOAuth" | "photos" | "azureAuth" | "unknown";
 export interface BenchmarkContext { searchId?: string; listingId?: string; phase?: string }
-type BoundedSchema = "bounded_card_assessment" | "bounded_slab_label_assessment" | "focused_printing_experiment" | "listing_priority_experiment" | "sold_card_condition";
+const approvedSchemas = ["bounded_card_assessment", "bounded_slab_label_assessment", "focused_printing_experiment",
+    "listing_priority_experiment", "sold_card_condition", "marketplace_query_assistance", "listing_text_priority"] as const;
+type BoundedSchema = typeof approvedSchemas[number];
 export interface BenchmarkTransportRecord extends BenchmarkContext {
     at: string;
     service: BenchmarkService;
@@ -46,7 +48,8 @@ const SERVICES: BenchmarkService[] = ["ebayBrowse", "prices", "aiGeneration", "a
 const counts = () => Object.fromEntries(SERVICES.map(service => [service, 0])) as Record<BenchmarkService, number>;
 const integer = (value: unknown): number | null => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 const identifier = (value: unknown): string | undefined => typeof value === "string" && /^[a-zA-Z0-9_.-]{1,100}$/.test(value) ? value : undefined;
-const schemas = new Set<BoundedSchema>(["bounded_card_assessment", "bounded_slab_label_assessment", "focused_printing_experiment", "listing_priority_experiment", "sold_card_condition"]);
+const schemas = new Set<BoundedSchema>(approvedSchemas);
+const productionTextOutputs = { marketplace_query_assistance: 180, listing_text_priority: 140 } as const;
 const pricingSegments = new Set(["v1", "cards", "sets", "listings", "ebay", "prices", "price-history", "sales", "volume", "cardmarket", "history"]);
 function classify(url: URL, options: Options): { service: BenchmarkService; path: string; allowed: boolean } {
     // Do not retain query strings, credentials, IDs embedded in URLs or media paths.
@@ -124,10 +127,15 @@ export function createBenchmarkTransport(options: Options = {}) {
             if (route.service === "aiGeneration" || route.service === "aiPreflight") {
                 let body: any;
                 try { body = JSON.parse(await effective.clone().text()); } catch { return block(record, "schema"); }
-                const schema = body?.text?.format?.name;
+                const schema = body?.text?.format?.name as BoundedSchema;
                 if (!schemas.has(schema)) return block(record, "schema");
                 record.schema = schema; record.model = identifier(body.model);
                 record.images = Array.isArray(body.input) ? body.input.flatMap((message: any) => Array.isArray(message?.content) ? message.content : []).filter((part: any) => part?.type === "input_image").length : 0;
+                if (schema === "marketplace_query_assistance" || schema === "listing_text_priority") {
+                    const maxOutput = route.service === "aiGeneration" ? productionTextOutputs[schema] : undefined;
+                    if (record.images !== 0 || body.model !== TEXT_MODEL || body.reasoning?.effort !== "none" || body.max_output_tokens !== maxOutput ||
+                        body.text.format.type !== "json_schema" || body.text.format.strict !== true) return block(record, "schema");
+                }
                 if (schema === "listing_priority_experiment" && (record.images !== 0 || body.model !== "gpt-6-luna" || body.reasoning?.effort !== "none")) return block(record, "schema");
                 if (schema === "sold_card_condition" && (body.model !== BOUNDED_VISION_MODEL || body.reasoning?.effort !== "none" ||
                     (record.images ?? 0) < 2 || (record.images ?? 0) > 6 || body.text.format.type !== "json_schema" || body.text.format.strict !== true ||

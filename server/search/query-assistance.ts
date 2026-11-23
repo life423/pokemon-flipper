@@ -21,9 +21,14 @@ const SCHEMA = {
 };
 
 function expandAliases(search: string, base: SearchIntent): string {
-    const words = search.replace(/\bbaseset\b/gi, "Base Set").replace(/\b(?:zard|charzard)\b/gi, "Charizard")
+    let words = search.replace(/\bbaseset\b/gi, "Base Set").replace(/\b(?:zard|charzard)\b/gi, "Charizard")
         .replace(/\b(?:1st|first)[\s-]+ed\b\.?/gi, "1st Edition")
         .replace(/\b(?:rev[\s-]+holo|rh)\b/gi, "reverse holo");
+    // A separate 151 beside a /165 collector number can name the expansion.
+    // Keep the numerator in a collector number such as 151/165 untouched.
+    if (!base.sets.length && /\/165$/.test(base.cardNumber ?? "")) {
+        words = words.replace(/(?<!\/\s*)\b151\b(?!\s*\/)/, "Scarlet & Violet 151");
+    }
     // This nickname names a specific Evolving Skies art. Leave a query with
     // contradictory explicit set or collector number in the literal path.
     if (/\bmoonbreon\b/i.test(words)) {

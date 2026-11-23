@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createSearchDiagnosticStore, SearchDiagnosticInputError } from "../../server/analysis/search-diagnostic-store.ts";
+import type { SearchDiagnosticOverflow, SourceDispositionRow } from "../../shared/search-diagnostic.ts";
 
 const first = "v1|123456789012|0";
 const second = "v1|123456789013|0";
@@ -23,7 +24,20 @@ test("diagnostics freeze one snapshot per completed search across store instance
     const id = randomUUID();
 
     assert.equal(await store.saveSnapshot(id, rows, { attempts: 0 }), null);
-    await store.saveDiscovery(id, discovery);
+    const unresolved = { id: "v1|123456789014|0", reason: "SOLD_EVIDENCE_DEFERRED" as const, title: "Overflow seller prose" };
+    const displayLimited = { id: "v1|123456789015|0", reason: "DISPLAY_LIMIT" as const };
+    const overflow: SearchDiagnosticOverflow = { version: 1, stage: "SCREENING", rows: [unresolved, displayLimited] };
+    for (const invalid of [{ ...overflow, rows: [unresolved, unresolved] }, { ...overflow, rows: [{ ...unresolved, id: first }] }]) {
+        await assert.rejects(store.saveDiscovery(id, { ...discovery, unresolvedOverflow: 1, overflow: invalid }), SearchDiagnosticInputError);
+    }
+    await assert.rejects(store.saveDiscovery(id, { ...discovery, unresolvedOverflow: 2, overflow }), SearchDiagnosticInputError);
+    const rejected = { id: "v1|123456789016|0", outcome: "REJECTED", reason: "SOLD_PRICE_EXCLUDED", title: "Seller prose" } as const;
+    const notReached = { id: "v1|123456789017|0", outcome: "NOT_REACHED", reason: "ENOUGH_CANDIDATES" } as const;
+    const covered = { ...discovery, soldPurchaseCeiling: 87.45, unresolvedOverflow: 1, overflow, marketplaceOrder: "lowest", sourceCoverage: "COMPLETE" } as const;
+    for (const sourceDispositions of [[rejected, rejected], [{ ...rejected, id: first }], [{ ...notReached, id: unresolved.id }]]) {
+        await assert.rejects(store.saveDiscovery(id, { ...covered, sourceDispositions }), SearchDiagnosticInputError);
+    }
+    await store.saveDiscovery(id, { ...covered, sourceDispositions: [rejected, notReached] });
     for (const invalid of [[rows[0]], [rows[0], rows[0]], [rows[0], { ...rows[1], id: "other" }],
         [rows[0], { ...rows[1], reason: "untrusted text" }], [{ ...rows[0], profit: Infinity }, rows[1]]]) {
         await assert.rejects(store.saveSnapshot(id, invalid, { attempts: 0 }), SearchDiagnosticInputError);
@@ -33,6 +47,14 @@ test("diagnostics freeze one snapshot per completed search across store instance
         sameStore.saveSnapshot(id, rows, { attempts: 2 }),
     ]);
     assert.deepEqual(a, b);
+    assert.equal(a?.discovery.soldPurchaseCeiling, 87.45);
+    assert.equal(a?.discovery.unresolvedOverflow, 1);
+    assert.equal(a?.discovery.marketplaceOrder, "lowest");
+    assert.deepEqual(a?.discovery.overflow, { ...overflow, rows: [{ id: unresolved.id, reason: unresolved.reason }, displayLimited] });
+    assert.deepEqual((await sameStore.loadDiscovery(id))?.discovery.overflow, a?.discovery.overflow);
+    const expectedSource: SourceDispositionRow[] = [{ id: rejected.id, outcome: rejected.outcome, reason: rejected.reason }, notReached];
+    assert.deepEqual(a?.discovery.sourceDispositions, expectedSource);
+    assert.deepEqual((await sameStore.loadDiscovery(id))?.discovery.sourceDispositions, expectedSource);
     assert.deepEqual(a?.rows.map(row => row.id), [first, second]);
     assert.deepEqual(await sameStore.loadSnapshot(id), a);
     assert.ok(!(await fs.readFile(path.join(directory, "index.json"), "utf8")).includes("Seller prose"));

@@ -18,3 +18,8 @@ export function createAiCreditGate(now = () => Date.now()) {
     return { check() { if (now() < blockedUntil) throw new AiCreditsError(); },
         reject(error: unknown) { if (isAiCreditFailure(error)) { blockedUntil = now() + 30_000; throw new AiCreditsError({ cause: error }); } } };
 }
+
+export function aiRateLimitDelayMs(headers?: Pick<Headers, "get">): number {
+    const seconds = Number(headers?.get("retry-after"));
+    return Number.isFinite(seconds) && seconds > 0 ? Math.min(2_147_483_647, Math.ceil(seconds * 1000)) : 30_000;
+}

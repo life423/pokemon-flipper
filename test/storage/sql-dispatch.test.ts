@@ -28,7 +28,7 @@ interface TaskRow extends TaskResult { owner: string; inputHash: string; type: s
 function memoryRepository() {
     const rows = new Map<string, TaskRow>();
     const calls = { claims: 0, reads: 0, dispatched: 0, completions: 0, unknown: 0, releases: 0 };
-    const hooks: { beforeClaim?: () => Promise<void>; afterClaim?: () => void; beforeDispatched?: () => Promise<void>; completionFailures: number } = { completionFailures: 0 };
+    const hooks: { beforeClaim?: () => Promise<void>; afterClaim?: () => void; beforeDispatched?: () => Promise<void>; afterRead?: () => void; completionFailures: number } = { completionFailures: 0 };
     function owned(key: string, owner: string) {
         const row = rows.get(key);
         assert.ok(row && row.owner === owner, "a task must retain its original lease owner");
@@ -40,7 +40,8 @@ function memoryRepository() {
             calls.claims++;
             await hooks.beforeClaim?.();
             let row = rows.get(claim.key), claimed = false;
-            if (!row || row.state === "PENDING" || row.state === "RUNNING" && Date.parse(row.leaseUntil ?? "") <= Date.now()) {
+            const elapsed = row?.leaseUntil != null && Date.parse(row.leaseUntil) <= Date.now();
+            if (!row || row.state === "PENDING" && (row.leaseUntil === null || elapsed) || row.state === "RUNNING" && elapsed) {
                 row = { owner: claim.ownerId, inputHash: claim.inputHash, type: claim.type, state: "RUNNING", result: null,
                     leaseUntil: new Date(Date.now() + (claim.leaseMs ?? 120_000)).toISOString() };
                 rows.set(claim.key, row); claimed = true;
@@ -49,7 +50,7 @@ function memoryRepository() {
             hooks.afterClaim?.();
             return { ...snapshot(row), claimed };
         },
-        async readTask(key: string) { calls.reads++; const row = rows.get(key); return row ? snapshot(row) : null; },
+        async readTask(key: string) { calls.reads++; hooks.afterRead?.(); const row = rows.get(key); return row ? snapshot(row) : null; },
         async markTaskDispatched(key: string, owner: string) {
             await hooks.beforeDispatched?.();
             const row = owned(key, owner);
@@ -67,6 +68,11 @@ function memoryRepository() {
             calls.unknown++;
             const row = owned(key, owner);
             if (row.state === "DISPATCHED") row.state = "UNKNOWN";
+        },
+        async deferRateLimitedTask(key: string, owner: string, delayMs: number) {
+            const row = owned(key, owner);
+            assert.equal(row.state, "DISPATCHED");
+            row.state = "PENDING"; row.leaseUntil = new Date(Date.now() + delayMs).toISOString();
         },
         async releaseTask(key: string, owner: string) {
             calls.releases++;
@@ -104,6 +110,63 @@ test("different backend dispatchers share one provider attempt and replay the sa
     assert.equal(reused.headers.get("authorization"), null);
     assert.equal(reused.headers.get("set-cookie"), null);
     assert.equal([...state.rows.values()][0].state, "COMPLETED");
+});
+
+test("a confirmed OpenAI 429 defers the exact task, then retries once across waiting workers", async t => {
+    const directory = await temporary(t);
+    for (const code of ["rate_limit_exceeded", "insufficient_quota"] as const) {
+        const state = memoryRepository(), observed = deferred();
+        const dispatch = createSqlAiDispatch(options(state, path.join(directory, code)));
+        let now = Date.now(), providerCalls = 0;
+        const clock = t.mock.method(Date, "now", () => now);
+        try {
+            const send = async (beforeSend: () => Promise<void>) => {
+                await beforeSend();
+                providerCalls++;
+                return providerCalls === 1
+                    ? Response.json({ error: { code } }, { status: 429, headers: { "retry-after": "0.05" } })
+                    : response("retry-completed");
+            };
+            assert.equal((await dispatch(body, send)).status, 429);
+            const [record] = state.rows.values();
+            assert.equal(record.state, "PENDING");
+            assert.equal(Date.parse(record.leaseUntil!), now + 50);
+
+            state.hooks.afterRead = observed.resolve;
+            const a = dispatch(body, send), b = dispatch(body, send);
+            await Promise.race([observed.promise, a, b]);
+            assert.equal(providerCalls, 1, "waiting workers respect the stored provider delay");
+            now += 50;
+            const [first, second] = await Promise.all([a, b]);
+            assert.equal(first.status, 200);
+            assert.deepEqual(await first.json(), await second.json());
+            assert.equal(providerCalls, 2, "one worker retries and one reuses the saved answer");
+            assert.equal(state.calls.unknown, 0);
+            assert.equal(state.calls.dispatched, 2);
+        } finally { clock.mock.restore(); }
+    }
+});
+
+test("ambiguous 429 or 5xx outcomes retain their claims", async t => {
+    const directory = await temporary(t);
+    const outcomes = [
+        { status: 429, body: { error: { code: "unrecognized_error" } } },
+        { status: 429, body: { error: { code: "rate_limit_exceeded" }, usage: { output_tokens: 10 } } },
+        { status: 503, body: { error: { code: "rate_limit_exceeded" } } },
+    ];
+    for (const outcome of outcomes) {
+        const state = memoryRepository(), dispatch = createSqlAiDispatch(options(state, directory));
+        let providerCalls = 0;
+        const send = async (beforeSend: () => Promise<void>) => {
+            await beforeSend();
+            providerCalls++;
+            return Response.json(outcome.body, { status: outcome.status });
+        };
+        assert.equal((await dispatch(body, send)).status, outcome.status);
+        assert.equal([...state.rows.values()][0].state, "UNKNOWN");
+        await assert.rejects(dispatch(body, send), { code: "AI_PAUSED" });
+        assert.equal(providerCalls, 1);
+    }
 });
 
 test("SQL connection, claim and pre-dispatch failures authorize zero provider requests", async t => {

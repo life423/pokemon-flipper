@@ -183,9 +183,19 @@ function median(values: number[]): number {
 
 function marketEstimate(sales: Comp[], now: number): CompSummary["marketEstimate"] {
     if (!sales.length) return undefined;
-    const observations = sales.map(({ price, sold_at }) => ({ price, age: now - Date.parse(sold_at) }));
-    const recent = observations.filter(({ age }) => age <= 2 * DAY_MS).sort((a, b) => a.age - b.age).slice(0, 4);
+    const observations = sales.map(({ price, sold_at, sale_type }) => ({ price, age: now - Date.parse(sold_at), saleType: sale_type }))
+        .sort((a, b) => a.age - b.age);
     const rounded = (price: number) => Math.round(price * 100) / 100;
+    // Resale is listed at Buy It Now. A recent fixed-price cohort is stronger
+    // evidence for that route, and its median resists a single unusual sale.
+    const fixedPrice = observations.filter(({ age, saleType }) => saleType === "fixed_price" && age <= 30 * DAY_MS).slice(0, 5);
+    if (fixedPrice.length >= 3) return {
+        price: rounded(median(fixedPrice.map(({ price }) => price))),
+        method: "RECENT_FIXED_PRICE_MEDIAN",
+        sampleSize: fixedPrice.length,
+    };
+
+    const recent = observations.filter(({ age }) => age <= 2 * DAY_MS).slice(0, 4);
     if (recent.length === 4) {
         const newest = (recent[0].price + recent[1].price) / 2;
         const previous = (recent[2].price + recent[3].price) / 2;
@@ -271,6 +281,7 @@ export function summarizeComps(
         dropped,
         sales: kept.map((comp) => ({
             ...(comp.photoCondition ? { photoCondition: comp.photoCondition, sellerCondition: comp.sellerCondition } : {}),
+            ...(comp.sale_type ? { saleType: comp.sale_type } : {}),
             price: comp.price,
             soldAt: comp.sold_at,
             title: comp.title,

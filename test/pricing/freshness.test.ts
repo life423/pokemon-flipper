@@ -14,6 +14,10 @@ test("saved photos do not make legacy or expired price evidence current", () => 
     evaluation.assessmentVersion = `test/prompts-${PHOTO_REVIEW_REVISION}`;
     evaluation.conditionVersion = `test/condition-${CONDITION_RULES_VERSION}/prompts-${CONDITION_ASSESSMENT_REVISION}`;
     assert.equal(currentPriceEvidence(evaluation, now), true);
+    evaluation.rawPricing!.printing = "FIRST_EDITION";
+    assert.equal(currentPriceEvidence(evaluation, now), false, "recent prices need rechecking after a printing correction");
+    evaluation.rawPricing!.printing = "UNLIMITED";
+    assert.equal(currentPriceEvidence(evaluation, now), true);
     assert.equal(currentPriceEvidence(evaluation, now + 6 * 3600000), false);
     assert.equal(currentPriceEvidence(evaluation, now - 1), false);
     assert.equal(evaluation.reusedSteps.length, 0, "the marker does not alter saved photo work");

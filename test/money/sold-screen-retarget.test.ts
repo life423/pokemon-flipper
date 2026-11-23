@@ -77,3 +77,25 @@ test("local retargeting preserves the distinction between unquoted shipping and 
     assert.equal(updated.status, "CANDIDATE");
     assert.equal(updated.assumed, original.assumed);
 });
+
+test("preliminary retargeting uses current shipping, format and Best Offer", () => {
+    const targets = { minProfit: 0, minRoi: 0 };
+    const original = screen(true);
+    original.money!.shipping = 100;
+    const terms = { shipping: 0, buyingOption: "FIXED_PRICE" as const, isGraded: true, bestOffer: false };
+    assert.equal(retargetScreen(original, 70, targets).status, "DROPPED");
+    const reopened = retargetScreen(original, 70, targets, undefined, true, terms);
+    assert.equal(reopened.status, "CANDIDATE");
+    assert.equal(retargetScreen(reopened, 70, targets, undefined, true, { ...terms, shipping: 100 }).status, "DROPPED");
+    const unquoted = retargetScreen(reopened, 70, targets, undefined, true, { ...terms, shipping: null });
+    assert.match(unquoted.assumed ?? "", /Purchase shipping is unknown/);
+    assert.doesNotMatch(reopened.assumed ?? "", /Purchase shipping is unknown/);
+
+    const nearMiss = reopened.bestCase!.maxBid + 1;
+    const withOffer = retargetScreen(reopened, nearMiss, targets, undefined, true, { ...terms, bestOffer: true });
+    assert.equal(withOffer.requiresOffer, true);
+    assert.equal(retargetScreen(withOffer, nearMiss, targets, undefined, true, terms).requiresOffer, false);
+    const auction = retargetScreen(withOffer, nearMiss, targets, undefined, true, { ...terms, buyingOption: "AUCTION", bestOffer: true });
+    assert.equal(auction.money?.auction, true);
+    assert.equal(auction.requiresOffer, false);
+});

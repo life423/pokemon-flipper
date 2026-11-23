@@ -48,7 +48,7 @@ test("AI's transport and real SDK refuse SQL outages even with a permissive spen
         model: "offline-model", input: [], metadata: { app_step: "Offline SQL provider gate" },
     }) }), { code: "STORAGE_UNAVAILABLE" });
     await assert.rejects(runStructured({ step: "Offline SQL provider gate", prompt: "Offline fixture", photos: [],
-        schemaName: "search_intent", schema: { type: "object", properties: {}, additionalProperties: false } }), { code: "STORAGE_UNAVAILABLE" });
+        schemaName: "offline_text_fixture", schema: { type: "object", properties: {}, additionalProperties: false } }), { code: "STORAGE_UNAVAILABLE" });
     assert.equal(calls, 0);
     assert.equal(reservations, 0, "a SQL failure must stop before spending work and must not be retried by the SDK");
 });

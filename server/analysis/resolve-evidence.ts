@@ -1,9 +1,23 @@
-import type { PhotoCheck, SlabReading } from "../../shared/types.ts";
+import type { PhotoCheck, PrintingMarks, SlabReading } from "../../shared/types.ts";
 import type { IdentityPhotoReading } from "./legacy-evidence.ts";
-import { normalizeWords, sameCardNumber, sameSetFamily, type PhotoConfirmation } from "../identity/card-identity.ts";
+import { normalizeWords, reprintMarkCode, sameCardNumber, sameSetFamily, type PhotoConfirmation } from "../identity/card-identity.ts";
 import { confirmPhotoIdentity } from "../identity/photo-confirmation.ts";
 import { normalizeSlabReading } from "../identity/slab-check.ts";
 import { cleanPhotoCard } from "../ai/photo-card-schema.ts";
+
+export function printingMarkConflicts(readings: readonly (PrintingMarks | undefined)[]): NonNullable<PrintingMarks["conflicts"]> {
+    const conflicts = new Set(readings.flatMap(marks => marks?.conflicts ?? []));
+    for (const [field, present, absent] of [["firstEditionStamp", "VISIBLE", "NOT_PRESENT"], ["artBoxShadow", "PRESENT", "ABSENT"]] as const) {
+        if (readings.some(marks => marks?.[field] === present) && readings.some(marks => marks?.[field] === absent)) conflicts.add(field);
+    }
+    const reprints = new Set(readings.map(marks => reprintMarkCode(marks?.reprintMark)).filter(Boolean));
+    if (reprints.size > 1) conflicts.add("reprintMark");
+    return [...conflicts];
+}
+
+export function visibleReprintReading(readings: readonly (PrintingMarks | undefined)[]): string | undefined {
+    return readings.map(marks => marks?.reprintMark).find(mark => reprintMarkCode(mark));
+}
 
 // Two independent, agreeing readings can fill a gap. Repetition never votes
 // away a known disagreement, qualified label, crack or authenticity concern.
@@ -32,11 +46,16 @@ export function reconcileIdentityReadings(base: PhotoCheck, passes: IdentityPhot
         merged.slab = slab;
     }
     if (merged.printingMarks) {
-        for (const field of ["firstEditionStamp", "artBoxShadow", "reprintMark"] as const) {
+        const marks = readings.map(value => value.printingMarks);
+        const conflicts = printingMarkConflicts(marks);
+        if (conflicts.length) merged.printingMarks.conflicts = conflicts;
+        for (const field of ["firstEditionStamp", "artBoxShadow"] as const) {
             const values = readings.map(value => value.printingMarks?.[field]).filter((value): value is string => Boolean(value && value !== "CANT_TELL"));
             if (merged.printingMarks[field] === "CANT_TELL" && values.length >= 2 && values.every(value => value === values[0])) merged.printingMarks[field] = values[0];
-            if (field === "reprintMark" && values.some(value => value !== "NONE_SEEN")) merged.printingMarks.reprintMark = values.find(value => value !== "NONE_SEEN");
         }
+        merged.printingMarks.reprintMark = visibleReprintReading(marks) ??
+            marks.map(value => value?.reprintMark).find(mark => mark && mark !== "NONE_SEEN" && mark !== "CANT_TELL") ??
+            merged.printingMarks.reprintMark;
     }
     const cards = readings.map(reading => reading.cardIdentity).filter(card => card?.confidence === "HIGH" && card.name && card.set && card.cardNumber);
     const card = cards[0];

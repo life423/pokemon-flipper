@@ -20,14 +20,22 @@ const AUTHENTICITY_ASSURANCE = /\b(?:(?:authenticity|authentic|genuine)[\s-]+gua
 const GENERIC_SINGLE_CARD = /\(\s*1\s*\)[ -]+(?:pokemon[ -]+)?card\b|\b(?:one|1)[ -]+pokemon[ -]+card\b/i;
 const CUSTOM_HOLDER = "custom[ -]+(?:(?:protective|protection|magnetic|acrylic|hard|fitted|display)[ -]+)*(?:card[ -]+)?(?:cases?|holders?|sleeves?|top[ -]?loaders?)";
 const ACCOMPANYING_CUSTOM_HOLDER = new RegExp(`\\b(?:with|in|inside|includes?|including)[ -]+(?:(?:a|an|the)[ -]+)?${CUSTOM_HOLDER}\\b`, "gi");
-const INCLUDED_CUSTOM_HOLDER = new RegExp(`\\b${CUSTOM_HOLDER}(?=[ -]+included\\b)`, "gi");
+const INCLUDED_CUSTOM_HOLDER = new RegExp(`\\b${CUSTOM_HOLDER}[ -]+included\\b`, "gi");
+
+function replaceCustomHolder(title: string, replace: (phrase: string) => string): string {
+    return normalizeText(title).replace(/[\u2010-\u2015]/g, "-").replace(/\s+/g, " ")
+        .replace(ACCOMPANYING_CUSTOM_HOLDER, replace)
+        .replace(INCLUDED_CUSTOM_HOLDER, replace);
+}
+
+export function withoutAccompanyingCustomHolder(title: string): string {
+    // A holder-only listing does not describe an accessory to a card.
+    return NOT_A_CARD.test(title) ? normalizeText(title) : replaceCustomHolder(title, () => " ");
+}
 
 function exclusionText(title: string): string {
-    const normalized = normalizeText(title).replace(/[\u2010-\u2015]/g, "-").replace(/\s+/g, " ");
-    return normalized
-        .replace(AUTHENTICITY_ASSURANCE, phrase => GENERIC_SINGLE_CARD.test(normalized) ? phrase : "authentic")
-        .replace(ACCOMPANYING_CUSTOM_HOLDER, phrase => phrase.replace(/\bcustom\b/i, ""))
-        .replace(INCLUDED_CUSTOM_HOLDER, phrase => phrase.replace(/\bcustom\b/i, ""));
+    const normalized = replaceCustomHolder(title, phrase => phrase.replace(/\bcustom\b/i, ""));
+    return normalized.replace(AUTHENTICITY_ASSURANCE, phrase => GENERIC_SINGLE_CARD.test(normalized) ? phrase : "authentic");
 }
 
 // Lowercase and strip accents, so "Pokémon" matches "pokemon".
@@ -38,25 +46,40 @@ export function normalizeText(text: unknown): string {
         .toLowerCase();
 }
 
-// Returns why a listing should be dropped, or null to keep it.
-export function exclusionReason(item: { title: string; itemId: string; itemGroupType?: string }): string | null {
+const EXCLUSION_TEXT = {
+    VARIATION: "Pick-your-card listing with several cards",
+    LOT: "Lot or bundle",
+    DIGITAL: "Digital item",
+    PROXY_OR_REPLICA: "Proxy, custom, or replica",
+    MYSTERY: "Mystery or pick-your-card listing",
+    SEALED: "Sealed product",
+    MERCHANDISE: "Merchandise, not a card",
+    EMPTY_HOLDER: "Empty slab, case, or label",
+} as const;
+
+export function listingExclusion(item: { title: string; itemId: string; itemGroupType?: string }): keyof typeof EXCLUSION_TEXT | null {
     const title = exclusionText(item.title);
 
     // Variation listings match on any option's name, and their
     // price belongs to whichever option is priciest. A plain
     // listing's ID ends in |0.
     if (item.itemGroupType || !String(item.itemId).endsWith("|0")) {
-        return "Pick-your-card listing with several cards";
+        return "VARIATION";
     }
 
-    if (LOT.test(title)) return "Lot or bundle";
-    if (DIGITAL.test(title)) return "Digital item";
-    if (FAKE.test(title)) return "Proxy, custom, or replica";
-    if (PICK_OR_MYSTERY.test(title)) return "Mystery or pick-your-card listing";
+    if (LOT.test(title)) return "LOT";
+    if (DIGITAL.test(title)) return "DIGITAL";
+    if (FAKE.test(title)) return "PROXY_OR_REPLICA";
+    if (PICK_OR_MYSTERY.test(title)) return "MYSTERY";
     // "Champions Path ETB promo" is the single card that came in the box.
-    if (SEALED.test(title) && !/\bpromo\b/.test(title)) return "Sealed product";
-    if (MERCH.test(title)) return "Merchandise, not a card";
-    if (NOT_A_CARD.test(title)) return "Empty slab, case, or label";
+    if (SEALED.test(title) && !/\bpromo\b/.test(title)) return "SEALED";
+    if (MERCH.test(title)) return "MERCHANDISE";
+    if (NOT_A_CARD.test(title)) return "EMPTY_HOLDER";
 
     return null;
+}
+
+export function exclusionReason(item: Parameters<typeof listingExclusion>[0]): string | null {
+    const code = listingExclusion(item);
+    return code === null ? null : EXCLUSION_TEXT[code];
 }

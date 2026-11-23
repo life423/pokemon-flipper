@@ -7,6 +7,9 @@ import { mapLimit } from "../lib/concurrency.ts";
 import type { ListingSummary, SearchIntent, Targets } from "../../shared/types.ts";
 import { createScreeningPriceSource } from "../pricing/pkmnprices.ts";
 import { resolveQueryCatalog } from "../search/catalog.ts";
+import { MONEY_CONFIG } from "../../shared/money/config.ts";
+import { maxBid, netFromSale } from "../../shared/money/underwriting.ts";
+import { soldMarketPrice } from "../../shared/sold-evidence.ts";
 
 export type SoldScreeningFactory = typeof createSoldScreening;
 interface PriceFirstOptions { signal?: AbortSignal; targets?: Targets; includeOffers?: boolean; now?: number; sourceFactory?: typeof createScreeningPriceSource }
@@ -51,13 +54,21 @@ export function createPriceFirstSession(intent: SearchIntent, {
         return priced.sort((a, b) => Number(a.screen?.status === "DROPPED") - Number(b.screen?.status === "DROPPED") ||
             comparePriority(analysisPriority(a, targets), analysisPriority(b, targets)));
     };
-    return Object.assign(screenBatch, { resolveIntent: async () => {
-        intent = await resolveQueryCatalog(intent, source?.lookupQueryCards, workSignal);
-        return intent;
-    } });
-}
-
-export async function priceFirstListings(listings: ListingSummary[], intent: SearchIntent,
-    options: PriceFirstOptions = {}, createScreening: SoldScreeningFactory = createSoldScreening): Promise<ListingSummary[]> {
-    return createPriceFirstSession(intent, options, createScreening)(listings);
+    return Object.assign(screenBatch, {
+        resolveIntent: async () => {
+            intent = await resolveQueryCatalog(intent, source?.lookupQueryCards, workSignal);
+            return intent;
+        },
+        slabPurchaseMarket: async (query: string) => {
+            const reference = await screen.exactSlabReference?.(intent, query);
+            if (!reference) return null;
+            const price = soldMarketPrice(reference.summary);
+            if (price === null) return null;
+            const config = { ...MONEY_CONFIG, targets: targets ?? MONEY_CONFIG.targets };
+            const expectedNet = netFromSale(price, "graded", config.selling);
+            // eBay filters item price. At this point $0 shipping keeps affordable
+            // listings in discovery; evaluation uses the actual purchase terms.
+            return { reference, expectedNet, ceiling: maxBid({ expectedNet, fixedCosts: 0, shipping: 0 }, config) };
+        },
+    });
 }

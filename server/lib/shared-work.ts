@@ -4,7 +4,13 @@
 // Already-dispatched provider calls may still finish and save their paid answers.
 const activeJobs = new Set<Promise<unknown>>();
 
-// CLI shutdown must wait for the underlying jobs, not their abortable browser
+export function trackSharedWork<T>(work: Promise<T>): Promise<T> {
+    const tracked = work.finally(() => { activeJobs.delete(tracked); });
+    activeJobs.add(tracked);
+    return tracked;
+}
+
+// Shutdown must wait for the underlying jobs, not their abortable browser
 // consumers. This includes accepted-response accounting, SQL claims and caches.
 // Waiting never cancels a job, releases a claim or authorizes replacement work.
 export async function drainSharedWork({ timeoutMs = 180_000 }: { timeoutMs?: number } = {}): Promise<{ complete: boolean; pending: number }> {
@@ -37,16 +43,14 @@ export function createSharedWork() {
             const predecessor = job?.promise;
             const controller = new AbortController();
             const created: Job = { controller, consumers: new Set(), promise: Promise.resolve(), settled: false };
-            created.promise = Promise.resolve().then(async () => {
+            created.promise = trackSharedWork(Promise.resolve().then(async () => {
                 await predecessor?.catch(() => undefined);
                 controller.signal.throwIfAborted();
                 return run(controller.signal);
             }).finally(() => {
                 created.settled = true;
-                activeJobs.delete(created.promise);
                 if (pending.get(key) === created) pending.delete(key);
-            });
-            activeJobs.add(created.promise);
+            }));
             pending.set(key, created);
             job = created;
         }

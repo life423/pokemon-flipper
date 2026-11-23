@@ -1,38 +1,20 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { writeJsonAtomic } from "../lib/atomic-json.ts";
 import { createLimiter } from "../lib/concurrency.ts";
+import { withFileLease } from "../lib/file-lease.ts";
 import type { EbayUsage } from "../../shared/types.ts";
 
 export class EbayBudgetError extends Error {}
 interface Ledger { used: number; limit: number; resetAt: number }
 const DAY = 24 * 60 * 60_000;
 
-// Only disk accounting runs under this lease, never a network request. All
-// local app instances using the same eBay account share the same ledger.
-async function withLease<T>(file: string, run: () => Promise<T>): Promise<T> {
-    await fs.mkdir(path.dirname(file), { recursive: true });
-    const lock = `${file}.lock`, nonce = randomUUID(), deadline = Date.now() + 10_000;
-    for (;;) {
-        try { await fs.writeFile(lock, nonce, { flag: "wx" }); break; }
-        catch (error) {
-            const code = (error as NodeJS.ErrnoException).code;
-            if (!["EEXIST", "EPERM", "EACCES", "EBUSY"].includes(code ?? "")) throw error;
-            const stat = await fs.stat(lock).catch(() => null);
-            if (code === "EEXIST" && stat && Date.now() - stat.mtimeMs > 30_000) { await fs.unlink(lock).catch(() => {}); continue; }
-            if (Date.now() >= deadline) throw new EbayBudgetError("eBay quota accounting is busy. No request was sent; retry shortly.");
-            await new Promise(resolve => setTimeout(resolve, 10));
-        }
-    }
-    try { return await run(); }
-    finally { if (await fs.readFile(lock, "utf8").catch(() => "") === nonce) await fs.unlink(lock).catch(() => {}); }
-}
-
+// Local app instances using the same eBay account share the daily ledger.
 export function createDailyBrowseBudget({ file, now = Date.now }: { file: string; now?: () => number }) {
     const serial = createLimiter(1);
-    return (snapshot: EbayUsage | null, keepReserve = false, consume = true): Promise<EbayUsage> => serial(() => withLease(file, async () => {
+    return (snapshot: EbayUsage | null, keepReserve = false, consume = true): Promise<EbayUsage> => serial(() => withFileLease(file, async () => {
         const at = now();
         if (snapshot && (!Number.isSafeInteger(snapshot.limit) || snapshot.limit <= 0 || !Number.isSafeInteger(snapshot.used) || snapshot.used < 0 ||
             !Number.isSafeInteger(snapshot.remaining) || snapshot.remaining < 0 || snapshot.remaining > snapshot.limit)) {
@@ -58,7 +40,7 @@ export function createDailyBrowseBudget({ file, now = Date.now }: { file: string
         const ledger = { limit, used: used + (consume ? 1 : 0), resetAt };
         await writeJsonAtomic(file, ledger);
         return { limit, used: ledger.used, remaining: Math.max(0, limit - ledger.used), resetsAt: new Date(resetAt).toISOString(), braking: limit - ledger.used <= limit * .1 };
-    }));
+    }, { timeoutError: () => new EbayBudgetError("eBay quota accounting is busy. No request was sent; retry shortly.") }));
 }
 
 const accounts = new Map<string, ReturnType<typeof createDailyBrowseBudget>>();

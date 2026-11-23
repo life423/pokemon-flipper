@@ -53,6 +53,16 @@ test("a lone seller-title condition cannot acquire the photo-evidenced one-sale 
     assert.equal(raw.prices, undefined);
 });
 
+test("seller-title raw comparisons exclude another card even when the provider assigned it to the target", async () => {
+    const raw = await rawPricesWithSales(card, identity, { now, fetchRawComps: async () => [
+        sale(1), sale(2), sale(3, 160, { title: "Charizard Base Set 4/102 Unlimited Holo LP" }),
+    ] });
+    const summary = raw.ebayComps?.find(entry => entry.grade === "LIGHTLY_PLAYED");
+    assert.equal(raw.status, "PRICE_UNAVAILABLE");
+    assert.equal(summary?.count, 2);
+    assert.equal(summary?.dropped["title does not match target card"], 1);
+});
+
 test("one or two physically condition-matched sold copies support a LOW-confidence raw resale without promoting contradictory evidence", async () => {
     const reading: SoldConditionReading = {
         card: { name: identity.name, set: identity.set, cardNumber: identity.cardNumber, language: "English", finish: "HOLO", confidence: "HIGH", evidence: ["Visible name, collector number and artwork agree"] },

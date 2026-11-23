@@ -49,30 +49,11 @@ export function resaleActivity(evaluation: Evaluation | null, now = Date.now()):
         scope: "BROAD",
         detail: `${volume.complete ? "" : "At least "}${volume.observedSales} recorded eBay ${volume.scope === "RAW" ? "raw" : "graded"} sales of ${volume.variant} / 30 days (${volume.dailyAverage.toFixed(volume.dailyAverage < 1 ? 2 : 1)}/day; ${volume.activeDays} active days). ${volume.scope === "RAW" ? "All raw conditions combined" : "All graders and grades combined"}.`,
     };
-    let summary: CompSummary | undefined;
-    if (best?.path === "RAW") summary = evaluation?.rawPricing?.prices?.find(price => price.condition === evaluation?.condition?.rawCondition)?.comps;
-    if (best?.path === "GRADED_RESALE") summary = evaluation?.slabPricing?.summary;
-    if (best?.path === "GRADE" && best.grader) {
-        const grade = evaluation?.condition?.gradeRange?.likely ?? evaluation?.condition?.gradeRange?.low;
-        const outcome = best.outlook?.find((entry) => entry.grade === grade);
-        const pricedGrade = outcome?.filledFrom ?? grade;
-        summary = evaluation?.gradedPricing?.[best.grader]?.byGrade?.find((entry) => Number(entry.grade) === pricedGrade);
-    }
-    if (!summary?.sales.length) return {
+    return {
         label: "Resale speed unknown",
         detail: best?.path === "RAW"
             ? "The raw price feed does not include turnover data. A market price alone cannot tell us how quickly this copy will sell."
             : "Not enough dated sold comps to assess resale activity.",
         recentSales: null,
-    };
-    const recent = summary.sales.filter((sale) => {
-        const age = now - Date.parse(sale.soldAt);
-        return Number.isFinite(age) && age >= 0 && age <= 30 * 86400000;
-    }).length;
-    return {
-        label: recent >= 10 ? "Frequent recent sales" : recent >= 3 ? "Some recent sales" : "Sparse recent sales",
-        recentSales: recent,
-        scope: "MATCHED",
-        detail: `${recent} observed ${summary.grader} ${summary.grade} sales / 30 days, from ${summary.sales.length} returned comps.`,
     };
 }

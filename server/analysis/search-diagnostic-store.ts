@@ -1,10 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
-    SEARCH_DIAGNOSTIC_OUTCOMES, SEARCH_DIAGNOSTIC_REASONS,
-    type SearchDiagnosticDiscovery, type SearchDiagnosticResult, type SearchDiagnosticRow,
+    SEARCH_DIAGNOSTIC_OUTCOMES, SEARCH_DIAGNOSTIC_REASONS, SOURCE_REJECTION_REASONS,
+    type SearchDiagnosticDiscovery, type SearchDiagnosticOverflow, type SearchDiagnosticResult, type SearchDiagnosticRow, type SourceDispositionRow,
 } from "../../shared/search-diagnostic.ts";
-import { DEVELOPMENT_SEARCH_LIMIT } from "../../shared/research-policy.ts";
+import { DEVELOPMENT_SEARCH_LIMIT, SEARCH_SOURCE_PAGE_LIMIT } from "../../shared/research-policy.ts";
 import { writeJsonAtomic } from "../lib/atomic-json.ts";
 import { withFileLease } from "../lib/file-lease.ts";
 import { DATA_DIR } from "../lib/paths.ts";
@@ -15,6 +15,7 @@ const LISTING_ID = /^[\w|\-]{1,120}$/;
 const MAX_SEARCHES = 50;
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_RECORD_SIZE = 64 * 1024;
+const MAX_OVERFLOW_ROWS = 2 * SEARCH_SOURCE_PAGE_LIMIT - DEVELOPMENT_SEARCH_LIMIT;
 
 export interface SavedSearchDiagnosticDiscovery {
     searchId: string;
@@ -47,20 +48,72 @@ function count(value: unknown): value is number {
     return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
+function overflowRecord(overflow: SearchDiagnosticOverflow, retainedIds: readonly string[], unresolved: number, screened: number): SearchDiagnosticOverflow {
+    if (overflow?.version !== 1 || overflow.stage !== "SCREENING" || !Array.isArray(overflow.rows) ||
+        overflow.rows.length === 0 || overflow.rows.length > MAX_OVERFLOW_ROWS || overflow.rows.length + retainedIds.length > screened) {
+        throw new SearchDiagnosticInputError("Completed search has invalid overflow totals or stage.");
+    }
+    const ids = new Set(retainedIds);
+    let blocked = 0;
+    const rows = overflow.rows.map(row => {
+        if (!row || typeof row.id !== "string" || !LISTING_ID.test(row.id) || ids.has(row.id) ||
+            row.reason !== "DISPLAY_LIMIT" && !SEARCH_DIAGNOSTIC_REASONS.includes(row.reason)) {
+            throw new SearchDiagnosticInputError("Completed search has an invalid overflow listing or reason.");
+        }
+        ids.add(row.id);
+        if (row.reason !== "DISPLAY_LIMIT") blocked++;
+        return { id: row.id, reason: row.reason };
+    });
+    if (blocked !== unresolved) throw new SearchDiagnosticInputError("Completed search has inconsistent unresolved overflow totals.");
+    return { version: 1, stage: "SCREENING", rows };
+}
+
+function sourceRows(rows: SourceDispositionRow[], accountedIds: readonly string[]): SourceDispositionRow[] {
+    if (!Array.isArray(rows) || rows.length + accountedIds.length > 2 * SEARCH_SOURCE_PAGE_LIMIT) {
+        throw new SearchDiagnosticInputError("Completed search has invalid source coverage totals.");
+    }
+    const ids = new Set(accountedIds);
+    return rows.map(row => {
+        if (!row || typeof row.id !== "string" || !LISTING_ID.test(row.id) || ids.has(row.id)) {
+            throw new SearchDiagnosticInputError("Completed search has an invalid source listing or reason.");
+        }
+        ids.add(row.id);
+        if (row.outcome === "REJECTED" && SOURCE_REJECTION_REASONS.includes(row.reason)) {
+            return { id: row.id, outcome: row.outcome, reason: row.reason };
+        }
+        if (row.outcome === "NOT_REACHED" && row.reason === "ENOUGH_CANDIDATES") {
+            return { id: row.id, outcome: row.outcome, reason: row.reason };
+        }
+        throw new SearchDiagnosticInputError("Completed search has an invalid source listing or reason.");
+    });
+}
+
 function discoveryRecord(value: SearchDiagnosticDiscovery): SearchDiagnosticDiscovery {
-    const { total, found, screened, priceExcluded, skipped, deferred, previouslySeen, pricePass, retainedIds } = value;
+    const { total, found, screened, priceExcluded, unresolvedOverflow, overflow, skipped, deferred, previouslySeen, soldPurchaseCeiling, pricePass, marketplaceOrder, retainedIds } = value;
+    const { sourceCoverage, sourceDispositions } = value;
     if (![total, found, skipped, deferred].every(count) ||
-        ![screened, priceExcluded, previouslySeen].every(number => number === undefined || count(number)) ||
+        ![screened, priceExcluded, unresolvedOverflow, previouslySeen].every(number => number === undefined || count(number)) ||
+        (marketplaceOrder !== undefined && marketplaceOrder !== "newest" && marketplaceOrder !== "lowest") ||
+        (sourceCoverage !== undefined && sourceCoverage !== "COMPLETE" && sourceCoverage !== "PARTIAL") ||
+        (sourceCoverage === undefined) !== (sourceDispositions === undefined) ||
+        (soldPurchaseCeiling !== undefined && (!Number.isFinite(soldPurchaseCeiling) || soldPurchaseCeiling < 0)) ||
         !Array.isArray(retainedIds) || retainedIds.length > DEVELOPMENT_SEARCH_LIMIT ||
         retainedIds.some(id => typeof id !== "string" || !LISTING_ID.test(id)) || new Set(retainedIds).size !== retainedIds.length ||
         pricePass !== undefined && (!pricePass || !["COMPLETE", "UNAVAILABLE"].includes(pricePass.status) ||
             !count(pricePass.newListings) || !count(pricePass.candidates))) {
         throw new SearchDiagnosticInputError("Completed search discovery has invalid diagnostic totals or retained listings.");
     }
+    const cleanOverflow = overflow === undefined ? undefined : overflowRecord(overflow, retainedIds, unresolvedOverflow ?? 0, screened ?? found);
     return { total, found, skipped, deferred,
         ...(screened === undefined ? {} : { screened }),
         ...(priceExcluded === undefined ? {} : { priceExcluded }),
+        ...(unresolvedOverflow === undefined ? {} : { unresolvedOverflow }),
+        ...(cleanOverflow && { overflow: cleanOverflow }),
+        ...(sourceDispositions !== undefined && { sourceCoverage,
+            sourceDispositions: sourceRows(sourceDispositions, [...retainedIds, ...(cleanOverflow?.rows.map(row => row.id) ?? [])]) }),
+        ...(marketplaceOrder === undefined ? {} : { marketplaceOrder }),
         ...(previouslySeen === undefined ? {} : { previouslySeen }),
+        ...(soldPurchaseCeiling === undefined ? {} : { soldPurchaseCeiling }),
         ...(pricePass === undefined ? {} : { pricePass: { status: pricePass.status, newListings: pricePass.newListings, candidates: pricePass.candidates } }),
         retainedIds: [...retainedIds] };
 }
@@ -176,8 +229,11 @@ export function createSearchDiagnosticStore<T>({
                 const previous = snapshotFrom(entry);
                 if (previous) return previous;
                 const snapshot = { ...discoveryFrom(entry), savedAt: new Date(at).toISOString(), rows: cleanRows, data };
-                requireRecordSize(snapshot);
-                entry.snapshot = snapshot;
+                // Per-listing coverage is stored once and restored on read.
+                const { overflow: _overflow, sourceDispositions: _sourceDispositions, sourceCoverage: _sourceCoverage, ...snapshotDiscovery } = snapshot.discovery;
+                const stored = { ...snapshot, discovery: snapshotDiscovery };
+                requireRecordSize(stored);
+                entry.snapshot = stored;
                 return snapshot;
             });
         },

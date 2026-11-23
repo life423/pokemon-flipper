@@ -14,7 +14,7 @@ test("AI assessment progress is visible throughout searching and respects pause,
     const { SearchProgress } = await vite.ssrLoadModule("/src/components/SearchProgress.tsx");
     const defaults = { phase: "filtering", query: "1999 base set holo", error: null, ebayTotal: 1000, checked: 25, total: 100,
         ai: { done: 5, target: 20, analyzing: 3, waiting: 12, failed: 1 },
-        stats: { junk: 0, dropped: 0, unchecked: 0, deals: 1 }, usage: null, onStop: () => {} };
+        stats: { junk: 0, dropped: 0, unchecked: 0, deals: 1 }, usage: null, onStop: () => {}, canStopAssessment: false };
     const render = (change: Record<string, unknown> = {}) => renderToStaticMarkup(createElement(SearchProgress, { ...defaults, ...change }));
     const status = (markup: string) => markup.match(/<div[^>]+data-ai-state="([^"]+)"[^>]*>([\s\S]*?)<\/div>/)!;
     for (const phase of ["finding", "filtering", "ai"]) {
@@ -54,12 +54,19 @@ test("AI assessment progress is visible throughout searching and respects pause,
     assert.doesNotMatch(status(pendingBudget)[2], /failed/);
     assert.match(pendingBudget, /Screening incomplete/);
     assert.doesNotMatch(pendingBudget, /Couldn&#x27;t verify|Couldn't verify/);
-    const mixedPause = render({ phase: "paused", ai: { done: 5, target: 53, analyzing: 3, waiting: 45, failed: 2, paused: true },
+    const mixedPause = render({ phase: "paused", canStopAssessment: true, ai: { done: 5, target: 53, analyzing: 3, waiting: 45, failed: 2, paused: true },
         stats: { junk: 0, dropped: 0, unchecked: 49, deals: 0 } });
     assert.match(status(mixedPause)[2], /3 completed/);
     assert.match(status(mixedPause)[2], /45 awaiting analysis/);
     assert.match(status(mixedPause)[2], /3 in progress/);
     assert.match(status(mixedPause)[2], /2 failed/);
+    assert.match(mixedPause, /aria-label="Stop search"/);
+    const failedSearch = render({ phase: "error", error: "Discovery stream closed" });
+    assert.match(failedSearch, /Discovery stream closed/);
+    assert.doesNotMatch(failedSearch, /aria-label="Stop search"|3 in progress|AI assessing/);
+    const manualAfterFailure = render({ phase: "error", error: "Discovery stream closed", canStopAssessment: true });
+    assert.match(manualAfterFailure, /aria-label="Stop search"/);
+    assert.match(manualAfterFailure, /AI assessing 3 cards/);
     const phasePaused = render({ phase: "paused", checked: 2, total: 3, ai: { ...defaults.ai, paused: false } });
     assert.match(status(phasePaused)[2], /AI analysis paused/);
     assert.doesNotMatch(phasePaused, /AI assessing|role="progressbar"|67%/);
@@ -89,4 +96,27 @@ test("AI assessment progress is visible throughout searching and respects pause,
         if (previous) Object.defineProperty(globalThis, "localStorage", previous);
         else Reflect.deleteProperty(globalThis, "localStorage");
     }
+});
+
+test("coverage distinguishes rejected, not reached, and screened outside the results", async t => {
+    const vite = await createServer({ configFile: fileURLToPath(new URL("../../client/vite.config.js", import.meta.url)),
+        server: { middlewareMode: true, hmr: false, ws: false, watch: null }, logLevel: "error" });
+    t.after(() => vite.close());
+    const { SearchCoverage } = await vite.ssrLoadModule("/src/search/SearchCoverage.tsx");
+    const render = (report: Record<string, unknown> | null, finished = true) => renderToStaticMarkup(createElement(SearchCoverage, { finished, report }));
+
+    const markup = render({ sourceCoverage: "PARTIAL", sourceDispositions: [
+        { id: "v1|123456789012|0", outcome: "REJECTED", reason: "OTHER_SET" },
+        { id: "v1|987654321098|0", outcome: "NOT_REACHED", reason: "ENOUGH_CANDIDATES" },
+    ], overflow: { version: 1, stage: "SCREENING", rows: [{ id: "overflow-copy", reason: "SOLD_EVIDENCE_MISSING" }] } });
+    assert.match(markup, /1 rejected · 1 not reached/);
+    assert.match(markup, /Rejected \(1\)[\s\S]*?ebay\.com\/itm\/123456789012[\s\S]*?Different set/);
+    assert.match(markup, /Not reached \(1\)[\s\S]*?ebay\.com\/itm\/987654321098[\s\S]*?Screening stopped after finding enough candidates/);
+    assert.match(markup, /Screened, outside display limit \(1\)[\s\S]*?overflow-copy[\s\S]*?No matching sold-price evidence/);
+    assert.match(markup, /Coverage is partial/);
+    assert.match(markup, /Listings outside the fetched window have no individual status here/);
+
+    assert.match(render({ sourceCoverage: "COMPLETE", sourceDispositions: [] }), /0 rejected · 0 not reached/);
+    assert.match(render(null), /This search has no recorded rejection or not-reached details/);
+    assert.equal(render(null, false), "");
 });

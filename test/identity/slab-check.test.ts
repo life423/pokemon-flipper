@@ -33,7 +33,18 @@ test("grader names and grades are read the way labels and eBay write them", () =
     assert.equal(normalizeGrade("MINT 9"), "9");
     assert.equal(normalizeGrade("GEM MT 10"), "10");
     assert.equal(normalizeGrade("8.5"), "8.5");
+    assert.equal(normalizeGrade("GEM MT 10.0"), "10");
+    assert.equal(normalizeGrade("NM/MINT+ 8.5"), "8.5");
     assert.equal(normalizeGrade("unreadable"), null);
+});
+
+test("malformed and ambiguous label grades cannot borrow a nearby slab's sold prices", () => {
+    for (const grade of ["8.25", "PSA 10.5", "5/10", "5 / 10", "8 or 9", "8.25 or 9", ".5"]) {
+        assert.equal(normalizeGrade(grade), null, grade);
+        const result = checkSlab(slabPhotos({ grade }));
+        assert.equal(result.grade, null, grade);
+        assert.equal(result.status, "NEEDS_REVIEW", grade);
+    }
 });
 
 test("a readable slab that matches its item details passes, with a cert link", () => {

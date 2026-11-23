@@ -2,8 +2,8 @@ import type { DeeperPhotoReview, EbayUsage, Evaluation, ListingSummary, SearchIn
 import type { ShortlistEntry, RefreshResult } from "../../shared/shortlist.ts";
 import type { PricingRetryResult } from "../../shared/pricing-retries.ts";
 import type { AiUsageDay } from "../../shared/ai-usage.ts";
-import type { ListingFilters } from "../../shared/listing-filters.ts";
-import type { SearchDiagnosticResult, SearchDiagnosticRow } from "../../shared/search-diagnostic.ts";
+import type { ListingFilters, MarketplaceOrder } from "../../shared/listing-filters.ts";
+import type { SearchDiagnosticResult, SearchDiagnosticRow, SearchSourceCoverage } from "../../shared/search-diagnostic.ts";
 
 function filterQuery(filters?: ListingFilters): string {
     const query = new URLSearchParams();
@@ -67,9 +67,9 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export type DealsMessage =
-    | { type: "start"; total: number; found: number; count: number; skipped: number; intent: SearchIntent; mode?: "new" | "development"; deferred?: number; previouslySeen?: number; screened?: number; priceExcluded?: number; pricePass?: { status: "COMPLETE" | "UNAVAILABLE"; newListings: number; candidates: number } }
+    | { type: "start"; total: number; found: number; count: number; skipped: number; intent: SearchIntent; mode?: "new" | "development"; deferred?: number; previouslySeen?: number; screened?: number; priceExcluded?: number; unresolvedOverflow?: number; soldPurchaseCeiling?: number; marketplaceOrder?: MarketplaceOrder; pricePass?: { status: "COMPLETE" | "UNAVAILABLE"; newListings: number; candidates: number } }
     | { type: "listing"; listing: ListingSummary }
-    | { type: "done" }
+    | ({ type: "done" } & SearchSourceCoverage)
     | { type: "error"; error: string };
 
 // A search with every listing screened for free, streamed one listing at
@@ -127,11 +127,12 @@ async function streamLines<T extends { type: string }>(
 
 export function streamDeals(
     query: string,
-    { maxResults, minPrice, signal, targets, includeOffers = false, automaticPhotos = true, filters, searchRunId }: { maxResults: number; minPrice: number; signal?: AbortSignal; targets?: Targets; includeOffers?: boolean; automaticPhotos?: boolean; filters?: ListingFilters; searchRunId?: string },
+    { minPrice, signal, targets, includeOffers = false, automaticPhotos = true, filters, searchRunId, marketplaceOrder }: { minPrice: number; signal?: AbortSignal; targets?: Targets; includeOffers?: boolean; automaticPhotos?: boolean; filters?: ListingFilters; searchRunId?: string; marketplaceOrder?: MarketplaceOrder },
     onMessage: (message: DealsMessage) => void
 ): Promise<void> {
     const criteria = targets ? `&profit=${targets.minProfit}&roi=${targets.minRoi}` : "";
-    return streamLines(`/api/deals?q=${encodeURIComponent(query)}&max=${maxResults}&min=${minPrice}${criteria}&offers=${includeOffers ? 1 : 0}&autoPhotos=${automaticPhotos ? 1 : 0}${filterQuery(filters)}`, onMessage, signal,
+    const order = marketplaceOrder ? `&order=${marketplaceOrder}` : "";
+    return streamLines(`/api/deals?q=${encodeURIComponent(query)}&min=${minPrice}${criteria}&offers=${includeOffers ? 1 : 0}&autoPhotos=${automaticPhotos ? 1 : 0}${filterQuery(filters)}${order}`, onMessage, signal,
         { headers: searchHeaders(searchRunId) });
 }
 
@@ -163,30 +164,34 @@ export function fetchEbayUsage(searchRunId?: string): Promise<EbayUsage | null> 
 
 // Paid the first time for a listing; the server reuses saved answers
 // after that. fresh refreshes listing terms while compatible photos are reused.
-// The listing's current price, bid, and end time go along, so the server
-// can use its saved details instead of asking eBay again.
-export async function evaluateListing(listing: ListingSummary, { fresh = false, signal, searchRunId = crypto.randomUUID(), automatic = false, includeOffers = true, targets }: { targets?: Targets; fresh?: boolean; signal?: AbortSignal; searchRunId?: string; automatic?: boolean; includeOffers?: boolean } = {}): Promise<Evaluation> {
+// The search's terms and their observation time let the server use saved
+// listing details without replacing newer purchase terms.
+export async function evaluateListing(listing: ListingSummary, { fresh = false, signal, searchRunId, automatic = false, includeOffers = true, targets, priceOnly = false }: { targets?: Targets; fresh?: boolean; signal?: AbortSignal; searchRunId?: string; automatic?: boolean; includeOffers?: boolean; priceOnly?: boolean } = {}): Promise<Evaluation> {
+    const account = searchRunId ?? (priceOnly ? undefined : crypto.randomUUID());
     for (let attempt = 0; ; attempt++) {
         signal?.throwIfAborted();
-        const refreshQuery = fresh ? attempt === 0 ? "?fresh=1" : "?refreshTerms=1" : "";
+        const refreshQuery = priceOnly ? "priceOnly=1" : fresh ? attempt === 0 ? "fresh=1" : "refreshTerms=1" : "";
         const query = new URLSearchParams(refreshQuery);
-        if (automatic) query.set("auto", "1");
+        if (automatic && !priceOnly) query.set("auto", "1");
         if (!includeOffers) query.set("offers", "0");
         if (targets) { query.set("profit", String(targets.minProfit)); query.set("roi", String(targets.minRoi)); }
         try { return await request(`/api/listings/${encodeURIComponent(listing.id)}/evaluate?${query}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...searchHeaders(searchRunId) },
+        headers: { "Content-Type": "application/json", ...(account && searchHeaders(account)) },
         signal,
-        body: JSON.stringify({
+        body: priceOnly ? undefined : JSON.stringify({
             title: listing.title,
             images: listing.images,
             price: listing.currentPrice,
             shipping: listing.shipping,
             bids: listing.bids,
             endTime: listing.endTime,
+            termsCheckedAt: listing.termsCheckedAt,
+            buyingOption: listing.buyingOption,
+            bestOffer: listing.bestOffer,
         }),
         }); } catch (error) {
-            if (signal?.aborted || attempt > 0 || !(error instanceof ApiRequestError) || !error.retryable) throw error;
+            if (priceOnly || signal?.aborted || attempt > 0 || !(error instanceof ApiRequestError) || !error.retryable) throw error;
             await retryDelay(error.retryAfterMs, signal);
         }
     }

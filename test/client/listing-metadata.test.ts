@@ -36,7 +36,9 @@ test("raw-condition facts are absent for listed and photographed slabs while act
     }
     const raw = cardEvaluation(); raw.photoCheck!.cardCount = "ONE";
     for (const isGraded of [true, false]) {
-        assert.match(render({ ...item, isGraded }, { status: "done", evaluation: raw }), /<dt>AI raw condition<\/dt><dd>Lightly Played<\/dd>/);
+        const html = render({ ...item, isGraded }, { status: "done", evaluation: raw });
+        assert.match(html, /<dt>AI raw condition<\/dt><dd>Lightly Played<\/dd>/);
+        assert.match(html, /Photo assessed: <\/span>Raw/);
     }
     assert.match(render({ ...item, isGraded: false }), /<dt>AI raw condition<\/dt><dd>Not assessed<\/dd>/);
 });
@@ -86,7 +88,7 @@ test("cards show real listed dates, distinguish creation, and keep the card-type
         filters: { typeFilter: "all", kindFilter: "all", sort: "best", minPrice: "", maxPrice: "", minGrade: 0,
             setTypeFilter: noop, setKindFilter: noop, setSort: noop, changeMinPrice: noop, setMaxPrice: noop, changeMinGrade: noop },
         target: { targets: { minProfit: 0, minRoi: 0 }, targetInputs: { minProfit: "", minRoi: "" }, changeTarget: noop },
-        settings: { includeOffers: false, autoSetting: 3, resultsSetting: 200, changeIncludeOffers: noop, changeAutoSetting: noop, changeResultsSetting: noop },
+        settings: { includeOffers: false, autoSetting: 3, changeIncludeOffers: noop, changeAutoSetting: noop },
         drawer: { drawerOpen: false, setDrawerOpen: noop }, usage: null, aiUsage: null };
     for (const kind of ["all", "raw", "graded"]) {
         const html = renderToStaticMarkup(createElement(SearchControls, { ...controls, filters: { ...controls.filters, kindFilter: kind } }));

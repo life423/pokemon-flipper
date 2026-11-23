@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { BENCHMARK_TRANSPORT_LIMITS, BenchmarkTransportBlockedError, createBenchmarkTransport } from "../../scripts/review/benchmark-transport.ts";
-import { BOUNDED_VISION_MODEL } from "../../server/ai/policy.ts";
+import { BOUNDED_VISION_MODEL, TEXT_MODEL } from "../../server/ai/policy.ts";
 
 const generation = "https://api.openai.com/v1/responses";
 const preflight = generation + "/input_tokens";
@@ -93,6 +93,27 @@ test("text priority experiments cannot send images or silently select another mo
     assert.equal(observer.snapshot().actual.aiGeneration, 1);
     assert.equal(observer.snapshot().actual.aiPreflight, 1);
     assert.equal(JSON.stringify(observer.records).includes("PRIVATE"), false);
+});
+
+test("benchmark transport allows the two bounded production text stages only with their expected limits", async () => {
+    const observer = createBenchmarkTransport({ live: true, fetch: ok });
+    for (const [name, maxOutput] of [["marketplace_query_assistance", 180], ["listing_text_priority", 140]] as const) {
+        const count = { model: TEXT_MODEL, reasoning: { effort: "none" },
+            input: [{ role: "user", content: [{ type: "input_text", text: "PRIVATE-LISTING" }] }],
+            text: { format: { name, type: "json_schema", strict: true } } };
+        const generate = { ...count, max_output_tokens: maxOutput };
+        const request = (url: string, body: object) => observer.fetch(url, { method: "POST", body: JSON.stringify(body) });
+        await request(preflight, count);
+        await request(generation, generate);
+        for (const invalid of [{ ...generate, model: "unknown-model" }, { ...generate, max_output_tokens: maxOutput + 1 },
+            { ...generate, reasoning: { effort: "low" } }, { ...generate, input: [{ content: [{ type: "input_image" }] }] }]) {
+            await assert.rejects(request(generation, invalid), /schema/);
+        }
+        await assert.rejects(request(preflight, generate), /schema/);
+    }
+    assert.equal(observer.snapshot().actual.aiPreflight, 2);
+    assert.equal(observer.snapshot().actual.aiGeneration, 2);
+    assert.equal(JSON.stringify(observer.records).includes("PRIVATE-LISTING"), false);
 });
 
 test("sold-copy benchmarks allow the compact writer and count proof while rejecting legacy photo/model/output work", async () => {

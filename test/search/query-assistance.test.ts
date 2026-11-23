@@ -48,6 +48,10 @@ test("literal searches, known aliases, and already-removed conversational wordin
         assert.deepEqual(await read("Moonbreon Base Set"), readSearchLocally("Moonbreon Base Set"));
         assert.equal((await read("Moonbreon baseset")).cardName, "moonbreon");
         assert.deepEqual(await read("Moonbreon Evolving Skies #94"), readSearchLocally("Moonbreon Evolving Skies #94"));
+        const charizard151 = await read("Charizard ex 151 199/165 holo PSA 9");
+        assert.deepEqual(charizard151.sets, ["Scarlet & Violet 151"]);
+        assert.equal(charizard151.cardNumber, "199/165");
+        assert.deepEqual((await read("Mewtwo 151/165 PSA 9")).sets, []);
     });
     assert.deepEqual(calls, []);
 });

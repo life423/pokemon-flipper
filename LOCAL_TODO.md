@@ -1,6 +1,6 @@
 # Pokémon Flipper — current to-do list
 
-Updated November 9, 2026. This file is tracked at the user's request. It is the
+Updated November 10, 2026. This file is tracked at the user's request. It is the
 current index, not a chronological work log. LOCAL_PLAN.md and dated docs retain
 research details; Git retains earlier versions of this list. Credentials,
 provider payloads, photos and data/ stay excluded. No computer handoff is pending.
@@ -11,10 +11,57 @@ provider payloads, photos and data/ stay excluded. No computer handoff is pendin
   supported resale value and positive net profit after all costs. Verify it
   reaches Deals through the normal workflow; never inflate values or relabel an
   unverified opportunity to meet a count.
+- [x] Show a Buy It Now competition check when an exact slab search retains no
+  candidates. Compare the lowest checked delivered ask with the ceiling at that
+  shipping cost. Reuse compatible saved slab evidence and distinguish it from
+  matching eBay details. Keep the check inside the search's eBay allowance.
+- [x] Validate the competition check through the app on Lost Origin Giratina V
+  186/196 holo PSA 9 with a shipping destination configured. The November 9
+  newest-first Any/Any scan returned zero under the $701.51 item ceiling. The
+  lowest checked exact match by listing details was $859.99 plus $6.82 shipping,
+  $165.30 above the $694.69 shipping-adjusted item ceiling. Five eBay Browse
+  requests, zero new PKMNPrices credits and zero AI spend. This sample found
+  no missed listing below the ceiling. The live Deal milestone remains open.
+- [x] Pick a new liquid slab from cached exact sold activity and run one
+  newest-first Buy It Now search with shipping and Any/Any. The November 9
+  Scarlet & Violet 151 Venusaur ex 198/165 holo PSA 9 search showed Deals 0.
+  eBay returned zero under $86.80. The lowest checked match by listing details
+  was $119.27 plus $5.80 shipping, $38.27 above the shipping-adjusted item
+  ceiling of $81.00. Five Browse requests, one PKMNPrices request (20 credits),
+  and zero AI calls. This verified another empty price window in the browser.
+- [x] Compare recent saved asks against exact sold prices before picking the next
+  live target. The November 10 replay matched 352 Buy It Now asks across 76
+  slab markets. None cleared purchase costs, even treating unquoted shipping
+  as free for the replay. A separate older $169 Lugia V TAG 9 lead was a title
+  mismatch: its slab showed 185/195 rather than the advertised 186/195.
+  No live provider calls were made.
+- [x] Sample one newest-first Buy It Now page of Evolving Skies PSA 9 slabs
+  with destination shipping and Any/Any. The November 10 scan used one Browse
+  request. The same page was replayed offline after correcting the diagnostic's
+  cache reader to load native catalog variants. Of 196 screened, 97 had exact
+  cached pricing and 88 were excluded on price. None supported positive profit
+  at asking. The closest was Gyarados V 28/203 PSA 9 at $48 plus $5.99 shipping,
+  with a $45.34 item ceiling and a modeled $2.86 loss. No new PKMNPrices calls,
+  listing-detail reads, or AI calls. The 99 without exact pricing are unresolved.
+- [x] Replay the 99 unresolved Evolving Skies PSA 9 rows and target the strongest
+  17 listings across 12 card identities. Exact sold evidence projected losses
+  for 13. One Pikachu 049/203 had a modeled $8.09 margin at a $65 reverse-holo
+  resale, but current eBay details identified the $30 plus $5.99 listing as
+  non-holo. No photo work and no Deals. The follow-up used 35 PKMNPrices
+  requests (81 reported credits) and one eBay Browse detail request.
+- [ ] Measure how often the automatic screen misses a market when the title's
+  set and collector number agree with the catalog but extra title text obscures
+  the name. Replay the targeted rows before changing matching rules. Keep
+  genuine finish and printing ambiguity separate from those parser misses.
 - [ ] Use fresh listing discovery and shared exact-market sold evidence to pick
   candidates before photo spending. Reuse original search accounts and accepted
   findings; inspect only decision-relevant candidates. Avoid another repetitive
   negative search matrix.
+- [x] Apply a sold-based item-price ceiling before fetching newest Buy It Now
+  inventory for an exact slab market. Four live browser scans found no listings
+  under their ceilings, using four Browse requests, one PKMNPrices request and
+  no new AI generation. This verifies discovery behavior and leaves the live
+  Deal milestone open.
 - [ ] Once a supported candidate exists, verify current price, shipping and
   availability, then check holder/grade or raw condition and printing. Confirm
   replay adds no duplicate photo charge and changed terms reprice correctly.
@@ -47,7 +94,194 @@ provider payloads, photos and data/ stay excluded. No computer handoff is pendin
   zero. Both attempts shared one search account and used 3.41686 cents of AI,
   23 Browse requests and 141 PKMNPrices requests with 381 reported credits.
 
-## Deal debugging and remaining audit fixes
+## November 9 audit repair checklist
+
+The supplied bundle reviewed `dd789c2`. The priorities below reflect the
+comparison against local `main` at `7c27270` and the working-tree cleanup.
+
+### 1. Fix what can keep a viable listing out of Deals
+
+- [x] Keep PSA and CGC grading routes running when an optional AI check on a
+  sold raw copy cannot reserve its allowance. Mark raw resale deferred and
+  keep the original accounting. Storage or ledger failures still stop work.
+  Replay the same fixture with and without the denial. Both runs should return
+  Buy and Grade when the exact graded sales support it. (Bundle finding 1)
+- [x] Use the same protective-case rule in discovery and final identity.
+  Accept ordinary cards advertised with a custom case and still reject custom
+  cards and proxies. Replay the original fixture through evaluation.
+  (Bundle finding 2)
+- [x] Reprice preliminary screens with the latest known shipping, listing
+  format and Best Offer terms. Replay the $70 slab with shipping changing
+  from $100 to $0, and test the reverse change.
+- [x] Carry structured condition and wear notes from eBay summaries into
+  research priority when present. Treat them as seller clues. Verify the
+  adapter with a mocked Browse response. (Bundle finding 4)
+- [x] Keep Prismatic Evolutions and Evolutions distinct in queries and exact
+  market matching. Test both cold and populated catalogs.
+
+### 2. Make recovery predictable and prevent repeat charges
+
+- [x] Give completed assessments with missing prices an explicit price-only
+  retry. Reuse saved photos and the original search account. Bound the lookups,
+  keep the previous assessment visible if refresh fails, and show a clear
+  outcome when prices remain unavailable. (Bundle finding 5)
+- [x] Stop new automatic assessments after a discovery stream error or early
+  end. Cancel work safely, keep completed results visible, and keep Stop usable
+  while work can still be cancelled. (Bundle finding 6)
+- [x] Retain AI answers that fail semantic validation with their request and
+  failure reason. Reuse that record on repeat requests and preserve any prior
+  valid answer. Cover the file backend and SQL replay. (Bundle finding 8)
+- [x] Drain accepted response and ledger writes on shutdown before closing
+  storage. Test restart and timeout with unresolved claims preserved.
+
+### 3. Verify Deals through the normal workflow
+
+- [x] Run mocked profitable, losing, missing-price and interrupted searches
+  through the real stream, evaluation and result grouping. Include the raw
+  grading regression and one exact slab. Verify a replay adds zero paid
+  requests and that Stop and price expiry work in the mounted app.
+- [x] Record the targeted live Pikachu ex 238/191 PSA 9 Buy It Now scan.
+  Exact sold evidence set a $166.60 item-price ceiling at Any profit and Any
+  ROI. eBay returned zero listings under that ceiling. The scan used one
+  Browse request, four PKMNPrices requests and 23 reported credits, and zero
+  AI calls. No listing advanced to availability or shipping verification.
+  The live Deal milestone stays open.
+
+### 4. Finish the supporting audit work
+
+- [x] Use corroborated photo evidence for the displayed raw or slabbed status.
+- [x] Update sold-sample wording to reflect the current paging bounds. Use the
+  current holder values in fixtures that exercise corroborated identity.
+- [x] Align the diagnostic benchmark with the app's current text stages and
+  photo settings. Extend saved replays to cover missed candidates where the
+  necessary evidence was recorded.
+- [x] Connect explicit deeper photo review to current saved assessments using
+  original photos and the original search account. Repricing restores the
+  saved review and preserves material photo concerns.
+- [x] Verify a production-only install and add a build and test
+  workflow. Keep public authentication and shared quota accounting on the
+  release checklist.
+
+### Follow-up validation and discovery
+
+- [x] Separate discovery coverage from the 50-row display limit. The same
+  fixture went from zero candidates after the first 50 unresolved rows to three
+  supported candidates in 54 screenings, using one mocked Browse page and no
+  provider calls. Four unresolved rows exceeded the display and six were left
+  unscreened after reaching the candidate target. Retained rows keep their reasons.
+- [x] Save screened overflow IDs, the completed screening stage and stable
+  stopping reasons under the original search ID. Distinguish missing evidence
+  from otherwise eligible rows beyond the display limit. Keep old count-only
+  diagnostics readable. Benchmarks preserve these rows on replay.
+- [x] Offer a marketplace Lowest price first mode alongside Newest first.
+  The local Sort results control remains separate. The new option reuses the
+  bounded Browse path and reserve. Find new listings still scans newest first.
+- [x] Use a usable USD shipping quote for the configured US destination. Treat
+  confirmed zero as free shipping. Keep potentially profitable Buy It Now
+  listings with unquoted shipping in Sorting with a provisional estimate and
+  an option to refresh terms. Offline raw and slab examples cover both outcomes.
+- [x] Correct an erroneous seller set claim for a raw card when the literal
+  title, high-confidence photos, full collector number, finish and exact
+  catalog variant agree. The original Blastoise 2/102 and Base Set 2 Blastoise
+  2/130 still price separately. Conflicting physical evidence remains unresolved.
+- [x] Normalize clear affirmative reprint observations from saved photo
+  evidence. Preserve visible marks across staged photo passes and recheck old
+  saved Deals without new photo calls. Negative, unreadable and conflicting
+  observations cannot establish a printing on their own.
+- [x] Recover missing prices under the original search account without a new
+  photo call. Separately verify an optional sold-copy AI allowance stop still
+  permits independent Buy and Grade evaluation. Storage and ledger stops keep
+  failing closed.
+- [x] Stop saved-only benchmark misses before provider reservations. Replay
+  the 50-row Tyranitar report: 112 unique listings were loaded originally, 50
+  reached sold screening, 22 were eligible for photos and 28 lacked usable sold
+  evidence. All four saved assessments replayed, two still lacked cached price
+  evidence, and zero Deals resulted. Replay sent no provider requests, changed
+  no quota counters, and spent $0. The older report cannot account for each
+  unseen row individually.
+- [ ] Expand saved baseline comparisons to record source and screening counts,
+  exclusions, unresolved reasons, final classifications and provider spend for
+  the 50-row overflow, Blastoise, a real loss and a supported profitable case.
+  Freeze minimal inputs, settings and evidence versions in private storage so
+  later cache refreshes cannot erase the reason a listing stopped. Use Giratina
+  for the live-market price gap and the profitable fixture to exercise Deals.
+  The offline search fixture now covers Deals, Projected losses and Sorting
+  with identical inputs on replay and zero additional paid generations. The
+  benchmark records screened overflow and the change in eBay Browse requests,
+  PKMNPrices requests and credits, and AI spend for each run.
+- [x] Show per-listing reasons for rejection and for rows never screened after
+  finding enough candidates. Keep screened overflow separate. Persist coverage
+  under the search ID, mark older records with incomplete coverage, and leave
+  listings outside eBay's returned pages unclassified.
+- [ ] Add per-buyer destination preferences when account settings are ready.
+  Verify address-specific quote selection and invalidate only the affected
+  purchase terms when the destination changes. Preserve reusable photo evidence.
+- [x] Run one approved newest-first Buy It Now scan for Evolving Skies Rayquaza
+  V 194/203 holo PSA 9. eBay returned zero listings under the $311.41 item-price
+  ceiling. The completed diagnostic recorded one Browse request, three
+  PKMNPrices requests (22 reported credits), and zero AI spend. The verified
+  live Deal milestone remains open.
+- [x] Use the collector numerator in exact-slab Browse queries while keeping
+  the full identity and sold-derived ceiling. Offline coverage admits `#194`
+  for verification and rejects a wrong set, a wrong denominator and an
+  above-ceiling price. Prefer the median of up to five recent matched Buy It
+  Now sales when at least three exist within 30 days. Show sale formats in
+  comparison evidence. Saved Rayquaza evidence models a $323.23 ceiling with
+  the new estimate and the same costs.
+- [x] Run one newest-first Buy It Now scan for Lost Origin Giratina V 186/196
+  holo PSA 9 at Any profit and Any ROI. eBay returned zero under the $701.51
+  item-price ceiling. One Browse request, three PKMNPrices requests
+  (22 reported credits), and zero AI generation requests.
+- [x] Compare the cheapest current exact Giratina PSA 9 Buy It Now listing
+  with the $701.51 ceiling. The lowest verified ask was $859.99 plus $6.82
+  destination-quoted shipping. A wider search found no cheaper exact match.
+  The app modeled a $178.92 loss at its $899.99 resale estimate. This was a
+  market price gap. The cross-check used four Browse requests and no AI calls.
+- [ ] Add a narrow sold-title normalization case for the observed `Pokemon Co.`
+  publisher prefix. It excluded one otherwise plausible Rayquaza comparison
+  without changing the five-sale median.
+
+## Deal debugging and earlier audit fixes
+
+- [x] Keep current eBay purchase terms ahead of older snapshots, separate
+  printing prices, block purchase advice for explicitly unconfirmed availability,
+  and make drawer opening free. Cancel detail work when its last consumer stops
+  and share duplicate Browse work. Retain readers for accepted legacy evidence.
+- [x] Use immutable image input for deeper photo review. Keep a first-photo
+  multi-card finding through later assessment stages. Preserve the eBay quota
+  lock during suspended processes and let SQL-backed paid work retry after a
+  confirmed provider rate limit.
+- [x] Reconcile contradictory First Edition stamp and artwork-shadow readings.
+  Count distinct seller photos in the disclosed-wear check, reject malformed
+  slab grades, and block pricing when strong photo identity disagrees with the
+  seller. Reuse accepted photos on re-evaluation.
+- [x] Apply new seller wear disclosures when repricing saved results or
+  refreshing the shortlist. Block Best Offer recommendations for suspected
+  creases using the same photo evidence as the buy decision.
+- [x] Reject invalid maximum prices and malformed provider responses before they
+  can produce a broader search or a false empty result. Keep unrelated cards
+  out of seller-title raw comparisons. Reuse the app's eBay link parser in the
+  evaluation CLI and retire the duplicate.
+- [x] Expire old pricing in open tabs while preserving photo evidence. Refresh
+  explicitly, protect edited shortlist fields from stale responses, and remove
+  unreachable auction rendering from the Buy It Now detail view. Keep sales at
+  a neighboring grade out of the exact-grade liquidity count.
+- [x] Replace paid offer notes with a local draft and apply the Best Offer
+  preference to the result and detail views.
+- [ ] Follow up on other findings from the source audit.
+  - Normalize reprint marks, reject malformed collector fractions, and account
+    for condition clauses with independent negation. Use semantic finish claims
+    to invalidate old pricing when eBay specifics change.
+  - Give automatic diagnostic reviews a bounded retry after a confirmed failure.
+    Preserve the original accounting scope and unresolved holds.
+  - Preserve historical rate snapshots when changing AI prices or retiring models.
+    Define SQL retention by data type with protection for paid and unresolved work.
+  - Use transactional shortlist and history writes and shared provider quota
+    accounting before running multiple processes or machines.
+  - Exercise SQL-backed spend and retry accounting through the full transport
+    path. Reject corrupt image bytes before paid dispatch.
+  - Verify storage-import freshness ordering and add repeatable browser coverage
+    for shortlist edits.
 
 The [November 8 search audit](docs/deal-search-audit-2026-11-08.md) preserves
 the PDF findings, the 50-row reconstruction, the browser checks and the live
@@ -127,8 +361,6 @@ Mew ex replay.
   when the model does not mark the entire listing a mismatch.
 - [ ] Add a replay covering listings excluded before the retained batch, using
   their own decisions and evidence versions instead of inferring why they stopped.
-- [ ] Keep a provider-mocked regression through the search stream and
-  evaluation endpoints for supported profit, loss and mixed stop reasons.
 - [x] Keep `Base Set 2/102` in the original market through reprint screening,
   title parsing, saved title reuse and final identity. Explicit Base Set 2 and
   Base Set II remain separate.
@@ -148,8 +380,6 @@ Mew ex replay.
   still lose money, so a new photo call was not justified on that evidence.
 - [ ] Document local reproduction and refresh the tracked environment template
   to match port 3017 and current settings. Preserve the loopback API boundary.
-- [ ] Complete the bounded price-only retry below, then validate a verified
-  profitable live Buy It Now listing through Deals using a targeted search.
 
 ## Working foundations to preserve
 
@@ -290,9 +520,6 @@ Mew ex replay.
   ingest, updates/corrections, deletion reconciliation and coverage tracking.
 - [ ] Retire the remaining seller-title-only raw final-price compatibility path
   after the accepted physical-condition route covers its useful behavior.
-- [ ] Resolve the manual pricing-retry admission gap: bounded price-first creates
-  no new trusted tickets. Implement a small capped price-only retry using saved
-  assessments, or deliberately retire the unused compatibility surface.
 
 ## Search, photo quality and automation
 
@@ -345,12 +572,32 @@ Mew ex replay.
   terms. Show item bid, shipping/tax/total investment, modeled profit and downside.
 - [ ] Compare the saved Mewtwo PSA7 Shadowless example against the implementation
   and preserve the 12-hour auction requirement. Record forecasts/outcomes.
+- [ ] Add a snipe assistant for auctions ending within 12 hours. Show the current
+  bid, next valid bid, maximum profitable item bid, total cost at that limit and
+  a separate expected closing range when supported. Add an ending-soon alert
+  and an eBay link for placing the bid.
+- [ ] Evaluate in-app automatic bidding after the snipe assistant. Confirm
+  production Offer API access and explicit permission for time-scheduled bids
+  with eBay. If approved, require buyer authorization per listing and a hard
+  cap, use durable scheduling and cancellation, refresh terms before dispatch,
+  and reconcile uncertain results before any retry. Test in the sandbox first.
+  See [eBay Offer API overview](https://www.developer.ebay.com/api-docs/buy/offer/static/overview.html)
+  and [eBay Buy APIs requirements](https://developer.ebay.com/api-docs/buy/buy-requirements.html).
+- [ ] Prototype a Chrome extension only if it improves the on-listing workflow.
+  Show the verified limit, timing alert and changes to auction terms beside the
+  eBay listing. Reuse the app's calculations. Benchmark bid readiness and late
+  submissions, including extended-bidding auctions. Treat bid submission as
+  the separate eBay approval milestone above.
 - [ ] Define understandable liquidity scores and resale-time/confidence ranges
   from exact-market activity, active supply and coverage. Include capital/holding
   preferences and grading/shipping turnaround; avoid a universal 30–60-day cap.
 - [ ] Build and backtest market trends, daily plans and daily-movers/stale-BIN
   strategies from shared SQL history. Keep provider aggregates separate from
   actual transactions; do not treat one outlier or asking-price spike as a trend.
+  Run once at a random time between 5 and 6 a.m. Central. Use exact eBay sold
+  history to confirm movement, then check newer and older active BINs below
+  the updated purchase ceiling. PriceCharting Big Movers is an ungraded lead
+  source. Integrating its data in the customer app requires written permission.
 - [ ] Test misspellings/generic titles, missed edition/Shadowless/holo/set, LP-to-NM
   and NM-to-Mint upside with actual photo evidence and after-cost margin.
 - [ ] Test general-merchandise/new sellers, small cached collection-condition

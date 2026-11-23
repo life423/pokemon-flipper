@@ -1,9 +1,9 @@
-import type { Evaluation, ListingSummary, PhotoCardReading, SearchIntent } from "./types.ts";
+import type { Evaluation, ListingSummary, SearchIntent } from "./types.ts";
 import { finishClaim } from "./finish.ts";
 import { isPrinting } from "./identity.ts";
 import { setKey } from "./sets.ts";
 import { explicitReprintSet } from "./reprint-release.ts";
-import { observedCardKind } from "./photo-evidence.ts";
+import { confirmedPhotoCard, observedCardKind } from "./photo-evidence.ts";
 import { compareCardNumbers } from "./card-number.ts";
 
 type Finish = NonNullable<SearchIntent["finish"]>;
@@ -88,21 +88,17 @@ function searchSetFamily(value: string): string {
     if (key === "game") return "base set";
     if (/^game base set(?: 2)?$/.test(key)) return key.slice("game ".length);
     if (key === "rocket") return "team rocket";
+    if (key === "xy evolutions") return "evolutions";
+    if (/^(?:sv|scarlet (?:and )?violet) prismatic evolutions$/.test(key)) return "prismatic evolutions";
     // Readable slab labels can include the publisher era before the release.
     const release = key.replace(/^sword (?:and )?shield (?!base set\b)/, "");
     return release === "crown zenith galarian gallery" ? "crown zenith" : release;
 }
 
-function confirmedPhotoCard(evaluation: Evaluation): PhotoCardReading | null {
-    const photo = evaluation.photoCheck?.cardIdentity;
-    return photo?.confidence === "HIGH" && evaluation.photoCheck?.cardCount === "ONE" &&
-        evaluation.photoCheck.images.some(image => image.usable && !image.isStockImage && (image.view === "FRONT" || image.view === "FRONT_DETAIL")) ? photo : null;
-}
-
 // Seller metadata cannot keep a photo-identified wrong release in Review.
 // Only settled facts exclude a copy; unclear photos remain an evidence gap.
 export function evaluatedIdentityMismatch(evaluation: Evaluation, intent: SearchIntent): ListingSummary["match"] | null {
-    const photo = confirmedPhotoCard(evaluation);
+    const photo = confirmedPhotoCard(evaluation.photoCheck);
     const strongPhoto = Boolean(photo);
     const identified = evaluation.identity?.status === "IDENTIFIED" ? evaluation.identity : null;
     const card = photo ? { name: photo.name ?? identified?.name, set: photo.set ?? identified?.set, cardNumber: photo.cardNumber ?? identified?.cardNumber } : identified;
@@ -137,7 +133,7 @@ export function evaluatedCriteriaMismatch(evaluation: Evaluation, intent: Search
         attributes.grader = null;
         attributes.grade = null;
     }
-    const physicalFinish = confirmedPhotoCard(evaluation)?.finish;
+    const physicalFinish = confirmedPhotoCard(evaluation.photoCheck)?.finish;
     const finish = physicalFinish && physicalFinish !== "UNKNOWN" ? physicalFinish : finishIn(evaluation.identity?.finish ?? "");
     if (finish) attributes.finish = finish;
     else if (physicalFinish === "UNKNOWN") attributes.finish = null;

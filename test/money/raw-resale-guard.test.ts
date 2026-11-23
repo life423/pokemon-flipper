@@ -57,4 +57,13 @@ test("a suspected crease leaves priced rejections finished until changed targets
     assert.equal(resultGroup(listingSummary(loss), loss), null);
     assert.equal(photoReviewStatus(loss).needsYourReview, false);
     assert.equal(loss.condition!.creases, "SUSPECTED");
+
+    const offerTerms = { minProfit: 20, minRoi: 0 };
+    Object.assign(original.listing, { price: 98, bestOffer: true });
+    const unsafeOffer = retargetEvaluation(original, offerTerms);
+    assert.equal(unsafeOffer.underwriting!.verdict, "PASS");
+    assert.equal(resultGroup(listingSummary(unsafeOffer), unsafeOffer, true), null);
+    original.condition!.creases = "NONE_SEEN";
+    const otherwiseEligible = retargetEvaluation(original, offerTerms);
+    assert.equal(resultGroup(listingSummary(otherwiseEligible), otherwiseEligible, true), "offers");
 });

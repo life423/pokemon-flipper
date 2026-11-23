@@ -175,7 +175,7 @@ test("a weak newest BIN pass admits a cheaper candidate even with all matching s
             assert.equal(options?.maxResults, 200);
             if (options?.sort === "price") {
                 assert.equal(options.keepReserve, true);
-                assert.equal(checked.length, 50, "sold screening decides whether a second search is worthwhile");
+                assert.equal(checked.length, newest.length, "screen the rest of the fetched newest page before widening");
                 return { listings: [wrongSet, duplicate, { ...cheap, currentPrice: 39 }, newCheap], total: 250, skipped: 0 };
             }
             return { listings: newest, total: 250, skipped: 0 };
@@ -199,7 +199,7 @@ test("a weak newest BIN pass admits a cheaper candidate even with all matching s
     assert.equal(result.find(row => row.id === cheap.id)?.currentPrice, cheap.currentPrice);
     assert.equal(result.find(row => row.id === duplicate.id)?.currentPrice, newest[0].currentPrice);
     assert.equal(summary?.pricePass?.status, "COMPLETE");
-    assert.equal(summary?.pricePass?.candidates, 2);
+    assert.equal(summary?.pricePass?.candidates, 1);
     assert.equal(summary?.found, 53);
     assert.equal(summary?.deferred, 0);
 });

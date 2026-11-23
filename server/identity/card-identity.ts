@@ -1,15 +1,17 @@
-import { normalizeText } from "../ebay/filters.ts";
+import { normalizeText, withoutAccompanyingCustomHolder } from "../ebay/filters.ts";
 import { PRINTINGS, isPrinting, readyForPricing } from "../../shared/identity.ts";
 import { finishClaim, type FinishClaim } from "../../shared/finish.ts";
-import { normalizeCardNumber, sameCardNumber } from "../../shared/card-number.ts";
+import { compareCardNumbers, normalizeCardNumber, sameCardNumber } from "../../shared/card-number.ts";
 import { canonicalCatalogName, sameCatalogName } from "./catalog-name.ts";
 import { cardLanguageStatus } from "../../shared/card-language.ts";
-import { BASE_SET_2_TITLE, hasBaseSetFourthPrint, withoutReprintRelease } from "../../shared/reprint-release.ts";
+import { confirmedPhotoCard, conflictsWithPhotoFinish } from "../../shared/photo-evidence.ts";
+import { BASE_SET_2_TITLE, hasBaseSetFourthPrint, PRISMATIC_EVOLUTIONS_TITLE, withoutReprintRelease, XY_EVOLUTIONS_TITLE } from "../../shared/reprint-release.ts";
+import { canonicalBaseSet2 } from "../../shared/sets.ts";
 import { checkSlab } from "./slab-check.ts";
 import type { readTitleByRules } from "../ai/title-reader.ts";
 
 export { PRINTINGS, isPrinting, normalizeCardNumber, readyForPricing, sameCardNumber };
-import type { Identity, PhotoCheck, Printing } from "../../shared/types.ts";
+import type { Identity, PhotoCheck, Printing, PrintingMarks } from "../../shared/types.ts";
 import type { LookupCards, PricedCard, CardRecord, PrintingOrUnknown } from "../pricing/types.ts";
 
 // A printing claim in seller text or on a label.
@@ -177,7 +179,7 @@ export function normalizeSetName(value: unknown): string {
         .trim();
 
     const release = words.replace(/^(?:sword (?:and )?shield|swsh) /, "");
-    return SET_ALIASES[words] ?? (Object.hasOwn(SWORD_SHIELD_RELEASE_CODES, release) ? release : words);
+    return SET_ALIASES[words] ?? (Object.hasOwn(SWORD_SHIELD_RELEASE_CODES, release) ? release : canonicalBaseSet2(words));
 }
 
 // The normalized names of every set a listing's set may be filed under.
@@ -201,7 +203,7 @@ export function setSearchTerm(setName: unknown): string {
 // "SV: Scarlet & Violet 151"). Never for Base Set: XY has its own.
 const SERIES_PREFIXES = [
     "xy", "sm", "swsh", "sv", "me", "bw", "dp", "hgss",
-    "scarlet violet", "sword shield", "sun moon", "black white", "diamond pearl", "mega evolution",
+    "scarlet violet", "scarlet and violet", "sword shield", "sun moon", "black white", "diamond pearl", "mega evolution",
 ];
 
 export function sameSetFamily(candidateSet: unknown, listedSet: unknown): boolean {
@@ -210,14 +212,14 @@ export function sameSetFamily(candidateSet: unknown, listedSet: unknown): boolea
 
     if (candidate === "" || listed === "") return false;
 
-    // A listing may put a series name in front ("Sword & Shield Crown
-    // Zenith"), never the other way around.
-    if (setFamily(listedSet).includes(candidate) || listed.endsWith(` ${candidate}`)) return true;
+    if (setFamily(listedSet).includes(candidate)) return true;
 
-    // The database may put a series name in front.
+    // Accept known series prefixes on either side. An arbitrary suffix
+    // can be a different release (Prismatic Evolutions vs XY Evolutions).
     return (
+        !candidate.startsWith("base set") &&
         !listed.startsWith("base set") &&
-        SERIES_PREFIXES.some((prefix) => candidate === `${prefix} ${listed}`)
+        SERIES_PREFIXES.some((prefix) => candidate === `${prefix} ${listed}` || listed === `${prefix} ${candidate}`)
     );
 }
 
@@ -305,13 +307,14 @@ export function finishOfVariant(name: string): string {
 // Maps what the model saw on the card to a printing. Anything unclear
 // stays UNKNOWN; the shadow only matters for Base Set.
 export function photoPrinting(
-    marks: { firstEditionStamp: string; artBoxShadow: string } | null | undefined,
+    marks: PrintingMarks | null | undefined,
     { shadowMatters }: { shadowMatters: boolean }
 ): PrintingOrUnknown {
-    if (!marks) return "UNKNOWN";
+    if (!marks || marks.conflicts?.includes("firstEditionStamp")) return "UNKNOWN";
     if (marks.firstEditionStamp === "VISIBLE") return "FIRST_EDITION";
     if (marks.firstEditionStamp !== "NOT_PRESENT") return "UNKNOWN";
     if (!shadowMatters) return "UNLIMITED";
+    if (marks.conflicts?.includes("artBoxShadow")) return "UNKNOWN";
     if (marks.artBoxShadow === "ABSENT") return "SHADOWLESS";
     if (marks.artBoxShadow === "PRESENT") return "UNLIMITED";
 
@@ -533,24 +536,54 @@ export function lookAlikeProblem(
 // Marks on the artwork that make a card a reprint or a special printing,
 // and the sets they belong to. Anywhere else, the mark means the listing
 // isn't the card its title says.
-const REPRINT_MARKS: Record<string, { name: string; sets: string[] }> = {
+const REPRINT_MARKS = {
     CELEBRATIONS_25TH: { name: "the 2021 Celebrations reprint", sets: ["celebration"] },
     ANNIVERSARY_30TH: { name: "the 2026 30th Celebration reprint", sets: ["30th"] },
-    BASE_SET_2: { name: "Base Set 2", sets: ["base set 2", "base set ii"] },
+    BASE_SET_2: { name: "Base Set 2", sets: ["base set 2"] },
     WORLD_CHAMPIONSHIPS: { name: "a World Championships deck", sets: ["world championship"] },
     OTHER_STAMP: { name: "a stamped special printing", sets: ["promo"] },
 };
 
+type ReprintMark = keyof typeof REPRINT_MARKS;
+const affirmativeReprintNotes = ([
+    ["BASE_SET_2", "base set (?:2|ii) (?:set symbol|symbol|mark|logo|stamp)"],
+    ["CELEBRATIONS_25TH", "(?:celebrations (?:pikachu )?|pikachu 25th anniversary |25th anniversary (?:pikachu )?)(?:logo|stamp|mark|symbol|face)"],
+    ["ANNIVERSARY_30TH", "(?:pikachu 30th anniversary |30th (?:anniversary|celebration) (?:pikachu )?)(?:logo|stamp|mark|symbol|face)"],
+    ["WORLD_CHAMPIONSHIPS", "world championships (?:logo|stamp|mark|symbol)"],
+] satisfies [ReprintMark, string][]).map(([code, mark]) => {
+    const subject = `(?:(?:a|an|the) )?(?:${mark})`;
+    const location = "(?: (?:below|under|beside|above) the artwork(?: frame)?| at the lower right of the artwork| in (?:the front photo|photo \\d+))?";
+    return [code, new RegExp(`^(?:${subject} (?:is )?(?:clearly )?(?:visible|present|seen)|(?:the )?(?:card|front photo|photo \\d+) (?:clearly )?shows ${subject})${location}$`)] as const;
+});
+
+export function reprintMarkCode(mark: string | null | undefined): ReprintMark | null {
+    if (!mark) return null;
+    if (Object.hasOwn(REPRINT_MARKS, mark)) return mark as ReprintMark;
+    // A complete, affirmative photo observation can survive legacy prose.
+    // Keep qualifiers, questions and unrelated claims outside this grammar.
+    const note = normalizeText(mark).trim().replace(/\s+/g, " ").replace(/\.$/, "").replace(/lower[-–]right/g, "lower right");
+    return affirmativeReprintNotes.find(([, pattern]) => pattern.test(note))?.[0] ?? null;
+}
+
 // The reprint a photographed mark shows, or null when there is none or the
 // listed set is that reprint.
 export function reprintShown(mark: string | null | undefined, setName: unknown): string | null {
-    const known = mark ? REPRINT_MARKS[mark] : undefined;
-
-    if (!known) return null;
+    const code = reprintMarkCode(mark);
+    if (!code) return null;
+    const known = REPRINT_MARKS[code];
 
     const set = normalizeWords(setName);
 
-    return known.sets.some((word) => set.includes(word)) ? null : known.name;
+    return (code === "BASE_SET_2" ? normalizeSetName(setName) === "base set 2" : known.sets.some((word) => set.includes(word))) ? null : known.name;
+}
+
+export function photoReprintIssue(marks: PrintingMarks | undefined, set: string, catalogSet = set): { reason: string; notThisCard?: string } | null {
+    if (marks?.conflicts?.includes("reprintMark")) return { reason: "Photo readings disagree about which reprint mark is visible." };
+    const reprint = reprintShown(marks?.reprintMark, catalogSet);
+    return reprint ? {
+        reason: `The photos show a mark from ${reprint}, so this isn't the ${set} card.`,
+        notThisCard: `it shows a mark from ${reprint}`,
+    } : null;
 }
 
 const baseSet2Mark = "base set 2 (?:mark|symbol)";
@@ -586,7 +619,7 @@ export function reprintMarksRuledOut(mark: string | undefined, set: string): boo
 const NOVELTY = /\b(reprint|replica|jumbo|oversized?|metal(?!\s+energy\b)|topps|custom|proxy|fan ?made|gold (foil|plated)|upc|ultra[\s-]*prem(ium)?)\b/;
 
 export function noveltyIn(text: unknown): string | null {
-    return normalizeText(text).match(NOVELTY)?.[0] ?? null;
+    return withoutAccompanyingCustomHolder(String(text ?? "")).match(NOVELTY)?.[0] ?? null;
 }
 
 // Reprints of vintage cards (Celebrations, Classic Collection, Base Set
@@ -597,7 +630,6 @@ const REPRINT_MARKERS: [RegExp, string[] | null][] = [
     [/\bcelebrations?\b/, ["celebration"]],
     [/\bclassic collection\b/, ["classic collection", "celebration"]],
     [/\b\d+(st|nd|rd|th) anniversary\b/, ["celebration", "classic collection", "anniversary"]],
-    [/\bevolutions\b/, ["evolutions"]],
     [BASE_SET_2_TITLE, REPRINT_MARKS.BASE_SET_2.sets],
     [/\blegendary collection\b/, ["legendary collection"]],
     [/\bmcdonald'?s\b/, ["mcdonald"]],
@@ -611,14 +643,21 @@ const TITLE_NUMBERS = /\b(\d{1,3})\s*\/\s*(\d{1,3})\b/g;
 // The title contradicting the item details: a reprint marker for
 // another set, or a card number that isn't the listed one.
 export function titleContradiction(title: string, setName: string | null, cardNumber: string | null): string | null {
-    const text = normalizeText(title);
+    const text = withoutAccompanyingCustomHolder(title);
     // The whole set name: normalizeSetName drops prefixes like "Celebrations:".
     const setKey = normalizeWords(setName);
+
+    for (const pattern of [PRISMATIC_EVOLUTIONS_TITLE, XY_EVOLUTIONS_TITLE]) {
+        const release = text.match(pattern)?.[0];
+        if (release && !sameSetFamily(release, setName)) {
+            return `The title says "${release}", but the item details say ${setName}.`;
+        }
+    }
 
     for (const [pattern, allowedIn] of REPRINT_MARKERS) {
         const match = text.match(pattern);
 
-        if (match && !(allowedIn ?? []).some((word) => setKey.includes(word))) {
+        if (match && !(pattern === BASE_SET_2_TITLE ? normalizeSetName(setName) === "base set 2" : (allowedIn ?? []).some((word) => setKey.includes(word)))) {
             return `The title says "${match[0]}", but the item details say ${setName}.`;
         }
     }
@@ -654,29 +693,52 @@ function corroboratedDateNumber(listing: IdentityListing, photos: IdentityPhotos
     return titleNumbers.length && titleNumbers.every(number => sameCardNumber(number, card.cardNumber)) ? card.cardNumber! : null;
 }
 
-function corroboratedSellerClaims(listing: IdentityListing, photos: IdentityPhotos): Partial<Record<"Card Number" | "Finish", string>> | null {
+function describesSellerSetConflict(problem: string, observed: string, claimed: string): boolean {
+    const text = normalizeWords(problem);
+    const visible = text.match(/^(?:the )?(?:visible|photographed) (?:card )?set (?:is|reads) (.+?) not (?:the )?(?:seller(?: s)? (?:item )?(?:aspects|details|specifics|metadata|set)|item (?:details|specifics)) (.+)$/);
+    const seller = text.match(/^(?:the )?(?:seller(?: s)? (?:item )?(?:aspects|details|specifics|metadata|set)|item (?:details|specifics)) (?:say|says|list|lists) (.+?) but (?:the )?(?:visible|photographed) (?:card )?set (?:is|reads) (.+)$/);
+    return normalizeSetName(visible?.[1] ?? seller?.[2]) === normalizeSetName(observed) &&
+        normalizeSetName(visible?.[2] ?? seller?.[1]) === normalizeSetName(claimed);
+}
+
+type SellerFieldCorrections = Partial<Record<"Set" | "Card Number" | "Finish", string>>;
+
+function corroboratedSellerClaims(listing: IdentityListing, photos: IdentityPhotos, readTitle?: typeof readTitleByRules): SellerFieldCorrections | null {
     const card = photos.cardIdentity, aspects = listing.aspects ?? {};
     const fraction = /^#?[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?$/i;
-    if (!card?.name || !card.set || !card.cardNumber || !fraction.test(card.cardNumber.trim()) || card.confidence !== "HIGH" || !card.evidence.length ||
+    const fractionsInText = /\b[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?\b/gi;
+    if (!card?.name || !card.set || !aspects.Set || !card.cardNumber || !fraction.test(card.cardNumber.trim()) || card.confidence !== "HIGH" || !card.evidence.length ||
         photos.cardCount !== "ONE" || !["NONE", "SLEEVE", "TOPLOADER"].includes(photos.holder ?? "") || photos.slab?.present ||
         !photos.images?.some(photo => photo.view === "FRONT" && photo.usable && !photo.isStockImage) ||
         !sameCatalogName(card.name, photos.printedName) || !sameCatalogName(card.name, aspects["Card Name"] ?? aspects.Character) ||
-        !fraction.test(photos.printedNumber?.trim() ?? "") || !sameCardNumber(card.cardNumber, photos.printedNumber) || !sameSetFamily(card.set, aspects.Set) ||
-        normalizeWords(card.language) !== "english" || cardLanguageStatus(listing.title, [aspects.Language, card.language]) !== "ENGLISH" ||
+        !fraction.test(photos.printedNumber?.trim() ?? "") || !sameCardNumber(card.cardNumber, photos.printedNumber) ||
+        cardLanguageStatus("", [card.language]) !== "ENGLISH" || cardLanguageStatus(listing.title, [aspects.Language, card.language]) !== "ENGLISH" ||
         !["HOLO", "NON_HOLO", "REVERSE_HOLO"].includes(card.finish) || finishClaim(listing.title) !== card.finish ||
         titleContradiction(listing.title, card.set, card.cardNumber)) return null;
-    const numbers = [...listing.title.matchAll(/\b[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?\b/gi)].map(match => match[0]);
+    const setConflict = !sameSetFamily(card.set, aspects.Set);
+    const title = setConflict ? withoutReprintRelease(listing.title) : listing.title;
+    const numbers = [...title.matchAll(fractionsInText)].map(match => match[0]);
     if (!numbers.length || numbers.some(number => !sameCardNumber(number, card.cardNumber))) return null;
-    let words = ` ${normalizeWords(listing.title.replace(/\b[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?\b/gi, " "))} `;
-    for (const claim of [card.name, card.set]) {
-        const explicit = ` ${normalizeWords(claim)} `;
-        if (!words.includes(explicit)) return null;
-        words = words.replace(explicit, " ");
+    const changes: SellerFieldCorrections = {};
+    if (setConflict) {
+        const literal = readTitle?.(listing.title, [card.set, aspects.Set]);
+        const mark = photos.printingMarks?.reprintMark;
+        const reprintSettled = reprintMarksRuledOut(mark, normalizeSetName(card.set)) ||
+            Boolean(mark && Object.hasOwn(REPRINT_MARKS, mark) && !reprintShown(mark, card.set));
+        if (!literal || !sameCatalogName(literal.cardName, card.name) || !sameSetFamily(literal.set, card.set) ||
+            !sameCardNumber(literal.cardNumber, card.cardNumber) || !reprintSettled) return null;
+        changes.Set = card.set;
+    } else {
+        let words = ` ${normalizeWords(title.replace(fractionsInText, " "))} `;
+        for (const claim of [card.name, card.set]) {
+            const explicit = ` ${normalizeWords(claim)} `;
+            if (!words.includes(explicit)) return null;
+            words = words.replace(explicit, " ");
+        }
+        words = words.replace(/\bwizards of the coast\b|\bthe pokemon company\b/g, " ")
+            .replace(/\b(?:pokemon|tcg|cards?|holo(?:graphic|foil)?|foil|non|reverse|rare|english|eng|en|raw|ungraded|unlimited|wotc|vintage|first|1st|edition|\d+)\b/g, " ").trim();
+        if (words) return null;
     }
-    words = words.replace(/\bwizards of the coast\b|\bthe pokemon company\b/g, " ")
-        .replace(/\b(?:pokemon|tcg|cards?|holo(?:graphic|foil)?|foil|non|reverse|rare|english|eng|en|raw|ungraded|unlimited|wotc|vintage|first|1st|edition|\d+)\b/g, " ").trim();
-    if (words) return null;
-    const changes: Partial<Record<"Card Number" | "Finish", string>> = {};
     if (aspects["Card Number"] && !sameCardNumber(aspects["Card Number"], card.cardNumber)) changes["Card Number"] = card.cardNumber;
     if (aspects.Finish && finishClaim(aspects.Finish) !== card.finish) changes.Finish = card.finish;
     if (!Object.keys(changes).length) return null;
@@ -684,8 +746,9 @@ function corroboratedSellerClaims(listing: IdentityListing, photos: IdentityPhot
     if ([...(photos.problems ?? []), ...(photos.cardMatch?.problems ?? [])].some(problem => risk.test(problem))) return null;
     if (photos.cardMatch?.verdict === "MISMATCH") {
         if (!photos.cardMatch.problems.length || photos.cardMatch.problems.some(problem => {
+            if (changes.Set && describesSellerSetConflict(problem, changes.Set, aspects.Set)) return false;
             if (!/\b(?:seller|aspects?|specifics?|details?|metadata)\b/i.test(problem) || /\b(?:name|set|language|printing|grade|unclear|uncertain|unknown|unreadable|unresolved)\b/i.test(problem)) return true;
-            const mentioned = [...problem.matchAll(/\b[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?\b/gi)].map(match => match[0]);
+            const mentioned = [...problem.matchAll(fractionsInText)].map(match => match[0]);
             const numberIssue = changes["Card Number"] && mentioned.some(number => sameCardNumber(number, card.cardNumber)) &&
                 mentioned.some(number => sameCardNumber(number, aspects["Card Number"])) && mentioned.every(number => sameCardNumber(number, card.cardNumber) || sameCardNumber(number, aspects["Card Number"]));
             const finishIssue = changes.Finish && /\bfinish\b/i.test(problem) && normalizeWords(problem).includes(normalizeWords(aspects.Finish)) &&
@@ -709,7 +772,7 @@ export function corroboratedSlabName(listing: IdentityListing, photos: IdentityP
     if (!card.name || !card.set || !card.cardNumber || !card.evidence.length || !labelText || !photos.images ||
         photos.cardCount !== "ONE" || photos.cardMatch?.verdict !== "MATCH" || photos.cardMatch.problems.length || photos.problems?.length ||
         !sameCatalogName(card.name, photos.printedName) || !sameCardNumber(card.cardNumber, photos.printedNumber) ||
-        normalizeWords(card.language) !== "english" || cardLanguageStatus(listing.title, [aspects.Language, card.language]) !== "ENGLISH" ||
+        cardLanguageStatus("", [card.language]) !== "ENGLISH" || cardLanguageStatus(listing.title, [aspects.Language, card.language]) !== "ENGLISH" ||
         card.finish === "UNKNOWN") return null;
 
     const agreesWithSet = (set: string) => sameSetFamily(set, card.set) || sameSetFamily(card.set, set);
@@ -739,7 +802,7 @@ function shadowConfirmsUnlimited(photos: IdentityPhotos, card: PricedCard): bool
     // A reflection can hide wear while leaving the printed frame readable.
     return Boolean(marks?.artBoxShadow === "PRESENT" && marks.firstEditionStamp === "CANT_TELL" && marks.evidence?.length &&
         reprintMarksRuledOut(marks.reprintMark, "base set") && observed?.confidence === "HIGH" && observed.evidence.length &&
-        normalizeSetName(observed.set) === "base set" && normalizeWords(observed.language) === "english" &&
+        normalizeSetName(observed.set) === "base set" && cardLanguageStatus("", [observed.language]) === "ENGLISH" &&
         ordinaryBaseSetPokemonNumber(observed.cardNumber) &&
         sameCatalogName(observed.name, photos.printedName) && sameCatalogName(observed.name, card.name) &&
         sameCardNumber(observed.cardNumber, photos.printedNumber) && sameCardNumber(observed.cardNumber, card.cardNumber) &&
@@ -747,6 +810,16 @@ function shadowConfirmsUnlimited(photos: IdentityPhotos, card: PricedCard): bool
         photos.cardMatch?.verdict === "MATCH" && !photos.cardMatch.problems.length &&
         photos.images?.some(image => image.view === "FRONT" && image.usable && !image.isStockImage) &&
         card.variants.some(variant => variant.printing === "UNLIMITED" && variant.finish === observed.finish));
+}
+
+export function structuredPhotoIdentityConflict(photos: IdentityPhotos | null, claims: Partial<Pick<Identity, "name" | "set" | "cardNumber">>): string | null {
+    const card = confirmedPhotoCard(photos);
+    if (!card?.name || !card.set || !card.cardNumber || !card.evidence?.length) return null;
+    const nameDiffers = claims.name && !sameCatalogName(card.name, claims.name);
+    const setDiffers = claims.set && !sameSetFamily(card.set, claims.set) && !sameSetFamily(claims.set, card.set);
+    const numberDiffers = compareCardNumbers(card.cardNumber, claims.cardNumber) === false;
+    return nameDiffers || setDiffers || numberDiffers
+        ? `the photos show ${card.name} #${card.cardNumber} from ${card.set}` : null;
 }
 
 // Builds the canonical identity for a listing. lookupCards returns
@@ -766,12 +839,13 @@ export async function identifyCard(
         };
     }
     const correctedNumber = corroboratedDateNumber(listing, photoCheck);
-    const correctedClaims = photoIdentity ? null : corroboratedSellerClaims(listing, photoCheck);
+    const correctedClaims = photoIdentity ? null : corroboratedSellerClaims(listing, photoCheck, readTitle);
     const correctedSlabName = readTitle && !photoIdentity ? corroboratedSlabName(listing, photoCheck, readTitle) : null;
     const aspects = correctedNumber || correctedClaims || correctedSlabName ? { ...listing.aspects,
         ...(correctedNumber ? { "Card Number": correctedNumber } : {}), ...correctedClaims,
         ...(correctedSlabName ? { "Card Name": correctedSlabName } : {}) } : listing.aspects ?? {};
     const listedName = aspects["Card Name"] ?? aspects.Character ?? photoCheck.printedName ?? null;
+    const language = aspects.Language ?? (/\b(japanese|jpn|japan)\b/i.test(listing.title) ? "Japanese" : "English");
 
     const identity: IdentityDraft = {
         status: "NEEDS_REVIEW",
@@ -779,9 +853,7 @@ export async function identifyCard(
         set: aspects.Set ?? null,
         cardNumber: null,
         listedCardNumber: aspects["Card Number"] ?? photoCheck.printedNumber ?? null,
-        language:
-            aspects.Language ??
-            (/\b(japanese|jpn|japan)\b/i.test(listing.title) ? "Japanese" : "English"),
+        language: cardLanguageStatus("", [language]) === "ENGLISH" ? "English" : language,
         printing: "UNKNOWN",
         printingLabel: null,
         finish: "NOT_STATED",
@@ -804,6 +876,13 @@ export async function identifyCard(
     }
     if (!identity.set || !identity.listedCardNumber || !listedName) {
         return needsReview("The listing doesn't give the set, card number, and card name.");
+    }
+    const photoConflict = photoCheck.cardMatch?.verdict !== "MISMATCH" && structuredPhotoIdentityConflict(photoCheck, {
+        name: listedName, set: identity.set, cardNumber: identity.listedCardNumber,
+    });
+    if (photoConflict) {
+        identity.notThisCard = photoConflict;
+        return needsReview(`The card doesn't match the listing: ${photoConflict}.`);
     }
 
     const contradiction = titleContradiction(listing.title, identity.set, identity.listedCardNumber);
@@ -840,6 +919,7 @@ export async function identifyCard(
             (card) =>
                 sameSetFamily(card.setName, identity.set) &&
                 sameCardNumber(card.cardNumber, identity.listedCardNumber) &&
+                (!correctedClaims?.Set || normalizeCardNumber(card.cardNumber)?.total != null) &&
                 (correctedSlabName ? sameCatalogName(card.name, listedName) : sameName(card.name, listedName)) &&
                 (!correctedClaims || sameCatalogName(card.name, photoCheck.cardIdentity?.name))
         ),
@@ -912,7 +992,7 @@ export async function identifyCard(
     const itemPrinting = printingClaimFromAspects(aspects);
     let photo: PrintingOrUnknown = photoPrinting(photoCheck.printingMarks, { shadowMatters });
     let photoSource = "photos";
-    if (!slab && photo === "UNKNOWN" && setKey === "base set" &&
+    if (!slab && photo === "UNKNOWN" && setKey === "base set" && !photoCheck.printingMarks?.conflicts?.length &&
         [titlePrinting, itemPrinting].every(claim => claim === "UNLIMITED" || claim === "NOT_STATED") &&
         !hasBaseSetFourthPrint(setKey, sellerListing.title, aspectText(aspects, /edition|feature|print|copyright|year/i),
             ...(photoCheck.printingMarks?.evidence ?? [])) &&
@@ -960,11 +1040,10 @@ export async function identifyCard(
     if (labelFinish !== "NOT_STATED") identity.finish = resolveFinish(identity.finish as FinishClaim, labelFinish);
 
     // A reprint's mark on the artwork outranks anything the seller wrote.
-    const reprint = reprintShown(photoCheck.printingMarks?.reprintMark, card.records[0]?.setName ?? identity.set);
-
+    const reprint = photoReprintIssue(photoCheck.printingMarks, identity.set, card.records[0]?.setName ?? identity.set);
     if (reprint) {
-        identity.notThisCard = `it shows a mark from ${reprint}`;
-        return needsReview(`The photos show a mark from ${reprint}, so this isn't the ${identity.set} card.`, card);
+        if (reprint.notThisCard) identity.notThisCard = reprint.notThisCard;
+        return needsReview(reprint.reason, card);
     }
 
     // Anything else on the card that shows it isn't what the listing claims.
@@ -973,6 +1052,17 @@ export async function identifyCard(
 
         identity.notThisCard = problems;
         return needsReview(`The photos don't match the listing: ${problems}.`, card);
+    }
+    if (conflictsWithPhotoFinish(photoCheck, identity.finish)) {
+        identity.finish = "CONFLICTING";
+        return needsReview("The photographed finish disagrees with the listing or slab label.", card);
+    }
+    const marks = photoCheck.printingMarks;
+    if (identity.hasEditions && marks?.conflicts?.includes("firstEditionStamp")) {
+        return needsReview("Photo readings disagree about whether the First Edition stamp is present.", card);
+    }
+    if (shadowMatters && !psaLabel && marks?.firstEditionStamp !== "VISIBLE" && marks?.conflicts?.includes("artBoxShadow")) {
+        return needsReview("Photo readings disagree about whether the artwork border has a shadow.", card);
     }
 
     const printing = resolvePrinting({ ...evidence, corroboratedPhoto: photoIdentity?.printing }, {
@@ -1020,7 +1110,10 @@ export async function identifyCard(
         return needsReview("The listing and photographed finish disagree.", card);
     }
     identity.status = "IDENTIFIED";
-    if (correctedClaims) identity.reasons.push("The explicit title, readable photographed identity and matching catalog agree. Conflicting seller-entered card number or finish fields were corrected for pricing.");
+    if (correctedClaims) {
+        const fields = Object.keys(correctedClaims).map(field => field.toLowerCase()).join(", ");
+        identity.reasons.push(`The explicit title, readable photos and exact catalog agree. Pricing uses the corrected ${fields}.`);
+    }
     if (correctedSlabName) identity.reasons.push("The title, readable slab label and matching catalog agree on the card name. The seller's card name was corrected for pricing.");
     return { identity, card, ...(correctedClaims ? { sellerClaimsCorrected: true } : {}) };
 }

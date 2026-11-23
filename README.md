@@ -245,7 +245,7 @@ listing from search through photo assessment, pricing, money rules and the UI.
 ```
 server/
   app.ts          API routes; serves the page
-  ai/             OpenAI: photo analysis, title reading, comp checks
+  ai/             Photo analysis, literal title parsing, and bounded text research
   analysis/       Runs a full analysis; code rules on the AI's answers
   deals/          Local checks, sold-price-first admission and the search funnel
   ebay/           eBay search and listing details, with caching
@@ -303,7 +303,9 @@ a bounded output and a durable reservation. Input preflight uses OpenAI's
 count-only endpoint for the final request's model, instructions, schema and
 images, with successful proofs reused for identical inputs. Generation has no
 automatic retries in the bounded workflow. Unknown billing retains its full
-reservation; a reported overage pauses further dispatch. Budget reporting
+reservation. A dollar, output, or rate-bound overage pauses dispatch. Uncapped
+searches can settle an input-count discrepancy covered by the existing dollar
+reservation at the same rate. Budget reporting
 distinguishes reported spend from unconfirmed holds.
 
 After saved-evidence reuse, an uncached RAW request assesses identity and

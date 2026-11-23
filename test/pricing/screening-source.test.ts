@@ -337,7 +337,7 @@ test("stop before dispatch blocks queued requests without consuming their allowa
     const paths: string[] = [];
     t.mock.method(globalThis, "fetch", async input => {
         paths.push(requestPath(input)); if (paths.length === 2) bothStarted.resolve();
-        return response.promise;
+        return (await response.promise).clone();
     });
     const occupying = createScreeningPriceSource({ maxRequests: 2 });
     const active = [occupying.fetchRawComps(85001, "Unlimited Holofoil"), occupying.fetchRawComps(85002, "Unlimited Holofoil")];

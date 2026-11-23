@@ -12,6 +12,7 @@ export function GradingComparison({ evaluation, expanded = false }: { evaluation
     const estimate = displayedRawGrade(evaluation);
     const range = estimate?.range;
     const referenceOnly = estimate && estimate.source !== "PHOTO";
+    const shippingPending = evaluation.underwriting?.shippingUnconfirmed;
     const weights = estimate?.source === "PHOTO" && range?.likely != null && range.high > range.low
         ? gradeProbabilities(range) : [];
     return <section className={styles.grading} aria-label="PSA and CGC comparison">
@@ -25,12 +26,12 @@ export function GradingComparison({ evaluation, expanded = false }: { evaluation
             {" · "}Pricing assumptions
         </p>}
         <div className={styles.gradeRows}>{routes.map(({ grader, priced, reason }) => <div className={styles.gradeRoute} key={grader}>
-            <div className={styles.gradeHead}><strong>{grader}{evaluation.underwriting?.best?.grader === grader ? " · selected" : ""}</strong><span>{range ? range.low === range.high ? range.low : `${range.low}–${range.high}` : "Not assessed"}</span></div>
+            <div className={styles.gradeHead}><strong>{grader}{!shippingPending && evaluation.underwriting?.best?.grader === grader ? " · selected" : ""}</strong><span>{range ? range.low === range.high ? range.low : `${range.low}–${range.high}` : "Not assessed"}</span></div>
             <p className={styles.note}>{range?.likely != null ? `Estimated grade ${range.likely}` : range ? "Likely grade unknown" : "Awaiting usable photo evidence"}</p>
             <p className={styles.routeValue}>{priced ? `Graded sale estimate ${dollars(priced.expectedSale)}` : "Price unavailable"}</p>
-            {priced && <p className={`${styles.note} ${priced.profit < 0 ? styles.loss : styles.gain}`}>{priced.profit < 0 ? "Estimated loss" : "Estimated net profit"} {dollars(Math.abs(priced.profit))} {evaluation.listing.buyingOption === "AUCTION" ? "at current bid" : "at asking price"}</p>}
-            {expanded && <><p className={styles.note}>{priced ? `Grading + shipping ${dollars(priced.fixedCosts)} · item limit ${dollars(priced.maxBid)}` : referenceOnly ? "The photos need to support a grade before it can be used for pricing." : reason}</p></>}
+            {priced && <p className={`${styles.note} ${shippingPending ? "" : priced.profit < 0 ? styles.loss : styles.gain}`}>{shippingPending ? "Modeled" : "Estimated"} {priced.profit < 0 ? "loss" : "net profit"} {dollars(Math.abs(priced.profit))} {evaluation.listing.buyingOption === "AUCTION" ? "at current bid" : "at asking price"}</p>}
+            {expanded && <p className={styles.note}>{priced ? `Grading + shipping ${dollars(priced.fixedCosts)} · ${shippingPending ? "provisional " : ""}item limit ${dollars(priced.maxBid)}` : referenceOnly ? "The photos need to support a grade before it can be used for pricing." : reason}</p>}
         </div>)}</div>
-        {evaluation.underwriting?.best?.path === "RAW" && <p className={styles.note}>Separate grading scenarios. {priceEvidenceGap(evaluation) ? "Raw resale reference shown; a purchase strategy is not confirmed." : "Selected strategy: sell raw."}</p>}
+        {evaluation.underwriting?.best?.path === "RAW" && <p className={styles.note}>Separate grading scenarios. {shippingPending ? "Raw resale assumes purchase shipping." : priceEvidenceGap(evaluation) ? "Raw resale reference shown; a purchase strategy is not confirmed." : "Selected strategy: sell raw."}</p>}
     </section>;
 }

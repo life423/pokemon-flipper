@@ -30,7 +30,7 @@ export function searchDiagnosticRows(
 
         const best = evaluation.underwriting?.best;
         const photoChecked = Boolean(evaluation.photoCheck);
-        const priced = best?.status === "PRICED" && Number.isFinite(best.profit);
+        const priced = !evaluation.underwriting?.shippingUnconfirmed && best?.status === "PRICED" && Number.isFinite(best.profit);
         const row = { id, photoChecked, priced, ...(priced ? { profit: best.profit } : {}) };
         if (deals.has(id)) return { ...row, outcome: "DEAL", reason: "DEAL_CONFIRMED" };
         if (losses.has(id)) return { ...row, outcome: "LOSS", reason: "NET_LOSS" };
@@ -50,6 +50,7 @@ export function searchDiagnosticRows(
         if (review.has(id) && evaluation.underwriting?.verdict !== "CANT_PRICE") {
             return { ...row, outcome: "REVIEW", reason: "MATERIAL_REVIEW" };
         }
+        if (evaluation.underwriting?.shippingUnconfirmed) return { ...row, outcome: "UNPRICED", reason: "SHIPPING_UNCONFIRMED" };
         if (evaluation.pricingDeferred) return { ...row, outcome: "UNPRICED", reason: "PRICING_DEFERRED" };
         if (priced) return { ...row, outcome: "PRICED", reason: "TARGETS_NOT_MET" };
         return { ...row, outcome: "UNPRICED", reason: "PRICE_EVIDENCE_UNAVAILABLE" };

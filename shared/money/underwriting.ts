@@ -4,9 +4,9 @@ import { MONEY_CONFIG, type BuyingConfig, type GradingConfig, type MoneyConfig, 
 import { RAW_CONDITIONS, isRawCondition } from "../conditions.ts";
 import { dollars, round2 } from "../format.ts";
 import { cents, meetsMoneyTargets, minimumOfferPrice, money, sellingFeeCents, taxedCents } from "./cents.ts";
-import { isRawSoldPrice, referencePriceReason, unsupportedVariantReason } from "./price-evidence.ts";
+import { isRawSoldPrice, PRICE_PRINTING_MISMATCH, pricePrintingMismatch, referencePriceReason, unsupportedVariantReason } from "./price-evidence.ts";
 import { soldMarketPrice } from "../sold-evidence.ts";
-import { obscuredDisclosedWear } from "../photo-evidence.ts";
+import { conflictsWithPhotoFinish, obscuredDisclosedWear } from "../photo-evidence.ts";
 import type {
     CompSummary,
     Condition,
@@ -266,6 +266,7 @@ export function rawPath(input: UnderwritingInput, listing: PricedListing, shippi
     if (rawPricing?.status !== "PRICED") {
         return unavailablePath("RAW", label, rawPricing?.reason ?? "There's no raw price.");
     }
+    if (pricePrintingMismatch(rawPricing.printing, input.identity?.printing)) return unavailablePath("RAW", label, PRICE_PRINTING_MISMATCH);
 
     if (!condition || !isRawCondition(condition.rawCondition)) {
         return unavailablePath("RAW", label, "The photos don't support a raw condition, so the raw price is unknown.");
@@ -306,6 +307,7 @@ export function gradePath(
     if (graded?.status !== "PRICED" || !gradeRange) {
         return unavailablePath("GRADE", label, graded?.reason ?? `There are no ${grader} sales to price with.`, grader);
     }
+    if (pricePrintingMismatch(graded.printing, input.identity?.printing)) return unavailablePath("GRADE", label, PRICE_PRINTING_MISMATCH, grader);
 
     const byGrade = pricesByGrade(graded.byGrade ?? [], gradeRange);
 
@@ -554,6 +556,9 @@ function underwriteBase(input: UnderwritingInput, config: MoneyConfig): Underwri
     if (!readyForPricing(identity)) {
         return verdict("NEEDS_REVIEW", identity?.reasons?.length ? identity.reasons : ["The card isn't identified yet."]);
     }
+    if (conflictsWithPhotoFinish(input.photoCheck, identity?.finish)) {
+        return verdict("NEEDS_REVIEW", ["The photographed finish disagrees with the listing or slab label."]);
+    }
 
     const unsupportedVariant = unsupportedVariantReason(input);
     if (unsupportedVariant && (input.slab ? input.slab.status === "OK" : condition?.authenticity.concern === "NONE_SEEN")) {
@@ -587,6 +592,9 @@ function underwriteBase(input: UnderwritingInput, config: MoneyConfig): Underwri
     }
 
     if (input.slab) {
+        if (input.slab.status === "OK" && pricePrintingMismatch(input.slabPricing?.printing, identity?.printing)) {
+            return verdict("CANT_PRICE", [PRICE_PRINTING_MISMATCH], assumptions);
+        }
         return underwriteSlab(input.slab, input.slabPricing, listing, shipping, config, assumptions);
     }
 
@@ -662,6 +670,10 @@ function underwriteBase(input: UnderwritingInput, config: MoneyConfig): Underwri
     };
 }
 
+export function unquotedBuyItNowShipping(listing: Pick<UnderwritingInput["listing"], "buyingOption" | "shipping">): boolean {
+    return listing.buyingOption === "FIXED_PRICE" && listing.shipping == null;
+}
+
 export function underwrite(input: UnderwritingInput, config: MoneyConfig = MONEY_CONFIG): Underwriting {
     const obscuredWear = input.listing.availability !== "UNAVAILABLE" && obscuredDisclosedWear(input);
     if (obscuredWear) return verdict("PASS", [obscuredWear]);
@@ -671,6 +683,9 @@ export function underwrite(input: UnderwritingInput, config: MoneyConfig = MONEY
         return verdict("CANT_PRICE", ["The front-only price check no longer rules out a deal. Review the remaining photos before buying."]);
     }
     const result = underwriteBase(input, config);
+    if (input.listing.availability === "UNKNOWN" && result.verdict.startsWith("BUY")) {
+        return { ...result, verdict: "NEEDS_REVIEW", best: null, reasons: ["eBay did not confirm that this listing is still available. Check availability before buying or bidding."] };
+    }
     if ((frontOnlySlab || frontOnlyRaw) && result.verdict.startsWith("BUY")) {
         return verdict("CANT_PRICE", ["Review the remaining photos before buying."]);
     }
@@ -690,6 +705,10 @@ export function underwrite(input: UnderwritingInput, config: MoneyConfig = MONEY
     // purchase advice when the optional second opinion finds a new risk.
     if (concerns.length && result.best && result.verdict !== "NEEDS_REVIEW") return {
         ...result, verdict: "NEEDS_REVIEW", reasons: [...concerns.map((concern) => `Your review needed: ${concern}`), ...result.reasons],
+    };
+    if (result.verdict.startsWith("BUY") && unquotedBuyItNowShipping(input.listing)) return {
+        ...result, verdict: "CANT_PRICE", shippingUnconfirmed: true,
+        reasons: ["eBay did not quote shipping. Confirm the delivered price before treating this estimate as a deal."],
     };
     const deferred = input.pricingDeferred;
     const lookupOnly = deferred?.identityLookupPending && result.verdict === "NEEDS_REVIEW" && !input.identity?.notThisCard &&

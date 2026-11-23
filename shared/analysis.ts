@@ -6,6 +6,7 @@ import { AUTOMATIC_PRICE_CEILING, withinAutomaticAuctionWindow } from "./listing
 import { photoReviewStatus } from "./photo-review.ts";
 import { hasSlabEvidence, obscuredDisclosedWear, observedCardKind } from "./photo-evidence.ts";
 import { priceEvidenceGap } from "./money/price-evidence.ts";
+import { unquotedBuyItNowShipping } from "./money/underwriting.ts";
 import { missingTextureReason } from "./grade-qualifier.ts";
 import { deferRawPremiumPhotos } from "./raw-market-context.ts";
 
@@ -66,11 +67,16 @@ export type ResultGroup = "deals" | "offers" | "candidates" | "review";
 
 export function resultGroup(listing: ListingSummary, evaluation: Evaluation | null, includeOffers = false, analysisFailed = false): ResultGroup | null {
     const verdict = evaluation?.underwriting?.verdict;
+    const availability = evaluation?.listing?.availability ?? listing.availability;
     if (verdict === "PASS" && evaluation && obscuredDisclosedWear(evaluation)) return null;
     if ((evaluation?.frontPhotoStop === "SLAB_PRICE" || evaluation?.frontPhotoStop === "RAW_PRICE") && verdict === "CANT_PRICE") {
         return photoReviewStatus(evaluation).needsYourReview ? "review" : "candidates";
     }
     if (evaluation && evaluation.listing?.availability !== "UNAVAILABLE" && priceEvidenceGap(evaluation)) {
+        return photoReviewStatus(evaluation).needsYourReview ? "review" : "candidates";
+    }
+    if (evaluation && availability !== "UNKNOWN" && availability !== "UNAVAILABLE" &&
+        (evaluation.underwriting?.shippingUnconfirmed || verdict?.startsWith("BUY") && unquotedBuyItNowShipping(evaluation.listing ?? listing))) {
         return photoReviewStatus(evaluation).needsYourReview ? "review" : "candidates";
     }
     if (evaluation?.pricingDeferred && evaluation.listing.availability !== "UNAVAILABLE" && !verdict?.startsWith("BUY")) {
@@ -94,11 +100,13 @@ export function resultGroup(listing: ListingSummary, evaluation: Evaluation | nu
             evaluation?.condition?.authenticity.concern === "POSSIBLE" ||
             evaluation?.deeperPhotoReview?.findings.some((finding) => finding.impact === "NEW_CONCERN");
         if (unresolvedRisk) return "review";
-        return evaluation?.researchMode !== "DEFERRED_LOW_RESALE" && includeOffers &&
-            offerWorthMaking(offerFor(listing, evaluation?.underwriting?.best?.maxBid)) ? "offers" : null;
+        const offer = availability !== "UNKNOWN" && evaluation?.researchMode !== "DEFERRED_LOW_RESALE" &&
+            evaluation?.condition?.creases !== "SUSPECTED" && includeOffers && offerWorthMaking(offerFor(listing, evaluation?.underwriting?.best?.maxBid));
+        if (!offer) return null;
+        return unquotedBuyItNowShipping(evaluation?.listing ?? listing) ? "candidates" : "offers";
     }
     if (evaluation?.researchMode === "DEFERRED_LOW_RESALE") return photoReviewStatus(evaluation).needsYourReview ? "review" : null;
-    if (verdict?.startsWith("BUY")) return "deals";
+    if (verdict?.startsWith("BUY")) return availability === "UNKNOWN" ? "review" : "deals";
     if (verdict === "NEEDS_REVIEW" || verdict === "CANT_PRICE") return "review";
     if (evaluation && !verdict) return "review";
     // An incomplete check is unresolved, never a priced rejection or a queued analysis.

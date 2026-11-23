@@ -4,9 +4,9 @@ import assert from "node:assert/strict";
 import { readSearchLocally, readSearchWithoutAi } from "../../server/search/intent.ts";
 import { readTitleByRules } from "../../server/ai/title-reader.ts";
 import { findDeals } from "../../server/deals/find-deals.ts";
-import { writeCache } from "../../server/lib/cache.ts";
+import { readCache, writeCache } from "../../server/lib/cache.ts";
 import { MODEL } from "../../server/ai/openai.ts";
-import { describeSearchCriteria, evaluatedCriteriaMismatch, marketplaceQuery } from "../../shared/search-criteria.ts";
+import { describeSearchCriteria, evaluatedCriteriaMismatch, evaluatedIdentityMismatch, marketplaceQuery } from "../../shared/search-criteria.ts";
 import { filterSearchResults, groupSearchResults, countSearchResults } from "../../client/src/search/results.ts";
 import { describeIntent } from "../../client/src/search/presentation.ts";
 import { cardEvaluation } from "../fixtures/card-evaluation.ts";
@@ -62,6 +62,33 @@ test("saved intent cannot erase a typed holo constraint or add one to an unconst
     }
 });
 
+test("a saved Base Set 2 interpretation cannot turn Blastoise's 2/102 collector number into a reprint search", async t => {
+    const provider = t.mock.method(globalThis, "fetch", async () => assert.fail("saved intent repair must remain offline"));
+    const query = "blastoise base set 2/102 holo";
+    const saved = { ...readSearchLocally(query), sets: ["Base Set 2"], cardNumber: "2", keywords: "blastoise base set 2 holo" };
+    const key = `search-intent:v2:${MODEL}:${query}`;
+    await writeCache(key, saved);
+    const intent = await readSearchWithoutAi(query);
+    assert.deepEqual(intent.sets, ["Base Set"]);
+    assert.equal(intent.cardNumber, "2/102");
+    assert.match(marketplaceQuery(query, intent), /base set 2\/102 holo/);
+    assert.deepEqual(await readCache(key, 24), saved);
+    assert.equal(provider.mock.callCount(), 0);
+});
+
+test("photo-confirmed Base II and Base Set 2 are aliases, separate from original Blastoise", () => {
+    const original = readSearchLocally("Blastoise Base Set 2/102 holo");
+    const reprint = readSearchLocally("Blastoise Base Set 2 2/130 holo");
+    for (const set of ["Base Set 2", "Base Set II", "2000 Pokémon Game Base II"]) {
+        const actual = photoAssessment(listing("blastoise", "Blastoise Base Set 2/102 holo"), "HOLO", "2/130");
+        actual.photoCheck!.cardIdentity = { ...actual.photoCheck!.cardIdentity!, name: "Blastoise", set };
+        assert.equal(evaluatedIdentityMismatch(actual, original), "OTHER_SET", set);
+        assert.equal(evaluatedIdentityMismatch(actual, reprint), null, set);
+    }
+    assert.deepEqual(readTitleByRules("Blastoise Pokemon Game Base II 2/130 Holo English"),
+        { kind: null, cardName: "blastoise", set: "Base Set 2", cardNumber: "2/130", language: "English", grader: null, grade: null, condition: null });
+});
+
 test("bounded admission excludes explicit wrong finishes before paid work and does not narrow any-finish searches", async t => {
     const fetch = t.mock.method(globalThis, "fetch", async () => assert.fail("metadata finish screening cannot buy any provider work"));
     const rows = [listing("holo", "Dark Blastoise Team Rocket 3/82 Holo English"),
@@ -72,7 +99,6 @@ test("bounded admission excludes explicit wrong finishes before paid work and do
         const result = await findDeals(query, { filters: { typeFilter: "FIXED_PRICE" } }, {
             readIntent: async () => readSearchLocally(query),
             readTitle: async title => readTitleByRules(title),
-            screening: () => assert.fail("no paid preliminary screening"),
             search: async (_query, options) => { sources++; assert.equal(options?.maxResults, 200); return { listings: rows, total: rows.length, skipped: 0 }; },
         });
         assert.deepEqual(result.map(row => row.id), expected === "HOLO" ? ["holo"] : expected === "REVERSE_HOLO" ? ["reverse"] : expected === "NON_HOLO" ? ["non-holo"] : rows.map(row => row.id));

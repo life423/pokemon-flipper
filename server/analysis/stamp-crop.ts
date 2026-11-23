@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import sharp from "sharp";
-import { inlineEbayImage } from "../ai/image-fallback.ts";
+import { inlineEbayImage } from "../ai/image-input.ts";
 import type { PhotoReport } from "../../shared/types.ts";
 
 type Box = { left: number; top: number; width: number; height: number };

@@ -38,6 +38,37 @@ test("changed photos clear financial advice without invoking an assessment",asyn
     const store=await fixture(t);const service=createShortlistService({store,load:async()=>snapshot(),details:async()=>({...details(),images:["https://i.ebayimg.com/new.jpg"]})});await service.save(listing());const entry=(await service.refresh([listing().id])).entries[0];
     assert.equal(entry.evaluation,null);assert.equal(entry.needsAnalysis,true);assert.deepEqual(entry.listing.images,["https://i.ebayimg.com/new.jpg"]);
 });
+
+test("shortlist refresh uses new condition disclosures with the saved photo assessment", async t => {
+    const record = snapshot();
+    const saved = record.latestEvaluation!.evaluation;
+    Object.assign(saved.listing, { buyingOption: "FIXED_PRICE", endTime: null, photosInListing: 1 });
+    Object.assign(saved.photoCheck!, { holder: "TOPLOADER", cardCount: "ONE" });
+    saved.condition!.corners.visibility = "PARTIAL";
+    saved.condition!.edges.visibility = "NOT_VISIBLE";
+    const current = { ...listing(), buyingOption: "FIXED_PRICE" as const, endTime: null };
+    const store = await fixture(t);
+    let cached: ListingDetails | null = null;
+    const service = createShortlistService({
+        store, load: async () => record, cached: async () => cached,
+        details: async () => (cached = { ...details(), buyingOption: "FIXED_PRICE", endTime: null, retrievedAt: "2026-10-30T12:01:00Z",
+            cardCondition: "Lightly Played", conditionNotes: ["Minor corner and edge wear"] }),
+    });
+    assert.equal((await service.save(current)).evaluation?.underwriting?.verdict, "BUY_AND_GRADE");
+    const result = await service.refresh([current.id]);
+    assert.deepEqual(result.errors, []);
+    const refreshed = result.entries[0];
+    assert.equal(refreshed.needsAnalysis, false);
+    assert.deepEqual(refreshed.evaluation?.photoCheck, saved.photoCheck);
+    assert.deepEqual(refreshed.evaluation?.listing.conditionNotes, ["Minor corner and edge wear"]);
+    assert.equal(refreshed.evaluation?.underwriting?.verdict, "PASS");
+    assert.match(refreshed.evaluation?.underwriting?.reasons[0] ?? "", /discloses corner and edge wear/);
+
+    await store.remove(current.id);
+    const resaved = await service.save(current);
+    assert.equal(resaved.evaluation?.underwriting?.verdict, "PASS");
+    assert.match(resaved.evaluation?.underwriting?.reasons[0] ?? "", /discloses corner and edge wear/);
+});
 test("changed or missing edition specifics clear shortlist advice without changing accepted photo answers", async t => {
     t.mock.method(globalThis, "fetch", () => assert.fail("shortlist edition refresh must use only supplied offline details"));
     for (const field of ["Edition", "Features", "Printing"]) for (const claim of ["Unlimited", null]) {

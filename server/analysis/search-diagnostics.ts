@@ -52,13 +52,18 @@ function evidenceFor(discovery: SearchDiagnosticDiscovery, rows: readonly Search
         examples[ordinal] = example.id;
         return { outcome, reason, count, exampleRow: ordinal, modeledProfitUsd: example.profit ?? null };
     });
-    const { total, found, screened, priceExcluded, skipped, deferred, previouslySeen, pricePass, retainedIds } = discovery;
+    const { total, found, screened, priceExcluded, unresolvedOverflow, overflow, skipped, deferred, previouslySeen, soldPurchaseCeiling, pricePass, marketplaceOrder, retainedIds } = discovery;
+    const overflowReasons = new Map<string, number>();
+    for (const { reason } of overflow?.rows ?? []) overflowReasons.set(reason, (overflowReasons.get(reason) ?? 0) + 1);
+    const sourceReasons = new Map<string, number>();
+    for (const { reason } of discovery.sourceDispositions ?? []) sourceReasons.set(reason, (sourceReasons.get(reason) ?? 0) + 1);
     const amount = (value: unknown) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
     return {
         examples,
         evidence: {
-            discovery: { total, found, screened, priceExcluded, skipped, deferred, previouslySeen, pricePass, retained: retainedIds.length },
-            screening: { decisions },
+            discovery: { total, found, screened, priceExcluded, unresolvedOverflow, skipped, deferred, previouslySeen, soldPurchaseCeilingUsd: soldPurchaseCeiling, pricePass, marketplaceOrder, retained: retainedIds.length },
+            screening: { decisions, ...(overflow && { overflow: { stage: overflow.stage, reasons: Object.fromEntries(overflowReasons) } }),
+                ...(discovery.sourceCoverage && { sourceCoverage: discovery.sourceCoverage, sourceReasons: Object.fromEntries(sourceReasons) }) },
             assessment: {
                 photoChecked: rows.filter(row => row.photoChecked).length,
                 priced: rows.filter(row => row.priced).length,
@@ -82,11 +87,12 @@ function evidenceFor(discovery: SearchDiagnosticDiscovery, rows: readonly Search
 const store = createSearchDiagnosticStore<SearchUsage>();
 const share = createSharedWork();
 export const saveDiagnosticDiscovery = store.saveDiscovery;
+export const loadDiagnosticDiscovery = store.loadDiscovery;
 export const loadDiagnosticResult = store.loadResult;
 
 // The scan has finished before it submits these decisions. Save the review
 // even when the browser navigates away while its text request is in flight.
-export function completeSearchDiagnostic(searchId: string, rows: unknown): Promise<SearchDiagnosticResult | null> {
+export function completeSearchDiagnostic(searchId: string, rows: unknown, signal?: AbortSignal): Promise<SearchDiagnosticResult | null> {
     return share(searchId, async workSignal => {
         const previous = await store.loadResult(searchId);
         if (previous) return previous;
@@ -110,5 +116,5 @@ export function completeSearchDiagnostic(searchId: string, rows: unknown): Promi
                 : "The automatic review could not finish. The search decisions were saved.";
             return save({ searchId, savedAt, status: "unavailable", message, reviewBudget });
         }
-    });
+    }, signal);
 }

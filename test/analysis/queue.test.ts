@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import { analysisConcurrency, resultGroup } from "../../shared/analysis.ts";
 
 test("losing at asking is never a deal, and lowball offers are not opportunities", () => {
-    const listing = { buyingOption: "FIXED_PRICE", bestOffer: true, currentPrice: 125 };
+    const listing = { buyingOption: "FIXED_PRICE", bestOffer: true, currentPrice: 125, shipping: 0 };
     const evaluation = { underwriting: { verdict: "PASS", best: { maxBid: 76, profit: -52.99 } } };
     assert.equal(resultGroup(listing, evaluation, true), null);
     assert.equal(resultGroup({ ...listing, currentPrice: 80 }, evaluation, true), "offers");
+    assert.equal(resultGroup({ ...listing, currentPrice: 80, shipping: null }, evaluation, true), "candidates");
     assert.equal(resultGroup({ ...listing, currentPrice: 80 }, evaluation, false), null);
     const buy = { underwriting: { verdict: "BUY_RAW", best: { maxBid: 150, profit: 10 } } };
     assert.equal(resultGroup(listing, buy, false), "deals");

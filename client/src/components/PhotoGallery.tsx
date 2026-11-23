@@ -20,9 +20,11 @@ export function PhotoGallery({ images }: { images: string[] }) {
     const instructions = useId();
     useDialog(fullscreen, gallery, () => { void document.exitFullscreen().catch(() => {}); });
     const index = Math.min(selected, Math.max(0, photos.length - 1));
-    const source = photos[index]?.replace(/\/s-l\d+\./, "/s-l1600.");
-    const loaded = loadedSource === source;
-    const failed = failedSource === source;
+    const originalSource = photos[index];
+    const enlargedSource = originalSource?.replace(/\/s-l\d+\./, "/s-l1600.");
+    const failed = failedSource === originalSource;
+    const source = failed || failedSource === enlargedSource ? originalSource : enlargedSource;
+    const loaded = !failed && loadedSource === source;
 
     const bounds = (): PhotoBounds => ({ width: viewport.current?.clientWidth || 1, height: viewport.current?.clientHeight || 1,
         imageWidth: image.current?.naturalWidth || 1, imageHeight: image.current?.naturalHeight || 1 });
@@ -154,7 +156,7 @@ export function PhotoGallery({ images }: { images: string[] }) {
                 onError={event => { if (event.currentTarget === image.current) setFailedSource(source ?? null); }} />
             {loaded && <span className={styles.photoPosition} aria-hidden="true">Photo {index + 1} / {photos.length}</span>}
             {!loaded && !failed && <p className={styles.photoLoading} role="status"><span aria-hidden="true" />Loading photo {index + 1}…</p>}
-            {failed && <p className={styles.photoError} role="status">Photo {index + 1} could not load. <a href={source} target="_blank" rel="noopener noreferrer">Open original photo ↗</a></p>}
+            {failed && <p className={styles.photoError} role="status">Photo {index + 1} could not load. <a href={originalSource} target="_blank" rel="noopener noreferrer">Open original photo ↗</a></p>}
         </div>
         <div className={styles.zoomControls} role="group" aria-label="Photo zoom controls">
             <button type="button" onClick={() => zoom(currentView.current.zoom / 1.5)} disabled={view.zoom <= 1} aria-label="Zoom out">−</button>
@@ -165,6 +167,6 @@ export function PhotoGallery({ images }: { images: string[] }) {
             <button type="button" className={styles.photoTextButton} onClick={reset} disabled={view.zoom === 1 && view.x === 0 && view.y === 0}>Reset view</button>
         </div>
         <p id={instructions} className={styles.small}>Scroll normally to browse. Pinch, double-click, or hold Ctrl or ⌘ while scrolling to zoom. Drag to move a zoomed photo. Use +/− to zoom, arrows to move, and 0 to reset. At 1×, left and right arrows change photos.</p>
-        <p className={styles.small}>Zoom enlarges the original image; it cannot recover missing detail. <a className={styles.originalPhoto} href={source} target="_blank" rel="noopener noreferrer">Open original photo ↗</a></p>
+        <p className={styles.small}>Zoom enlarges the listing photo. It cannot recover missing detail. <a className={styles.originalPhoto} href={originalSource} target="_blank" rel="noopener noreferrer">Open original photo ↗</a></p>
     </section>;
 }

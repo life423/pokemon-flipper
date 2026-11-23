@@ -1,14 +1,19 @@
 import "../fixtures/isolated-data.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { findDeals } from "../../server/deals/find-deals.ts";
-import { priceFirstListings, type SoldScreeningFactory } from "../../server/deals/price-first.ts";
+import { findDeals, type SearchSummary } from "../../server/deals/find-deals.ts";
+import { searchDeals } from "../../server/deals/search.ts";
+import { createPriceFirstSession, type SoldScreeningFactory } from "../../server/deals/price-first.ts";
 import { createSoldScreening } from "../../server/pricing/screening-sales.ts";
 import { createNewListingDiscovery } from "../../server/deals/new-listings.ts";
 import { readSearchLocally } from "../../server/search/intent.ts";
 import { readTitleByRules } from "../../server/ai/title-reader.ts";
+import { createBoundedEvaluator, type BoundedReading } from "../../server/analysis/bounded-evaluate.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
 import { autoAnalysisBlockReason, canAutoAnalyze, resultGroup } from "../../shared/analysis.ts";
+import { listingEvidenceKey } from "../../shared/listing-evidence.ts";
+import { filterSearchResults, groupSearchResults } from "../../client/src/search/results.ts";
+import type { AnalysisState } from "../../client/src/analysis-state.ts";
 import type { ListingSummary, ScreeningSoldEvidence } from "../../shared/types.ts";
 import type { CardRecord, Comp } from "../../server/pricing/types.ts";
 
@@ -96,6 +101,75 @@ test("missing and budget-deferred markets remain visible Sorting rows without pa
     }
 });
 
+test("Buy It Now emits a profitable slab, a loss and an unresolved row and replays without new paid work", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("the search-to-Deals regression must remain offline"));
+    const candidate = listing("profitable", { title: "Charizard Base Set 4/102 Unlimited Holo English PSA 8", isGraded: true });
+    const loss = listing("loss", { title: candidate.title, isGraded: true,
+        images: ["https://i.ebayimg.com/images/g/offline-loss/s-l1600.jpg"] });
+    const missing = listing("no-exact-sales", { title: "Charizard Base Set 4/102 Unlimited Holo English CGC 8", isGraded: true });
+    const card: CardRecord = { source: "pkmnprices", id: 1, name: "Charizard", setName: "Base Set", cardNumber: "4/102",
+        variants: [{ name: "Unlimited Holofoil", printing: "UNLIMITED", finish: "HOLO" }] };
+    const sales: Comp[] = [190, 200, 210].map((price, index) => ({ id: index, title: candidate.title, price, currency: "USD",
+        sold_at: new Date(NOW - (index + 1) * DAY).toISOString(), sale_type: "fixed_price", attribution: "exact", variant: "Unlimited Holofoil", grader: "PSA", grade: "8" }));
+    const fetchComps: Parameters<typeof createBoundedEvaluator>[0]["fetchComps"] = async (_id, { grader, grade }) => grader === "PSA" && grade === "8" ? sales : [];
+    const lookupCards = async () => [card];
+    const fetchRawComps = async () => assert.fail("verified slabs must not look up raw comps");
+    const prices: SoldScreeningFactory = options => createSoldScreening({ ...options, source: { lookupCards, fetchRawComps, fetchComps } });
+    const cache = new Map<string, unknown>();
+    let assessments = 0;
+    const reading: BoundedReading = { condition: null, photoCheck: { cardCount: "ONE", holder: "GRADED_SLAB", photoSufficiency: "SUFFICIENT", confidence: "HIGH",
+        printedName: "Charizard", printedNumber: "4/102", cardIdentity: { name: "Charizard", set: "Base Set", cardNumber: "4/102", language: "English", finish: "HOLO", confidence: "HIGH", evidence: ["Readable card and slab label."] },
+        images: [{ number: 1, view: "FRONT", usable: true, isStockImage: false, issues: [], obscuresCondition: false }], missingViews: [], problems: [], cardMatch: { verdict: "MATCH", problems: [] },
+        printingMarks: { firstEditionStamp: "NOT_PRESENT", artBoxShadow: "PRESENT", reprintMark: "NONE_SEEN", evidence: ["Printed artwork shadow is visible."] },
+        slab: { present: true, grader: "PSA", grade: "8", gradeQualifier: null, certNumber: "12345678", labelText: "1999 POKEMON GAME CHARIZARD-HOLO #4 NM-MT 8",
+            caseCondition: "INTACT", authenticity: "NONE_SEEN", authenticityEvidence: [], concerns: [] } } };
+    const evaluate = createBoundedEvaluator({ now: () => NOW, saved: async () => null, assertPriceAvailable: async () => {},
+        cached: async <T>(key: string) => (cache.get(key) ?? null) as T | null,
+        save: async (key, value) => { cache.set(key, structuredClone(value)); },
+        details: async id => {
+            const row = id === candidate.id ? candidate : id === loss.id ? loss : assert.fail("a missing exact market should not reach photo assessment");
+            return { ...row, price: row.currentPrice, shipping: id === loss.id ? 175 : row.shipping,
+                availability: "ACTIVE", condition: "Graded", cardCondition: null, conditionNotes: [],
+                aspects: { "Card Name": "Charizard", Set: "Base Set", "Card Number": "4/102", Language: "English", Finish: "Holo", "Professional Grader": "PSA", Grade: "8" } };
+        },
+        assess: async () => { assessments++; return { result: reading, usage: { inputTokens: 500, outputTokens: 250 } }; },
+        lookup: lookupCards, fetchComps, fetchRawComps, compChecks: async () => new Map(),
+    });
+    const query = "Charizard Base Set 4/102 holo";
+    const filters = { typeFilter: "FIXED_PRICE", kindFilter: "graded" } as const;
+    const run = async () => {
+        const rows: ListingSummary[] = [], progress: SearchSummary[] = [];
+        const dependencies = steps([missing, loss, candidate], prices);
+        await searchDeals(query, { filters, targets, onListing: row => rows.push(row), onStart: summary => progress.push(summary) },
+            (text, options) => findDeals(text, options, dependencies));
+        assert.equal(rows.length, 3);
+        assert.equal(progress.at(-1)?.screened, 3);
+        assert.equal(progress.at(-1)?.priceExcluded, 0);
+        assert.equal(rows.find(row => row.id === missing.id)?.screen?.soldEvidence?.status, "UNAVAILABLE");
+        const analyses: Record<string, AnalysisState> = {};
+        for (const row of rows.filter(canAutoAnalyze)) {
+            const evaluation = await evaluate(row.id, { automatic: true, targets });
+            analyses[row.id] = { status: "done", evaluation, evidenceKey: listingEvidenceKey(row) };
+        }
+        const filtered = filterSearchResults({ listings: rows, analyses, page: "search", intent, now: NOW,
+            filters: { ...filters, minPrice: "", maxPrice: "", minGrade: 0 } });
+        const grouped = groupSearchResults(filtered, analyses, false, new Set());
+        assert.deepEqual(grouped.deals.map(row => row.id), [candidate.id]);
+        assert.deepEqual(grouped.losses.map(row => row.id), [loss.id]);
+        assert.deepEqual(grouped.candidates.map(row => row.id), [missing.id]);
+        const result = analyses[candidate.id];
+        assert.equal(result?.status, "done");
+        return result.evaluation;
+    };
+    const first = await run();
+    assert.equal(first.slabPricing?.summary?.count, 3);
+    assert.equal(first.usage.length, 1);
+    assert.equal(assessments, 2);
+    const replay = await run();
+    assert.deepEqual(replay.usage, []);
+    assert.equal(assessments, 2);
+});
+
 test("an exact expensive slab is terminal for automatic work while raw grading upside remains eligible", async () => {
     const slab = listing("slab", { title: "Charizard Base Set 4/102 Unlimited Holo PSA 8 English", isGraded: true, currentPrice: 1000 });
     const raw = listing("raw", { currentPrice: 1000, cardCondition: "Near Mint",
@@ -168,7 +242,8 @@ test("a storage failure aborts sibling and queued market work instead of dispatc
         });
         return evidence();
     };
-    await assert.rejects(priceFirstListings(Array.from({ length: 50 }, (_, index) => listing(String(index))), intent, {}, prices), error => error === failure);
+    const screenPrices = createPriceFirstSession(intent, {}, prices);
+    await assert.rejects(screenPrices(Array.from({ length: 50 }, (_, index) => listing(String(index)))), error => error === failure);
     await new Promise(resolve => setImmediate(resolve));
     assert.ok(checked <= 4, `${checked} callbacks started`); assert.equal(observedAbort, checked - 1);
 });

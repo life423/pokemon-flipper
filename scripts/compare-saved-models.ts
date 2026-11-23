@@ -10,7 +10,7 @@ import { boundedAssessmentPlan } from "../server/analysis/bounded-plan.ts";
 import { validateBoundedReading } from "../server/analysis/bounded-evaluate.ts";
 import { buildStampExperiment, validateStampFinding } from "../server/ai/focused-printing-experiment.ts";
 import { createModelExperimentRunner, type ExperimentRequest } from "../server/analysis/model-experiment.ts";
-import { inlineEbayImage } from "../server/ai/image-fallback.ts";
+import { inlineEbayImage } from "../server/ai/image-input.ts";
 import { runStructured } from "../server/ai/openai.ts";
 import { withAiUsageContext } from "../server/ai/usage-context.ts";
 import { aiSpending } from "../server/ai/spending.ts";

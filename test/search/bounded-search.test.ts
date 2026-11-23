@@ -8,8 +8,11 @@ import { readCache, writeCache } from "../../server/lib/cache.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
 import { MODEL } from "../../server/ai/openai.ts";
 import { canAutoAnalyze } from "../../shared/analysis.ts";
+import { salesSummary } from "../fixtures/card-evaluation.ts";
 import { explicitReprintSet } from "../../shared/reprint-release.ts";
-import type { ListingSummary } from "../../shared/types.ts";
+import { evaluatedIdentityMismatch } from "../../shared/search-criteria.ts";
+import type { Evaluation, ListingSummary } from "../../shared/types.ts";
+import type { SourceDispositionRow } from "../../shared/search-diagnostic.ts";
 
 const row = (id: string, title = "Charizard Base Set 4/102 Holo English", extra: Partial<ListingSummary> = {}): ListingSummary => ({
     id, title, currentPrice: 80, shipping: 5, buyingOption: "FIXED_PRICE", bids: 0, isGraded: false,
@@ -62,12 +65,64 @@ test("bounded BIN search retains fifty unresolved rows without paid preliminary 
     assert.equal(summary?.mode, "development");
     assert.equal(summary?.count, 50);
     assert.equal(summary?.found, 200);
-    assert.equal(summary?.screened, 100);
-    assert.equal(summary?.deferred, 100);
+    assert.equal(summary?.screened, 200);
+    assert.equal(summary?.deferred, 0);
+    assert.equal(summary?.unresolvedOverflow, 150);
     assert.deepEqual(summary?.pricePass, { status: "COMPLETE", newListings: 0, candidates: 0 });
     assert.ok(result.every(listing => !canAutoAnalyze(listing)), "missing sold prices cannot authorize paid photos");
     assert.ok(result.every(listing => listing.screen?.soldEvidence?.status === "UNAVAILABLE"));
     assert.ok(result.every(listing => listing.screen?.status === "UNSCREENED" && listing.screen.bestCase === null));
+});
+
+test("sold-backed candidates after fifty unresolved rows stay eligible in a newest-only scan", async t => {
+    const fetch = t.mock.method(globalThis, "fetch", async () => assert.fail("the source and sold references are injected"));
+    const title = "Charizard Base Set 4/102 Unlimited Holo English PSA 8";
+    const page = Array.from({ length: 60 }, (_, index) => row(String(index), title, { isGraded: true, currentPrice: 80 }));
+    const checked: string[] = [];
+    let browseCalls = 0;
+    let summary: SearchSummary | undefined;
+    const overflow: { id: string; reason: string }[] = [];
+    const dispositions: SourceDispositionRow[] = [];
+    const dependencies = noPaidSteps(async (_query, options) => {
+        browseCalls++;
+        assert.equal(options.sort, "newlyListed");
+        assert.equal(options.maxResults, 200);
+        return { listings: page, total: page.length, skipped: 0, rejections: [] };
+    });
+    const result = await findDeals("Charizard Base Set holo PSA 8", {
+        targets: { minProfit: 0, minRoi: 0 }, filters: { typeFilter: "FIXED_PRICE" },
+        marketplaceOrder: "lowest", newOnly: { excludeIds: [] }, onStart: value => { summary = value; },
+        onScreenedOverflow: row => overflow.push(row),
+        onSourceDisposition: row => dispositions.push(row),
+    }, {
+        ...dependencies,
+        soldScreening: () => async listing => {
+            checked.push(listing.id);
+            const index = Number(listing.id);
+            if (index < 50 || index > 52) return { status: index % 2 ? "DEFERRED" : "UNAVAILABLE",
+                exactScope: false, references: [], note: "No supported exact market yet." };
+            return { status: "AVAILABLE", exactScope: true, note: "Exact, recent sold evidence.", references: [{
+                recordId: 1, name: "Charizard", set: "Base Set", cardNumber: "4/102", printing: "UNLIMITED", finish: "HOLO",
+                grader: "PSA", grade: "8", condition: null,
+                summary: { ...salesSummary("PSA", "8", [180, 200, 220]), windowDays: 90 },
+            }] };
+        },
+    });
+    assert.equal(browseCalls, 1);
+    assert.equal(fetch.mock.callCount(), 0);
+    assert.deepEqual(result.filter(canAutoAnalyze).map(listing => listing.id), ["50", "51", "52"]);
+    assert.equal(result.length, 50);
+    assert.deepEqual(result.filter(listing => !canAutoAnalyze(listing)).map(listing => listing.id), page.slice(0, 47).map(listing => listing.id));
+    assert.equal(result[3].screen?.soldEvidence?.status, "UNAVAILABLE");
+    assert.equal(result[4].screen?.soldEvidence?.status, "DEFERRED");
+    assert.equal(summary?.screened, 54);
+    assert.equal(summary?.deferred, 6, "stop once the small refill meets the supported candidate target");
+    assert.equal(summary?.unresolvedOverflow, 4);
+    assert.equal(summary?.marketplaceOrder, "newest", "Find new listings always uses newest inventory");
+    assert.equal(summary?.sourceCoverage, "COMPLETE");
+    assert.deepEqual(overflow, [47, 48, 49, 53].map(index => ({ id: String(index), reason: index % 2 ? "SOLD_EVIDENCE_DEFERRED" : "SOLD_EVIDENCE_MISSING" })));
+    assert.deepEqual(dispositions, [54, 55, 56, 57, 58, 59].map(index => ({ id: String(index), outcome: "NOT_REACHED", reason: "ENOUGH_CANDIDATES" })));
+    assert.equal(new Set(checked).size, 54);
 });
 
 test("wrong cards, sets, numbers, foreign titles, junk, budget exclusions and far-off auctions do not consume bounded slots", async () => {
@@ -76,12 +131,35 @@ test("wrong cards, sets, numbers, foreign titles, junk, budget exclusions and fa
         row("junk", "Charizard Base Set 4/102 custom proxy"), row("absurd", undefined, { currentPrice: 223200 }),
         row("far-auction", undefined, { buyingOption: "AUCTION", endTime: new Date(Date.now() + 7 * 86400000).toISOString() }),
         row("filtered-price", undefined, { currentPrice: 250 }), row("known"), row("one"), row("two"), row("three")];
-    const result = await findDeals("Charizard Base Set 4/102 holo", { filters: { maxPrice: 200 }, newOnly: { excludeIds: ["known"] } },
+    const dispositions: SourceDispositionRow[] = [];
+    let summary: SearchSummary | undefined;
+    const result = await findDeals("Charizard Base Set 4/102 holo", { filters: { maxPrice: 200 }, newOnly: { excludeIds: ["known"] },
+        onSourceDisposition: row => dispositions.push(row), onStart: value => { summary = value; } },
         noPaidSteps(async () => ({ listings: page, total: page.length, skipped: 0 })));
     assert.deepEqual(result.map(listing => listing.id), ["one", "two", "three"]);
+    assert.deepEqual(dispositions, [
+        ["other-card", "OTHER_CARD"], ["other-set", "OTHER_SET"], ["other-number", "OTHER_CARD"],
+        ["foreign", "OTHER_LANGUAGE"], ["junk", "JUNK"], ["absurd", "PRICE_ABOVE_CEILING"],
+        ["far-auction", "OUTSIDE_AUCTION_WINDOW"], ["filtered-price", "ABOVE_MAX_PRICE"], ["known", "ALREADY_SEEN"],
+    ].map(([id, reason]) => ({ id, reason, outcome: "REJECTED" })));
+    assert.equal(summary?.sourceCoverage, "PARTIAL", "older adapter responses lack a rejection list");
 });
 
-test("known cached mismatches are excluded before filling50 slots, including newest scans", async t => {
+test("a duplicate accepted in either source pass does not appear in rejected listings", async t => {
+    const fetch = t.mock.method(globalThis, "fetch", async () => assert.fail("source passes use saved fixtures"));
+    const dispositions: SourceDispositionRow[] = [];
+    const result = await findDeals("Charizard Base Set 4/102 Holo", { filters: { typeFilter: "FIXED_PRICE" },
+        onSourceDisposition: row => dispositions.push(row) }, noPaidSteps(async (_query, options) => options.sort === "newlyListed" ? {
+        listings: [row("first")], total: 5000, skipped: 2, rejections: [{ id: "second", reason: "VARIATION" }, { id: "lot", reason: "LOT" }],
+    } : {
+        listings: [row("second")], total: 5000, skipped: 2, rejections: [{ id: "first", reason: "VARIATION" }, { id: "lot", reason: "LOT" }],
+    }));
+    assert.deepEqual(result.map(listing => listing.id), ["first", "second"]);
+    assert.deepEqual(dispositions, [{ id: "lot", outcome: "REJECTED", reason: "LOT" }]);
+    assert.equal(fetch.mock.callCount(), 0);
+});
+
+test("known cached mismatches are excluded before filling fifty slots, including newest scans", async t => {
     const fetch = t.mock.method(globalThis, "fetch", async () => assert.fail("metadata admission cannot call a provider"));
     const page = Array.from({ length: 100 }, (_, index) => row(String(index)));
     const emitted: ListingSummary[] = [];
@@ -92,12 +170,12 @@ test("known cached mismatches are excluded before filling50 slots, including new
             return { ...reading, set: reads++ < 6 ? "Jungle" : reading.set };
         } };
     const result = await findDeals("Charizard Base Set 4/102 holo", {
-        newOnly: { excludeIds: [], limit: 50 }, onListing: listing => emitted.push(listing) }, dependencies);
+        newOnly: { excludeIds: [] }, onListing: listing => emitted.push(listing) }, dependencies);
     assert.equal(result.length, 50);
     assert.deepEqual(result.map(listing => listing.id), Array.from({ length: 50 }, (_, index) => String(index + 6)));
     assert.equal(emitted.length, 50);
     assert.ok(emitted.every(listing => !listing.match));
-    assert.equal(reads, 56, "only enough free metadata is read to fill the matching batch; rows are not checked twice");
+    assert.equal(reads, 100, "newest searches can check the loaded page for stronger matches without revisiting rows");
     assert.equal(fetch.mock.callCount(), 0);
 });
 
@@ -155,6 +233,43 @@ test("literal reprint names correct an old seller-derived title cache without mo
     const title = "Offline Charizard Celebration Base Set 4/102";
     await writeCache(`title-reading:v6:${MODEL}:${title.toLowerCase()}`, { kind: "SINGLE_CARD", cardName: "Charizard", set: "Base Set", cardNumber: "4/102", language: "English", grader: null, grade: null, condition: null });
     assert.equal((await readTitleWithoutAi(title)).set, "Celebrations");
+    assert.equal(fetch.mock.callCount(), 0);
+});
+
+test("Prismatic Evolutions and XY Evolutions remain separate with or without saved metadata", async t => {
+    const fetch = t.mock.method(globalThis, "fetch", () => assert.fail("explicit release matching needs no provider"));
+    const query = "Prismatic Evolutions holo";
+    const modern = row("modern", "Umbreon ex 161/131 Prismatic — Evolutions Holo English");
+    const older = row("older", "Charizard 11/108 XY Evolutions Holo English");
+    for (const catalog of [[], ["Evolutions", "Prismatic Evolutions"]]) {
+        const intent = readSearchLocally(query, catalog);
+        assert.deepEqual([intent.sets, intent.cardName], [["Prismatic Evolutions"], null]);
+        assert.equal(readTitleByRules(modern.title, catalog).cardName, "umbreon ex");
+        assert.equal(readTitleByRules("Umbreon ex 161/131 Scarlet & Violet Prismatic Evolutions Holo", catalog).cardName, "umbreon ex");
+        assert.equal(readTitleByRules(older.title, catalog).cardName, "charizard");
+    }
+    assert.equal(explicitReprintSet(modern.title), null);
+    assert.equal(explicitReprintSet(older.title), "Evolutions");
+    const titleCache = `title-reading:v6:${MODEL}:${modern.title.toLowerCase()}`;
+    const intentCache = `search-intent:v2:${MODEL}:${query.toLowerCase()}`;
+    const savedTitle = { ...readTitleByRules(modern.title), cardName: "Umbreon ex prismatic", set: "Evolutions" };
+    const savedIntent = { ...readSearchLocally(query), sets: ["XY Evolutions"], cardName: "Prismatic", titleWords: ["prismatic"], keywords: "XY Evolutions" };
+    await writeCache(titleCache, savedTitle);
+    await writeCache(intentCache, savedIntent);
+    assert.deepEqual((await readSearchWithoutAi(query)).sets, ["Prismatic Evolutions"]);
+    const steps = {
+        ...noPaidSteps(async () => ({ listings: [older, modern], total: 2, skipped: 0 })),
+        readIntent: readSearchWithoutAi, readTitle: readTitleWithoutAi,
+    };
+    assert.deepEqual((await findDeals(query, {}, steps)).map(listing => listing.id), ["modern"]);
+    assert.deepEqual((await findDeals("XY Evolutions holo", {}, steps)).map(listing => listing.id), ["older"]);
+    const assessed = (set: string) => ({ identity: { status: "IDENTIFIED", set, finish: "HOLO" } }) as Evaluation;
+    assert.equal(evaluatedIdentityMismatch(assessed("Scarlet & Violet Prismatic Evolutions"), readSearchLocally(query)), null);
+    assert.equal(evaluatedIdentityMismatch(assessed("XY Evolutions"), readSearchLocally("XY Evolutions holo")), null);
+    assert.equal(evaluatedIdentityMismatch(assessed("XY Evolutions"), readSearchLocally(query)), "OTHER_SET");
+    assert.equal(evaluatedIdentityMismatch(assessed("Prismatic Evolutions"), readSearchLocally("XY Evolutions holo")), "OTHER_SET");
+    assert.deepEqual(await readCache(titleCache, 24), savedTitle);
+    assert.deepEqual(await readCache(intentCache, 24), savedIntent);
     assert.equal(fetch.mock.callCount(), 0);
 });
 

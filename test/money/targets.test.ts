@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.ts";
+import { withFreshListing } from "../../shared/fresh-listing.ts";
+import { cardEvaluation } from "../fixtures/card-evaluation.ts";
 
 // A PSA 9 Lugia slab listed at $1,500, with sold comps at a $2,600 median.
 const slabEvaluation = () => ({
@@ -98,4 +100,34 @@ test("offer-only retargeting honors the toggle and the 15% cutoff", () => {
     assert.equal(retargetScreen(screen, 118, targets, undefined, true).requiresOffer, true);
     assert.equal(retargetScreen(screen, 125, targets, undefined, true).status, "DROPPED");
     assert.equal(retargetScreen(screen, 90, targets, undefined, false).status, "CANDIDATE");
+});
+
+test("a newly disclosed condition warning changes the verdict without repeating photos", () => {
+    const targets = { minProfit: 0, minRoi: 0 };
+    const saved = cardEvaluation(targets);
+    Object.assign(saved.listing, { buyingOption: "FIXED_PRICE", endTime: null, shipping: 0, termsCheckedAt: "2026-10-30T12:00:00Z" });
+    Object.assign(saved.photoCheck!, { holder: "TOPLOADER", cardCount: "ONE" });
+    saved.condition!.corners.visibility = "PARTIAL";
+    saved.condition!.edges.visibility = "NOT_VISIBLE";
+    const current = { id: saved.listing.id, title: saved.listing.title, url: saved.listing.url, images: [],
+        currentPrice: saved.listing.price, shipping: saved.listing.shipping, bids: 0, endTime: null,
+        buyingOption: "FIXED_PRICE" as const, seller: null, isGraded: false, termsCheckedAt: "2026-10-30T12:01:00Z", availability: "ACTIVE" as const,
+        cardCondition: "Lightly Played", conditionNotes: ["Minor corner and edge wear"] };
+
+    assert.equal(retargetEvaluation(saved, targets).underwriting?.verdict, "BUY_AND_GRADE");
+    const updated = retargetEvaluation(saved, targets, current);
+    assert.equal(updated.underwriting?.verdict, "PASS");
+    assert.match(updated.underwriting?.reasons[0] ?? "", /discloses corner and edge wear/);
+    assert.equal(updated.photoCheck, saved.photoCheck);
+    assert.equal(updated.listing.cardCondition, "Lightly Played");
+    assert.deepEqual(saved.listing.conditionNotes, []);
+    const summaryOnly = retargetEvaluation(saved, targets, { ...current, availability: undefined });
+    assert.equal(summaryOnly.listing.cardCondition, saved.listing.cardCondition, "summary claims cannot replace checked details");
+    assert.deepEqual(summaryOnly.listing.conditionNotes, []);
+
+    const refreshed = withFreshListing({ ...current, termsCheckedAt: saved.listing.termsCheckedAt }, {
+        ...updated, listing: { ...updated.listing, termsCheckedAt: "2026-10-30T12:02:00Z", cardCondition: null, conditionNotes: [] },
+    });
+    assert.equal(refreshed.cardCondition, null);
+    assert.deepEqual(refreshed.conditionNotes, []);
 });

@@ -16,7 +16,7 @@ const VISION_SCHEMAS = new Set(["photo_check", "card_condition", "focused_photo_
 export function aiPolicy(schema: string) {
     const assessment = VISION_SCHEMAS.has(schema);
     const model = assessment ? VISION_MODEL : TEXT_MODEL;
-    const maxOutputTokens = schema === "photo_check" ? 16384 : schema === "title_readings" || schema === "card_condition" || schema === "focused_photo_review" ? 8192 : schema === "comp_check" ? 4096 : schema === "search_intent" ? 2048 : 4096;
+    const maxOutputTokens = schema === "photo_check" ? 16384 : schema === "card_condition" || schema === "focused_photo_review" ? 8192 : 4096;
     return { model, maxOutputTokens, effort: assessment ? "medium" as const : "low" as const,
         supportsReasoning: /^(?:gpt-[56](?:[.-]|$)|o\d)/.test(model) };
 }

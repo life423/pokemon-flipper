@@ -95,6 +95,7 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
                     : original.grader || original.grade || /\b(psa|cgc|bgs|sgc|tag)\b/i.test(original.title) ? "graded or grading claim"
                     : !original.sale_type ? "sale amount not confirmed"
                     : /\blot\b|\bbundle\b|\bset of\b|\b\d+\s*(cards|pcs)\b/i.test(original.title) ? "not a single card"
+                    : !assessCondition && !titleMatches(original) ? "title does not match target card"
                     : (assessCondition ? original.photoCondition : compCondition(original.title)) !== condition ? "condition unstated or different"
                     : age > 90 ? "older than 90 days"
                     : compProblem(normalized[i], criteria);

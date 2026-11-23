@@ -20,6 +20,7 @@ import {
 } from "../../server/identity/card-identity.ts";
 import { variantFor } from "../../server/pricing/raw-prices.ts";
 import { toCardRecord } from "../../server/pricing/pkmnprices.ts";
+import { readTitleByRules } from "../../server/ai/title-reader.ts";
 
 const usd = variant => ({ currency: "USD", variant });
 
@@ -78,6 +79,19 @@ const LUGIA_LISTING = {
         Language: "English",
     },
 };
+
+test("recognized English item-specific aliases use the same identity as English", async () => {
+    for (const Language of ["EN", "eng", "en-US", "english", "English (US)"]) {
+        const listing = { ...LUGIA_LISTING, aspects: { ...LUGIA_LISTING.aspects, Language } };
+        const { identity } = await identifyCard(listing, photoCheck(), { lookupCards: lookup(LUGIA) });
+        assert.equal(identity.status, "IDENTIFIED", Language);
+        assert.equal(identity.language, "English", Language);
+        assert.equal(listing.aspects.Language, Language);
+    }
+    const foreign = { ...LUGIA_LISTING, aspects: { ...LUGIA_LISTING.aspects, Language: "Japanese" } };
+    const { identity } = await identifyCard(foreign, photoCheck(), { lookupCards: async () => assert.fail("foreign cards must be rejected before lookup") });
+    assert.equal(identity.status, "NEEDS_REVIEW");
+});
 
 function photoCheck(marks = {}, overrides = {}) {
     return {
@@ -378,7 +392,7 @@ test("catalog-backed physical number and finish correct conflicting seller field
     const result = await identifyCard(listing, photos, { lookupCards: async query => { lookups++; assert.equal(query.cardNumber, "3/82"); return [record]; } });
     assert.equal(lookups, 1); assert.equal(result.identity.status, "IDENTIFIED"); assert.equal(result.sellerClaimsCorrected, true);
     assert.equal(sameCardNumber(result.identity.cardNumber, "3/82"), true); assert.equal(result.identity.finish, "HOLO"); assert.equal(result.identity.printing, "UNLIMITED");
-    assert.equal(result.identity.notThisCard, undefined); assert.match(result.identity.reasons.join(" "), /seller|item details/i);
+    assert.equal(result.identity.notThisCard, undefined); assert.match(result.identity.reasons.join(" "), /corrected card number, finish/i);
     assert.doesNotMatch(result.identity.reasons.join(" "), /independent.*readings/i);
     assert.deepEqual({ listing, photos }, before);
 });
@@ -438,6 +452,71 @@ test("a local seller-field correction is not accepted without a matching catalog
         const { listing, photos } = sellerFieldCorrectionCase();
         const result = await identifyCard(listing, photos, { lookupCards: lookup(...records) });
         assert.equal(result.identity.status, "NEEDS_REVIEW"); assert.equal(result.sellerClaimsCorrected, undefined);
+    }
+});
+
+function sellerSetCorrectionCase(reprint = false) {
+    const observed = reprint ? "Base Set 2" : "Base Set";
+    const claimed = reprint ? "Base Set" : "Base Set 2";
+    const number = reprint ? "2/130" : "2/102";
+    const wrongNumber = reprint ? "2/102" : "2/130";
+    const { listing, photos, record } = sellerFieldCorrectionCase();
+    listing.title = `Blastoise ${reprint ? "Base II" : observed} ${number} Holo English`;
+    Object.assign(listing.aspects, { "Card Name": "Blastoise", Set: claimed, "Card Number": wrongNumber, Finish: "Holo" });
+    Object.assign(photos, { printedName: "Blastoise", printedNumber: number });
+    Object.assign(photos.cardIdentity, { name: "Blastoise", set: observed, cardNumber: number, evidence: [`The readable collector fraction and set marks establish ${observed}.`] });
+    Object.assign(photos.printingMarks, { artBoxShadow: "PRESENT", reprintMark: reprint ? "BASE_SET_2" : "NONE_SEEN" });
+    photos.cardMatch.problems = [`The visible set is ${observed}, not the seller aspects' ${claimed}.`,
+        `The visible collector number is ${number}, not seller aspects ${wrongNumber}.`];
+    return { listing, photos, record: { ...record, name: "Blastoise", setName: observed, cardNumber: number }, observed, claimed, number };
+}
+
+test("a literal title and photographed full collector number can correct the seller set in either Blastoise market", async () => {
+    for (const reprint of [false, true]) {
+        const { listing, photos, record, observed, claimed, number } = sellerSetCorrectionCase(reprint);
+        const before = structuredClone({ listing, photos });
+        const result = await identifyCard(listing, photos, { readTitle: readTitleByRules, lookupCards: async query => {
+            assert.deepEqual(query, { set: observed, name: "Blastoise", cardNumber: number });
+            return [record];
+        } });
+        assert.equal(result.identity.status, "IDENTIFIED");
+        assert.equal(result.identity.set, observed);
+        assert.equal(result.identity.cardNumber, number);
+        assert.equal(result.identity.finish, "HOLO");
+        assert.equal(result.identity.printing, "UNLIMITED");
+        assert.equal(result.identity.notThisCard, undefined);
+        assert.equal(result.sellerClaimsCorrected, true);
+        assert.match(result.identity.reasons.join(" "), /pricing uses the corrected set, card number/i);
+        assert.deepEqual({ listing, photos }, before);
+        assert.equal(listing.aspects.Set, claimed);
+    }
+});
+
+test("seller-set correction requires independent title agreement, settled set marks and an exact catalog fraction", async () => {
+    for (const [label, change] of [
+        ["title agrees with wrong seller set", value => { value.listing.title = "Blastoise Base Set 2 2/130 Holo English"; }],
+        ["title omits release", value => { value.listing.title = "Blastoise 2/102 Holo English"; }],
+        ["title names both markets", value => { value.listing.title = "Blastoise Base Set and Base Set 2 2/102 Holo English"; }],
+        ["title names custom card", value => { value.listing.title += " custom card"; }],
+        ["unknown set-symbol reading", value => { value.photos.printingMarks.reprintMark = "CANT_TELL"; }],
+        ["physical reprint contradicts the apparent set", value => { value.photos.printingMarks.reprintMark = "BASE_SET_2"; }],
+        ["positive but unstructured reprint claim", value => { value.photos.printingMarks.reprintMark = "Base Set 2 symbol is visible"; }],
+        ["unresolved photo set mixed with metadata", value => { value.photos.cardMatch.problems[0] += " The symbol is still unreadable."; }],
+        ["another visible set mixed with metadata", value => { value.photos.cardMatch.problems[0] = "The visible set is Celebrations, not the seller aspects' Base Set 2."; }],
+    ]) {
+        const value = sellerSetCorrectionCase(); change(value);
+        const result = await identifyCard(value.listing, value.photos, { readTitle: readTitleByRules, lookupCards: async query => {
+            assert.equal(query.set, value.claimed, label);
+            return [];
+        } });
+        assert.equal(result.identity.status, "NEEDS_REVIEW", label);
+        assert.equal(result.sellerClaimsCorrected, undefined, label);
+    }
+    const { listing, photos, record, claimed } = sellerSetCorrectionCase();
+    for (const entry of [{ ...record, cardNumber: "2" }, { ...record, setName: claimed, cardNumber: "2/130" }]) {
+        const result = await identifyCard(listing, photos, { readTitle: readTitleByRules, lookupCards: lookup(entry) });
+        assert.equal(result.identity.status, "NEEDS_REVIEW");
+        assert.equal(result.sellerClaimsCorrected, undefined);
     }
 });
 
@@ -677,14 +756,48 @@ test("a reprint in the title, or another card number, overrules the item details
     assert.match(titleContradiction("Blastoise Base Set 2 2/102 Holo English", "Base Set", "2/102") ?? "", /base set 2/);
     assert.match(titleContradiction("Blastoise Base Set II 2/102 Holo English", "Base Set", "2/102") ?? "", /base set ii/);
     assert.equal(titleContradiction("Blastoise Base Set II 2/130 Holo English", "Base Set 2", "2/130"), null);
+    assert.equal(titleContradiction("Blastoise Pokémon Game Base II 2/130 Holo English", "2000 Pokémon Game Base II", "2/130"), null);
+    assert.match(titleContradiction("Blastoise Base Set 2 2/130 Holo English", "Base Set 20", "2/130") ?? "", /base set 2/i);
     assert.match(titleContradiction("Blastoise Base Set 2 / 2/130 Holo English", "Base Set 2", "3/130") ?? "", /2\/130/);
 });
 
 test("a database may put a series name in front of a set, except Base Set", () => {
     assert.equal(sameSetFamily("XY - Evolutions", "Evolutions"), true);
+    assert.equal(sameSetFamily("Evolutions", "XY - Evolutions"), true);
     assert.equal(sameSetFamily("SV: Scarlet & Violet 151", "151"), true);
     assert.equal(sameSetFamily("SV: Prismatic Evolutions", "Evolutions"), false);
+    assert.equal(sameSetFamily("Evolutions", "SV: Prismatic Evolutions"), false);
+    assert.equal(sameSetFamily("Prismatic Evolutions", "Scarlet & Violet - Prismatic Evolutions"), true);
     assert.equal(sameSetFamily("XY Base Set", "Base Set"), false);
+    assert.equal(sameSetFamily("Base Set II", "Base Set 2"), true);
+    assert.equal(sameSetFamily("Base Set 2", "2000 Pokémon Game Base II"), true);
+    assert.equal(sameSetFamily("Base Set II", "Base Set"), false);
+});
+
+test("identity distinguishes the two Evolutions releases in seller titles", () => {
+    const modern = "Umbreon ex 161/131 Prismatic — Evolutions";
+    const older = "Charizard 11/108 XY Evolutions";
+    assert.equal(titleContradiction(modern, "SV: Prismatic Evolutions", "161/131"), null);
+    assert.equal(titleContradiction(older, "Evolutions", "11/108"), null);
+    assert.match(titleContradiction(modern, "Evolutions", "161/131") ?? "", /prismatic.*evolutions/);
+    assert.match(titleContradiction(older, "Prismatic Evolutions", "11/108") ?? "", /xy evolutions/);
+});
+
+test("a custom holder does not interrupt identity while custom cards and holder-only titles still do", async () => {
+    const title = LUGIA_LISTING.title;
+    for (const suffix of ["with custom case", "in a custom‑protective holder", "custom fitted acrylic case included"]) {
+        const listing = { ...LUGIA_LISTING, title: `${title} ${suffix}` };
+        assert.equal(noveltyIn(listing.title), null);
+        const { identity } = await identifyCard(listing, photoCheck(), { lookupCards: lookup(LUGIA) });
+        assert.equal(identity.status, "IDENTIFIED", suffix);
+        assert.equal(identity.printing, "UNLIMITED");
+    }
+    for (const suffix of ["custom card with a custom case", "proxy in a custom holder", "with custom case only"]) {
+        const listing = { ...LUGIA_LISTING, title: `${title} ${suffix}` };
+        const { identity } = await identifyCard(listing, photoCheck(), { lookupCards: async () => assert.fail("contradictory title cannot reach pricing") });
+        assert.equal(identity.status, "NEEDS_REVIEW", suffix);
+        assert.match(identity.reasons[0], /custom|proxy/);
+    }
 });
 
 test("Celebrations reprints are fine when the set says Celebrations", () => {
@@ -819,8 +932,23 @@ test("a reprint's mark in the photos means it isn't the card the title says", ()
     assert.equal(reprintShown("CELEBRATIONS_25TH", "Celebrations: Classic Collection"), null);
     assert.match(reprintShown("BASE_SET_2", "Base Set") ?? "", /Base Set 2/);
     assert.equal(reprintShown("BASE_SET_2", "Base Set II"), null);
+    assert.equal(reprintShown("BASE_SET_2", "2000 Pokémon Game Base II"), null);
     assert.equal(reprintShown("NONE_SEEN", "Base Set"), null);
     assert.equal(reprintShown("CANT_TELL", "Base Set"), null);
+    assert.match(reprintShown("Base Set 2 symbol visible under the artwork", "Base Set") ?? "", /Base Set 2/);
+    assert.match(reprintShown("A Pikachu 25th anniversary logo is visible below the artwork.", "Base Set") ?? "", /Celebrations/);
+    assert.match(reprintShown("Photo 2 clearly shows the 30th anniversary Pikachu logo at the lower-right of the artwork.", "Base Set") ?? "", /30th Celebration/);
+    assert.equal(reprintShown("Base Set 2 symbol visible under the artwork", "Base Set II"), null);
+    for (const note of [
+        "No Base Set 2 symbol is visible.",
+        "Base Set 2 symbol is not visible.",
+        "Could be a Celebrations logo.",
+        "Pikachu 25th anniversary logo visible?",
+        "Base Set 2 symbol visible only in the seller title.",
+        "Base Set 2 symbol visible under the artwork; the area is cropped.",
+        "Base Set 2 mark area is cropped.",
+        "constructor",
+    ]) assert.equal(reprintShown(note, "Base Set"), null, note);
 });
 
 test("a Celebrations logo in the photos sends a Base Set listing to review as a reprint", async () => {

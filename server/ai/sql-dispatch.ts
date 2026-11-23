@@ -5,6 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { DATA_DIR } from "../lib/paths.ts";
 import { getSqlRepositories, storageBackend, StorageUnavailableError, localOwner, type TaskClaim, type TaskResult } from "../storage/index.ts";
 import { AiSpendingError } from "./spending.ts";
+import { aiRateLimitDelayMs, isAiCreditFailure } from "./errors.ts";
 
 interface DispatchRepository {
     claimTask(claim: TaskClaim): Promise<TaskResult & { claimed: boolean }>;
@@ -12,6 +13,7 @@ interface DispatchRepository {
     markTaskDispatched(key: string, owner: string): Promise<void>;
     completeTask(key: string, owner: string, result: unknown): Promise<void>;
     markTaskUnknown(key: string, owner: string): Promise<void>;
+    deferRateLimitedTask(key: string, owner: string, delayMs: number): Promise<void>;
     releaseTask(key: string, owner: string): Promise<void>;
 }
 interface SavedResponse {
@@ -40,6 +42,18 @@ function savedResponse(value: unknown, hash: string): SavedResponse {
 }
 const replay = (entry: SavedResponse) => new Response(entry.body, { status: entry.status, headers: [...entry.headers, ["x-pokemon-flipper-reused", "true"]] });
 const unknownOutcome = () => new AiSpendingError("AI_PAUSED", "A previous AI request for this evidence has an unresolved outcome. Its claim and spending hold were kept; no duplicate request was sent.");
+interface ProviderReply {
+    status?: unknown;
+    id?: unknown;
+    output?: unknown;
+    usage?: unknown;
+    error?: { code?: unknown; type?: unknown };
+}
+const RATE_LIMIT_CODES = ["rate_limit_exceeded", "rate_limit_error"];
+function rejectedByRateLimit(response: Response, result: ProviderReply | null): boolean {
+    if (response.status !== 429 || !result?.error || result.id != null || result.status != null || result.output != null || result.usage != null) return false;
+    return [result.error.code, result.error.type].some(code => typeof code === "string" && RATE_LIMIT_CODES.includes(code)) || isAiCreditFailure(result);
+}
 async function saveRecovery(file: string, value: Recovery) {
     await fs.mkdir(path.dirname(file), { recursive: true });
     const temporary = `${file}.${randomUUID()}.tmp`;
@@ -92,7 +106,8 @@ export function createSqlAiDispatch({ enabled = () => storageBackend() === "azur
             await delay(pollMs, undefined, { signal });
             const current = await repos.readTask(key);
             if (!current) throw new StorageUnavailableError("The shared AI task disappeared; no replacement request was authorized.");
-            if (current.state === "PENDING" || current.state === "RUNNING" && Date.parse(current.leaseUntil ?? "") <= Date.now()) {
+            const elapsed = current.leaseUntil !== null && Date.parse(current.leaseUntil) <= Date.now();
+            if (current.state === "PENDING" && (current.leaseUntil === null || elapsed) || current.state === "RUNNING" && elapsed) {
                 claim = await repos.claimTask(claimInput);
             } else claim = { ...current, claimed: false };
         }
@@ -106,8 +121,14 @@ export function createSqlAiDispatch({ enabled = () => storageBackend() === "azur
                 signal?.throwIfAborted();
             });
             const text = await response.clone().text();
-            let result: { status?: string } | null = null;
+            let result: ProviderReply | null = null;
             try { result = JSON.parse(text); } catch {}
+            if (dispatched && rejectedByRateLimit(response, result)) {
+                // A confirmed refusal can be retried after the provider's delay.
+                // The transport still owns its accounting and no hold is refunded here.
+                await repos.deferRateLimitedTask(key, owner, aiRateLimitDelayMs(response.headers));
+                return response;
+            }
             if (!response.ok || result?.status !== "completed") {
                 await repos.markTaskUnknown(key, owner);
                 return response;

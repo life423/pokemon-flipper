@@ -94,17 +94,17 @@ test("sold-price UI keeps preliminary evidence separate from assessed prices and
         assert.doesNotMatch(renderCard(listing), /Unverified screening ceiling|Est\. net profit/);
     });
 
-    await t.test("one-page screening states its 20-row sample while existing full-price evidence retains its 40-row sample", () => {
+    await t.test("screening and final pricing show the sold lookback without promising a fixed sample size", () => {
         const value = summary("PSA", "8");
-        const preliminary = renderToStaticMarkup(createElement(CompsRow, { summary: value, sampleLimit: 20, screening: true }));
+        const preliminary = renderToStaticMarkup(createElement(CompsRow, { summary: value, screening: true }));
         const existing = renderToStaticMarkup(createElement(CompsRow, { summary: value }));
-        assert.match(preliminary, /at most 20 results sampled per lookup/);
+        assert.match(preliminary, /Sampled sales from up to the last 90 days/);
         assert.match(preliminary, /This evidence is used for preliminary screening/);
-        assert.doesNotMatch(preliminary, /at most 40/);
-        assert.match(existing, /at most 40 results sampled per lookup/);
+        assert.doesNotMatch(preliminary, /results sampled per lookup/);
+        assert.match(existing, /Sampled sales from up to the last 90 days/);
         assert.match(existing, /Based on the eBay sold median/);
         assert.doesNotMatch(existing, /preliminary screening/);
-        const empty = renderToStaticMarkup(createElement(CompsRow, { summary: summary("PSA", "8", 120, 0), screening: true, sampleLimit: 20 }));
+        const empty = renderToStaticMarkup(createElement(CompsRow, { summary: summary("PSA", "8", 120, 0), screening: true }));
         assert.match(empty, /No verified sales/);
         assert.doesNotMatch(empty, /median \$|Range \$|NaN/);
     });

@@ -31,6 +31,13 @@ test("provider deadlines also cover a stalled response body", async (t) => {
     } finally { clearTimeout(keepAlive); }
 });
 
+test("non-JSON provider errors retain the HTTP status for callers", async t => {
+    t.mock.method(globalThis, "fetch", async () => new Response("<html>Too many requests</html>", { status: 429 }));
+    const result = await fetchJson("https://example.invalid", {}, { service: "Test provider" });
+    assert.equal(result.response.status, 429);
+    assert.deepEqual(result.body, {});
+});
+
 test("a rate-limited price service cools down across different lookups instead of hammering it", async (t) => {
     const { lookupCards } = await import("../../server/pricing/pkmnprices.ts");
     const previous = process.env.PKMNPRICES_API_KEY;

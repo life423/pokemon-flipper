@@ -16,6 +16,7 @@ export async function fetchJson(
         const response = await fetch(url, { ...init, signal });
         const body = await response.json().catch((error: unknown) => {
             if (signal.aborted) throw error;
+            if (response.ok) throw new ProviderError(`${service} returned unreadable data. Please retry later.`, { cause: error });
             return {};
         });
         return { response, body };

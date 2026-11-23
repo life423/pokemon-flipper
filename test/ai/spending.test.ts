@@ -182,6 +182,25 @@ test("unexpected usage automatically pauses later dispatch and preserves the dis
     assert.ok((await book(directory)).searches[context.searchId].heldNanoUsd >= 145000);
 });
 
+test("an uncapped search settles an input-count discrepancy covered by its dollar reservation", async () => {
+    const { directory, context } = await fixture();
+    const guard = createAiSpendingGuard({ directory, preflight: async request => ({ inputHash: aiInputHash(request), inputTokens: 3543 }) });
+    await guard.configure({ paused: false, perSearchCapUsd: null });
+    const request = { ...body, model: "gpt-5.6-luna", max_output_tokens: 1100 };
+    const reservation = await guard.reserve(request, context);
+    const report = (input_tokens: number, output_tokens: number) => ({ model: request.model, service_tier: "default", usage: {
+        input_tokens, output_tokens, input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+    } });
+    await guard.settle(reservation, report(3766, 349));
+    assert.equal((await guard.status()).paused, false);
+    assert.equal((await guard.summary(context.searchId)).settledUsd, 0.001172);
+
+    const next = await guard.reserve(request, context);
+    await guard.settle(next, report(5000, 1100));
+    assert.equal((await guard.status()).paused, true);
+    assert.equal((await guard.summary(context.searchId)).heldUsd, 0.00232);
+});
+
 test("independent processes share the same durable reservation limit", async () => {
     const { directory, context } = await fixture();
     const moduleUrl = new URL("../../server/ai/spending.ts", import.meta.url).href;
@@ -210,7 +229,7 @@ test("the real SDK sends zero requests when persistent pause/budget blocks, with
     const original = aiSpending.reserve;
     t.mock.method(aiSpending, "reserve", async (...args) => { reservations++; return original(...args); });
     await aiSpending.configure({ paused: true, perSearchCapUsd: null });
-    const request = () => runStructured({ step: "Offline spending guard fixture", schemaName: "search_intent", prompt: "Offline fixture", photos: [], schema: { type: "object", properties: {}, additionalProperties: false } });
+    const request = () => runStructured({ step: "Offline spending guard fixture", schemaName: "offline_text_fixture", prompt: "Offline fixture", photos: [], schema: { type: "object", properties: {}, additionalProperties: false } });
     await assert.rejects(request(), denied("AI_PAUSED")); assert.equal(reservations, 1); assert.equal(network, 0);
     await aiSpending.configure({ paused: false, perSearchCapUsd: 0 });
     await assert.rejects(withAiUsageContext({ searchId: randomUUID() }, request), denied("AI_BUDGET"));
@@ -256,7 +275,7 @@ test("a fresh data directory is paused and cannot make even one unconfigured pai
     await fs.rm(controlPath, { force: true }); await fs.rm(ledgerPath, { force: true });
     const previous = process.env.OPENAI_API_KEY; process.env.OPENAI_API_KEY = "offline-fresh-install";
     t.after(() => { if (previous === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = previous; });
-    await assert.rejects(runStructured({ step: "Fresh install guard fixture", schemaName: "search_intent", prompt: "Offline", photos: [], schema: { type: "object", properties: {}, additionalProperties: false } }), denied("AI_PAUSED"));
+    await assert.rejects(runStructured({ step: "Fresh install guard fixture", schemaName: "offline_text_fixture", prompt: "Offline", photos: [], schema: { type: "object", properties: {}, additionalProperties: false } }), denied("AI_PAUSED"));
     assert.equal(dispatches, 0);
     await assert.rejects(guard.configure({ paused: false, perSearchCapUsd: 0.26 }), /between \$0 and \$0\.25/);
 });

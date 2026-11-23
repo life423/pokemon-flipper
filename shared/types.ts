@@ -220,6 +220,7 @@ export interface PhotoCheck {
 export interface PrintingMarks {
     firstEditionStamp: string;
     artBoxShadow: string;
+    conflicts?: ("firstEditionStamp" | "artBoxShadow" | "reprintMark")[];
     // A reprint's or special printing's mark on the artwork, if any.
     reprintMark?: string;
     evidence?: string[];
@@ -350,9 +351,12 @@ export interface MarketActivity {
     complete: boolean;
 }
 
+export type SoldSaleType = "auction" | "fixed_price" | "best_offer_accepted";
+
 export interface CompSale {
     photoCondition?: RawCondition;
     sellerCondition?: RawCondition | null;
+    saleType?: SoldSaleType;
     price: number;
     soldAt: string;
     title: string;
@@ -363,7 +367,8 @@ export interface CompSummary {
     mean?: number | null;
     marketEstimate?: {
         price: number;
-        method: "RECENT_FOUR" | "RECENCY_WEIGHTED_MEDIAN";
+        method: "RECENT_FIXED_PRICE_MEDIAN" | "RECENT_FOUR" | "RECENCY_WEIGHTED_MEDIAN";
+        sampleSize?: number;
         recentTrendPercent?: number;
     };
     windowDays?: number;
@@ -499,6 +504,7 @@ export interface Underwriting {
     best: PricedPath | null;
     paths: MoneyPath[];
     assumptions: string[];
+    shippingUnconfirmed?: true;
 }
 
 // What a listing usually sells for, as listed, and the recent sales

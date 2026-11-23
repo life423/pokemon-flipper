@@ -7,6 +7,7 @@ import { PriceResearchBudgetError } from "../../server/pricing/research-budget.t
 import { StorageUnavailableError } from "../../server/storage/index.ts";
 import type { CardRecord, Comp, FetchSoldPage } from "../../server/pricing/types.ts";
 import type { ListingSummary, SearchIntent } from "../../shared/types.ts";
+import type { SearchCompetition } from "../../shared/search-diagnostic.ts";
 import { applySoldPriceScreen } from "../../shared/money/sold-screen.ts";
 import { retargetScreen } from "../../shared/money/targets.ts";
 import { analysisPriority } from "../../shared/analysis-priority.ts";
@@ -18,6 +19,8 @@ import { findDeals } from "../../server/deals/find-deals.ts";
 import { writeCache } from "../../server/lib/cache.ts";
 import { hasSpecialSlabTitle } from "../../shared/grade-qualifier.ts";
 import { compProblem } from "../../server/pricing/sold-comps.ts";
+import { MONEY_CONFIG } from "../../shared/money/config.ts";
+import { maxBid, netFromSale } from "../../shared/money/underwriting.ts";
 
 const NOW = Date.parse("2026-11-03T12:00:00Z"), DAY = 86_400_000;
 const intent: SearchIntent = { cardName: "Charizard", sets: ["Base Set"], cardNumber: "4/102", printing: null, graded: null, titleWords: ["charizard"], source: "rules" };
@@ -37,6 +40,171 @@ function harness(options: { cards?: CardRecord[]; raw?: (record: number | string
     } });
     return { run, calls };
 }
+
+test("an exact slab BIN search prices the market before Browse and shares that evidence with listing screening", async () => {
+    const query = "Charizard Base Set 4/102 Unlimited Holo PSA 8";
+    const targets = { minProfit: 25, minRoi: 0 };
+    const config = { ...MONEY_CONFIG, targets };
+    const purchaseCeiling = maxBid({ expectedNet: netFromSale(300, "graded", config.selling), fixedCosts: 0, shipping: 0 }, config);
+    const { run, calls } = harness({ graded: async () => [
+        sale({ title: query, price: 300, grader: "PSA", grade: "8" }),
+        sale({ title: query.replace("Unlimited", "First Edition"), price: 1500, grader: "PSA", grade: "8" }),
+    ] });
+    const candidate = listing({ title: query, isGraded: true, currentPrice: 100, images: ["front"] });
+    const overpriced = { ...candidate, id: "v1|overpriced|0", currentPrice: purchaseCeiling + 1 };
+    let browseCalls = 0;
+    const rows = await findDeals(query, { targets, filters: { typeFilter: "FIXED_PRICE" },
+        onCompetition: () => assert.fail("a retained listing should not trigger competition") }, {
+        readIntent: async () => readSearchLocally(query),
+        readTitle: async title => readTitleByRules(title),
+        soldScreening: () => run,
+        competition: async () => assert.fail("no extra lookup for non-empty discovery"),
+        search: async (keywords, options) => {
+            browseCalls++;
+            assert.equal(keywords, "charizard 4 PSA 8");
+            assert.equal(calls.graded.length, 1, "the exact sold market must be researched before eBay picks its page");
+            assert.equal(options?.sort, "newlyListed");
+            assert.equal(options?.filters?.kindFilter, "graded");
+            assert.equal(options?.filters?.maxPrice, purchaseCeiling);
+            return { listings: [overpriced, candidate], total: 2, skipped: 0 };
+        },
+    });
+    assert.equal(browseCalls, 1);
+    assert.deepEqual(rows.map(row => row.id), [candidate.id]);
+    assert.equal(rows[0].screen?.soldEvidence?.references[0].summary.count, 1, "First Edition never prices Unlimited");
+    assert.equal(canAutoAnalyze(rows[0]), true);
+    assert.equal(resultGroup(rows[0], null), "candidates", "a search ceiling does not verify the photographed slab");
+    assert.equal(calls.lookup, 1);
+    assert.equal(calls.graded.length, 1, "listing screening reuses the original catalog and sold lookup");
+});
+
+test("empty exact slab discovery reports comparison evidence outside the deal queue", async () => {
+    const query = "Charizard Base Set 4/102 Unlimited Holo PSA 8";
+    const targets = { minProfit: 25, minRoi: 0 };
+    const { run, calls } = harness({ graded: async () => [
+        sale({ title: query, price: 300, grader: "PSA", grade: "8" }),
+    ] });
+    const comparison: SearchCompetition = { title: query, url: "https://www.ebay.com/itm/123",
+        price: 250, shipping: 5, ceiling: 160, identity: "LISTING" };
+    const observed: SearchCompetition[] = [];
+    const rows = await findDeals(query, { targets, filters: { typeFilter: "FIXED_PRICE", maxPrice: 170 }, asOf: NOW,
+        onStart: summary => assert.equal(summary.soldPurchaseCeiling, 170),
+        onListing: () => assert.fail("a comparison cannot enter the assessment queue"),
+        onCompetition: reference => observed.push(reference) }, {
+        readIntent: async () => readSearchLocally(query),
+        readTitle: async title => readTitleByRules(title),
+        soldScreening: () => run,
+        search: async (_query, options) => {
+            assert.equal(options?.filters?.maxPrice, 170);
+            return { listings: [], rejections: [], total: 0, skipped: 0 };
+        },
+        competition: async (keywords, reference, expectedNet, passedTargets, userMax) => {
+            assert.equal(keywords, "charizard 4 PSA 8");
+            assert.deepEqual([reference.cardNumber, reference.printing, reference.grader, reference.grade], ["4/102", "UNLIMITED", "PSA", "8"]);
+            assert.equal(expectedNet, netFromSale(300, "graded", MONEY_CONFIG.selling));
+            assert.deepEqual(passedTargets, targets);
+            assert.equal(userMax, 170);
+            return comparison;
+        },
+    });
+    assert.deepEqual(rows, []);
+    assert.deepEqual(observed, [comparison]);
+    assert.equal(calls.graded.length, 1);
+});
+
+test("exact slab discovery accepts a short title number without weakening identity or the price ceiling", async () => {
+    const query = "Rayquaza V Evolving Skies 194/203 PSA 9";
+    const targets = { minProfit: 0, minRoi: 0 };
+    const purchaseCeiling = maxBid({ expectedNet: netFromSale(500, "graded", MONEY_CONFIG.selling), fixedCosts: 0, shipping: 0 },
+        { ...MONEY_CONFIG, targets });
+    const { run, calls } = harness({
+        cards: [card({ name: "Rayquaza V (Alternate Full Art)", setName: "Evolving Skies", cardNumber: "194/203" })],
+        graded: async () => [300, 500, 500, 500, 500, 300].map((price, index) => sale({
+            title: `${query} Holo`, price, grader: "PSA", grade: "9",
+            sale_type: index ? "fixed_price" : "auction",
+            sold_at: new Date(NOW - index * DAY).toISOString(),
+        })),
+    });
+    const page = [
+        listing({ id: "short-number", title: "Rayquaza V Evolving Skies #194 PSA 9", isGraded: true, currentPrice: 200, images: ["front"] }),
+        listing({ id: "full-number", title: query, isGraded: true, currentPrice: 200, images: ["front"] }),
+        listing({ id: "wrong-set", title: "Rayquaza V Lost Origin #194 PSA 9", isGraded: true, currentPrice: 200 }),
+        listing({ id: "wrong-number", title: "Rayquaza V Evolving Skies 194/264 PSA 9", isGraded: true, currentPrice: 200 }),
+        listing({ id: "overpriced", title: "Rayquaza V Evolving Skies #194 PSA 9", isGraded: true, currentPrice: purchaseCeiling + 1 }),
+    ];
+    let browseCalls = 0;
+    const rows = await findDeals(query, { targets, filters: { typeFilter: "FIXED_PRICE" }, asOf: NOW,
+        onStart: summary => assert.equal(summary.intent.cardNumber, "194/203") }, {
+        readIntent: async () => readSearchLocally(query), readTitle: async title => readTitleByRules(title), soldScreening: () => run,
+        search: async (keywords, options) => {
+            browseCalls++;
+            assert.equal(keywords, "rayquaza v 194 PSA 9");
+            assert.equal(options?.sort, "newlyListed");
+            assert.equal(options?.filters?.maxPrice, purchaseCeiling);
+            return { listings: page, total: page.length, skipped: 0 };
+        },
+    });
+    assert.equal(browseCalls, 1);
+    assert.equal(calls.graded.length, 1);
+    assert.deepEqual(rows.map(row => row.id).sort(), ["full-number", "short-number"]);
+    const short = rows.find(row => row.id === "short-number")!;
+    assert.equal(short.screen?.card?.cardNumber, "194");
+    assert.equal(resultGroup(short, null), "candidates");
+});
+
+test("ambiguous markets and stale sold prices do not narrow the first BIN page", async () => {
+    for (const reason of ["ambiguous printing", "stale sale"]) {
+        const ambiguous = reason === "ambiguous printing";
+        const title = "Charizard Base Set 4/102 Unlimited Holo PSA 8";
+        const query = ambiguous ? title.replace("Unlimited ", "") : title;
+        const { run, calls } = harness({
+            cards: [card({ variants: ambiguous ? [variant(), variant("Shadowless Holofoil", "SHADOWLESS")] : [variant()] })],
+            graded: async () => [sale({ title, price: 300, grader: "PSA", grade: "8",
+                sold_at: new Date(NOW - (ambiguous ? 1 : 31) * DAY).toISOString() })],
+        });
+        const candidate = listing({ title, isGraded: true, currentPrice: 100 });
+        let browseCalls = 0;
+        const rows = await findDeals(query, { filters: { typeFilter: "FIXED_PRICE", maxPrice: 500 } }, {
+            readIntent: async () => readSearchLocally(query),
+            readTitle: async text => readTitleByRules(text),
+            soldScreening: () => run,
+            search: async (_query, options) => {
+                browseCalls++;
+                assert.equal(calls.graded.length, ambiguous ? 0 : 1, reason);
+                assert.equal(options?.filters?.maxPrice, 500, reason);
+                return { listings: [candidate], total: 1, skipped: 0 };
+            },
+        });
+        assert.equal(browseCalls, 1, reason);
+        assert.deepEqual(rows.map(row => row.id), [candidate.id], reason);
+        assert.equal(calls.lookup, 1, reason);
+        assert.equal(calls.graded.length, 1, reason);
+    }
+});
+
+test("a thin exact slab search with offers enabled can check a separate asking price band", async () => {
+    const query = "Charizard Base Set 4/102 Unlimited Holo PSA 8";
+    const targets = { minProfit: 0, minRoi: 0 };
+    const { run } = harness({ graded: async () => [sale({ title: query, price: 300, grader: "PSA", grade: "8" })] });
+    const ceiling = maxBid({ expectedNet: netFromSale(300, "graded", MONEY_CONFIG.selling), fixedCosts: 0, shipping: 0 }, { ...MONEY_CONFIG, targets });
+    const offer = listing({ title: query, isGraded: true, currentPrice: ceiling + 2, bestOffer: true });
+    const fixed = { ...offer, id: "v1|fixed|0", bestOffer: false };
+    const sorts: (string | undefined)[] = [];
+    const rows = await findDeals(query, { targets, includeOffers: true, filters: { typeFilter: "FIXED_PRICE" } }, {
+        readIntent: async () => readSearchLocally(query),
+        readTitle: async title => readTitleByRules(title),
+        soldScreening: () => run,
+        search: async (_keywords, options) => {
+            sorts.push(options?.sort);
+            if (options?.sort === "newlyListed") return { listings: [], total: 0, skipped: 0 };
+            assert.ok(options?.keepReserve);
+            assert.equal(options?.filters?.minPrice, Math.round(ceiling * 100 + 1) / 100);
+            return { listings: [offer, fixed], total: 2, skipped: 0 };
+        },
+    });
+    assert.deepEqual(sorts, ["newlyListed", "price"]);
+    assert.deepEqual(rows.map(row => row.id), [offer.id]);
+});
 
 test("empty raw sales admit only affordable grading leads backed by recent exact sold grades", async () => {
     const { run, calls } = harness({ page: async (_id, { grader, grade }) => {

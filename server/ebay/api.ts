@@ -5,8 +5,14 @@ import { fetchJson, ProviderError } from "../lib/http.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
 import { reserveBrowseRequest } from "./usage.ts";
 import { requireBrowseSearchId, reserveSearchBrowseRequest } from "./search-budget.ts";
+import { requireLiveProvider } from "../lib/saved-provider-evidence.ts";
 
 const EBAY_API = "https://api.ebay.com";
+
+export function configuredShippingZip(): string | null {
+    const zip = process.env.EBAY_SHIP_TO_ZIP?.trim();
+    return zip && /^\d{5}(?:-\d{4})?$/.test(zip) ? zip : null;
+}
 
 let cachedToken: string | null = null;
 let tokenExpiresAt = 0;
@@ -85,6 +91,7 @@ async function requestAccessToken(): Promise<string> {
 
 export async function ebayGet<T>(path: string, { signal, keepReserve = false }: { signal?: AbortSignal; keepReserve?: boolean } = {}): Promise<T> {
     signal?.throwIfAborted();
+    requireLiveProvider("EBAY");
     if (path.startsWith("/buy/browse/")) requireBrowseSearchId();
     const { assertSqlStorageReady } = await import("../storage/index.ts");
     await assertSqlStorageReady();
@@ -97,9 +104,8 @@ export async function ebayGet<T>(path: string, { signal, keepReserve = false }: 
     };
 
     // Optional: lets eBay quote CALCULATED shipping to your ZIP.
-    if (process.env.EBAY_SHIP_TO_ZIP?.trim()) {
-        headers["X-EBAY-C-ENDUSERCTX"] = `contextualLocation=${encodeURIComponent(`country=US,zip=${process.env.EBAY_SHIP_TO_ZIP.trim()}`)}`;
-    }
+    const zip = configuredShippingZip();
+    if (zip) headers["X-EBAY-C-ENDUSERCTX"] = `contextualLocation=${encodeURIComponent(`country=US,zip=${zip}`)}`;
 
     if (path.startsWith("/buy/browse/")) await reserveSearchBrowseRequest(() => reserveBrowseRequest(keepReserve), signal);
     signal?.throwIfAborted();

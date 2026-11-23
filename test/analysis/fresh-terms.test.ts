@@ -16,5 +16,7 @@ test("fresh server terms reach cards and repricing; later selected refreshes sti
     assert.equal(repriced.listing.price, 90); assert.equal(repriced.listing.shipping, null);
     const later = { ...next, currentPrice: 100, termsCheckedAt: "2026-10-30T12:01:00Z" };
     assert.equal(withFreshListing(later, e), later);
-    assert.equal(retargetEvaluation(e, { minProfit: 0, minRoi: 0 }, later).listing.price, 100);
+    const updated = retargetEvaluation(e, { minProfit: 0, minRoi: 0 }, later);
+    assert.equal(updated.listing.price, 100);
+    assert.equal(updated.listing.termsCheckedAt, later.termsCheckedAt);
 });

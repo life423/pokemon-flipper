@@ -51,7 +51,7 @@ END
 ELSE
 BEGIN
  UPDATE dbo.ResearchTasks SET state='RUNNING',lease_owner=@owner,lease_until=DATEADD(millisecond,CONVERT(int,@leaseMs),@now),updated_at=@now
- WHERE task_hash=CONVERT(char(64),@hash) AND (state='PENDING' OR state='RUNNING' AND lease_until<=@now);
+ WHERE task_hash=CONVERT(char(64),@hash) AND (state='PENDING' AND lease_until IS NULL OR state IN ('PENDING','RUNNING') AND lease_until<=@now);
  IF @@ROWCOUNT=1 SET @claimed=1;
 END
 SELECT @claimed AS claimed,state,result_json AS result,lease_until AS leaseUntil FROM dbo.ResearchTasks WHERE task_hash=CONVERT(char(64),@hash);`,
@@ -80,6 +80,14 @@ OUTPUT inserted.state WHERE task_hash=CONVERT(char(64),@hash) AND task_key=@key 
         },
         async markTaskUnknown(key: string, ownerId: string): Promise<void> {
             await executor.query(`UPDATE dbo.ResearchTasks SET state='UNKNOWN',updated_at=SYSUTCDATETIME() WHERE task_hash=CONVERT(char(64),@hash) AND task_key=@key AND lease_owner=@owner AND state='DISPATCHED';`, keyParameters(key, ownerId));
+        },
+        async deferRateLimitedTask(key: string, ownerId: string, delayMs: number): Promise<void> {
+            if (!Number.isSafeInteger(delayMs) || delayMs < 1 || delayMs > 2_147_483_647) throw new StorageUnavailableError("The research retry delay is invalid.");
+            const rows = await executor.query<{ state: string }>(`DECLARE @now datetime2(3)=SYSUTCDATETIME();
+UPDATE dbo.ResearchTasks SET state='PENDING',lease_owner=NULL,lease_until=DATEADD(millisecond,CONVERT(int,@delayMs),@now),updated_at=@now
+OUTPUT inserted.state WHERE task_hash=CONVERT(char(64),@hash) AND task_key=@key AND lease_owner=@owner AND task_type='AI_GENERATION' AND state='DISPATCHED';`,
+                { ...keyParameters(key, ownerId), delayMs });
+            if (!rows.length) throw new StorageUnavailableError("The rate-limited research claim could not be deferred.");
         },
         async releaseTask(key: string, ownerId: string): Promise<void> {
             // A dispatched or unknown attempt is never returned to the queue

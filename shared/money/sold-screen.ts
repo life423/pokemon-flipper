@@ -5,6 +5,7 @@ import { offerPlan, offerWorthMaking } from "./offer.ts";
 import { bestPath, gradingTier, netFromSale, pathNumbers } from "./underwriting.ts";
 import { cents, MAX_OFFER_DISCOUNT_PERCENT } from "./cents.ts";
 import { hasExactSoldScope, soldMarketPrice, usableSoldReference } from "../sold-evidence.ts";
+import { usualPrice } from "./auction.ts";
 
 type SoldScreenListing = Pick<ListingSummary, "currentPrice" | "shipping" | "isGraded" | "buyingOption" | "bestOffer" | "screen">;
 interface SoldScreenOptions {
@@ -136,10 +137,7 @@ export function applySoldPriceScreen<T extends SoldScreenListing>(
         paths,
         auction: listing.buyingOption === "AUCTION",
         bestOffer: listing.bestOffer === true,
-        usual: listing.isGraded ? {
-            price: soldMarketPrice(references[0].summary)!,
-            sales: references[0].summary.sales.map((sale) => sale.price).filter(positive),
-        } : null,
+        usual: listing.isGraded ? usualPrice([], references[0].summary) : null,
     };
     screen.assumed = "Preliminary sold-title comparisons; photos have not confirmed this card's identity, label or condition." +
         (listing.shipping === null ? " Purchase shipping is unknown; $0 is used only to avoid excluding a possible opportunity." : "");

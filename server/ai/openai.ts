@@ -5,8 +5,8 @@ import { createLimiter } from "../lib/concurrency.ts";
 import { ProviderError } from "../lib/http.ts";
 import { aiPolicy, TEXT_MODEL, AI_REQUEST_CONCURRENCY, BOUNDED_VISION_MODEL, BOUNDED_MAX_OUTPUT_TOKENS } from "./policy.ts";
 import { trackedAiFetch } from "./usage.ts";
-import { canRetryImageDownload, inlineEbayImage } from "./image-fallback.ts";
-import { createAiCreditGate } from "./errors.ts";
+import { inlineEbayImage } from "./image-input.ts";
+import { aiRateLimitDelayMs, createAiCreditGate } from "./errors.ts";
 import { aiSpendingFailure } from "./spending.ts";
 import { withAiDispatchSignal } from "./usage-context.ts";
 import { storageFailure } from "../lib/storage-failure.ts";
@@ -20,7 +20,7 @@ export interface Photo {
 export const MODEL = TEXT_MODEL;
 
 let client: OpenAI | null = null;
-// Shared across searches, photo analysis, title batches, and comp checks.
+// Shared across searches, photo analysis, and comp checks.
 const limitRequests = createLimiter(AI_REQUEST_CONCURRENCY);
 let coolingUntil = 0;
 const creditGate = createAiCreditGate();
@@ -53,6 +53,9 @@ function readStructuredOutput(response: OpenAI.Responses.Response, step: string)
         throw new Error(
             `${step}: response was cut off (${response.incomplete_details?.reason ?? "unknown reason"})`
         );
+    }
+    if (response.status !== "completed") {
+        throw new Error(`${step}: response did not complete (${response.status ?? "unknown status"})`);
     }
 
     const refusal = (response.output ?? [])
@@ -121,18 +124,17 @@ export async function runStructured<T>({
             supportsReasoning: /^(?:gpt-[56](?:[.-]|$)|o\d)/.test(selectedModel) } : aiPolicy(schemaName);
         const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
         const immutablePhotos: Photo[] = [];
-        if (bounded) {
-            let bytes = 0;
-            for (const photo of photos) {
-                waitingSignal?.throwIfAborted();
-                const url = photo.url.startsWith("data:image/") ? photo.url : await inlineEbayImage(photo.url,
-                    waitingSignal ? AbortSignal.any([requestSignal, waitingSignal]) : requestSignal);
-                bytes += url.length;
-                if (bytes > 32 * 1024 * 1024) throw new Error("The selected photos exceed the bounded assessment input limit.");
-                immutablePhotos.push({ ...photo, url });
-            }
+        const downloadSignal = waitingSignal ? AbortSignal.any([requestSignal, waitingSignal]) : requestSignal;
+        // Preflight and generation must see the same image bytes.
+        let encodedLength = 0;
+        for (const photo of photos) {
+            downloadSignal.throwIfAborted();
+            const url = photo.url.startsWith("data:image/") ? photo.url : await inlineEbayImage(photo.url, downloadSignal);
+            encodedLength += url.length;
+            if (encodedLength > 32 * 1024 * 1024) throw new Error("The selected photos exceed the assessment input limit.");
+            immutablePhotos.push({ ...photo, url });
         }
-        const sendOnce = (images: Photo[]) => withAiDispatchSignal(waitingSignal, () => getClient().responses.create({
+        const sendOnce = () => withAiDispatchSignal(waitingSignal, () => getClient().responses.create({
             model: policy.model,
             service_tier: "default",
             // GPT-5.6+ uses the current TTL API. Explicit mode avoids paying
@@ -143,14 +145,15 @@ export async function runStructured<T>({
             max_output_tokens: bounded ? Math.min(maxOutputTokens ?? policy.maxOutputTokens, BOUNDED_MAX_OUTPUT_TOKENS) : maxOutputTokens ?? policy.maxOutputTokens,
             ...(policy.supportsReasoning ? { reasoning: { effort: policy.effort } } : {}),
             metadata: { app_step: step },
-            input: [{ role: "user" as const, content: [{ type: "input_text" as const, text: prompt }, ...photoInputs(images)] }],
+            input: [{ role: "user" as const, content: [{ type: "input_text" as const, text: prompt }, ...photoInputs(immutablePhotos)] }],
             text: { format: { type: "json_schema" as const, name: schemaName, strict: true, schema } },
         }, { signal: requestSignal, maxRetries: 0 }));
-        const send = async (images: Photo[], retries = bounded ? 0 : maxRetries ?? 1) => {
+        const send = async () => {
+            const retries = bounded ? 0 : maxRetries ?? 1;
             for (let attempt = 0; ; attempt++) {
                 waitingSignal?.throwIfAborted();
                 creditGate.check();
-                try { return await sendOnce(images); }
+                try { return await sendOnce(); }
                 catch (error) {
                     const storage = storageFailure(error);
                     if (storage) throw storage;
@@ -160,37 +163,20 @@ export async function runStructured<T>({
                     const transient = error instanceof OpenAI.APIConnectionError || error instanceof OpenAI.APIError &&
                         (error.status === 429 || error.status === 408 || error.status >= 500);
                     if (!transient || attempt >= retries) throw error;
-                    const seconds = error instanceof OpenAI.APIError ? Number(error.headers?.get("retry-after")) : 0;
-                    const pause = error instanceof OpenAI.APIError && error.status === 429 ? seconds > 0 ? seconds * 1000 : 30_000 : 1500;
+                    const pause = error instanceof OpenAI.APIError && error.status === 429 ? aiRateLimitDelayMs(error.headers) : 1500;
                     if (error instanceof OpenAI.APIError && error.status === 429) coolingUntil = Math.max(coolingUntil, Date.now() + pause);
                     await delay(pause, undefined, { signal: dispatchSignal ? AbortSignal.any([requestSignal, dispatchSignal]) : requestSignal });
                 }
             }
         };
         try {
-            try { return await send(bounded ? immutablePhotos : photos); }
-            catch (error) {
-                waitingSignal?.throwIfAborted();
-                if (bounded || !photos.length || !canRetryImageDownload(error)) throw error;
-                const inline: Photo[] = [];
-                // Download sequentially and cap the aggregate encoded input.
-                let bytes = 0;
-                for (const photo of photos) {
-                    waitingSignal?.throwIfAborted();
-                    const url = await inlineEbayImage(photo.url, requestSignal);
-                    bytes += url.length;
-                    if (bytes > 32 * 1024 * 1024) throw new Error("The listing photos exceed the AI fallback size limit.");
-                    inline.push({ ...photo, url });
-                }
-                return await send(inline, 0);
-            }
+            return await send();
         } catch (error) {
             waitingSignal?.throwIfAborted();
             creditGate.reject(error);
             if (deadline.aborted) throw new ProviderError(`${step} timed out after two minutes. Please retry later.`, { cause: error });
             if (error instanceof OpenAI.APIError && error.status === 429) {
-                const retrySeconds = Number(error.headers?.get("retry-after"));
-                coolingUntil = Math.max(coolingUntil, Date.now() + (retrySeconds > 0 ? retrySeconds * 1000 : 30_000));
+                coolingUntil = Math.max(coolingUntil, Date.now() + aiRateLimitDelayMs(error.headers));
                 throw new ProviderError("AI service is rate limited. Please retry this listing later.", { cause: error, retryAfterMs: coolingUntil - Date.now() });
             }
             throw error;

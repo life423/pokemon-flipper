@@ -8,6 +8,7 @@ import { withFileLease } from "../lib/file-lease.ts";
 import { createKeyedLock } from "../lib/keyed-lock.ts";
 import { getAiUsageContext, type AiUsageContext } from "../ai/usage-context.ts";
 import { recordProviderUsage } from "../lib/provider-usage.ts";
+import { requireLiveProvider } from "../lib/saved-provider-evidence.ts";
 import type { PricingResearchUsage } from "../../shared/pricing-usage.ts";
 
 // New searches receive more research headroom. A stored search keeps the
@@ -215,6 +216,6 @@ export function assertPriceResearchAvailable(signal = getPriceResearchSignal()) 
     return currentBudget().assertAvailable(getAiUsageContext().searchId, signal);
 }
 export function reservePriceRequest(path: string, signal = getPriceResearchSignal()) {
-    signal?.throwIfAborted(); scope(getAiUsageContext().searchId);
+    signal?.throwIfAborted(); requireLiveProvider("PKMNPRICES"); scope(getAiUsageContext().searchId);
     return currentBudget().reserve(path, getAiUsageContext(), signal);
 }

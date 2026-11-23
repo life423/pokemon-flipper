@@ -8,11 +8,13 @@ export class ListingLinkError extends Error {
     constructor(message: string, readonly status = 400) { super(message); }
 }
 export function createListingResolver({ details = getListingDetails, now = () => Date.now() } = {}) {
-    return async (input: unknown): Promise<ListingSummary> => {
+    return async (input: unknown, signal?: AbortSignal): Promise<ListingSummary> => {
+        signal?.throwIfAborted();
         const parsed = parseListingLink(input);
         if (!parsed) throw new ListingLinkError("Paste a full ebay.com/itm/ listing link or its item number.");
         if (!parsed.itemId.endsWith("|0")) throw new ListingLinkError("Pick-your-card variations are not supported. Use a single-card listing.", 422);
-        const listing = await details(parsed.itemId, { maxAgeHours: 0 });
+        const listing = await details(parsed.itemId, { maxAgeHours: 0, signal });
+        signal?.throwIfAborted();
         const excluded = exclusionReason({ title: listing.title, itemId: listing.id, itemGroupType: listing.itemGroupType });
         if (excluded) throw new ListingLinkError(`${excluded}. This app evaluates individual collectible cards. No AI analysis was started.`, 422);
         if (listing.availability === "UNAVAILABLE" || listing.endTime && Date.parse(listing.endTime) <= now()) throw new ListingLinkError("This listing is unavailable or ended. No AI analysis was started.", 410);

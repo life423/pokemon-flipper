@@ -7,6 +7,7 @@ import type { Identity } from "../../shared/types.ts";
 import { soldMarketPrice } from "../../shared/sold-evidence.ts";
 import { gradedResalePath } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
+import { usualPrice } from "../../shared/money/auction.ts";
 
 const now = Date.parse("2026-11-03T12:00:00Z");
 const criteria: CompCriteria = { printing: "UNLIMITED", setName: "Base Set", finish: "HOLO", grader: "PSA", grade: "7", now };
@@ -18,7 +19,8 @@ const sale = (price: number, overrides: Partial<Comp> = {}): Comp => ({
 });
 
 test("four newest distinct sales within 48 hours drive the current price and show an observed move", () => {
-    const at = (price: number, hours: number) => sale(price, { id: `sale-${hours}`, sold_at: new Date(now - hours * 3_600_000).toISOString() });
+    const at = (price: number, hours: number) => sale(price, { id: `sale-${hours}`, sale_type: "auction",
+        sold_at: new Date(now - hours * 3_600_000).toISOString() });
     const latest = at(120, 1);
     const sales = [at(50, 50), at(90, 48), at(100, 24), latest, at(80, 20 * 24), at(110, 4),
         at(80, 2 * 24 + 1), { ...latest }, at(1500, 3)];
@@ -32,6 +34,28 @@ test("four newest distinct sales within 48 hours drive the current price and sho
     if (path.status === "PRICED") assert.equal(path.salePrice, 105);
     const tooOld = summarizeComps(sales.filter(comp => comp.sold_at !== at(90, 48).sold_at), criteria);
     assert.equal(tooOld.marketEstimate?.method, "RECENCY_WEIGHTED_MEDIAN");
+});
+
+test("recent Buy It Now comps anchor resale while auctions remain a separate bid reference", () => {
+    const at = (price: number, days: number, saleType: Comp["sale_type"] = "fixed_price") =>
+        sale(price, { id: `sale-${days}`, sale_type: saleType, sold_at: new Date(now - days * 86_400_000).toISOString() });
+    const latest = [at(300, 1), at(500, 3), at(500, 4), at(500, 5), at(500, 6)];
+    const summary = summarizeComps([
+        at(370, 30), ...latest, { ...latest[0] }, at(300, 0, "auction"), at(330, 2, "auction"),
+        at(340, 0.5, "best_offer_accepted"), at(950, 0.25, null),
+    ], criteria);
+    assert.deepEqual(summary.marketEstimate, { price: 500, method: "RECENT_FIXED_PRICE_MEDIAN", sampleSize: 5 });
+    assert.equal(summary.low, 300);
+    assert.equal(summary.sales.filter((comp) => comp.saleType === "auction").length, 2);
+    assert.equal(summary.sales.filter((comp) => comp.saleType === "best_offer_accepted").length, 1);
+    assert.equal(summary.dropped["sale amount not confirmed"], 1);
+    assert.deepEqual(usualPrice([], summary), { price: 315, sales: [300, 330] });
+    const path = gradedResalePath({ price: 300, shipping: 0 }, summary, 0, MONEY_CONFIG);
+    assert.equal(path.status, "PRICED");
+    if (path.status === "PRICED") assert.equal(path.salePrice, 500);
+
+    const sparse = summarizeComps([at(500, 3), at(500, 4), at(500, 31), at(300, 0, "auction")], criteria);
+    assert.equal(sparse.marketEstimate?.method, "RECENCY_WEIGHTED_MEDIAN");
 });
 
 test("sparse exact markets weight newer sales in either direction and preserve legacy medians", () => {

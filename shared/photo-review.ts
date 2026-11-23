@@ -3,7 +3,7 @@ import { hasSlabEvidence, obscuredDisclosedWear, photoAssessmentConfidence, phot
 import { isRawCondition } from "./conditions.ts";
 import { priceEvidenceGap } from "./money/price-evidence.ts";
 
-export const DEEP_PHOTO_LIMIT = 24;
+const DEEP_PHOTO_LIMIT = 6;
 export function planDeeperPhotos(check: PhotoCheck | null, photos: string[]) {
     if (!check || check.cardCount !== "ONE") return { photos: [], reason: "A completed photo check of one card is needed first." };
     if (check.holder === "GRADED_SLAB") return { photos: [], reason: "This card already has a certified grade." };

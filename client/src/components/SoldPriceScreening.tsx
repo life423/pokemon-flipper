@@ -21,7 +21,7 @@ export function SoldPriceScreening({ listing, compact = false }: { listing: List
             {!reference.grader && <p className={styles.small}>{reference.condition
                 ? "Condition is stated in sold titles; this card's condition is not yet assessed."
                 : "Sold condition is unspecified. This is market context, not a condition-matched raw valuation."}</p>}
-            <CompsRow summary={reference.summary} sampleLimit={20} screening />
+            <CompsRow summary={reference.summary} screening />
         </div>)}
     </Section>;
 }

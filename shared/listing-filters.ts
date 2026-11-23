@@ -5,6 +5,8 @@ import { searchPhotosFitDetails } from "./listing-evidence.ts";
 export const AUTOMATIC_PRICE_CEILING = 200_000;
 export const AUTOMATIC_AUCTION_WINDOW_HOURS = 12;
 
+export type MarketplaceOrder = "newest" | "lowest";
+
 export interface ListingFilters {
     typeFilter?: BuyingOption | "all";
     kindFilter?: "raw" | "graded" | "all";
@@ -45,8 +47,13 @@ export function withinAutomaticAuctionWindow(listing: Pick<ListingSummary, "buyi
     return Number.isFinite(end) && end > now && end - now <= AUTOMATIC_AUCTION_WINDOW_HOURS * 3600000;
 }
 
+export function screeningBlock(listing: ListingSummary, filters: ListingFilters = {}, asOf = Date.now()) {
+    if (!withinAutomaticAuctionWindow(listing, asOf) ||
+        listing.buyingOption === "AUCTION" && !(Date.parse(listing.endTime ?? "") > Date.now())) return "OUTSIDE_AUCTION_WINDOW";
+    if (!((listing.currentPrice ?? 0) <= AUTOMATIC_PRICE_CEILING)) return "PRICE_ABOVE_CEILING";
+    return listingFilterBlock(listing, filters);
+}
+
 export function worthScreening(listing: ListingSummary, filters: ListingFilters = {}, asOf = Date.now()): boolean {
-    return withinAutomaticAuctionWindow(listing, asOf) &&
-        (listing.buyingOption !== "AUCTION" || Date.parse(listing.endTime ?? "") > Date.now()) &&
-        (listing.currentPrice ?? 0) <= AUTOMATIC_PRICE_CEILING && matchesListingFilters(listing, filters);
+    return screeningBlock(listing, filters, asOf) === null;
 }

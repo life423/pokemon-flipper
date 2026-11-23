@@ -26,6 +26,23 @@ test("independent instances cannot overdraw a shared daily quota under 100 concu
     assert.equal((await b(observed, false, false)).remaining, 0, "a stale Analytics sample cannot refill the displayed allowance");
     await assert.rejects(createDailyBrowseBudget({ file })(observed), /daily allowance/, "restart cannot reset the counter");
 });
+test("an old daily quota lock stays owned after a suspended process exceeds the lease wait", async t => {
+    const file = await temporary(t), lock = `${file}.lock`;
+    const at = Date.now(), suspendedAt = new Date(at - 45_000);
+    await fs.writeFile(lock, "suspended-owner");
+    await fs.utimes(lock, suspendedAt, suspendedAt);
+    let timeRead = false;
+    t.mock.method(Date, "now", () => {
+        if (timeRead) return at + 11_000;
+        timeRead = true;
+        return at;
+    });
+    try {
+        await assert.rejects(createDailyBrowseBudget({ file, now: () => at })(null), /quota accounting is busy/);
+        assert.equal(await fs.readFile(lock, "utf8"), "suspended-owner");
+        await assert.rejects(fs.access(file), { code: "ENOENT" });
+    } finally { await fs.unlink(lock).catch(() => {}); }
+});
 test("the optional reserve, provider high-water usage and real reset are respected", async t => {
     const file = await temporary(t); let at = Date.now(); const reserve = createDailyBrowseBudget({ file, now: () => at });
     const observed = snapshot(10, 2);

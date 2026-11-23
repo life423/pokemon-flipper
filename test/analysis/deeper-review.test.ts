@@ -2,7 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ANALYSIS_VERSION } from "../../server/analysis/legacy-evidence.ts";
 import { photoFingerprint, withAssessmentLock } from "../../server/analysis/store.ts";
-import { createDeeperPhotoReviewer, photoReviewKey, cleanDeeperAnswer } from "../../server/analysis/deeper-review.ts";
+import { createDeeperPhotoReviewer, photoReviewKey, cleanDeeperAnswer, restoreBoundedPhotoReview } from "../../server/analysis/deeper-review.ts";
+import { getAiUsageContext, withAiUsageContext } from "../../server/ai/usage-context.ts";
+import { drainSharedWork } from "../../server/lib/shared-work.ts";
+import type { PrivateEvaluationSnapshot } from "../../server/analysis/private-evaluation.ts";
 import { cardEvaluation } from "../fixtures/card-evaluation.ts";
 import type { SavedRecord } from "../../server/analysis/types.ts";
 import type { DeeperAnswer } from "../../server/ai/deeper-photo-review.ts";
@@ -18,7 +21,7 @@ function record(): SavedRecord {
 const answer = (): DeeperAnswer => ({ summary: "Glare still hides fine surface wear.", findings: [{ area: "SURFACE", impact: "UNRESOLVED", observation: "Fine scratches cannot be resolved through the glare.", photoNumbers: [1, 3] }], requestedPhotos: ["Unobscured holo surface under angled light."] });
 function fixture(review = async () => ({ result: answer(), usage: { inputTokens: 10, outputTokens: 10 } })) {
     let stored = record(); let calls = 0; let saves = 0;
-    const run = createDeeperPhotoReviewer({ load: async () => structuredClone(stored), save: async (_id, next) => { stored = structuredClone(next); saves++; }, review: async () => { calls++; return review(); }, now: () => "2026-10-26T13:00:00Z" });
+    const run = createDeeperPhotoReviewer({ loadPrivate: async () => null, load: async () => structuredClone(stored), save: async (_id, next) => { stored = structuredClone(next); saves++; }, review: async () => { calls++; return review(); }, now: () => "2026-10-26T13:00:00Z" });
     return { run, key: () => photoReviewKey(stored), get: () => stored, set: (next: SavedRecord) => { stored = next; }, calls: () => calls, saves: () => saves };
 }
 
@@ -53,8 +56,9 @@ test("duplicate clicks share one review; reopening the same saved review makes n
     const f = fixture(async () => { await gate; return { result: answer(), usage: { inputTokens: 10, outputTokens: 10 } }; });
     const before = structuredClone(f.get());
     const first = f.run("offline", f.key()); const second = f.run("offline", f.key());
-    assert.equal(first, second); release();
+    release();
     const result = await first;
+    assert.deepEqual(await second, result);
     assert.equal(f.calls(), 1); assert.equal(f.saves(), 1);
     assert.deepEqual(await f.run("offline", f.key()), result);
     assert.equal(f.calls(), 1);
@@ -85,7 +89,7 @@ test("failed review preserves the assessment and repeated retries are held witho
 test("a failed disk write retries the saved answer without another paid request", async () => {
     let stored = record(); let calls = 0; let writes = 0;
     const before = structuredClone(stored);
-    const run = createDeeperPhotoReviewer({ load: async () => structuredClone(stored), save: async (_id, next) => {
+    const run = createDeeperPhotoReviewer({ loadPrivate: async () => null, load: async () => structuredClone(stored), save: async (_id, next) => {
         writes++;
         if (writes === 1) throw new Error("Disk temporarily unavailable");
         stored = structuredClone(next);
@@ -123,7 +127,7 @@ test("focused comparison uses code-limited prior confidence, not an optimistic r
     stored.photoCheck!.result.images = [stored.photoCheck!.result.images[0]];
     stored.assessment!.result.confidence = "HIGH";
     let compared = false;
-    const run = createDeeperPhotoReviewer({ load: async () => structuredClone(stored), save: async () => {}, review: async (input) => {
+    const run = createDeeperPhotoReviewer({ loadPrivate: async () => null, load: async () => structuredClone(stored), save: async () => {}, review: async (input) => {
         compared = true;
         assert.equal(input.condition?.confidence, "LOW");
         assert.equal(input.condition?.gradeRange.likely, null);
@@ -145,4 +149,61 @@ test("saved review keys track changed photos/assessment, but not the addition of
     f.set(baseline); f.get().photoFingerprint = "changed-photo-list";
     await assert.rejects(f.run("offline", f.key()), /assessment changed/);
     assert.equal(f.calls(), 1);
+});
+
+test("bounded deeper review saves a dispatched answer after cancellation and reuses it across price changes", async () => {
+    const evaluation = cardEvaluation();
+    evaluation.assessmentVersion = "bounded-offline";
+    evaluation.photoCheck!.cardCount = "ONE";
+    evaluation.listing.photos = record().reviewContext!.photos;
+    evaluation.listing.availability = "ACTIVE";
+    const searchId = "12345678-1234-4234-8234-123456789abc";
+    const storage = new Map<string, unknown>();
+    const cached = async <T>(key: string) => structuredClone(storage.get(key) ?? null) as T | null;
+    const snapshot: PrivateEvaluationSnapshot = { version: 1, contextKey: "context", evidenceKey: "evidence", searchId,
+        evaluation: await restoreBoundedPhotoReview(evaluation, searchId, cached) };
+    const key = snapshot.evaluation.photoReviewKey!;
+    assert.match(key, /^[a-f0-9]{64}$/);
+    let entered!: () => void, release!: () => void;
+    const ready = new Promise<void>(resolve => entered = resolve);
+    const gate = new Promise<void>(resolve => release = resolve);
+    let calls = 0;
+    const run = createDeeperPhotoReviewer({ loadPrivate: async () => structuredClone(snapshot), cached,
+        cache: async (cacheKey, value) => { storage.set(cacheKey, structuredClone(value)); },
+        review: async (input, signal) => {
+            calls++;
+            assert.equal(getAiUsageContext().searchId, searchId);
+            assert.equal(getAiUsageContext().listingId, evaluation.listing.id);
+            assert.equal(signal?.aborted, false);
+            assert.deepEqual(input.photos.map(photo => photo.number), [1, 2, 3, 4]);
+            entered();
+            await gate;
+            assert.equal(signal?.aborted, true);
+            const result = answer();
+            result.findings[0].impact = "NEW_CONCERN";
+            return { result, usage: { inputTokens: 1, outputTokens: 1 } };
+        },
+    });
+    const stopped = new AbortController();
+    const paid = withAiUsageContext({ searchId: "87654321-4321-4321-8321-cba987654321" }, () => run(evaluation.listing.id, key, stopped.signal));
+    await ready;
+    const rejected = assert.rejects(paid, { name: "AbortError" });
+    stopped.abort();
+    await rejected;
+    release();
+    assert.equal((await drainSharedWork()).complete, true);
+
+    const repriced = structuredClone(evaluation);
+    repriced.listing.price = 25;
+    snapshot.evaluation = await restoreBoundedPhotoReview(repriced, searchId, cached);
+    assert.equal(snapshot.evaluation.photoReviewKey, key);
+    assert.equal(snapshot.evaluation.deeperPhotoReview?.findings[0].impact, "NEW_CONCERN");
+    assert.deepEqual(await run(evaluation.listing.id, key), snapshot.evaluation.deeperPhotoReview);
+    assert.equal(calls, 1);
+
+    repriced.listing.photos![0] = "https://i.ebayimg.com/images/g/new-front/s-l1600.jpg";
+    snapshot.evaluation = await restoreBoundedPhotoReview(repriced, searchId, cached);
+    await assert.rejects(run(evaluation.listing.id, key), /assessment changed/);
+    assert.equal(snapshot.evaluation.deeperPhotoReview, undefined);
+    assert.equal(calls, 1);
 });

@@ -1,6 +1,7 @@
 import type { PhotoCheck } from "../../shared/types.ts";
 import type { PhotoInspection } from "../ai/photo-find.ts";
-import { normalizeWords, photoPrinting, sameCardNumber, sameSetFamily, psaBaseLabelPrinting, type PhotoConfirmation } from "./card-identity.ts";
+import { normalizeWords, photoPrinting, reprintMarkCode, sameCardNumber, sameSetFamily, psaBaseLabelPrinting, type PhotoConfirmation } from "./card-identity.ts";
+import { cardLanguageStatus } from "../../shared/card-language.ts";
 
 // A discovery scan alone cannot raise a valuation. Its independent reading
 // must agree with the later full photo check, including actual front coverage.
@@ -11,10 +12,11 @@ export function confirmPhotoIdentity(scan: PhotoInspection | null, full: PhotoCh
     if (allowSlab && full.slab?.present && (full.slab.authenticity !== "NONE_SEEN" || !full.slab.grader || !full.slab.grade)) return;
     if (a.confidence !== "HIGH" || b.confidence !== "HIGH" || !a.evidence.length || !b.evidence.length) return;
     if (!a.name || !a.set || !a.cardNumber || !b.name || !b.set || !b.cardNumber) return;
-    if (normalizeWords(a.language) !== "english" || normalizeWords(b.language) !== "english") return;
+    if (cardLanguageStatus("", [a.language]) !== "ENGLISH" || cardLanguageStatus("", [b.language]) !== "ENGLISH") return;
     if (normalizeWords(a.name) !== normalizeWords(b.name) || !sameSetFamily(a.set, b.set) || !sameCardNumber(a.cardNumber, b.cardNumber)) return;
     if (!full.images.some((image) => image.view === "FRONT" && image.usable && !image.isStockImage)) return;
-    if (full.printingMarks?.reprintMark !== "NONE_SEEN") return;
+    if (full.printingMarks?.reprintMark !== "NONE_SEEN" || full.printingMarks.conflicts?.includes("reprintMark") ||
+        reprintMarkCode(scan.printingMarks?.reprintMark) || scan.printingMarks?.conflicts?.includes("reprintMark")) return;
     if (/fake|proxy|counterfeit|replica|wrong fonts|off colo|blurry print|non.?standard|tamper|custom|reprint/i.test([...(full.cardMatch?.problems ?? []), ...full.problems].join(" "))) return;
     const shadowMatters = sameSetFamily(a.set, "Base Set");
     const first = photoPrinting(scan.printingMarks, { shadowMatters });

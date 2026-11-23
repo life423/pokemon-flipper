@@ -3,7 +3,6 @@ import type { Evaluation, MoneyPath, Targets, Underwriting } from "../../types";
 import { dollars, name, percent, timeLeft } from "../../format";
 import { MONEY_CONFIG } from "../../../../shared/money/config.ts";
 import { returnText } from "../../../../shared/card-presentation.ts";
-import { ceilingLabel } from "../../../../shared/format.ts";
 import { AuctionSummary } from "../AuctionSummary";
 import { RatingBadge, VerdictBadge } from "../VerdictBadge";
 import { Tween } from "../Tween";
@@ -47,11 +46,12 @@ function VerdictSection({
 }) {
     const { listing } = evaluation;
     const best = underwriting.best;
+    const shippingPending = underwriting.shippingUnconfirmed;
     const left = timeLeft(listing.endTime, now);
     const room = best?.maxBid !== undefined && listing.price !== null ? best.maxBid - listing.price : null;
 
     const rows: [string, ReactNode][] = [
-        [listing.buyingOption === "AUCTION" ? `Current bid (${listing.bids} bids)` : "Buy It Now", dollars(listing.price)],
+        ["Buy It Now", dollars(listing.price)],
         ["Shipping", listing.shipping === null ? `Not quoted · ${dollars(MONEY_CONFIG.buying.assumedShippingWhenUnknown)} assumed` : dollars(listing.shipping)],
     ];
     if (best?.path === "RAW") {
@@ -61,48 +61,24 @@ function VerdictSection({
         rows.push(["Net sale proceeds after fees and shipping", dollars(best.expectedNet)]);
     }
 
-    if (room !== null) {
-        // An auction's bid days before the end says nothing about the outcome.
-        if (listing.buyingOption !== "AUCTION") rows.push([
+    if (room !== null && !shippingPending) {
+        rows.push([
             room >= 0 ? "Below your price limit" : "Above your price limit",
             <span className={room >= 0 ? styles.good : styles.bad}>{dollars(Math.abs(room))}</span>,
         ]);
     }
-    if (best && (listing.buyingOption !== "AUCTION" || underwriting.verdict.startsWith("BUY"))) {
-        // An auction's bid will rise, so its profit is shown at the max bid.
-        const auction = listing.buyingOption === "AUCTION";
-        const profit = auction ? best.profitAtMaxBid : best.profit;
-        const investment = auction ? best.costAtMaxBid : best.cost;
-        const roi = investment && profit !== null ? profit / investment : null;
-
+    if (best) {
+        const { profit, cost } = best;
         rows.push([
-            auction ? "Est. profit at max bid" : (profit ?? 0) < 0 ? "Est. net loss at asking" : "Est. net profit at asking",
-            <span className={(profit ?? 0) >= 0 ? styles.good : styles.bad}>
-                {dollars(profit === null ? null : Math.abs(profit))} ({returnText(roi)} return on total cost)
+            `${shippingPending ? "Modeled" : "Est."} net ${profit < 0 ? "loss" : "profit"} at asking`,
+            <span className={shippingPending ? undefined : profit >= 0 ? styles.good : styles.bad}>
+                {dollars(Math.abs(profit))} ({returnText(cost ? profit / cost : null)} return on total cost)
             </span>,
         ]);
-        if (!auction) rows.push(["Est. total invested", dollars(best.cost)]);
+        rows.push(["Est. total invested", dollars(cost)]);
     }
     if (left) {
         rows.push(["Ends in", left]);
-    }
-
-    // An auction ends near its usual price, not near today's bid.
-    const outlook = evaluation.rating?.auction;
-
-    if (outlook) {
-        rows.push(["Usually sells for", dollars(outlook.usualPrice)]);
-
-        if (outlook.profitAtUsual != null) {
-            rows.push([
-                "Profit if it ends there",
-                <span className={outlook.profitAtUsual >= 0 ? styles.good : styles.bad}>{dollars(outlook.profitAtUsual)}</span>,
-            ]);
-        }
-
-        if (outlook.salesTotal !== null) {
-            rows.push(["Recent sales at or under max bid", `${outlook.salesAtOrUnder} of ${outlook.salesTotal}`]);
-        }
     }
 
     return (
@@ -112,10 +88,10 @@ function VerdictSection({
                 <VerdictBadge verdict={underwriting.verdict} large />
             </div>
 
+            {shippingPending && <Notes items={underwriting.reasons} />}
             {best?.maxBid !== undefined && (
                 <div className={styles.hero}>
-                    <span className={styles.heroLabel}>{ceilingLabel(listing.buyingOption)} · {best.label}</span>
-                    {/* Green to buy, purple to grade: the verdict's color, not today's bid. */}
+                    <span className={styles.heroLabel}>{shippingPending ? "Provisional max price" : "Max price"} · {best.label}</span>
                     <span
                         className={`${styles.heroValue} ${
                             underwriting.verdict === "BUY_AND_GRADE"
@@ -127,7 +103,6 @@ function VerdictSection({
                     >
                         <Tween value={best.maxBid} format={dollars} />
                     </span>
-                    <span className={styles.heroLabel}>{best.label}</span>
                 </div>
             )}
 
@@ -140,13 +115,13 @@ function VerdictSection({
                     <Notes items={evaluation.rating.notes} tone="muted" />
                 </>
             )}
-            <Notes items={underwriting.reasons} />
+            {!shippingPending && <Notes items={underwriting.reasons} />}
             <Notes items={underwriting.assumptions} tone="muted" />
         </section>
     );
 }
 
-export function PathCard({ path, auction, referenceReason }: { path: MoneyPath; auction: boolean; referenceReason?: string | null }) {
+export function PathCard({ path, auction, referenceReason, shippingPending }: { path: MoneyPath; auction: boolean; referenceReason?: string | null; shippingPending?: boolean }) {
     if (path.status !== "PRICED") {
         return (
             <div className={styles.path}>
@@ -175,11 +150,12 @@ export function PathCard({ path, auction, referenceReason }: { path: MoneyPath; 
               ]
             : [["Sells for", `${dollars(path.salePrice)}${path.priceCondition ? ` (${name(path.priceCondition)})` : ""}`]];
 
+    const actionable = path.clears && !shippingPending;
     return (
-        <div className={`${styles.path} ${path.clears ? styles.clears : ""}`}>
+        <div className={`${styles.path} ${actionable ? styles.clears : ""}`}>
             <div className={styles.pathHead}>
                 <h4>{path.label}</h4>
-                {path.clears && <span className={styles.clearsTag}>Clears your targets</span>}
+                {actionable && <span className={styles.clearsTag}>Clears your targets</span>}
             </div>
 
             <Pairs
@@ -195,16 +171,16 @@ export function PathCard({ path, auction, referenceReason }: { path: MoneyPath; 
                               ["Modeled downside at your max bid", path.downsideAtMaxBid === null ? "Unknown" : dollars(path.downsideAtMaxBid)],
                           ]
                         : [
-                              ["All-in cost", dollars(path.cost)],
+                              [shippingPending ? "Cost with assumed shipping" : "All-in cost", dollars(path.cost)],
                               [
-                                  "Profit",
-                                  <span className={(path.profit ?? 0) >= 0 ? styles.good : styles.bad}>
+                                  shippingPending ? "Modeled profit" : "Profit",
+                                  <span className={shippingPending ? undefined : (path.profit ?? 0) >= 0 ? styles.good : styles.bad}>
                                       {dollars(path.profit)} ({returnText(path.cost > 0 ? path.profit / path.cost : null)})
                                   </span>,
                               ],
                               ["Modeled downside", path.downside === null ? "Unknown" : dollars(path.downside)],
                           ]) as [string, ReactNode][]),
-                    [auction ? "Max bid" : "Max price", <strong>{dollars(path.maxBid)}</strong>],
+                    [auction ? "Max bid" : shippingPending ? "Provisional max price" : "Max price", <strong>{dollars(path.maxBid)}</strong>],
                 ]}
             />
 

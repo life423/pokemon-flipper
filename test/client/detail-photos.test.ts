@@ -23,6 +23,7 @@ test("detail view leads with eBay access and an open original-photo viewer befor
     assert.ok(photos < markup.indexOf("Auction decision"));
     assert.match(markup, /href="https:\/\/www\.ebay\.com\/itm\/123456789012" target="_blank" rel="noopener noreferrer"/);
     assert.match(markup, /src="https:\/\/i\.ebayimg\.com\/images\/g\/front\/s-l1600\.jpg"/);
+    assert.match(markup, /href="https:\/\/i\.ebayimg\.com\/images\/g\/front\/s-l225\.jpg" target="_blank"/);
     assert.match(markup, /aria-label="Zoomable listing photo"/);
     assert.match(markup, /aria-label="Photo zoom"/);
     assert.match(markup, /max="16"/);

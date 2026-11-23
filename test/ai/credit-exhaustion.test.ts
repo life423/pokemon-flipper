@@ -31,7 +31,7 @@ test("temporary provider throttling still retries and returns a complete structu
     t.mock.method(globalThis, "fetch", async () => ++attempts === 1
         ? Response.json({ error: { message: "Temporary rate limit", type: "rate_limit_exceeded", code: "rate_limit_exceeded" } }, { status: 429, headers: { "retry-after": "0.001" } })
         : Response.json({ id: "resp_offline", object: "response", status: "completed", output: [{ id: "message_offline", type: "message", role: "assistant", content: [{ type: "output_text", text: '{"ok":true}', annotations: [] }] }], usage: { input_tokens: 1, output_tokens: 1 } }));
-    const result = await runStructured<{ ok: boolean }>({ step: "Offline retry test", schemaName: "search_intent", prompt: "Offline fixture", photos: [], schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"], additionalProperties: false } });
+    const result = await runStructured<{ ok: boolean }>({ step: "Offline retry test", schemaName: "offline_text_fixture", prompt: "Offline fixture", photos: [], schema: { type: "object", properties: { ok: { type: "boolean" } }, required: ["ok"], additionalProperties: false } });
     assert.equal(result.result.ok, true); assert.equal(attempts, 2);
 });
 test("real SDK transport never retries an exhausted balance, and subsequent queued work sends no request", async t => {
@@ -41,7 +41,7 @@ test("real SDK transport never retries an exhausted balance, and subsequent queu
     t.mock.method(fs, "mkdir", async () => undefined);
     t.mock.method(fs, "appendFile", async () => undefined);
     t.mock.method(globalThis, "fetch", async () => { attempts++; return Response.json({ error: { message: "You have no credits remaining", type: "insufficient_quota", code: "credit_balance_exhausted" } }, { status: 429 }); });
-    const request = () => runStructured({ step: "Offline credit test", schemaName: "search_intent", prompt: "Offline fixture", photos: [], schema: { type: "object", properties: {}, additionalProperties: false } });
+    const request = () => runStructured({ step: "Offline credit test", schemaName: "offline_text_fixture", prompt: "Offline fixture", photos: [], schema: { type: "object", properties: {}, additionalProperties: false } });
     await assert.rejects(request(), AiCreditsError);
     await assert.rejects(request(), AiCreditsError);
     assert.equal(attempts, 1);

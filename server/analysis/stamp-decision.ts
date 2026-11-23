@@ -51,7 +51,7 @@ export function stampCandidate(evaluation: Evaluation) {
     const neo = set === "neo discovery" && number?.[2] === "75" && collector <= 17 && card?.finish === "HOLO";
     if ((!base && !rocket && !neo) || !photoCheck || photoCheck.cardCount !== "ONE" ||
         !["NONE", "SLEEVE", "TOPLOADER"].includes(photoCheck.holder) || photoCheck.slab?.present || evaluation.slab ||
-        photoCheck.cardMatch?.verdict === "MISMATCH" || marks?.firstEditionStamp !== "CANT_TELL" ||
+        photoCheck.cardMatch?.verdict === "MISMATCH" || marks?.firstEditionStamp !== "CANT_TELL" || marks.conflicts?.includes("firstEditionStamp") ||
         !reprintMarksRuledOut(marks.reprintMark, set) || card?.confidence !== "HIGH" || !card.name || !card.evidence.length ||
         cardLanguageStatus("", [card.language]) !== "ENGLISH" || !["HOLO", "NON_HOLO"].includes(card.finish)) return null;
 

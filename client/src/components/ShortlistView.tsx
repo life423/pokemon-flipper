@@ -67,21 +67,24 @@ function ExcludedSavedEntry({ entry, onRemove }: { entry: ShortlistEntry; onRemo
     </div>;
 }
 function SavedNotes({ entry, onUpdate, onRemove }: { entry: ShortlistEntry; onUpdate: Props["onUpdate"]; onRemove: Props["onRemove"] }) {
-    const [notes, setNotes] = useState(entry.notes);
-    const [ceiling, setCeiling] = useState(entry.ceiling === null ? "" : String(entry.ceiling));
+    const [notesDraft, setNotesDraft] = useState<string | null>(null);
+    const [ceilingDraft, setCeilingDraft] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const [message, setMessage] = useState("");
-    const dirty = notes !== entry.notes || ceiling !== (entry.ceiling === null ? "" : String(entry.ceiling));
+    const savedCeiling = entry.ceiling === null ? "" : String(entry.ceiling);
+    const notes = notesDraft ?? entry.notes;
+    const ceiling = ceilingDraft ?? savedCeiling;
+    const dirty = notes !== entry.notes || ceiling !== savedCeiling;
     return <details className={styles.notes}><summary>Notes and my ceiling{entry.notes ? " · notes saved" : ""}</summary>
         <form onSubmit={async (event) => {
-            event.preventDefault(); if (busy) return;
+            event.preventDefault(); if (busy || !dirty) return;
             const value = ceiling.trim() === "" ? null : Number(ceiling);
             if (value !== null && (!Number.isFinite(value) || value < 0)) { setMessage("Enter a valid ceiling or leave it blank."); return; }
             setBusy(true); setMessage("Saving…");
-            try { await onUpdate(entry.id, notes, value); setCeiling(value === null ? "" : String(value)); setMessage("Saved."); } catch (error) { setMessage((error as Error).message); } finally { setBusy(false); }
+            try { await onUpdate(entry.id, notes, value); setNotesDraft(null); setCeilingDraft(null); setMessage("Saved."); } catch (error) { setMessage((error as Error).message); } finally { setBusy(false); }
         }}>
-            <label>My bid / purchase ceiling ($)<input type="number" min="0" step="0.01" inputMode="decimal" placeholder="Use app guidance" value={ceiling} readOnly={busy} onChange={(event) => { setCeiling(event.target.value); setMessage(""); }} /></label>
-            <label>Notes<textarea aria-label="Notes" maxLength={2000} rows={3} value={notes} readOnly={busy} onChange={(event) => { setNotes(event.target.value); setMessage(""); }} /></label>
+            <label>My bid / purchase ceiling ($)<input type="number" min="0" step="0.01" inputMode="decimal" placeholder="Use app guidance" value={ceiling} readOnly={busy} onChange={(event) => { const value = event.target.value; setCeilingDraft(value === savedCeiling ? null : value); setMessage(""); }} /></label>
+            <label>Notes<textarea aria-label="Notes" maxLength={2000} rows={3} value={notes} readOnly={busy} onChange={(event) => { const value = event.target.value; setNotesDraft(value === entry.notes ? null : value); setMessage(""); }} /></label>
             <div className={styles.noteActions}><button type="submit" aria-disabled={busy || !dirty} onClick={(event) => { if (busy || !dirty) event.preventDefault(); }}>{busy ? "Saving…" : "Save notes"}</button>
                 <button type="button" aria-disabled={busy} onClick={async () => { if (busy) return; setBusy(true); try { await onRemove(entry.id); } catch (error) { setMessage((error as Error).message); setBusy(false); } }}>Remove</button></div>
             <p role="status" className={styles.small}>{message}</p>

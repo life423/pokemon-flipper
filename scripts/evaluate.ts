@@ -3,9 +3,9 @@
 // Refreshes listing terms, reuses unchanged paid evidence and performs only
 // the current bounded raw/slab assessment when evidence is missing.
 import "dotenv/config";
-import { toItemId } from "./item-id.ts";
 import { CONDITION_AREAS } from "../shared/conditions.ts";
 import { describeRange, dollars, percent } from "../shared/format.ts";
+import { parseListingLink } from "../shared/listing-link.ts";
 import { createCliResearchScope } from "./review/research-scope.ts";
 
 const STEP_NAMES: Record<string, string> = { photoCheck: "saved photo check", condition: "saved condition report", boundedPhotoAssessment: "bounded photo assessment", savedEvaluation: "saved evaluation" };
@@ -19,10 +19,14 @@ if (args.includes("--fresh")) {
     console.error("--fresh photo reanalysis has been retired. Run evaluate without it to refresh listing terms and reuse unchanged paid photo evidence under the existing search budget.");
     process.exit(1);
 }
-const itemId = toItemId(args.find((arg) => !arg.startsWith("--")));
+const itemId = parseListingLink(args.find((arg) => !arg.startsWith("--")))?.itemId;
 
 if (!itemId) {
     console.log("Usage: npm run evaluate -- <eBay link or item number>");
+    process.exit(1);
+}
+if (!itemId.endsWith("|0")) {
+    console.error("Pick-your-card variations are not supported. Use a single-card listing.");
     process.exit(1);
 }
 

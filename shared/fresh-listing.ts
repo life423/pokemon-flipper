@@ -12,5 +12,7 @@ export function withFreshListing(current: ListingSummary, evaluation: Evaluation
         listedAt: listing.listedAt ?? current.listedAt, createdAt: listing.createdAt ?? current.createdAt,
         listedAttributes: searchAttributes(listing.title, listing.aspects),
         bids: listing.bids, endTime: listing.endTime, buyingOption: listing.buyingOption, bestOffer: listing.bestOffer ?? current.bestOffer, images: listing.photos ?? current.images,
+        cardCondition: listing.cardCondition === undefined ? current.cardCondition : listing.cardCondition,
+        conditionNotes: listing.conditionNotes ?? current.conditionNotes,
         seller: listing.seller, availability: listing.availability, termsCheckedAt: checked, screen: undefined, match: undefined, mistakes: undefined };
 }

@@ -30,6 +30,14 @@ test("disclosed corner and edge wear hidden by a holder is a terminal pass", () 
 
     e.listing.photosInListing++;
     assert.notEqual(retargetEvaluation(e, any).underwriting?.best, null, "a partial gallery might still show the wear");
+    e.listing.photos = [1, 2, 3, 4, 5].map(n => `https://i.ebayimg.com/images/g/offline-${n}/s-l1600.jpg`);
+    assert.notEqual(retargetEvaluation(e, any).underwriting?.best, null, "an uninspected distinct image might still show the wear");
+    e.listing.photos[4] = e.listing.photos[0].replace("1600", "500");
+    assert.equal(retargetEvaluation(e, any).underwriting?.best, null, "a resized duplicate adds no uninspected view");
+    e.photoCheck!.images[3].number = 5;
+    assert.notEqual(retargetEvaluation(e, any).underwriting?.best, null, "two reports on one image cannot substitute for a missing distinct view");
+    e.photoCheck!.images[3].number = 4;
+    delete e.listing.photos;
     e.listing.photosInListing--;
     e.listing.conditionNotes = ["No corner or edge wear"];
     assert.notEqual(retargetEvaluation(e, any).underwriting?.best, null, "negated wear is not a disclosure");
@@ -134,13 +142,13 @@ test("a previously skipped photo set can be completed without asking for manual 
     assert.equal(photoReviewStatus(evaluation).needsYourReview, true);
 });
 
-test("targeted photo selection includes every usable view while excluding duplicates and stock", () => {
+test("targeted photo selection covers different views within six unique listing photos", () => {
     const e = cardEvaluation(); const check = e.photoCheck!; check.cardCount = "ONE";
     const urls = Array.from({ length: 15 }, (_, i) => `https://i.ebayimg.com/images/g/${i}/s-l225.jpg`);
     check.images = urls.map((_, i) => ({ number: i + 1, view: i === 0 ? "FRONT" : i === 1 ? "BACK" : i === 2 ? "FRONT_DETAIL" : "BACK_DETAIL", usable: true, isStockImage: i === 14, issues: [] }));
     urls[4] = urls[0].replace("225", "1600");
     const plan = planDeeperPhotos(check, urls);
-    assert.equal(plan.photos.length, 13);
+    assert.equal(plan.photos.length, 6);
     assert.deepEqual(plan.photos.slice(0, 4).map((photo) => photo.view), ["FRONT", "BACK", "FRONT_DETAIL", "BACK_DETAIL"]);
     assert.ok(plan.photos.every((photo) => photo.number !== 5 && photo.number !== 15 && photo.url.includes("1600")));
     check.images[0].obscuresCondition = true;

@@ -24,6 +24,7 @@ interface Props {
     stats: { junk: number; dropped: number; unchecked: number; deals: number };
     usage: { text: string; note: string; braking: boolean } | null;
     onStop: () => void;
+    canStopAssessment: boolean;
     // Explicit additional analysis controls, within the current search budget.
     actions?: ReactNode;
     // Everything else, one tap down.
@@ -40,7 +41,7 @@ function readCollapsed(): boolean {
 
 // The search's progress, expanded with every step and count, or collapsed
 // to one line to leave room for results.
-export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal, checked, total, ai, stats, usage, onStop, actions, details }: Props) {
+export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal, checked, total, ai, stats, usage, onStop, canStopAssessment, actions, details }: Props) {
     const [collapsed, setCollapsed] = useState(readCollapsed);
     const listingWork = requestedPhase === "finding" || requestedPhase === "filtering";
     // A paid-AI pause does not stop the independently bounded metadata stream.
@@ -62,13 +63,14 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
     const running = phase === "finding" || phase === "filtering" || phase === "ai";
     const halted = phase === "paused" || phase === "stopped" || phase === "error";
     const step = STEP_OF[phase];
-    const aiState = phase === "stopped" ? "stopped" : phase === "error" ? "idle" : phase === "paused" || ai.paused ? "paused" : ai.analyzing > 0 ? "working" : "idle";
+    const analyzing = phase === "error" && !canStopAssessment ? 0 : ai.analyzing;
+    const aiState = phase === "stopped" ? "stopped" : phase === "paused" || ai.paused ? "paused" : analyzing > 0 ? "working" : "idle";
     const completed = Math.max(0, ai.done - ai.failed);
     const loaded = `${checked.toLocaleString()} ${checked === 1 ? "listing" : "listings"} loaded`;
     const assessed = `${completed.toLocaleString()} ${completed === 1 ? "assessment" : "assessments"} completed`;
     const aiStatus = aiState === "stopped" ? "AI analysis stopped"
         : aiState === "paused" ? "AI analysis paused"
-        : aiState === "working" ? `AI assessing ${ai.analyzing.toLocaleString()} ${ai.analyzing === 1 ? "card" : "cards"}`
+        : aiState === "working" ? `AI assessing ${analyzing.toLocaleString()} ${analyzing === 1 ? "card" : "cards"}`
         : "No full card assessments running";
     const awaiting = ai.waiting > 0
         ? `${ai.waiting.toLocaleString()} ${ai.waiting === 1 ? "listing awaits" : "listings await"} AI assessment.`
@@ -124,7 +126,7 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
     const activity =
             phase === "stopped" ? "New checks are stopped. Already accepted AI answers can still finish and save."
             : phase === "paused" ? `New AI assessments are paused. ${awaiting ? `${awaiting} These listings have not failed verification. ` : ""}Completed assessments and search results stay below.`
-            : phase === "error" ? "The search could not finish. Any results checked so far are kept."
+            : phase === "error" ? "The search ended early. Automatic assessments stopped, and results checked so far are kept."
             : ai.paused && listingWork ? "Listing checks are still running. New AI assessments are paused; unassessed listings remain preliminary."
             : ai.analyzing > 0 ? `${aiStatus}. Results appear as each assessment finishes.`
             : phase === "finding"
@@ -175,7 +177,7 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
                     )}
                 </div>
 
-                {running && (
+                {(running || canStopAssessment) && (
                     <button
                         type="button"
                         className={`${styles.iconButton} ${styles.stop}`}
@@ -206,7 +208,7 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
                 </span>
                 <span className={styles.aiStatusCount}>{completed.toLocaleString()} completed</span>
                 {ai.waiting > 0 && <span className={styles.aiStatusCount}>{ai.waiting.toLocaleString()} awaiting analysis</span>}
-                {(halted || ai.paused) && ai.analyzing > 0 && <span className={styles.aiStatusCount}>{ai.analyzing.toLocaleString()} in progress</span>}
+                {(halted || ai.paused) && analyzing > 0 && aiState !== "working" && <span className={styles.aiStatusCount}>{analyzing.toLocaleString()} in progress</span>}
                 {ai.failed > 0 && <span className={styles.aiStatusCount}>{ai.failed.toLocaleString()} failed</span>}
             </div>
 

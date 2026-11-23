@@ -6,16 +6,21 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { Evaluation, ListingSummary, SearchIntent } from "../shared/types.ts";
+import type { EbaySearchAllowance, Evaluation, ListingSummary, SearchIntent } from "../shared/types.ts";
 import type { SearchSummary } from "../server/deals/find-deals.ts";
 import type { AiSearchBudget } from "../shared/ai-usage.ts";
+import type { PricingResearchUsage } from "../shared/pricing-usage.ts";
+import type { SearchSourceCoverage } from "../shared/search-diagnostic.ts";
 import { AI_SEARCH_HARD_CAP_USD, aiSpending } from "../server/ai/spending.ts";
 import { DEVELOPMENT_SEARCH_LIMIT } from "../shared/research-policy.ts";
+import { currentPriceEvidence } from "../shared/pricing-freshness.ts";
+import { listingEvidenceKey } from "../shared/listing-evidence.ts";
 import { runBenchmarkQueue, type BenchmarkQueueResult } from "./review/benchmark-queue.ts";
 import { BENCHMARK_TRANSPORT_LIMITS, createBenchmarkTransport } from "./review/benchmark-transport.ts";
 import { candidateAdmission, summarizeBenchmark } from "./review/benchmark-results.ts";
 import { benchmarkCommand } from "./review/benchmark-command.ts";
 import { drainSharedWork } from "../server/lib/shared-work.ts";
+import { withSavedProviderEvidence } from "../server/lib/saved-provider-evidence.ts";
 
 const args = process.argv.slice(2);
 if (args.includes("--help")) {
@@ -38,28 +43,30 @@ const query: string = previous?.query ?? (command.mode === "live" ? command.quer
 const targets = { minProfit: 0, minRoi: 0 };
 const filters = { typeFilter: "FIXED_PRICE" as const, kindFilter: "all" as const };
 const includeOffers = false;
+const marketplaceOrder = previous?.settings.marketplaceOrder === "lowest" ? "lowest" : "newest";
 const directory = path.resolve("data/search-benchmarks", `${new Date().toISOString().replace(/[:.]/g, "-")}-${command.mode}-${searchId}`);
 await fs.mkdir(directory, { recursive: true });
 const context = new AsyncLocalStorage<{ searchId: string; listingId?: string; phase: string }>();
 const browseCap = previous?.settings.browseCap ?? BENCHMARK_TRANSPORT_LIMITS.ebayBrowse;
 const priceTransportsDiagnosticCap = previous?.settings.priceTransportsDiagnosticCap ?? BENCHMARK_TRANSPORT_LIMITS.prices;
-const settings = { targets, filters, includeOffers, matchingRows: DEVELOPMENT_SEARCH_LIMIT,
+const settings = { targets, filters, includeOffers, marketplaceOrder, automaticPhotos: true, matchingRows: DEVELOPMENT_SEARCH_LIMIT,
     aiCapUsd: (recordedAiCap ?? null) as number | null, browseCap, priceTransportsDiagnosticCap };
 const observer = createBenchmarkTransport({ live, context: () => context.getStore() ?? { searchId, phase: "setup" }, allowAzureAuth: true,
     limits: { ebayBrowse: browseCap, prices: priceTransportsDiagnosticCap } });
 const originalFetch = globalThis.fetch;
 globalThis.fetch = observer.fetch;
-const report: {
+const report: SearchSourceCoverage & {
     searchId: string; query: string; startedAt: string; completedAt?: string;
     method: string; limitations: string[]; settings: object; summary?: SearchSummary;
     listings: ListingSummary[]; queue?: BenchmarkQueueResult; final?: ReturnType<typeof summarizeBenchmark>;
     snapshots: Record<string, unknown>; events: object[]; error?: string; transport?: unknown; costDelta?: object;
+    replayCoverage?: { savedAssessmentRows: number; returnedOriginalRows: number; missingOriginalRows: string[]; evidenceMisses: Record<string, string[]> };
     shutdownDrain?: { complete: boolean; pending: number };
 } = {
     searchId, query, startedAt: new Date().toISOString(),
     ...(command.mode === "resume" ? { resumedFrom: path.resolve(command.file) } : {}),
     method: live ? `${command.mode === "resume" ? "Live retest preserving the original search ID, spending and provider counters. " : ""}Actual bounded server search and evaluator; client eligibility/priority/feedback and two slots reproduced after metadata screening.`
-        : "Replay only the original completed assessments against saved metadata; same original search ID, SQL assessment/price reuse, all paid/provider transports prohibited.",
+        : "Replay original completed assessments and eligible rows with matching fresh saved valuations; same original search ID, all paid/provider transports prohibited.",
     limitations: [
         "One exact Buy It Now search, not an exhaustive marketplace scan or a general model accuracy evaluation.",
         "Not a browser timing test: automatic assessment begins after metadata screening; initial UI bootstrap/shortlist/set-year work is excluded.",
@@ -91,6 +98,7 @@ try {
     const { ebayUsage } = await import("../server/ebay/usage.ts");
     const { evaluationFailure } = await import("../server/analysis/failure.ts");
     const { createBoundedEvaluator } = await import("../server/analysis/bounded-evaluate.ts");
+    const { loadPrivateEvaluation } = await import("../server/analysis/private-evaluation.ts");
     const { searchDeals } = await import("../server/deals/search.ts");
     const scope = <T>(phase: string, work: () => T, listingId?: string): T => context.run({ searchId, phase, listingId }, () =>
         withAiUsageContext({ searchId, ...(listingId ? { listingId } : {}) }, work));
@@ -114,11 +122,24 @@ try {
         if (command.mode === "replay") {
             report.summary = previous.summary;
             report.listings = previous.listings;
+            report.overflow = previous.overflow;
+            report.sourceCoverage = previous.sourceCoverage;
+            report.sourceDispositions = previous.sourceDispositions;
         } else await scope("sold-screening", () => withPriceResearchSignal(stopped.signal, () => searchDeals(query, {
             minPrice: 0,
-            targets, filters, includeOffers, signal: stopped.signal,
-            onStart: summary => { report.summary = summary; report.events.push({ type: "metadata", elapsedMs: elapsedMs(), summary }); },
+            targets, filters, includeOffers, marketplaceOrder, automaticPhotos: settings.automaticPhotos, signal: stopped.signal,
+            onStart: summary => {
+                report.summary = summary;
+                report.sourceCoverage = summary.sourceCoverage;
+                report.sourceDispositions ??= [];
+                report.events.push({ type: "metadata", elapsedMs: elapsedMs(), summary });
+            },
             onListing: listing => { report.listings.push(listing); },
+            onSourceDisposition: row => { (report.sourceDispositions ??= []).push(row); },
+            onScreenedOverflow: row => {
+                report.overflow ??= { version: 1, stage: "SCREENING", rows: [] };
+                report.overflow.rows.push(row);
+            },
         })));
         report.events.push({ type: "metadata-finished", elapsedMs: elapsedMs(), loaded: report.listings.length,
             admissions: Object.fromEntries(report.listings.map(listing => [listing.id, candidateAdmission(listing, filters, Date.now(), targets)])) });
@@ -127,14 +148,38 @@ try {
         stopped.signal.throwIfAborted();
         const evaluate = createBoundedEvaluator(live ? {} : {
             assess: async () => { throw new Error("Cache replay needs a saved photo assessment; no paid replacement was authorized."); },
+            save: async () => {},
+            // No automatic crop/photo download in a saved replay. Existing
+            // stamp readings are still loaded by the normal evaluator.
+            stamp: async () => null,
         });
-        const assessmentRows = command.mode === "replay" ? report.listings.filter(listing => previous.queue?.evaluations?.[listing.id]) : report.listings;
+        const evidenceMisses = new Map<string, Set<string>>();
+        const restored = new Map<string, Evaluation>();
+        const originallyEvaluated = previous?.queue?.evaluations ?? {};
+        if (command.mode === "replay") {
+            for (const listing of report.listings) {
+                stopped.signal.throwIfAborted();
+                if (originallyEvaluated[listing.id] || !candidateAdmission(listing, filters, Date.now(), targets).eligible) continue;
+                const snapshot = await loadPrivateEvaluation(listing.id);
+                if (snapshot?.evidenceKey !== listingEvidenceKey(listing) || !currentPriceEvidence(snapshot.evaluation)) continue;
+                restored.set(listing.id, { ...snapshot.evaluation, usage: [], reusedSteps: [...new Set([...snapshot.evaluation.reusedSteps, "savedEvaluation"])] });
+            }
+            report.events.push({ type: "saved-candidates-restored", elapsedMs: elapsedMs(), count: restored.size });
+        }
+        const assessmentRows = command.mode === "replay" ? report.listings.filter(listing => originallyEvaluated[listing.id] || restored.has(listing.id)) : report.listings;
         report.queue = await runBenchmarkQueue(assessmentRows, {
             filters, targets, signal: stopped.signal, assertTransport: observer.assertNoBlock,
-            evaluate: (listing, signal) => scope("assessment", () => evaluate(listing.id, {
-                automatic: true, signal,
-                current: { title: listing.title, images: listing.images, price: listing.currentPrice, shipping: listing.shipping, bids: listing.bids, endTime: listing.endTime },
-            }), listing.id),
+            evaluate: (listing, signal) => scope("assessment", async () => {
+                const saved = restored.get(listing.id);
+                if (saved) return saved;
+                const work = () => evaluate(listing.id, { automatic: settings.automaticPhotos, includeOffers, targets, signal,
+                    current: { title: listing.title, images: listing.images, price: listing.currentPrice, shipping: listing.shipping, bids: listing.bids,
+                        endTime: listing.endTime, buyingOption: listing.buyingOption, bestOffer: listing.bestOffer, termsCheckedAt: listing.termsCheckedAt } });
+                return live ? work() : withSavedProviderEvidence(provider => {
+                    const missing = evidenceMisses.get(listing.id) ?? new Set<string>();
+                    missing.add(provider); evidenceMisses.set(listing.id, missing);
+                }, work);
+            }, listing.id),
             failureOf: evaluationFailure,
             onUpdate: async queue => {
                 report.queue = queue;
@@ -142,6 +187,12 @@ try {
                 await checkpoint();
             },
         });
+        if (command.mode === "replay") {
+            const originalIds = Object.keys(originallyEvaluated);
+            const missingOriginalRows = originalIds.filter(id => !Object.hasOwn(report.queue!.evaluations, id));
+            report.replayCoverage = { savedAssessmentRows: originalIds.length, returnedOriginalRows: originalIds.length - missingOriginalRows.length,
+                missingOriginalRows, evidenceMisses: Object.fromEntries([...evidenceMisses].map(([id, providers]) => [id, [...providers]])) };
+        }
         const intent = report.summary?.intent as SearchIntent | undefined;
         if (!intent) throw new Error("Search intent missing; final result grouping was not inferred.");
         const resolvedListings = report.listings.map(listing => report.queue!.otherLanguage.includes(listing.id) ? { ...listing, match: "OTHER_LANGUAGE" as const } : listing);
@@ -170,13 +221,18 @@ try {
     process.exitCode = 1;
 } finally {
     report.completedAt = new Date().toISOString();
-    const before = (report.snapshots.before as { budget?: AiSearchBudget } | undefined)?.budget;
-    const after = (report.snapshots.after as { budget?: AiSearchBudget } | undefined)?.budget;
+    type UsageSnapshot = { budget: AiSearchBudget; browse: EbaySearchAllowance | null; pricing: PricingResearchUsage | null };
+    const beforeUsage = report.snapshots.before as UsageSnapshot | undefined;
+    const afterUsage = report.snapshots.after as UsageSnapshot | undefined;
+    const before = beforeUsage?.budget, after = afterUsage?.budget;
     if (before && after) report.costDelta = {
         settledUsd: Number((after.settledUsd - before.settledUsd).toFixed(9)),
         committedUsd: Number((after.committedUsd - before.committedUsd).toFixed(9)),
         heldUsd: Number((after.heldUsd - before.heldUsd).toFixed(9)),
         generationReservations: after.attempts - before.attempts,
+        ebayBrowseRequests: (afterUsage?.browse?.used ?? 0) - (beforeUsage?.browse?.used ?? 0),
+        pkmnPricesRequests: (afterUsage?.pricing?.used ?? 0) - (beforeUsage?.pricing?.used ?? 0),
+        pkmnPricesReportedCredits: (afterUsage?.pricing?.reportedCredits ?? 0) - (beforeUsage?.pricing?.reportedCredits ?? 0),
     };
     await checkpoint();
     globalThis.fetch = originalFetch;

@@ -11,6 +11,9 @@ export type { AiInputProof } from "./input-preflight.ts";
 export class AiSpendingError extends Error {
     constructor(readonly code: "AI_PAUSED" | "AI_BUDGET", message: string, options?: ErrorOptions) { super(message, options); }
 }
+export class AiSearchAllowanceError extends AiSpendingError {
+    constructor(message: string) { super("AI_BUDGET", message); }
+}
 export function aiSpendingFailure(error: unknown): AiSpendingError | null {
     const seen = new Set<unknown>();
     for (let current = error; current && typeof current === "object" && !seen.has(current);) {
@@ -47,7 +50,8 @@ const RATES: Record<string, { input: number; cached: number; write: number; outp
     "gpt-6-luna": { input: 100, cached: 10, write: 125, output: 500 },
 };
 const count = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-const fail = (message: string, cause?: unknown): never => { throw new AiSpendingError("AI_BUDGET", `${message} Cached results and screened candidates remain available.`, cause === undefined ? undefined : { cause }); };
+const budgetMessage = (message: string) => `${message} Cached results and screened candidates remain available.`;
+const fail = (message: string, cause?: unknown): never => { throw new AiSpendingError("AI_BUDGET", budgetMessage(message), cause === undefined ? undefined : { cause }); };
 
 async function readJson(file: string): Promise<any | null> {
     try { return JSON.parse(await fs.readFile(file, "utf8")); }
@@ -188,7 +192,8 @@ export function createAiSpendingGuard({ directory = DATA_DIR, preflight }: Optio
                 if (body.tools?.length || body.previous_response_id || body.conversation || body.stream || body.background) return fail("Paid AI cannot bound tool, conversation or streaming charges for this request.");
                 if (!count(body.max_output_tokens) || body.max_output_tokens === 0) return fail("Paid AI needs a bounded maximum output before dispatch.");
                 const minimum = body.max_output_tokens * rates.output;
-                if (!count(minimum) || minimum > remaining) return fail("This request's maximum output alone exceeds the search's remaining AI budget. No paid request was sent.");
+                if (!count(minimum)) return fail("Paid AI cannot record the maximum output cost. No paid request was sent.");
+                if (minimum > remaining) throw new AiSearchAllowanceError(budgetMessage("This request's maximum output alone exceeds the search's remaining AI budget. No paid request was sent."));
                 const immutableInput = typeof body.input === "string" || Array.isArray(body.input) && body.input.every((item: any) =>
                     item && (!item.type || item.type === "message") && Object.keys(item).every(key => ["type", "role", "content"].includes(key)) &&
                     (typeof item.content === "string" || Array.isArray(item.content) && item.content.every((part: any) =>
@@ -216,7 +221,7 @@ export function createAiSpendingGuard({ directory = DATA_DIR, preflight }: Optio
                 const { account, rates, minimum, remaining } = validateRequest(settings, book);
                 const amount = proof.inputTokens * Math.max(rates.input, rates.write) + minimum;
                 if (!count(account.heldNanoUsd + amount)) return fail("Paid AI cannot record the cost of this request. No paid request was sent.");
-                if (amount > remaining) return fail("This request would exceed the search's remaining AI budget. No paid request was sent.");
+                if (amount > remaining) throw new AiSearchAllowanceError(budgetMessage("This request would exceed the search's remaining AI budget. No paid request was sent."));
                 const attempt: Attempt = { id: randomUUID(), inputHash, model: body.model, createdAt: new Date().toISOString(),
                     maxInputTokens: proof.inputTokens, maxOutputTokens: body.max_output_tokens, reservedNanoUsd: amount, heldNanoUsd: amount, state: "RESERVED" };
                 account.heldNanoUsd += amount; account.attempts.push(attempt); book.searches[context.searchId!] = account;
@@ -246,7 +251,11 @@ export function createAiSpendingGuard({ directory = DATA_DIR, preflight }: Optio
                 const rates = RATES[attempt.model];
                 const actual = (usage.input_tokens - cached - writes) * rates.input + cached * rates.cached + writes * rates.write + usage.output_tokens * rates.output;
                 if (!count(actual)) return;
-                if (usage.input_tokens > attempt.maxInputTokens || usage.output_tokens > attempt.maxOutputTokens || actual > attempt.reservedNanoUsd) {
+                // An uncapped search can settle an input-count discrepancy when
+                // reported usage still fits the reserved dollars and rate tier.
+                const inputOverage = usage.input_tokens > MAX_STANDARD_INPUT_TOKENS ||
+                    settings.perSearchCapUsd !== null && usage.input_tokens > attempt.maxInputTokens;
+                if (inputOverage || usage.output_tokens > attempt.maxOutputTokens || actual > attempt.reservedNanoUsd) {
                     await durableJson(controlFile, { ...settings, paused: true, pauseReason: "Paid AI is paused because reported usage exceeded its verified reservation. Inspect the retained ledger before resuming." });
                     // Preserve a discrepancy even if the provider/preflight
                     // broke its bound; never conceal it by refunding the hold.

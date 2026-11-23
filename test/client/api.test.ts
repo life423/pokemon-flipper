@@ -8,7 +8,7 @@ test("known filters and a search identifier reach both search modes before paid 
         requests.push({ url: String(url), searchId: new Headers(init?.headers).get("X-Pokemon-Flipper-Search-Id") });
         return new Response('{"type":"done"}\n');
     });
-    const options = { maxResults: 200, minPrice: 10, targets: { minProfit: 50, minRoi: 25 }, includeOffers: false,
+    const options = { minPrice: 10, targets: { minProfit: 50, minRoi: 25 }, includeOffers: false,
         filters: { typeFilter: "FIXED_PRICE" as const, kindFilter: "raw" as const, maxPrice: 300 }, searchRunId: "offline-search", knownIds: [] };
     await streamDeals("charizard", options, () => {});
     await streamNewDeals("charizard", options, () => {});
@@ -56,18 +56,37 @@ test("a fresh request resumes one interrupted connection without repaying comple
     assert.match(urls[0], /fresh=1/); assert.match(urls[1], /refreshTerms=1/); assert.equal(urls.length, 2);
 });
 
+test("explicit price refresh uses the saved search scope and makes one price-only request", async t => {
+    const scopes: (string | null)[] = [];
+    t.mock.method(globalThis, "fetch", async (url: string, init?: RequestInit) => {
+        const query = new URL(url, "http://local").searchParams;
+        assert.equal(query.get("priceOnly"), "1");
+        assert.ok(!query.has("fresh") && !query.has("refreshTerms") && !query.has("auto"));
+        assert.equal(query.get("profit"), "0");
+        assert.equal(query.get("roi"), "0");
+        assert.equal(query.get("offers"), "0");
+        assert.equal(init?.body, undefined, "the server checks live terms and saved photos");
+        scopes.push(new Headers(init?.headers).get("X-Pokemon-Flipper-Search-Id"));
+        return Response.json({ error: "Price research unavailable", retryable: true }, { status: 503 });
+    });
+    const options = { priceOnly: true, fresh: true, automatic: true, includeOffers: false, targets: { minProfit: 0, minRoi: 0 } };
+    await assert.rejects(evaluateListing({ id: "offline" } as never, { ...options, searchRunId: "original" }), /Price research unavailable/);
+    await assert.rejects(evaluateListing({ id: "offline" } as never, options), /Price research unavailable/);
+    assert.deepEqual(scopes, ["original", null], "no retries or invented search account");
+});
+
 test("browser API calls identify the local app and display actionable validation errors", async t => {
     t.mock.method(globalThis, "fetch", async (_url: unknown, init?: RequestInit) => {
         assert.equal(new Headers(init?.headers).get("X-Pokemon-Flipper"), "1");
         return Response.json({ error: "Enter a search between 1 and 300 characters." }, { status: 400 });
     });
-    await assert.rejects(streamDeals("", { maxResults: 400, minPrice: 0 }, () => {}), /between 1 and 300/);
+    await assert.rejects(streamDeals("", { minPrice: 0 }, () => {}), /between 1 and 300/);
 });
 
 test("early EOF preserves delivered results but cannot become a completed search", async (t) => {
     t.mock.method(globalThis, "fetch", async () => new Response('{"type":"listing","listing":{"id":"kept"}}\n'));
     const messages: string[] = [];
-    await assert.rejects(streamDeals("offline", { maxResults: 200, minPrice: 0 }, (message) => messages.push(message.type)), /ended before completion/);
+    await assert.rejects(streamDeals("offline", { minPrice: 0 }, (message) => messages.push(message.type)), /ended before completion/);
     assert.deepEqual(messages, ["listing"]);
 });
 
@@ -78,7 +97,7 @@ test("a terminal message without a newline completes a fragmented UTF-8 stream",
         controller.close();
     } })));
     const messages: string[] = [];
-    await streamDeals("offline", { maxResults: 200, minPrice: 0 }, (message) => messages.push(message.type === "listing" ? message.listing.id : message.type));
+    await streamDeals("offline", { minPrice: 0 }, (message) => messages.push(message.type === "listing" ? message.listing.id : message.type));
     assert.deepEqual(messages, ["Pokémon", "done"]);
 });
 
@@ -87,7 +106,7 @@ test("stream parsing errors cancel pending upstream work", async (t) => {
     t.mock.method(globalThis, "fetch", async () => new Response(new ReadableStream({ start(controller) {
         controller.enqueue(new TextEncoder().encode('not json\n'));
     }, cancel() { cancelled = true; } })));
-    await assert.rejects(streamDeals("offline", { maxResults: 200, minPrice: 0 }, () => {}), SyntaxError);
+    await assert.rejects(streamDeals("offline", { minPrice: 0 }, () => {}), SyntaxError);
     assert.equal(cancelled, true);
 });
 
@@ -99,9 +118,13 @@ test("an evaluation supplies current evidence hints without asking the server to
         body = JSON.parse(String(init?.body));
         return Response.json({});
     });
-    await evaluateListing({ id: "changed", title: "New listing title", images: ["https://i.ebayimg.com/new.jpg"], currentPrice: 20, shipping: 0, bids: 1, endTime: null, isGraded: false, buyingOption: "FIXED_PRICE", url: "", seller: null }, { fresh: true });
+    const termsCheckedAt = "2026-11-03T12:00:00Z";
+    await evaluateListing({ id: "changed", title: "New listing title", images: ["https://i.ebayimg.com/new.jpg"], currentPrice: 20, shipping: 0, bids: 1, endTime: null, isGraded: false, buyingOption: "FIXED_PRICE", bestOffer: false, termsCheckedAt, url: "", seller: null }, { fresh: true });
     assert.equal(body.title, "New listing title");
     assert.deepEqual(body.images, ["https://i.ebayimg.com/new.jpg"]);
+    assert.equal(body.termsCheckedAt, termsCheckedAt);
+    assert.equal(body.buyingOption, "FIXED_PRICE");
+    assert.equal(body.bestOffer, false);
 });
 
 test("Any targets and offer settings reach both search endpoints as explicit zeroes", async (t) => {
@@ -111,10 +134,12 @@ test("Any targets and offer settings reach both search endpoints as explicit zer
         return new Response('{"type":"done"}\n', { headers: { "Content-Type": "application/x-ndjson" } });
     });
     const targets = { minProfit: 0, minRoi: 0 };
-    await streamDeals("1999 base set holo", { maxResults: 200, minPrice: 0, targets, includeOffers: false }, () => {});
+    await streamDeals("1999 base set holo", { minPrice: 0, targets, includeOffers: false, marketplaceOrder: "lowest" }, () => {});
     await streamNewDeals("lugia", { minPrice: 0, targets, includeOffers: true, knownIds: [] }, () => {});
     assert.equal(new URL(urls[0], "http://local").searchParams.get("offers"), "0");
     assert.equal(new URL(urls[1], "http://local").searchParams.get("offers"), "1");
+    assert.equal(new URL(urls[0], "http://local").searchParams.get("order"), "lowest");
+    assert.equal(new URL(urls[1], "http://local").searchParams.get("order"), null);
     for (const url of urls) {
         const params = new URL(url, "http://local").searchParams;
         assert.equal(params.get("profit"), "0");
@@ -192,7 +217,7 @@ test("an AI budget stop preserves all50 free metadata rows still arriving in the
         }));
     });
     const rows: string[] = [];
-    await streamDeals("charizard", { maxResults: 50, minPrice: 0, signal: signal.signal, searchRunId: "metadata-during-budget-stop" }, message => {
+    await streamDeals("charizard", { minPrice: 0, signal: signal.signal, searchRunId: "metadata-during-budget-stop" }, message => {
         if (message.type !== "listing") return;
         rows.push(message.listing.id);
         if (rows.length === 1 && analysisBlockPolicy("AI_BUDGET").stopListingStream) signal.abort();

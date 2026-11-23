@@ -6,6 +6,48 @@ import { EnglishOnlyError } from "../../shared/card-language.ts";
 import { findDeals } from "../../server/deals/find-deals.ts";
 import { readSearchLocally } from "../../server/search/intent.ts";
 import { readTitleByRules } from "../../server/ai/title-reader.ts";
+import { sellerConditionClues } from "../../shared/raw-condition-claim.ts";
+import type { MarketplaceOrder } from "../../shared/listing-filters.ts";
+
+test("Browse structured condition and wear notes reach seller clues", async t => {
+    offlineEbayCredentials(t);
+    t.mock.method(globalThis, "fetch", async input => {
+        const address = String(input);
+        if (address.includes("oauth2/token")) return Response.json({ access_token: "offline", expires_in: 3600 });
+        if (address.includes("rate_limit")) return Response.json({ rateLimits: [{ apiName: "Browse", resources: [{ name: "buy.browse", rates: [{ count: 0, limit: 5000, remaining: 5000 }] }] }] });
+        assert.match(address, /item_summary\/search/);
+        return Response.json({ total: 2, itemSummaries: [
+            { itemId: "v1|disclosed|0", title: "Venusaur Base Set Holo Near Mint", conditionDescriptors: [
+                { name: "Card Condition", values: [{ content: "Heavily Played (Poor)", additionalInfo: ["Creased"] }] },
+            ] },
+            { itemId: "v1|unknown-condition|0", title: "Venusaur Base Set Holo" },
+        ] });
+    });
+    const { listings: [disclosed, unknown] } = await searchListings("Offline structured condition");
+    assert.equal(disclosed.cardCondition, "Heavily Played (Poor)");
+    assert.deepEqual(disclosed.conditionNotes, ["Creased"]);
+    assert.equal(sellerConditionClues(disclosed).severe, true);
+    assert.equal(unknown.conditionNotes, undefined);
+});
+
+test("malformed successful Browse responses do not become cached empty searches", async t => {
+    offlineEbayCredentials(t);
+    const query = "Offline truncated eBay response";
+    let pages = 0;
+    t.mock.method(globalThis, "fetch", async input => {
+        const address = String(input);
+        if (address.includes("oauth2/token")) return Response.json({ access_token: "offline", expires_in: 3600 });
+        if (address.includes("rate_limit")) return Response.json({ rateLimits: [{ apiName: "Browse", resources: [{ name: "buy.browse", rates: [{ count: 0, limit: 5000, remaining: 5000 }] }] }] });
+        assert.match(address, /item_summary\/search/);
+        return ++pages === 1
+            ? new Response('{"total":1,"itemSummaries":[', { headers: { "content-type": "application/json" } })
+            : Response.json({ total: 1, itemSummaries: [{ itemId: "v1|recovered-page|0", title: "Venusaur Base Set Holo" }] });
+    });
+    await assert.rejects(searchListings(query), /eBay returned unreadable data/);
+    assert.equal((await searchListings(query)).listings[0]?.id, "v1|recovered-page|0");
+    assert.equal((await searchListings(query)).total, 1);
+    assert.equal(pages, 2);
+});
 
 test("a bounded Buy It Now search reaches affordable inventory beyond 200 out-of-range listings and scopes its cache to prices", async t => {
     offlineEbayCredentials(t);
@@ -28,18 +70,22 @@ test("a bounded Buy It Now search reaches affordable inventory beyond 200 out-of
         if (params.get("sort") === "price") matched.sort((a, b) => Number(a.price.value) - Number(b.price.value));
         return Response.json({ total: matched.length, itemSummaries: matched.slice(0, Number(params.get("limit"))) });
     });
-    const run = (minPrice: number, maxPrice?: number) => findDeals(query, {
-        minPrice, filters: { typeFilter: "FIXED_PRICE", maxPrice },
+    const run = (minPrice: number, maxPrice?: number, marketplaceOrder?: MarketplaceOrder) => findDeals(query, {
+        minPrice, filters: { typeFilter: "FIXED_PRICE", maxPrice }, marketplaceOrder,
     }, {
         search: searchListings, readIntent: async value => readSearchLocally(value), readTitle: async value => readTitleByRules(value),
         soldScreening: () => async () => ({ status: "UNAVAILABLE", exactScope: false, references: [], note: "Offline market fixture." }),
     });
-    assert.deepEqual((await run(50, 100)).map(row => row.id), ["v1|affordable|0"]);
+    const first = await run(50, 100);
+    assert.deepEqual(first.map(row => row.id), ["v1|affordable|0"]);
+    assert.ok(Number.isFinite(Date.parse(first[0].termsCheckedAt!)));
     assert.equal(requests.length, 1, "recover the candidate in one page, without extra provider work");
     assert.match(requests[0].get("filter")!, /price:\[50\.\.100\],priceCurrency:USD/);
     assert.equal(requests[0].get("sort"), "newlyListed");
     assert.equal(requests[0].get("limit"), "200");
-    assert.deepEqual((await run(50, 100)).map(row => row.id), ["v1|affordable|0"]);
+    const repeated = await run(50, 100);
+    assert.deepEqual(repeated.map(row => row.id), ["v1|affordable|0"]);
+    assert.equal(repeated[0].termsCheckedAt, first[0].termsCheckedAt, "a cache hit cannot make the original Browse terms look newer");
     assert.equal(requests.length, 1, "an identical range reuses its cache");
     assert.deepEqual((await run(0, 100)).map(row => row.id), ["v1|affordable|0", "v1|cheap|0"]);
     assert.match(requests[1].get("filter")!, /price:\[\.\.100\],priceCurrency:USD/);
@@ -54,6 +100,11 @@ test("a bounded Buy It Now search reaches affordable inventory beyond 200 out-of
     assert.ok(requests.slice(6).every(params => !params.get("filter")!.includes("price:")));
     assert.deepEqual(await run(100, 50), []);
     assert.equal(requests.length, 8, "wider and unbounded ranges cannot reuse a narrower page");
+    assert.deepEqual((await run(0, 100, "lowest")).map(row => row.id), ["v1|cheap|0", "v1|affordable|0"]);
+    assert.equal(requests[8].get("sort"), "price", "the selected order reaches Browse before result sorting");
+    assert.equal(requests[8].get("limit"), "200");
+    assert.equal((await run(50, 600, "lowest")).length, 50);
+    assert.equal(requests.length, 9, "lowest-first reuses the existing cheaper-page cache and skips a duplicate source pass");
 });
 
 test("BIN price bounds never become auction or mixed-search source filters", async t => {
@@ -156,4 +207,7 @@ test("source filtering keeps assurance/holder wording without admitting other ju
     const result = await searchListings(`offline-filter-context-${Date.now()}`);
     assert.deepEqual(result.listings.map(row => row.title), titles.slice(0, 2));
     assert.equal(result.skipped, 4);
+    assert.deepEqual(result.rejections, ["PROXY_OR_REPLICA", "MYSTERY", "EMPTY_HOLDER", "PROXY_OR_REPLICA"].map((reason, index) => ({
+        id: `v1|filter-${index + 2}|0`, reason,
+    })));
 });

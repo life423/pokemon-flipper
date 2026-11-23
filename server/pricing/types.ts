@@ -1,4 +1,4 @@
-import type { Printing } from "../../shared/types.ts";
+import type { Printing, SoldSaleType } from "../../shared/types.ts";
 
 export type PrintingOrUnknown = Printing | "UNKNOWN";
 
@@ -46,7 +46,7 @@ export interface Comp {
     grader: string | null;
     grade: string | null;
     currency?: string;
-    sale_type?: "auction" | "fixed_price" | "best_offer_accepted" | null;
+    sale_type?: SoldSaleType | null;
     grade_qualifier: string | null;
     attribution: "exact" | "shared" | "unknown";
     listing_url: string | null;

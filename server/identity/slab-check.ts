@@ -31,8 +31,12 @@ export function graderCode(text: unknown): string | null {
 
 // "MINT 9", "9", "GEM MT 10", and "8.5" become "9", "10", and "8.5".
 export function normalizeGrade(text: unknown): string | null {
-    const match = String(text ?? "").match(/\b(10|[1-9](?:\.5)?)\b/);
-    return match ? match[1] : null;
+    // Reject partial reads of a decimal or fraction and ambiguous answers.
+    // A label can include a grade description around the one numeric grade.
+    const grades = String(text ?? "").match(/(?<![\w.])(?:\d+(?:\.\d+)?|\.\d+)\b/g);
+    if (grades?.length !== 1) return null;
+    const [grade] = grades;
+    return /^(?:(?:10|[1-9])(?:\.0)?|[1-9]\.5)$/.test(grade) ? grade.replace(/\.0$/, "") : null;
 }
 
 export function normalizeCertNumber(text: unknown, grader: string | null): string | null {

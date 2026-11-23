@@ -1,8 +1,25 @@
 import { isRawCondition, type RawCondition } from "./conditions.ts";
+import { finishClaim } from "./finish.ts";
 import { readyForPricing } from "./identity.ts";
+import { normalizedPhoto } from "./listing-evidence.ts";
 import type { Evaluation, GradeRange, PhotoCheck } from "./types.ts";
 
 const VIEW_NAMES: Record<string, string> = { FRONT: "front", BACK: "back", FRONT_DETAIL: "front close-up", BACK_DETAIL: "back close-up" };
+
+type CardPhotos = Partial<Pick<PhotoCheck, "cardIdentity" | "cardCount" | "images">>;
+
+export function confirmedPhotoCard(check?: CardPhotos | null) {
+    const card = check?.cardIdentity;
+    return card?.confidence === "HIGH" && check?.cardCount === "ONE" &&
+        check.images?.some(image => image.usable && !image.isStockImage && (image.view === "FRONT" || image.view === "FRONT_DETAIL")) ? card : null;
+}
+
+export function conflictsWithPhotoFinish(check: CardPhotos | null | undefined, finish: string | null | undefined): boolean {
+    const card = confirmedPhotoCard(check);
+    if (!card?.evidence?.length || card.finish === "UNKNOWN") return false;
+    const claim = finish === "CONFLICTING" ? finish : finishClaim(finish);
+    return claim !== "NOT_STATED" && claim !== card.finish;
+}
 
 // Holder evidence is independent of readable grades, certificate checks and
 // raw condition. Unknown holders and stock-only/multiple-card views prove neither.
@@ -15,13 +32,26 @@ export function observedCardKind(evaluation?: Pick<Evaluation, "photoCheck"> | n
     return null;
 }
 
+function reviewedGallery(listing: Partial<Pick<Evaluation["listing"], "photosInListing" | "photos">>, check: PhotoCheck): boolean {
+    if (!listing.photosInListing) return false;
+    const urls = listing.photos;
+    if (urls?.length !== listing.photosInListing) return check.images.length >= listing.photosInListing;
+    const remaining = new Set(urls.filter(Boolean).map(normalizedPhoto));
+    if (!remaining.size) return false;
+    for (const { number } of check.images) {
+        const url = urls[number - 1];
+        if (url) remaining.delete(normalizedPhoto(url));
+    }
+    return remaining.size === 0;
+}
+
 export function obscuredDisclosedWear({ listing, photoCheck, condition }: {
-    listing: Partial<Pick<Evaluation["listing"], "conditionNotes" | "photosInListing">>;
+    listing: Partial<Pick<Evaluation["listing"], "conditionNotes" | "photosInListing" | "photos">>;
     photoCheck?: PhotoCheck | null;
     condition?: Partial<Pick<NonNullable<Evaluation["condition"]>, "corners" | "edges">> | null;
 }): string | null {
     if (!photoCheck || !["SLEEVE", "TOPLOADER"].includes(photoCheck.holder) || observedCardKind({ photoCheck }) !== "raw" ||
-        !listing.photosInListing || photoCheck.images.length < listing.photosInListing) return null;
+        !reviewedGallery(listing, photoCheck)) return null;
 
     const views = photoCheck.images.filter(photo => photo.usable && !photo.isStockImage && photo.view !== "OTHER");
     const allObscured = views.every(photo => photo.obscuresCondition === true);

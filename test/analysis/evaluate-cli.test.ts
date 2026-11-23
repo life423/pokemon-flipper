@@ -20,6 +20,20 @@ test("CLI usage requires a listing without initiating a research scope or provid
     assert.equal(result.status, 1); assert.match(result.stdout, /Usage: npm run evaluate/);
     assert.doesNotMatch(result.stdout + result.stderr, /UNEXPECTED_PROVIDER_DISPATCH|Evaluating/);
 });
+test("CLI rejects invalid item IDs and links from other hosts before provider work", () => {
+    for (const input of ["v1|invalid", "1234", "https://example.invalid/itm/123456789012"]) {
+        const result = run(input);
+        assert.equal(result.status, 1); assert.match(result.stdout, /Usage: npm run evaluate/);
+        assert.doesNotMatch(result.stdout + result.stderr, /UNEXPECTED_PROVIDER_DISPATCH|Evaluating/);
+    }
+});
+test("CLI rejects pick-your-card variations before provider work", () => {
+    for (const input of ["v1|123456789012|7", "https://www.ebay.com/itm/123456789012?var=7"]) {
+        const result = run(input);
+        assert.equal(result.status, 1); assert.match(result.stderr, /Use a single-card listing/);
+        assert.doesNotMatch(result.stdout + result.stderr, /UNEXPECTED_PROVIDER_DISPATCH|Evaluating/);
+    }
+});
 test("CLI help describes evidence reuse without initiating provider work", () => {
     const result = run("--help");
     assert.equal(result.status, 0); assert.match(result.stdout, /unchanged paid photo evidence is reused/);

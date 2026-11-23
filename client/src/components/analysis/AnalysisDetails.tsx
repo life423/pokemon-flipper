@@ -21,7 +21,7 @@ export function AnalysisDetails({
     listing: ListingSummary;
     evaluation: Evaluation;
     now: number;
-    onReanalyze: () => void;
+    onReanalyze?: () => void;
     minGrade: number;
     reviewing: boolean;
 }) {
@@ -49,7 +49,8 @@ export function AnalysisDetails({
                 <Section title="Every path">
                     <div className={styles.paths}>
                         {evaluation.underwriting.paths.filter(path => path.path !== "RAW" || path.status !== "PRICED" || !referencePriceReason(evaluation, path)).map((path) => (
-                            <PathCard key={path.label} path={path} auction={evaluation.listing.buyingOption === "AUCTION"} referenceReason={path.status === "PRICED" ? referencePriceReason(evaluation, path) : null} />
+                            <PathCard key={path.label} path={path} auction={evaluation.listing.buyingOption === "AUCTION"}
+                                shippingPending={evaluation.underwriting?.shippingUnconfirmed} referenceReason={path.status === "PRICED" ? referencePriceReason(evaluation, path) : null} />
                         ))}
                     </div>
                 </Section>
@@ -89,7 +90,8 @@ export function AnalysisDetails({
                         ? `The initial analysis used ${tokens.toLocaleString()} tokens.`
                         : "The initial analysis reused saved AI assessments."}
                 </p>
-                {priceEvidenceGap(evaluation) ? <p className={styles.small}>Price evidence is incomplete. Saved photo findings can be reused when matched sales become available.</p> : <button type="button" className={styles.secondary} onClick={onReanalyze} disabled={reviewing}>
+                {priceEvidenceGap(evaluation) && <p className={styles.small}>Price evidence is incomplete. Saved photo findings can be reused when matched sales become available.</p>}
+                {onReanalyze && <button type="button" className={styles.secondary} onClick={onReanalyze} disabled={reviewing}>
                     {(evaluation.frontPhotoStop === "SLAB_PRICE" || evaluation.frontPhotoStop === "RAW_PRICE") && evaluation.underwriting?.verdict === "CANT_PRICE" ? "Check remaining photos (paid)"
                         : evaluation.researchMode && evaluation.researchMode !== "FULL" ? "Run full research (paid; reuse photos)" : "Reanalyze full listing (paid)"}
                 </button>}

@@ -4,7 +4,9 @@ import { setKey } from "./sets.ts";
 // This does not verify the photograph or identify an exact anniversary market.
 // A 2 followed by a collector-number denominator belongs to the card number.
 // A slash before another full number can instead separate title fields.
-export const BASE_SET_2_TITLE = /\bbase[\s-]+set[\s-]+(?:2(?!\s*\/\s*\d+[a-z]?\b(?!\s*\/))|ii)\b/i;
+export const BASE_SET_2_TITLE = /\b(?:game[\s-]+)?base[\s-]+(?:set[\s-]+(?:2(?!\s*\/\s*\d+[a-z]?\b(?!\s*\/))|ii)|ii)\b/i;
+export const PRISMATIC_EVOLUTIONS_TITLE = /\b(?:(?:sv|scarlet(?:\s*(?:&|and)\s*|\s+)violet)[\s:\p{Dash_Punctuation}]+)?prismatic[\s\p{Dash_Punctuation}]+evolutions\b/iu;
+export const XY_EVOLUTIONS_TITLE = /\b(?:xy[\s:\p{Dash_Punctuation}]+)?(?<!\bprismatic[\s\p{Dash_Punctuation}]+)evolutions\b/iu;
 
 const RELEASES: readonly [RegExp, string][] = [
     [/\b30th[\s-]+(?:anniversary[\s-]+)?celebrations?\b/i, "30th Celebration"],
@@ -12,7 +14,7 @@ const RELEASES: readonly [RegExp, string][] = [
     [/\bclassic[\s-]+collection\b/i, "Classic Collection"],
     [/\b(?:25th|30th)[\s-]+anniversary\b/i, "Anniversary reprint"],
     [BASE_SET_2_TITLE, "Base Set 2"],
-    [/\bevolutions\b/i, "Evolutions"],
+    [XY_EVOLUTIONS_TITLE, "Evolutions"],
     [/\blegendary[\s-]+collection\b/i, "Legendary Collection"],
 ];
 

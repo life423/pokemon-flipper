@@ -1,11 +1,12 @@
 import "../fixtures/isolated-data.ts";
 import { test } from "../fixtures/search-context.ts";
 import assert from "node:assert/strict";
-import { evaluateBoundedListing as evaluateListing } from "../../server/analysis/bounded-evaluate.ts";
+import { createBoundedEvaluator } from "../../server/analysis/bounded-evaluate.ts";
 import { offlineEbayCredentials } from "../fixtures/ebay-credentials.ts";
 
-test("terms-refresh evaluations share work and use server terms; different browser snapshots stay separate", async t => {
+test("evaluations share details without overwriting newer purchase terms with an older snapshot", async t => {
     offlineEbayCredentials(t);
+    const evaluateListing = createBoundedEvaluator({ now: () => Date.now() });
     const id = `v1|fresh-concurrent-${Date.now()}|0`;
     const end = new Date(Date.now() + 86400000).toISOString();
     let items = 0; let failed = false;
@@ -23,9 +24,25 @@ test("terms-refresh evaluations share work and use server terms; different brows
     const [first, duplicate] = await Promise.all([evaluateListing(id), evaluateListing(id)]);
     assert.equal(items, 1); assert.equal(first, duplicate);
     assert.equal(first.listing.price, 18); assert.equal(first.listing.shipping, null); assert.equal(first.listing.bids, 5); assert.equal(first.listing.endTime, end); assert.ok(first.listing.termsCheckedAt);
+    const detailTime = Date.parse(first.listing.termsCheckedAt!);
+    const browserTime = new Date(detailTime + 1_000).toISOString();
+    t.mock.method(Date, "now", () => detailTime + 2_000);
     const current = { ...old, title: first.listing.title, price: 10, endTime: end };
-    const [a, b] = await Promise.all([evaluateListing(id, { current }), evaluateListing(id, { current: { ...current, price: 12 } })]);
-    assert.equal(a.listing.price, 10); assert.equal(b.listing.price, 12); assert.equal(items, 1);
+    const [unstamped, older, newer] = await Promise.all([
+        evaluateListing(id, { current }),
+        evaluateListing(id, { current: { ...old, title: current.title, termsCheckedAt: new Date(detailTime - 1_000).toISOString() } }),
+        evaluateListing(id, { current: { ...current, price: 12, shipping: null, bids: 7, termsCheckedAt: browserTime } }),
+    ]);
+    assert.equal(unstamped.listing.price, 18);
+    assert.equal(older.listing.price, 18);
+    assert.equal(older.listing.bids, 5);
+    assert.equal(older.listing.endTime, end, "an older, ended Browse snapshot cannot reject a live detail response");
+    assert.equal(older.listing.termsCheckedAt, first.listing.termsCheckedAt);
+    assert.equal(newer.listing.price, 12);
+    assert.equal(newer.listing.shipping, null);
+    assert.equal(newer.listing.bids, 7);
+    assert.equal(newer.listing.termsCheckedAt, browserTime);
+    assert.equal(items, 1);
     failed = true;
     await assert.rejects(evaluateListing(id), /temporary offline failure/);
     failed = false;

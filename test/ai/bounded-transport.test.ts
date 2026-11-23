@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { runStructured } from "../../server/ai/openai.ts";
-import { aiSpending } from "../../server/ai/spending.ts";
+import { AiSearchAllowanceError, aiSpending } from "../../server/ai/spending.ts";
 import { withAiUsageContext } from "../../server/ai/usage-context.ts";
 
 test("bounded SDK transport counts the exact inline schema/input before reserving, bills one request and rejects an over-budget follow-up", async t => {
@@ -45,11 +45,15 @@ test("bounded SDK transport counts the exact inline schema/input before reservin
     let budget = await aiSpending.summary(searchId);
     assert.equal(budget.attempts, 1); assert.equal(budget.heldUsd, 0);
     assert.ok(budget.settledUsd > 0 && budget.settledUsd < 0.001);
-    await assert.rejects(request("Additional evidence is too large."), error => (error as { code?: string }).code === "AI_BUDGET");
+    await assert.rejects(request("Additional evidence is too large."), AiSearchAllowanceError);
     budget = await aiSpending.summary(searchId);
     assert.equal(counts, 2); assert.equal(generations, 1); assert.equal(imageDownloads, 2);
     assert.equal(budget.attempts, 1, "an oversized proof cannot authorize or reserve a second generation");
     assert.ok(budget.committedUsd <= 0.02);
+    await aiSpending.configure({ paused: false, perSearchCapUsd: 0.001 });
+    await assert.rejects(request("Maximum output cannot fit."), AiSearchAllowanceError);
+    assert.equal(counts, 2, "maximum-output denial needs no input preflight");
+    assert.equal(generations, 1);
 });
 
 test("a bounded image error cannot enter the legacy image-download retry and buy another generation", async t => {
@@ -67,6 +71,26 @@ test("a bounded image error cannot enter the legacy image-download retry and buy
     await assert.rejects(withAiUsageContext({ searchId: randomUUID() }, () => runStructured({ bounded: true, step: "No image retry", prompt: "Inspect this card.",
         photos: [{ url: "https://i.ebayimg.com/images/g/offline-no-retry/s-l1600.png" }], schemaName: "no_image_retry", schema: { type: "object", additionalProperties: false, required: [], properties: {} } })), /Unable to download/);
     assert.equal(images, 1); assert.equal(counts, 1); assert.equal(generations, 1);
+});
+
+test("a failed AI generation cannot become evidence even with valid structured text", async t => {
+    const previous = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = "offline-failed-response";
+    t.after(() => { if (previous === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = previous; });
+    await aiSpending.configure({ paused: false, perSearchCapUsd: 0.02 });
+    const searchId = randomUUID();
+    let generations = 0;
+    t.mock.method(globalThis, "fetch", async input => {
+        if (new URL(String(input)).pathname.endsWith("/input_tokens")) return Response.json({ object: "response.input_tokens", input_tokens: 120 });
+        generations++;
+        return Response.json({ id: "offline-failed-answer", status: "failed", object: "response",
+            output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: '{"ok":true}', annotations: [] }] }],
+            usage: { input_tokens: 120, output_tokens: 35, input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 } } });
+    });
+    await assert.rejects(withAiUsageContext({ searchId }, () => runStructured({ bounded: true, step: "Failed generation fixture", prompt: "Inspect this card.", photos: [],
+        schemaName: "failed_generation_fixture", schema: { type: "object", additionalProperties: false, required: ["ok"], properties: { ok: { type: "boolean" } } } })), /did not complete \(failed\)/);
+    assert.equal(generations, 1);
+    assert.ok((await aiSpending.summary(searchId)).committedUsd > 0);
 });
 
 test("explicit bounded comparisons keep exact model counting, compact output and the shared cap while defaults remain unchanged", async t => {

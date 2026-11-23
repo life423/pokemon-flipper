@@ -40,6 +40,11 @@ export function createShortlistService({ store = shortlistStore, details = getLi
                 printingClaimFromAspects(bounded?.evaluation.listing.aspects ?? {}) === printingClaimFromAspects(currentDetails.aspects);
             if (sameSnapshot && sameDetails) snapshot = bounded!.evaluation;
         }
+        if (snapshot && Array.isArray(currentDetails?.conditionNotes) &&
+            Date.parse(currentDetails.retrievedAt ?? "") >= (Date.parse(snapshot.listing.termsCheckedAt ?? "") || 0)) {
+            snapshot = { ...snapshot, listing: { ...snapshot.listing,
+                cardCondition: currentDetails.cardCondition, conditionNotes: currentDetails.conditionNotes } };
+        }
         const review = record?.deeperPhotoReview;
         const evaluation = snapshot ? retargetEvaluation({ ...snapshot, ...(review?.inputKey === snapshot.photoReviewKey ? { deeperPhotoReview: review } : {}) }, MONEY_CONFIG.targets, listing) : null;
         return store.save(evaluation ? withFreshListing(listing, evaluation) : listing, evaluation, new Date(now()).toISOString());
@@ -85,8 +90,9 @@ export function createShortlistService({ store = shortlistStore, details = getLi
                     printingClaimFromAspects(latest.evaluation.listing.aspects) === printingClaimFromAspects(refreshed.aspects);
                 const evaluation = same && latest.evaluation ? retargetEvaluation({ ...latest.evaluation, listing: { ...latest.evaluation.listing,
                     title: refreshed.title, url: refreshed.url, price: refreshed.price, shipping: refreshed.shipping, buyingOption: refreshed.buyingOption,
-                    listedAt: listing.listedAt, createdAt: listing.createdAt,
-                    bids: refreshed.bids, endTime: refreshed.endTime, seller: refreshed.seller, availability: listing.availability } }, MONEY_CONFIG.targets) : null;
+                    listedAt: listing.listedAt, createdAt: listing.createdAt, termsCheckedAt: listing.termsCheckedAt, bestOffer: listing.bestOffer,
+                    bids: refreshed.bids, endTime: refreshed.endTime, seller: refreshed.seller, availability: listing.availability,
+                    cardCondition: refreshed.cardCondition, conditionNotes: refreshed.conditionNotes } }, MONEY_CONFIG.targets) : null;
                 return { ...latest, listing, evaluation, needsAnalysis: !evaluation, checkedAt: new Date(now()).toISOString() };
             });
             failures.delete(id);

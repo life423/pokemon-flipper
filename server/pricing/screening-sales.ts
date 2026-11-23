@@ -11,6 +11,7 @@ import { PriceResearchBudgetError } from "./research-budget.ts";
 import { resolveScreeningName } from "../identity/screening-name.ts";
 import { canonicalCatalogName, sameCatalogName } from "./search-name.ts";
 import { jungleNoSymbolReason } from "../../shared/jungle-no-symbol.ts";
+import { hasBaseSetFourthPrint } from "../../shared/reprint-release.ts";
 import { usableSoldReference } from "../../shared/sold-evidence.ts";
 import { SOLD_MARKET_PAGE_LIMIT } from "../../shared/research-policy.ts";
 import { hasSpecialSlabTitle, missingTextureReason } from "../../shared/grade-qualifier.ts";
@@ -21,6 +22,9 @@ type Source = { lookupCards: LookupCards; fetchComps: FetchComps; fetchRawComps:
 type Finish = ScreeningSoldReference["finish"];
 interface Market { record: CardRecord; printing: ScreeningSoldReference["printing"]; finish: Finish; labels: string[] }
 interface MarketEvidence { references: ScreeningSoldReference[]; issue: "BUDGET" | "UNAVAILABLE" | null }
+type SoldScreening = ((listing: ListingSummary, intent: SearchIntent) => Promise<ScreeningSoldEvidence>) & {
+    exactSlabReference?: (intent: SearchIntent, query: string) => Promise<ScreeningSoldReference | null>;
+};
 const FINISHES = ["HOLO", "NON_HOLO", "REVERSE_HOLO"];
 const DAY_MS = 86_400_000;
 const hasMatchedSales = (references: ScreeningSoldReference[]) => references.some(reference => usableSoldReference(reference, reference.grader !== null));
@@ -61,7 +65,7 @@ function incompleteEvidence(evidence: ScreeningSoldEvidence, budget: boolean): S
 // Public sold observations only. Listing claims choose research targets but
 // never become photo confirmation, condition assessments or deal verdicts.
 export function createSoldScreening({ signal, now = Date.now, source = createScreeningPriceSource({ signal }) }:
-    { signal?: AbortSignal; now?: () => number; source?: Source } = {}) {
+    { signal?: AbortSignal; now?: () => number; source?: Source } = {}): SoldScreening {
     const asOf = now();
     const catalogs = new Map<string, Promise<CardRecord[]>>();
     const pages = new Map<string, Promise<SoldPage>>();
@@ -75,6 +79,14 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
         // Attach immediately even when work synchronously stops its subscriber;
         // a second pre-await abort check would orphan pending's rejection.
         return pending.then(value => { signal?.throwIfAborted(); return value; });
+    }
+    async function matchingRecords(name: string, set: string, number: string | null) {
+        const key = JSON.stringify([canonicalCatalogName(name), setFamily(set).sort(), normalizeCardNumber(number)]);
+        const found = await memo(catalogs, key, () => source.lookupCards({ name, set, cardNumber: number ?? "" }));
+        const matches = [...new Map(found.filter(record => record.source === "pkmnprices" && sameSetFamily(record.setName, set) &&
+            (!number || sameCardNumber(record.cardNumber, number)) && sameCatalogName(record.name, name)).map(record => [record.id, record])).values()];
+        const identities = new Set(matches.map(record => JSON.stringify([normalizeSetName(record.setName), normalizeCardNumber(record.cardNumber)])));
+        return identities.size === matches.length ? matches : [];
     }
     const marketReferences = (market: Market, grader: string | null, grade: string | null, gradingScout = false) => {
         const { record, printing, finish } = market;
@@ -146,7 +158,39 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
         return matches;
     }
 
-    return async (listing: ListingSummary, intent: SearchIntent): Promise<ScreeningSoldEvidence> => {
+    async function exactSlabReference(intent: SearchIntent, query: string): Promise<ScreeningSoldReference | null> {
+        const { cardName, sets, cardNumber, grader, minGrade, maxGrade, finish, printing } = intent;
+        const set = sets[0];
+        if (!cardName || sets.length !== 1 || !cardNumber || !grader || !/^(?:PSA|CGC|BGS|SGC|TAG)$/.test(grader) ||
+            !/^(?:10|[1-9](?:\.5)?)$/.test(String(minGrade)) ||
+            minGrade !== maxGrade || intent.graded === false || hasSpecialSlabTitle(query) || hasBaseSetFourthPrint(set, query) ||
+            jungleNoSymbolReason({ listing: { title: query }, identity: { set } })) return null;
+        try {
+            const records = await matchingRecords(cardName, set, cardNumber);
+            let market: Market | null = null;
+            for (const record of records) {
+                if (!record.variants.length) return null;
+                for (const variant of record.variants) {
+                    if (printing && variant.printing !== printing || finish && variant.finish !== finish) continue;
+                    if (!isPrinting(variant.printing) || !FINISHES.includes(variant.finish)) return null;
+                    if (market && (market.record.id !== record.id || market.printing !== variant.printing || market.finish !== variant.finish)) return null;
+                    market ??= { record, printing: variant.printing, finish: variant.finish as Finish, labels: [] };
+                    market.labels.push(variant.name);
+                }
+            }
+            if (!market) return null;
+            const { references: [reference], issue } = await marketReferences(market, grader, String(minGrade));
+            const newestSale = Date.parse(reference?.summary.newestSale ?? "");
+            return !issue && reference && usableSoldReference(reference, true) && newestSale <= asOf && asOf - newestSale <= 30 * DAY_MS
+                ? reference : null;
+        } catch (error) {
+            signal?.throwIfAborted();
+            if (error instanceof StorageUnavailableError || error instanceof PriceResearchBudgetError && error.reason !== "LIMIT") throw error;
+            return null;
+        }
+    }
+
+    async function screenListing(listing: ListingSummary, intent: SearchIntent): Promise<ScreeningSoldEvidence> {
         signal?.throwIfAborted();
         const evidence: ScreeningSoldEvidence = { status: "UNAVAILABLE", exactScope: false, references: [], note: "The listing does not establish one exact card market for sold-price screening." };
         const textureError = missingTextureReason(listing.title);
@@ -183,11 +227,8 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
         const grade = listing.isGraded ? listedGrade == null ? titleGrade : String(listedGrade) : null;
         if (listing.isGraded && (!grader || !/^(?:PSA|CGC|BGS|SGC|TAG)$/.test(grader) || !grade || !/^(?:10|[1-9](?:\.5)?)$/.test(grade))) return evidence;
         try {
-            const catalogKey = JSON.stringify([canonicalCatalogName(name), setFamily(set).sort(), normalizeCardNumber(number)]);
-            const found = await memo(catalogs, catalogKey, () => source.lookupCards({ name, set, cardNumber: number ?? "" }));
-            const matches = [...new Map(found.filter(record => record.source === "pkmnprices" && sameSetFamily(record.setName, set) && (!number || sameCardNumber(record.cardNumber, number)) && sameCatalogName(record.name, name)).map(record => [record.id, record])).values()];
-            const identities = matches.map(record => JSON.stringify([normalizeSetName(record.setName), normalizeCardNumber(record.cardNumber)]));
-            if (!matches.length || new Set(identities).size !== matches.length) return evidence;
+            const matches = await matchingRecords(name, set, number);
+            if (!matches.length) return evidence;
             const markets = new Map<string, Market>();
             let unknownVariant = false;
             let queryScoped = false;
@@ -232,5 +273,6 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
             if (error instanceof StorageUnavailableError || error instanceof PriceResearchBudgetError && error.reason !== "LIMIT") throw error;
             return incompleteEvidence(evidence, error instanceof ScreeningPriceBudgetError || error instanceof PriceResearchBudgetError);
         }
-    };
+    }
+    return Object.assign(screenListing, { exactSlabReference });
 }

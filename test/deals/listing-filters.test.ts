@@ -31,6 +31,8 @@ test("raw/type/price and absolute ceilings exclude metadata before title or sold
 test("server listing filters accept valid numeric bounds and ignore malformed query values", () => {
     assert.deepEqual(readListingFilters({ type: "AUCTION", kind: "raw", min: "30", ceiling: "100" }), { typeFilter: "AUCTION", kindFilter: "raw", minPrice: 30, maxPrice: 100 });
     assert.deepEqual(readListingFilters({ type: "bogus", kind: ["raw"], min: "NaN", ceiling: "-1" }), { typeFilter: "all", kindFilter: "all", minPrice: undefined, maxPrice: undefined });
+    assert.equal(readListingFilters({ max: "100" }).maxPrice, 100);
+    assert.equal(readListingFilters({ max: "100", ceiling: "0" }).maxPrice, 0);
 });
 
 test("automatic auctions require a known future end within12hours before local or provider work", async () => {

@@ -181,7 +181,7 @@ export function createSoldConditionAcquirer({ condition, loadDetails = getListin
                 sale.currency !== "USD" || !sale.sale_type || sale.grader || sale.grade || /\b(?:psa|cgc|bgs|sgc|tag|lot|bundle)\b/i.test(sale.title) ||
                 compProblem({ ...sale, grader: "RAW", grade: "ANY" }, { printing: identity.printing, setName: identity.set, finish: identity.finish, grader: "RAW", grade: "ANY", now: now(), windowDays: 90 }) !== null) return null;
             signal?.throwIfAborted();
-            const listing = existing.listing ?? await loadDetails(existing.id, { maxAgeHours: 24 * 30, keepReserve: true, allowEndedCache: true }).catch(async error => {
+            const listing = existing.listing ?? await loadDetails(existing.id, { maxAgeHours: 24 * 30, keepReserve: true, allowEndedCache: true, ...(signal ? { signal } : {}) }).catch(async error => {
                 if (!(error instanceof EbayError) || ![404, 410].includes(error.status)) throw error;
                 // Definitive absence is reusable for the reader's short TTL.
                 // Other failures cannot establish unavailable historical photos.

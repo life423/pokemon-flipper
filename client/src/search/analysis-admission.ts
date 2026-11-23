@@ -15,7 +15,7 @@ export function automaticListingBlock(listing: ListingSummary, filters: ListingF
     return autoAnalysisBlockReason(listing, now);
 }
 
-export function describeListingBlock(listing: ListingSummary, block: ListingBlock) {
+export function describeListingBlock(listing: ListingSummary | null, block: ListingBlock) {
     switch (block) {
         case "OTHER_LANGUAGE": return { label: "Non-English card" };
         case "LISTING_FORMAT": return { label: "Different listing format" };
@@ -32,14 +32,14 @@ export function describeListingBlock(listing: ListingSummary, block: ListingBloc
         case "PRICE_ABOVE_CEILING": return { label: "Above the automatic research price ceiling" };
         case "PRICING_CONFIG": return { label: "Pricing provider setup required" };
         case "PRICING_CREDITS": return { label: "Pricing provider credits unavailable" };
-        case "SCREEN_DROPPED": return { label: "Above target in price screening", detail: listing.screen?.reason };
+        case "SCREEN_DROPPED": return { label: "Above target in price screening", detail: listing?.screen?.reason };
         case "SOLD_EVIDENCE_MISSING": return {
-            label: listing.screen?.soldEvidence?.exactScope ? "No matching sold-price evidence" : "Exact sold market unconfirmed",
-            detail: listing.screen?.soldEvidence?.note,
+            label: !listing || listing.screen?.soldEvidence?.exactScope ? "No matching sold-price evidence" : "Exact sold market unconfirmed",
+            detail: listing?.screen?.soldEvidence?.note,
         };
-        case "SOLD_EVIDENCE_DEFERRED": return { label: "Sold-price lookup deferred", detail: listing.screen?.soldEvidence?.note };
+        case "SOLD_EVIDENCE_DEFERRED": return { label: "Sold-price lookup deferred", detail: listing?.screen?.soldEvidence?.note };
         case "RAW_PRICE_PREMIUM": return { label: "Asking well above recent raw sales", detail: "Delivered asking is more than twice the highest recent matched raw sale. There is too little evidence of grading upside to start paid photos automatically." };
-        case "CRITERIA_MISMATCH": return { label: listing.match === "UNCONFIRMED_CRITERIA" ? "Search criteria unconfirmed" : name(listing.match) };
-        case "NO_ANALYSIS_CANDIDATE": return { label: "Preliminary screening did not qualify this listing", detail: listing.screen?.reason };
+        case "CRITERIA_MISMATCH": return { label: !listing || listing.match === "UNCONFIRMED_CRITERIA" ? "Search criteria unconfirmed" : name(listing.match) };
+        case "NO_ANALYSIS_CANDIDATE": return { label: "Preliminary screening did not qualify this listing", detail: listing?.screen?.reason };
     }
 }

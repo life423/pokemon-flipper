@@ -150,6 +150,57 @@ test("one or two LOW confidence exact slab sales still support resale even when 
     }
 });
 
+test("a stale wrong-printing slab price cannot admit a verified Unlimited slab to Deals", () => {
+    const evaluation = slabReference();
+    evaluation.slabPricing!.summary = salesSummary("PSA", "9", [900, 1000, 1100]);
+    evaluation.slabPricing!.printing = "UNLIMITED";
+    const matched = retargetEvaluation(evaluation, any);
+    assert.equal(matched.underwriting?.verdict, "BUY_GRADED");
+    matched.slabPricing!.printing = "FIRST_EDITION";
+    assert.equal(resultGroup(summary(matched), matched), "candidates", "cached BUY is screened before retargeting");
+    assert.equal(rateDeal(matched), null);
+    const corrected = retargetEvaluation(matched, any);
+    assert.equal(corrected.underwriting?.verdict, "CANT_PRICE");
+    assert.match(corrected.underwriting!.reasons.join(" "), /different printing/);
+    assert.equal(corrected.slabPricing?.summary, undefined);
+    assert.equal(corrected.slabPricing?.activeReference, undefined);
+    assert.equal(corrected.slab, matched.slab);
+    assert.equal(matched.slabPricing?.summary?.count, 3, "original evidence is left intact");
+});
+
+test("an unrelated printing cannot price a raw route while an independently matched grade can", () => {
+    const evaluation = rawReference();
+    evaluation.listing.price = 40;
+    evaluation.rawPricing = { status: "PRICED", printing: "FIRST_EDITION", prices: [
+        { condition: "MODERATELY_PLAYED", price: 700, basis: "EBAY_SOLD", updatedAt: null },
+    ] };
+    assert.equal(retargetEvaluation(evaluation, any).underwriting?.verdict, "CANT_PRICE");
+    evaluation.condition!.gradeRange = { low: 7, likely: 7, high: 7 };
+    evaluation.gradedPricing = { PSA: { status: "PRICED", printing: "SHADOWLESS", byGrade: [salesSummary("PSA", 7)] },
+        CGC: { status: "PRICED", printing: "UNLIMITED", byGrade: [salesSummary("CGC", 7)] } };
+    const corrected = retargetEvaluation(evaluation, any);
+    assert.equal(corrected.underwriting?.verdict, "BUY_AND_GRADE");
+    assert.equal(corrected.underwriting?.best?.grader, "CGC");
+    assert.equal(corrected.underwriting?.paths?.find(path => path.path === "GRADE" && path.grader === "PSA")?.status, "UNAVAILABLE");
+});
+
+test("unknown eBay availability withholds an otherwise profitable deal and preserves its photos", () => {
+    const evaluation = slabReference();
+    evaluation.slabPricing!.summary = salesSummary("PSA", "9", [900, 1000, 1100]);
+    const previous = retargetEvaluation(evaluation, any);
+    assert.equal(resultGroup(summary(previous), previous), "deals", "unstamped legacy evidence remains readable");
+    previous.listing.availability = "UNKNOWN";
+    assert.equal(resultGroup(summary(previous), previous), "review", "cached BUY also needs confirmation");
+    const unresolved = retargetEvaluation(previous, any);
+    assert.equal(unresolved.underwriting?.verdict, "NEEDS_REVIEW");
+    assert.equal(unresolved.underwriting?.best, null);
+    assert.match(unresolved.underwriting!.reasons[0], /listing is still available/);
+    assert.equal(unresolved.slab, previous.slab);
+    assert.equal(unresolved.photoCheck, previous.photoCheck);
+    unresolved.listing.availability = "ACTIVE";
+    assert.equal(resultGroup(summary(unresolved), retargetEvaluation(unresolved, any)), "deals");
+});
+
 test("old saved BUY and PASS fallback advice cannot re-enter Deals or offers before retargeting", () => {
     const original = rawReference();
     original.rawPricing!.prices![1].basis = "EBAY_SOLD";

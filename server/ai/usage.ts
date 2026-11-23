@@ -6,6 +6,7 @@ import { aiSpending } from "./spending.ts";
 import { getAiUsageContext, getAiDispatchSignal, type AiUsageContext } from "./usage-context.ts";
 import type { AiUsageDay, AiUsageStage } from "../../shared/ai-usage.ts";
 import { sqlAiDispatch } from "./sql-dispatch.ts";
+import { requireLiveProvider } from "../lib/saved-provider-evidence.ts";
 
 export interface AiAttempt extends AiUsageContext {
     at: string;
@@ -82,6 +83,7 @@ export const trackedAiFetch: typeof fetch = async (input, init) => {
     // local request must never reach the provider or appear as paid usage.
     const dispatchSignal = getAiDispatchSignal();
     dispatchSignal?.throwIfAborted();
+    requireLiveProvider("OPENAI");
     return sqlAiDispatch(body, async beforeSend => {
         const reservation = await aiSpending.reserve(body, getAiUsageContext());
         // Stop may arrive while waiting for the spending lock/preflight/fsync.

@@ -1,4 +1,4 @@
-import type { CompSummary, GradedPricing, RawPricing } from "../../types";
+import type { CompSale, CompSummary, GradedPricing, RawPricing } from "../../types";
 import { dollars, name } from "../../format";
 import { RAW_CONDITIONS, CONDITION_NAMES } from "../../../../shared/conditions.ts";
 import { isRawSoldPrice } from "../../../../shared/money/price-evidence.ts";
@@ -6,14 +6,22 @@ import { Pairs, Section } from "./primitives";
 import styles from "../DetailPanel.module.css";
 
 export function soldEstimateBasis(summary?: CompSummary): string {
-    switch (summary?.marketEstimate?.method) {
-        case "RECENT_FOUR": return "average of the four latest matched eBay sales within 48 hours";
-        case "RECENCY_WEIGHTED_MEDIAN": return "eBay sold median weighted toward newer sales";
+    const estimate = summary?.marketEstimate;
+    switch (estimate?.method) {
+        case "RECENT_FIXED_PRICE_MEDIAN": return `median of the ${estimate.sampleSize ?? 5} latest matched Buy It Now sales within 30 days`;
+        case "RECENT_FOUR": return "average of the four latest matched eBay sales across available formats within 48 hours";
+        case "RECENCY_WEIGHTED_MEDIAN": return "eBay sold median across available formats, weighted toward newer sales";
         default: return "eBay sold median";
     }
 }
 
-export function CompsRow({ summary, sampleLimit = 40, screening = false }: { summary: CompSummary; sampleLimit?: number; screening?: boolean }) {
+const SALE_TYPES: Record<NonNullable<CompSale["saleType"]>, string> = {
+    auction: "Auction",
+    fixed_price: "Buy It Now",
+    best_offer_accepted: "Best Offer accepted",
+};
+
+export function CompsRow({ summary, screening = false }: { summary: CompSummary; screening?: boolean }) {
     const dropped = Object.entries(summary.dropped);
     const estimate = summary.marketEstimate;
     const priceLabel = estimate ? `estimate ${dollars(estimate.price)}` : `median ${dollars(summary.median)}`;
@@ -41,7 +49,7 @@ export function CompsRow({ summary, sampleLimit = 40, screening = false }: { sum
                         Based on the {soldEstimateBasis(summary)}. Observed sale range {dollars(summary.low)} to {dollars(summary.high)}.
                         {summary.mean != null && ` Full-sample average ${dollars(summary.mean)}.`}
                         {summary.newestSale && ` Latest sale ${summary.newestSale}.`}
-                        {summary.windowDays ? ` Up to ${summary.windowDays} days of sales, with at most ${sampleLimit} results sampled per lookup.` : ""}
+                        {summary.windowDays ? ` Sampled sales from up to the last ${summary.windowDays} days.` : ""}
                         {screening && " This evidence is used for preliminary screening."}
                     </p>
                     {trend && <p className={styles.small}>{trend}</p>}
@@ -58,7 +66,7 @@ export function CompsRow({ summary, sampleLimit = 40, screening = false }: { sum
                 {summary.sales.map((sale, index) => (
                     <li key={`${sale.soldAt}-${index}`}>
                         <span className={styles.salePrice}>{dollars(sale.price)}</span>
-                        <span className={styles.muted}>{sale.soldAt}</span>
+                        <span className={styles.muted}>{sale.soldAt}{sale.saleType && ` · ${SALE_TYPES[sale.saleType]}`}</span>
                         {sale.photoCondition && <span className={styles.muted}>Seller says: {sale.sellerCondition ? CONDITION_NAMES[sale.sellerCondition] : "Not stated"} · AI assesses: {CONDITION_NAMES[sale.photoCondition]}</span>}
                         {sale.url ? (
                             <a href={sale.url} target="_blank" rel="noopener noreferrer">

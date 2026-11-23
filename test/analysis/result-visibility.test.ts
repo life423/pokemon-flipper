@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { resultGroup } from "../../shared/analysis.ts";
+import { retargetEvaluation } from "../../shared/money/targets.ts";
 import type { ListingSummary } from "../../shared/types.ts";
-import { cardEvaluation } from "../fixtures/card-evaluation.ts";
+import { cardEvaluation, salesSummary } from "../fixtures/card-evaluation.ts";
 
 test("incomplete screening and failed analyses stay visible in Review without becoming Deals", () => {
     const evaluation = cardEvaluation();
@@ -54,5 +55,33 @@ test("resolved seller-metadata mismatches stay in Sorting while deferred prices 
     ]) {
         const copy = structuredClone(value); change(copy);
         assert.equal(resultGroup(listing, copy), "review", "unresolved or disproved identities must retain their review hold");
+    }
+});
+
+test("unknown Buy It Now shipping keeps positive raw and slab estimates in Sorting until a quote is available", () => {
+    const targets = { minProfit: 0, minRoi: 0 };
+    for (const slab of [false, true]) {
+        const value = cardEvaluation(targets);
+        Object.assign(value.listing, { buyingOption: "FIXED_PRICE", availability: "ACTIVE", endTime: null, shipping: 0 });
+        if (slab) {
+            value.condition = null;
+            value.photoCheck!.holder = "GRADED_SLAB";
+            value.slab = { status: "OK", grader: "PSA", grade: "7", reasons: [], concerns: [] };
+            value.slabPricing = { status: "PRICED", summary: salesSummary() };
+        }
+        const listing: ListingSummary = { ...value.listing, currentPrice: value.listing.price, images: [], isGraded: slab };
+        const quoted = retargetEvaluation(value, targets);
+        assert.equal(resultGroup(listing, quoted), "deals", "an explicit zero is a verified shipping quote");
+        const missing = { ...listing, shipping: null, termsCheckedAt: new Date().toISOString() };
+        const provisional = retargetEvaluation(quoted, targets, missing);
+        assert.equal(provisional.underwriting?.verdict, "CANT_PRICE");
+        assert.equal(provisional.underwriting?.shippingUnconfirmed, true);
+        assert.ok(provisional.underwriting?.best && provisional.underwriting.best.profit > 0);
+        assert.match(provisional.underwriting.reasons[0], /Confirm the delivered price/);
+        assert.equal(provisional.rating, null);
+        assert.equal(resultGroup(missing, provisional, true), "candidates");
+        assert.equal(resultGroup(missing, { ...quoted, listing: provisional.listing }, true), "candidates", "a saved BUY also requires a quote");
+        const refreshed = { ...listing, termsCheckedAt: new Date(Date.parse(missing.termsCheckedAt) + 1).toISOString() };
+        assert.equal(resultGroup(refreshed, retargetEvaluation(provisional, targets, refreshed), true), "deals");
     }
 });
