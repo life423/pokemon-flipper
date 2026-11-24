@@ -15,7 +15,7 @@ export async function screenListingWithoutAi(listing: ListingSummary, intent: Se
     signal?.throwIfAborted();
     if (cardLanguageStatus(listing.title, [reading.language]) === "OTHER") return { ...listing, match: "OTHER_LANGUAGE" };
     if (reading.kind && reading.kind !== "SINGLE_CARD") return { ...listing, match: "JUNK" };
-    if (intent && !setMatches(reading.set, intent)) return { ...listing, match: "OTHER_SET" };
+    if (intent && !setMatches(reading.set, intent, reading.cardNumber)) return { ...listing, match: "OTHER_SET" };
     if (intent?.cardNumber && reading.cardNumber && !sameCardNumber(intent.cardNumber, reading.cardNumber)) return { ...listing, match: "OTHER_CARD" };
     const attributes = searchAttributes(listing.title, { ...(reading.grader ? { "Professional Grader": reading.grader } : {}), ...(reading.grade ? { Grade: reading.grade } : {}) });
     const mismatch = intent && criteriaMismatch(attributes, intent, false);

@@ -178,6 +178,23 @@ export function savedRawPriceContext(evaluation: Evaluation, now: number, target
     return rawBuyGuidance(evaluation, now, targets, true)?.marketEvidence ?? sellerEvidence;
 }
 
+export function rawPriceReferences(evaluation: Evaluation, now: number, rawCondition: RawCondition, identity: NonNullable<Evaluation["identity"]>) {
+    const recent = (date: string | null | undefined, days: number) => {
+        const age = now - Date.parse(date ?? "");
+        return age >= 0 && age <= days * day;
+    };
+    const web = evaluation.webPriceResearch, scope = web?.market;
+    const scopedWeb = scope && scope.cardName === identity.name && scope.setName === identity.set &&
+        scope.cardNumber === identity.cardNumber && scope.finish === identity.finish && scope.language === identity.language &&
+        scope.printingLabel === (identity.printingLabel || identity.printing.replaceAll("_", " ")) &&
+        scope.grader === "RAW" && scope.grade === CONDITION_NAMES[rawCondition] && recent(web?.checkedAt, 7);
+    const tracker = evaluation.trackerRawReference;
+    const tracked = tracker && tracker.source === "TCGPLAYER_MARKET" && tracker.recordId === String(identity.recordId) &&
+        tracker.printing === identity.printing && tracker.finish === identity.finish && recent(tracker.updatedAt, 7) &&
+        tracker.priceUsd > 0 && Number.isSafeInteger(cents(tracker.priceUsd)) ? tracker : null;
+    return { web, scopedWeb, tracked, recent };
+}
+
 // Decision support for incomplete raw valuations. It never promotes an unconfirmed route to Deals or computes a raw loss from a worse copy.
 export function rawBuyGuidance(evaluation: Evaluation, now = Date.now(), targets: Targets = MONEY_CONFIG.targets, allowSavedMarket = false): RawBuyGuidance | null {
     if (evaluation.underwriting?.verdict !== "CANT_PRICE" || !eligibleRawCopy(evaluation, now)) return null;
@@ -195,19 +212,7 @@ export function rawBuyGuidance(evaluation: Evaluation, now = Date.now(), targets
     const native = !!raw && (currentPriceEvidence(evaluation, now) || allowSavedMarket && asOf <= now && currentPriceEvidence(evaluation, asOf)) && raw.conditionEvidence === "AI_PHOTOS" &&
         raw.source === "pkmnprices" && raw.printing === identity.printing && raw.finish === identity.finish && !!raw.variant;
     if (native && raw?.prices?.some(price => price.condition === rawCondition && isRawSoldPrice(price))) return null;
-    const recent = (date: string | null | undefined, days: number) => {
-        const age = now - Date.parse(date ?? "");
-        return age >= 0 && age <= days * day;
-    };
-    const web = evaluation.webPriceResearch, scope = web?.market;
-    const scopedWeb = scope && scope.cardName === identity.name && scope.setName === identity.set &&
-        scope.cardNumber === identity.cardNumber && scope.finish === identity.finish && scope.language === identity.language &&
-        scope.printingLabel === (identity.printingLabel || identity.printing.replaceAll("_", " ")) &&
-        scope.grader === "RAW" && scope.grade === CONDITION_NAMES[rawCondition] && recent(web?.checkedAt, 7);
-    const tracker = evaluation.trackerRawReference;
-    const tracked = tracker && tracker.source === "TCGPLAYER_MARKET" && tracker.recordId === String(identity.recordId) &&
-        tracker.printing === identity.printing && tracker.finish === identity.finish && recent(tracker.updatedAt, 7) &&
-        tracker.priceUsd > 0 && Number.isSafeInteger(cents(tracker.priceUsd)) ? tracker : null;
+    const { web, scopedWeb, tracked, recent } = rawPriceReferences(evaluation, now, rawCondition, identity);
     if (!native && !scopedWeb && !tracked) return wait("Current matching sold evidence is missing for this printing and condition.");
     const cost = acquisitionCost(listing.price, listing.shipping, MONEY_CONFIG.buying);
     const needed = breakEven(cost, "raw");

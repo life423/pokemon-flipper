@@ -1,10 +1,11 @@
 import { auctionOpportunity, nextAuctionBid, withinOpportunityWindow } from "../../shared/auction-opportunity.ts";
+import { collectorAuction } from "../../shared/collector-auction.ts";
 import { yearOf } from "../../shared/sets.ts";
 import { setYears } from "../pricing/price-tracker.ts";
 import { researchAuctionSellers } from "../deals/auction-seller-research.ts";
 import { autoAnalysisBlockReason, meetsMinimumGrade, type AutoAnalysisBlockReason } from "../../shared/analysis.ts";
 import { englishListingEligible } from "../../shared/card-language.ts";
-import { dealHuntGoals, type DealHuntGoal, type DealHuntRequest, type DealHuntResponse } from "../../shared/deal-hunt.ts";
+import { dealHuntGoals, type DealHuntAction, type DealHuntGoal, type DealHuntRequest, type DealHuntResponse } from "../../shared/deal-hunt.ts";
 import { buyerReviewBlock } from "../../shared/wait-skip-review.ts";
 import { listingEvidenceKey, searchPhotosFitDetails } from "../../shared/listing-evidence.ts";
 import { matchesListingFilters, type ListingFilters } from "../../shared/listing-filters.ts";
@@ -12,6 +13,7 @@ import { retargetEvaluation } from "../../shared/money/targets.ts";
 import { acquisitionCost } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { dollars } from "../../shared/format.ts";
+import { withFreshListing } from "../../shared/fresh-listing.ts";
 import { currentPriceEvidence } from "../../shared/pricing-freshness.ts";
 import { DEVELOPMENT_SEARCH_LIMIT } from "../../shared/research-policy.ts";
 import { evaluatedCriteriaMismatch } from "../../shared/search-criteria.ts";
@@ -27,14 +29,16 @@ import { createSharedWork } from "../lib/shared-work.ts";
 import { evaluateBoundedListing, PriceOnlyEvidenceError } from "./bounded-evaluate.ts";
 import { EnglishOnlyError, RejectedPhotoAssessmentError } from "./failure.ts";
 import { runDealHunt, type DealHuntCandidate } from "./deal-hunt.ts";
+import { huntPrintingCheck, huntPrintingTerms } from "./deal-hunt-printing.ts";
 import { dealHuntCandidate } from "./deal-hunt-evidence.ts";
 import { evaluationContextKey, loadPrivateEvaluation, type PrivateEvaluationSnapshot } from "./private-evaluation.ts";
 import { loadDiagnosticDiscovery } from "./search-diagnostics.ts";
 import { isSearchDiagnosticId } from "./search-diagnostic-store.ts";
 import { findHuntMarkets, restoreSavedHuntSales, type HuntMarket } from "./same-set-markets.ts";
 import { discoverMarketListings } from "./same-set-listings.ts";
-import { describeHuntMarket, huntOrigin, keepsSetSearchPreferences, marketItemLimit, marketIntent, matchesHuntMarket } from "./deal-hunt-market-checks.ts";
+import { describeHuntMarket, huntOrigin, keepsSetSearchPreferences, marketItemLimit, marketIntent, matchesHuntMarket, shortlistMarketCopies } from "./deal-hunt-market-checks.ts";
 import { groupMarketCopies, groupMarketSearches, huntMarketCardKey } from "./deal-hunt-market-groups.ts";
+import { supplementalResearch } from "../pricing/supplemental-research.ts";
 import { restoreRawComparisons } from "../pricing/saved-raw-comparisons.ts";
 
 export class DealHuntInputError extends Error {
@@ -49,7 +53,8 @@ export function dealHuntRequest(input: unknown): DealHuntRequest {
     const preferences = body?.marketPreferences;
     const years = [preferences?.minYear, preferences?.maxYear];
     if (!body || typeof body.goal !== "string" || !Object.hasOwn(dealHuntGoals, body.goal) ||
-        !["search", "same_set", "any_card"].includes(scope) || scope === "any_card" && body.goal !== "resell" ||
+        !["search", "same_set", "any_card"].includes(scope) || scope === "any_card" && body.goal !== "resell" &&
+            !(body.goal === "collect_slab" && filters?.typeFilter === "AUCTION") ||
         (body.standalone !== undefined && typeof body.standalone !== "boolean") ||
         !Array.isArray(body.listingIds) || !body.listingIds.length && scope === "search" || body.listingIds.length > DEVELOPMENT_SEARCH_LIMIT ||
         body.standalone && (scope !== "any_card" || body.listingIds.length !== 0) ||
@@ -59,7 +64,6 @@ export function dealHuntRequest(input: unknown): DealHuntRequest {
             ![undefined, "raw", "graded", "all"].includes(filters.kindFilter) ||
             [filters.minPrice, filters.maxPrice].some(p => p !== undefined && (!Number.isFinite(p) || p < 0)) ||
             (filters.minPrice ?? 0) > (filters.maxPrice ?? Infinity))) ||
-        (filters?.typeFilter === "AUCTION" && body.goal === "collect_slab") ||
         (preferences !== undefined && (!preferences || typeof preferences !== "object" || Array.isArray(preferences) ||
             years.some(year => year !== undefined && (!Number.isInteger(year) || year < 1900 || year > 2100)) ||
             (preferences.minYear ?? 1900) > (preferences.maxYear ?? 2100) ||
@@ -113,6 +117,7 @@ const defaults = {
     snapshot: loadPrivateEvaluation,
     details: getListingDetails,
     restoreRaw: restoreRawComparisons,
+    supplement: supplementalResearch,
     evaluate: evaluateBoundedListing,
     plan: runDealHunt,
     markets: findHuntMarkets,
@@ -122,6 +127,7 @@ const defaults = {
     researchAuctionSellers,
 };
 type Dependencies = typeof defaults;
+const referencePrerequisites = new Set<DealHuntAction>(["inspect_photos", "check_listing", "check_sales"]);
 
 function fits(value: Evaluation, row?: HuntRow, inventory?: HuntInventory | null) {
     if (value.identity?.notThisCard ||
@@ -137,17 +143,21 @@ function rowMatches(row: HuntRow, saved: PrivateEvaluationSnapshot) {
         searchPhotosFitDetails(row.listing.images, saved.evaluation.listing.photos ?? []);
 }
 
+interface ScopedCandidate extends DealHuntCandidate {
+    liveListing(): ListingSummary | null;
+}
+
 function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searchId: string, saved: PrivateEvaluationSnapshot | null,
     inventory: HuntInventory | null, row: HuntRow | undefined, evaluations: Map<string, Evaluation>, deps: Dependencies,
-    filters: ListingFilters, minGrade: number, acceptsMarket: (set?: string | null, finish?: string | null) => boolean, markets: HuntMarket[] = []): DealHuntCandidate | null {
+    filters: ListingFilters, minGrade: number, acceptsMarket: (set?: string | null, finish?: string | null) => boolean, markets: HuntMarket[] = []): ScopedCandidate | null {
     // Never use an unrelated old version of a card simply because its eBay ID is the same.
-    if (saved && (row ? !rowMatches(row, saved) : saved.searchId !== searchId)) saved = null;
+    if (saved && (saved.evaluation.listing.id !== id || (row ? !rowMatches(row, saved) : saved.searchId !== searchId))) saved = null;
     const format = filters.typeFilter === "AUCTION" ? "AUCTION" : "FIXED_PRICE";
     const auction = format === "AUCTION";
     if (auction && !withinOpportunityWindow(row?.listing.endTime ?? saved?.evaluation.listing.endTime, deps.now())) return null;
     let checkFullListing = Boolean((markets.length || auction) && saved);
     let value = saved && retargetEvaluation(saved.evaluation, targets, row?.listing);
-    const matches = (e: Evaluation) => e.listing.buyingOption === format && acceptsMarket(e.identity?.set, e.identity?.finish) && fits(e, row, inventory) && meetsMinimumGrade(e, minGrade) && (!markets.length || markets.some(market => matchesHuntMarket(e, market) && !evaluatedCriteriaMismatch(e, marketIntent(market)))) &&
+    const matches = (e: Evaluation) => e.listing.buyingOption === format && acceptsMarket(e.identity?.set, e.identity?.finish) && fits(e, row, inventory) && meetsMinimumGrade(e, minGrade) && (!markets.length || markets.some(market => matchesHuntMarket(e, market, !!huntPrintingCheck(e)) && !evaluatedCriteriaMismatch(e, marketIntent(market)))) &&
         (!row || matchesListingFilters({ ...row.listing, currentPrice: e.listing.price }, filters, e));
     if (value && !matches(value)) return null;
     const reader = () => value && dealHuntCandidate(value, goal, deps.now, markets, targets, filters.maxPrice);
@@ -162,7 +172,7 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
         evaluations.delete(id);
         return message;
     };
-    const card = row?.listing;
+    let card = row?.listing;
     const seller = card?.auctionResearch;
     const copySummary = initial?.summary ?? [card!.isGraded ? "Listed graded" : "Listed raw", card!.cardCondition,
         card!.listedAt && `Listed ${card!.listedAt}`, card!.currentPrice != null && `Item price $${card!.currentPrice}`,
@@ -175,16 +185,27 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
     return {
         listingId: id, title: initial?.title ?? card!.title,
         summary: [auctionClues, copySummary].filter(Boolean).join(" "),
+        liveListing() {
+            if (!card || retired) return null;
+            const latest = value ? withFreshListing(card, value) : card;
+            if (!latest.images.length || latest.availability === "UNAVAILABLE" ||
+                latest.endTime && !(Date.parse(latest.endTime) > deps.now()) ||
+                auction && !withinOpportunityWindow(latest.endTime, deps.now())) return null;
+            return latest;
+        },
         available: checked => retired ? [] : reader()?.available(checked) ??
             (auction && !checked.has("check_listing") ? ["check_listing", "inspect_photos"] : ["inspect_photos"]),
         outcome(checked) {
             if (!value || retired) return null;
-            const result = reader()?.outcome(checked);
+            const evidence = reader();
+            if (evidence?.available(checked).includes("check_price_references")) return null;
+            const result = evidence?.outcome(checked);
             if (!result) return null;
             if (quotaNote) return { ...result, decision: "WAIT", reason: `${result.reason} ${quotaNote}` };
             const { price, shipping } = value.listing;
             if (filters.maxPrice !== undefined && price !== null && shipping !== null) {
-                const total = auction ? auctionOpportunity(value, targets, deps.now(), filters.maxPrice)?.nextTotal : acquisitionCost(price, shipping, MONEY_CONFIG.buying);
+                const item = auction ? nextAuctionBid(value.listing, deps.now()) : price;
+                const total = item === null ? null : acquisitionCost(item, shipping, MONEY_CONFIG.buying);
                 if (total != null && total > filters.maxPrice) return { decision: "WAIT", section: result.section,
                     reason: `The purchase totals ${dollars(total)} after shipping and estimated tax, above your ${dollars(filters.maxPrice)} limit.` };
             }
@@ -192,7 +213,8 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
         },
         async read(action, signal) {
             signal?.throwIfAborted();
-            if (action === "check_sales" && value?.underwriting?.verdict === "CANT_PRICE") {
+            const checkRaw = action === "check_raw_resale" || action === "check_sales" && value?.underwriting?.verdict === "CANT_PRICE";
+            if (checkRaw && value) {
                 const raw = await deps.restoreRaw(value, deps.now(), signal);
                 if (raw) value = retargetEvaluation({ ...value, rawPricing: raw }, targets);
             }
@@ -211,6 +233,8 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
                             markets.every(m => next > marketItemLimit(m, goal, targets, detail.shipping!))) {
                             return retire(`At the next bid of ${dollars(next)}, delivery totals ${dollars(total)}. That exceeds the buyer’s budget or the ceiling supported by the researched exits.`);
                         }
+                        card = { ...row.listing, currentPrice: detail.price, shipping: detail.shipping, images: detail.images,
+                            availability: detail.availability, endTime: detail.endTime, bids: detail.bids, termsCheckedAt: detail.retrievedAt };
                         return `eBay shows the next bid at ${dollars(next)} and the total with shipping and estimated tax at ${dollars(total)}. The original photos can now be assessed.`;
                     }
                     if (action !== "inspect_photos" || !row?.assessable) return retire("This copy has no eligible photo check.");
@@ -218,6 +242,29 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
                     if (row.listing.title.trim() !== value.listing.title.trim() ||
                         !searchPhotosFitDetails(row.listing.images, value.listing.photos ?? [])) {
                         return retire("The listing or gallery changed since this search. Its original evidence cannot support a buy.");
+                    }
+                } else if (action === "resolve_printing") {
+                    if (!huntPrintingCheck(value) || !huntPrintingTerms(value.listing, deps.now(), filters.maxPrice))
+                        return "The current terms or original gallery do not warrant another printing check.";
+                    const originalSearch = saved?.searchId ?? searchId;
+                    const focused = await withAiUsageContext({ searchId: originalSearch, listingId: id }, () =>
+                        deps.evaluate(id, { priceOnly: true, huntPrinting: { maxDelivered: filters.maxPrice }, typeFilter: format, targets, signal }));
+                    if (evaluationContextKey({ ...focused.listing, images: focused.listing.photos ?? [] }) !==
+                        evaluationContextKey({ ...value.listing, images: value.listing.photos ?? [] }) ||
+                        focused.listing.cardCondition !== value.listing.cardCondition ||
+                        JSON.stringify(focused.listing.conditionNotes) !== JSON.stringify(value.listing.conditionNotes))
+                        return retire("The listing changed during its printing check. Its previous evidence no longer applies.");
+                    value = focused;
+                } else if (action === "check_price_references") {
+                    const eligible = () => reader()?.available(referencePrerequisites).includes("check_price_references");
+                    if (!eligible()) return "The current listing terms or market evidence no longer warrant a supplemental lookup.";
+                    const now = deps.now();
+                    const options = { now, signal: signal ?? new AbortController().signal };
+                    const cached = await deps.supplement(value, { ...options, cacheOnly: true });
+                    value = { ...value, ...cached };
+                    if (eligible()) {
+                        signal?.throwIfAborted();
+                        value = { ...value, ...await deps.supplement(value, { ...options, cacheOnly: false }) };
                     }
                 } else if (action === "check_listing" && value.listing.availability !== "UNAVAILABLE") {
                     const age = deps.now() - Date.parse(value.listing.termsCheckedAt ?? "");
@@ -238,7 +285,7 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
                             seller: details.seller, cardCondition: details.cardCondition, conditionNotes: details.conditionNotes } }, targets);
                         checkFullListing = false;
                     }
-                } else if (action === "check_sales" && saved && isSearchDiagnosticId(saved.searchId) && value.listing.availability === "ACTIVE" &&
+                } else if ((action === "check_sales" || action === "check_raw_resale") && saved && isSearchDiagnosticId(saved.searchId) && value.listing.availability === "ACTIVE" &&
                     !currentPriceEvidence(value, deps.now())) {
                     // Price-only research retains the original assessment's allowance on a reused copy.
                     const refreshed = await withAiUsageContext({ searchId: saved.searchId, listingId: id }, () =>
@@ -258,11 +305,11 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
                     return retire("The updated listing could not be matched to eligible photo and price evidence. The hunt can check another copy.");
                 }
                 if (!(error instanceof EbayBudgetError && error.reason === "QUOTA" && value &&
-                    (action === "check_sales" || action === "check_listing"))) throw error;
+                    (action === "check_sales" || action === "check_raw_resale" || action === "check_listing"))) throw error;
                 quotaNote = "The eBay allowance prevented a fresh check. These figures use the last checked listing.";
             }
             signal?.throwIfAborted();
-            if (action === "check_sales") await restoreSavedHuntSales([value], goal, deps.now(), signal);
+            if (action === "check_sales" || action === "check_raw_resale") await restoreSavedHuntSales([value], goal, deps.now(), signal);
             const evidence = reader();
             if (value.listing.id !== id || !matches(value) || !evidence) return retire("The verified copy falls outside the search, comparison market or buyer goal.");
             evaluations.set(id, value);
@@ -289,7 +336,7 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
             const requested = request.filters;
             const format = requested?.typeFilter === "AUCTION" || previous?.typeFilter === "AUCTION" ? "AUCTION" : "FIXED_PRICE";
             if (previous?.typeFilter && previous.typeFilter !== "all" && requested?.typeFilter && requested.typeFilter !== "all" &&
-                previous.typeFilter !== requested.typeFilter || format === "AUCTION" && goal === "collect_slab" || previous?.kindFilter && previous.kindFilter !== "all" &&
+                previous.typeFilter !== requested.typeFilter || previous?.kindFilter && previous.kindFilter !== "all" &&
                 requested?.kindFilter && requested.kindFilter !== "all" && previous.kindFilter !== requested.kindFilter)
                 throw new DealHuntInputError("The current card type or listing format conflicts with the original search.");
             const ceilings = [previous?.maxPrice, requested?.maxPrice].filter((p): p is number => p !== undefined);
@@ -309,7 +356,7 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                 (!row.excludedFromHunt || format === "AUCTION" && row.assessable && !row.listing.match && englishListingEligible(row.listing))).map(row => [row.listing.id, row]));
             const evaluations = new Map<string, Evaluation>();
             const candidates: DealHuntCandidate[] = [];
-            const alternatives = new Map<string, NonNullable<DealHuntResponse["alternative"]>>();
+            const alternatives = new Map<string, { candidate: ScopedCandidate; leads: HuntMarket[]; reason: string }>();
             // Keep private SQL reads bounded. Preserve display order even if reads finish out of order.
             for (let offset = 0; offset < listingIds.length; offset += 4) {
                 active.throwIfAborted();
@@ -336,7 +383,8 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                     const recentAsk = group.observedPurchaseTotal === undefined ? "" :
                         ` A matching copy was seen in the last 24 hours at ${dollars(group.observedPurchaseTotal)} including shipping and estimated tax. Check its current price and availability.`;
                     const summary = group.leads.map(describeHuntMarket).join(" ") + recentAsk;
-                    markets.push({ cardKey: huntMarketCardKey(reference), title: `${reference.name} ${reference.cardNumber} · ${reference.set}`,
+                    markets.push({ cardKey: huntMarketCardKey(reference), releaseYear: yearOf(years, reference.set) ?? undefined,
+                        title: `${reference.name} ${reference.cardNumber} · ${reference.set}`,
                         summary: summary + ` Research item prices up to ${dollars(group.ceiling)} before adjusting for shipping.`,
                         async discover() {
                             const found = await deps.discoverMarket(searchId, intent, { ...filters, maxPrice: group.ceiling }, active, { relatedIntents });
@@ -357,7 +405,7 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                                 const matched = saved ? leads.filter(lead => matchesHuntMarket(saved.evaluation, lead)) : [];
                                 const reason = (matched.length ? matched : leads).map(describeHuntMarket).join(" ");
                                 knownIds.add(listing.id);
-                                alternatives.set(listing.id, { listing, reason });
+                                alternatives.set(listing.id, { candidate, leads, reason });
                                 discovered.push({ ...candidate, summary: `${candidate.summary} ${reason} Item ${dollars(listing.currentPrice)}.` });
                             }
                             return discovered;
@@ -365,23 +413,40 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                 }
                 if (!markets.length) marketNote = scope === "same_set" && !origin
                     ? "The original results did not establish a single set to explore."
+                    : goal === "collect_slab" ? "No matching slab market in the saved research had a verified sale in the past 30 days."
                     : "No other market in the saved research met your filters and had three distinct matching sales in the past 30 days.";
             }
             const report = await deps.plan({ searchId, goal, candidates, markets, auction: format === "AUCTION" }, active);
             active.throwIfAborted();
             const evaluation = report.destination ? evaluations.get(report.destination.listingId) : null;
             if (report.destination && !evaluation) throw new Error("The selected evidence is unavailable.");
-            const alternative = report.destination && alternatives.get(report.destination.listingId);
+            let alternative: DealHuntResponse["alternative"];
+            const otherCopies: ListingSummary[] = [];
+            for (const [id, { candidate, leads, reason }] of alternatives) {
+                const listing = candidate.liveListing();
+                if (!listing) continue;
+                if (id === report.destination?.listingId) alternative = { listing, reason };
+                else if (standalone && otherCopies.length < DEVELOPMENT_SEARCH_LIMIT &&
+                    leads.some(lead => shortlistMarketCopies([listing], lead, goal, targets, filters).length)) otherCopies.push(listing);
+            }
+            const copies = { ...(alternative && { alternative }), ...(standalone && { candidates: otherCopies }) };
+            if (standalone && report.destination && !alternative) {
+                return { report: { ...report, decision: "WAIT", destination: null, reason: "The selected listing became unavailable before the hunt finished." },
+                    evaluation: null, ...copies };
+            }
             if (!report.destination && !marketNote && report.steps.length && report.steps.every(step => step.action === "find_listings")) {
                 marketNote = `Searched item prices for ${new Intl.ListFormat("en-US").format(searchedPrices)}.`;
             }
-            const opportunity = evaluation && report.decision === "BID" ? auctionOpportunity(evaluation, targets, deps.now(), filters.maxPrice) : null;
-            if (report.decision === "BID" && opportunity?.status !== "BID") {
+            const selectedBid = evaluation && report.decision === "BID" ? evaluation : null;
+            const collector = selectedBid && goal === "collect_slab" ? collectorAuction(selectedBid, deps.now(), filters.maxPrice) : null;
+            const opportunity = selectedBid && goal !== "collect_slab" ? auctionOpportunity(selectedBid, targets, deps.now(), filters.maxPrice) : null;
+            if (report.decision === "BID" && (collector ?? opportunity)?.status !== "BID") {
                 return { report: { ...report, decision: "WAIT", reason: "The auction terms expired before the hunt finished.", marketNote }, evaluation: evaluation ?? null,
-                    ...(alternative && { alternative }) };
+                    ...copies };
             }
-            return { ...(opportunity && { auctionOpportunity: opportunity }), report: marketNote ? { ...report, marketNote } : report, evaluation: evaluation ?? null,
-                ...(alternative && { alternative }) };
+            return { ...(collector && { collectorAuction: collector }), ...(opportunity && { auctionOpportunity: opportunity }),
+                report: marketNote ? { ...report, marketNote } : report, evaluation: evaluation ?? null,
+                ...copies };
         }, signal);
     };
 }

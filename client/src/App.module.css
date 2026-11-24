@@ -1010,3 +1010,4 @@
 }
 .aiUsage summary { min-height: var(--tap); align-content: center; cursor: pointer; }
 .aiUsage ul { padding-left: var(--space-4); display: grid; gap: var(--space-3); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.huntFilters > summary { width: fit-content; min-height: var(--tap); align-content: center; color: var(--text-muted); cursor: pointer; }

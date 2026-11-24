@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { EbayBudgetError } from "../../server/ebay/daily-budget.ts";
 import { getAiUsageContext } from "../../server/ai/usage-context.ts";
+import { MalformedStructuredOutputError } from "../../server/ai/openai.ts";
 import { dealHuntCandidate } from "../../server/analysis/deal-hunt-evidence.ts";
 import { runDealHunt, type DealHuntCandidate, type DealHuntMarket } from "../../server/analysis/deal-hunt.ts";
 import { createModelExperimentRunner } from "../../server/analysis/model-experiment.ts";
@@ -13,10 +14,11 @@ import { cardEvaluation, salesSummary } from "../fixtures/card-evaluation.ts";
 const searchId = "e94a7e8a-2f78-40e8-afc8-941d0aab6803";
 type Prompt = { inventory: { index: number; listingId: string }[];
     observed: { action: string; listingId: string | null; observation: string }[];
-    menu: { key: string; market?: string; evidence?: string; decision?: string }[] };
+    menu: { key: string; market?: string; evidence?: string; decision?: string; differentCard?: boolean; releaseYear?: number }[] };
 function planner(pick: (prompt: Prompt) => string) {
+    const cache = new Map();
     return createModelExperimentRunner({
-        cached: async () => null, save: async () => {},
+        cached: async key => cache.get(key) ?? null, save: async (key, value) => { cache.set(key, value); },
         run: async request => {
             assert.deepEqual(request.photos, []);
             assert.equal(getAiUsageContext().searchId, searchId);
@@ -104,18 +106,70 @@ test("an expensive copy and an empty market redirect research to a second live m
     assert.match(result.reason, /projects \$[\d,.]+ after purchase and selling costs/);
 });
 
-test("two resale misses continue in saved market order without additional planner calls and leave room to verify a copy", async () => {
+test("after two misses the planner can pick a lower-ranked eligible market and reuse all four decisions on replay", async () => {
     const visits: number[] = [];
-    const markets = [0, 1, 2, 3, 4, 5].map(index => ({ title: `Market ${index}`, summary: "Historically profitable with frequent sales.",
-        async discover() { visits.push(index); return []; } }));
-    let decisions = 0;
-    const model = planner(prompt => { decisions++; return prompt.menu.at(-1)!.key; });
-    const empty = await runDealHunt({ searchId, goal: "resell", candidates: [], markets }, undefined, model);
-    assert.deepEqual(visits, [5, 4, 0, 1]);
-    assert.equal(decisions, 2);
-    assert.deepEqual(empty.steps.map(step => step.reused), [false, false, null, null]);
+    const markets = ["Dark Alakazam PSA 9", "Dark Alakazam PSA 8", "Mewtwo PSA 8", "Venusaur holo", "Dark Gengar holo", "Blastoise holo"]
+        .map((title, index) => ({ title, cardKey: index < 2 ? "alakazam" : title, releaseYear: [2000, 2000, 1999, 1999, 2002, 1999][index], summary: "Recent matching sales for " + title + ".",
+            async discover() { visits.push(index); return []; } }));
+    let dispatches = 0;
+    const model = planner(prompt => {
+        dispatches++;
+        const checks = prompt.observed.length;
+        if (checks < 2) assert.ok(prompt.menu.every(m => m.releaseYear === undefined && m.differentCard === undefined));
+        if (checks >= 2) {
+            assert.deepEqual(prompt.menu.map(m => m.releaseYear), checks === 2 ? [2000, 1999, 1999, 1999] : [2000, 1999, 1999]);
+            assert.deepEqual(prompt.menu.map(m => m.market), checks === 2
+                ? ["Dark Alakazam PSA 8", "Mewtwo PSA 8", "Venusaur holo", "Blastoise holo"]
+                : ["Dark Alakazam PSA 8", "Mewtwo PSA 8", "Venusaur holo"]);
+            assert.equal(prompt.menu[0].differentCard, false);
+            assert.equal(prompt.menu.at(-1)?.differentCard, true);
+        }
+        // The first two markets miss. Choose the last remaining different card on both pivots.
+        return "market-" + [0, 4, 5, 3][checks] + "/find_listings";
+    });
+    const input = { searchId, goal: "resell" as const, candidates: [], markets };
+    const empty = await runDealHunt(input, undefined, model);
+    assert.deepEqual(visits, [0, 4, 5, 3]);
+    assert.equal(dispatches, 4);
+    assert.ok(empty.steps.every(step => step.selectedBy === "model" && step.reused === false));
     assert.match(empty.reason, /No eligible Buy It Now copy turned up in the 4 markets checked\. Other markets remain/);
     assert.equal(empty.decision, "WAIT"); assert.equal(empty.destination, null);
+
+    visits.length = 0;
+    const replay = await runDealHunt(input, undefined, model);
+    assert.deepEqual(visits, [0, 4, 5, 3]);
+    assert.equal(dispatches, 4);
+    assert.ok(replay.steps.every(step => step.selectedBy === "model" && step.reused === true));
+});
+
+test("an unreadable market pivot uses the top-ranked different card and records that the app chose it", async () => {
+    const cache = new Map();
+    let dispatches = 0;
+    const model = createModelExperimentRunner({
+        cached: async key => cache.get(key) ?? null,
+        save: async (key, value) => { cache.set(key, value); },
+        run: async request => {
+            dispatches++;
+            const prompt: Prompt = JSON.parse(request.prompt);
+            const usage = { inputTokens: 10, outputTokens: 4 };
+            if (prompt.observed.length >= 2) throw new MalformedStructuredOutputError(request.step, usage, new SyntaxError());
+            return { result: { choice: prompt.menu[0].key, reason: "Check this market's recent sales." }, usage };
+        },
+    });
+    const markets = ["Alakazam PSA 9", "Gengar", "Alakazam PSA 8", "Venusaur"].map((title, index) => ({
+        title, cardKey: index === 2 ? "Alakazam PSA 9" : title, summary: "Matching sold records.", discover: async () => [],
+    }));
+    const run = () => runDealHunt({ searchId, goal: "resell", candidates: [], markets }, undefined, model);
+    const first = await run();
+    assert.deepEqual(first.steps.map(step => [step.title, step.selectedBy]), [
+        ["Alakazam PSA 9", "model"], ["Gengar", "model"], ["Venusaur", "app"], ["Alakazam PSA 8", "app"],
+    ]);
+    assert.match(first.steps[2].reason, /unreadable choice/);
+    assert.equal(first.steps[3].reused, null);
+    const replay = await run();
+    assert.equal(dispatches, 3);
+    assert.equal(replay.steps[2].reused, true);
+    assert.equal(replay.steps[2].selectedBy, "app");
 });
 
 test("a fourth market can surface a supported flip and a listing with insufficient sales still yields Wait", async () => {
@@ -155,4 +209,34 @@ test("eBay quota stops retain completed observations, while an accounting failur
     const badLedger = new EbayBudgetError("Could not read eBay counts.", "ACCOUNTING");
     markets[1].discover = async () => { throw badLedger; };
     await assert.rejects(runDealHunt(input, undefined, choose), badLedger);
+});
+
+test("an auction grading loss offers both a raw exit and a different liquid market with time to verify it", async () => {
+    const checks = ["check_listing", "inspect_photos", "check_sales", "calculate_grading"] as const;
+    const optionsAtLoss: string[] = [];
+    const markets: DealHuntMarket[] = ["Espeon", "Ampharos"].map((title, index) => ({
+        title, summary: "Repeated matched auction sales.",
+        discover: async () => [{
+            title, listingId: title, summary: "Raw holo auction inside ten hours",
+            available: checked => [...checks.filter(action => !checked.has(action)), "check_raw_resale"],
+            read: action => !index && action === "calculate_grading" ? "Grading costs erase the profit." : "Verified.",
+            outcome: checked => index && checks.every(action => checked.has(action))
+                ? { decision: "BID", section: "grading", reason: "The next bid fits the confirmed grading ceiling." } : null,
+        }],
+    }));
+    const result = await runDealHunt({ searchId, goal: "resell", auction: true, candidates: [], markets }, undefined,
+        planner(({ inventory, observed, menu }) => {
+            if (!inventory.length) return "market-0/find_listings";
+            if (observed.at(-1)?.observation.includes("erase")) {
+                optionsAtLoss.push(...menu.map(row => row.key));
+                return "market-1/find_listings";
+            }
+            const index = inventory.length - 1;
+            return [...checks, "finish/grading"].map(action => `${index}/${action}`).find(key => menu.some(row => row.key === key))!;
+        }));
+    assert.ok(optionsAtLoss.includes("0/check_raw_resale"));
+    assert.ok(optionsAtLoss.includes("market-1/find_listings"));
+    assert.equal(result.decision, "BID");
+    assert.equal(result.destination?.listingId, "Ampharos");
+    assert.equal(result.steps.length, 10);
 });

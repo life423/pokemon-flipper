@@ -18,6 +18,7 @@ import { hasSlabEvidence, photoEvidence } from "../../../shared/photo-evidence.t
 import { currentSellerMistakes } from "../../../shared/seller-mistakes.ts";
 import { AuctionSummary } from "./AuctionSummary";
 import { RawCardGrade } from "./RawCardGrade";
+import { ListingThumbnail } from "./ListingThumbnail";
 import { PhotoReview, type DeeperReviewState } from "./PhotoReview";
 import styles from "./DealCard.module.css";
 import { cardDetails } from "../../../shared/card-details.ts";
@@ -168,7 +169,7 @@ export function DealCard({ listing, analysis, assessmentNote, automaticDecision,
         <div className={styles.overview}>
             <header className={styles.head}>
                 <button type="button" className={styles.photo} onClick={onOpen} aria-label={`View photos and analysis of ${title}`}>
-                    {listing.images[0] ? <img src={listing.images[0]} alt="" loading="lazy" /> : <span>No photo</span>}
+                    <ListingThumbnail images={[...listing.images, ...(evaluation?.listing.photos ?? [])]} alt={title} />
                 </button>
                 <div className={styles.identity}>
                     <div className={styles.metaRow}><span className={styles.saleType}>{auction ? "Auction" : "Buy It Now"}</span><span className={styles.badge}>{badge}</span></div>

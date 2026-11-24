@@ -2720,3 +2720,43 @@ test("buyer price research can settle a previously inspected sold condition on a
     assert.equal((await refresh(true)).rawPricing?.status, "PRICED");
     assert.equal(authorizations, 1, "an accepted single physical match closes the acquisition stage");
 });
+
+test("a hunt can resolve a saved Dark Gengar auction's edition once within its live bid budget", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("the replay must not contact providers"));
+    const searchId = randomUUID();
+    const item = details({ id: "v1|123451234567|0", title: "Dark Gengar 6/105 Neo Destiny Holo",
+        buyingOption: "AUCTION", price: 25, bids: 1, auctionBids: { currentBid: 25, minimumBid: 26 },
+        shipping: 3, retrievedAt: new Date(now).toISOString(), endTime: new Date(now + 3600_000).toISOString(),
+        images: [photo(1), photo(2)], aspects: { Set: "Neo Destiny", Finish: "Holo", Language: "English" } });
+    const original = reading(2);
+    Object.assign(original.photoCheck.cardIdentity!, { name: "Dark Gengar", cardNumber: "6/105", set: "Neo Destiny" });
+    original.photoCheck.printingMarks = { firstEditionStamp: "CANT_TELL", artBoxShadow: "CANT_TELL", reprintMark: "NONE_SEEN", evidence: [] };
+    Object.assign(original.photoCheck, { printedName: "Dark Gengar", printedNumber: "6/105" });
+    let crops = 0;
+    const { evaluate, cache } = harness({ details: async () => item, assess: async () => assert.fail("the full gallery was already paid for"),
+        lookup: async () => [{ ...card, name: "Dark Gengar", setName: "Neo Destiny", cardNumber: "6/105",
+            variants: [{ name: "Unlimited Holofoil", printing: "UNLIMITED", finish: "HOLO" }, { name: "1st Edition Holofoil", printing: "FIRST_EDITION", finish: "HOLO" }] }],
+        fetchRawComps: async () => [], fetchComps: async () => [],
+        frame: async () => assert.fail("Neo Destiny has no Base Set artwork-frame check"),
+        stamp: async () => {
+            crops++; assert.equal(getAiUsageContext().searchId, searchId);
+            return { result: "NOT_PRESENT", reused: false, key: "fixture", answeredAt: new Date(now).toISOString(),
+                usage: { inputTokens: 100, outputTokens: 10 }, source: { method: "NEO_DESTINY_CONTEXT_V1", observation: "The printed stamp area is blank.",
+                    photoNumber: 1, sourceSha256: "d".repeat(64), box: { left: 90, top: 90, width: 200, height: 140 } } };
+        } });
+    const gallery = boundedAssessmentPlan(item);
+    cache.set(gallery.key, { ...original, version: gallery.version, answeredAt: new Date(now).toISOString() });
+    await withAiUsageContext({ searchId }, () => evaluate(item.id, { automatic: true, typeFilter: "AUCTION" }));
+    const saved = [...cache.entries()].find(([key]) => key.startsWith(PRIVATE_EVALUATION_PREFIX))![1];
+    saved.evaluation.focusedStamp = { result: "CANT_TELL", photoNumber: 1,
+        sourceSha256: "d".repeat(64), box: { left: 90, top: 90, width: 200, height: 140 } };
+    const focused = (maxDelivered: number) => withAiUsageContext({ searchId }, () =>
+        evaluate(item.id, { priceOnly: true, huntPrinting: { maxDelivered }, typeFilter: "AUCTION" }));
+    await focused(25);
+    assert.equal(crops, 0, "the next delivered bid exceeds the budget");
+    const first = await focused(40);
+    assert.equal(first.identity?.printing, "UNLIMITED");
+    assert.equal(first.focusedStamp?.photoNumber, 1);
+    assert.equal((await focused(40)).identity?.printing, "UNLIMITED");
+    assert.equal(crops, 1);
+});

@@ -34,7 +34,7 @@ const REFILL_BATCH_SIZE = 4;
 function literalTitleBlock(listing: ListingSummary, intent: SearchIntent): SourceRejectionReason | null {
     const reading = readTitleByRules(listing.title, intent.sets);
     if (reading.kind && reading.kind !== "SINGLE_CARD") return "JUNK";
-    if (!setMatches(reading.set, intent)) return "OTHER_SET";
+    if (!setMatches(reading.set, intent, reading.cardNumber)) return "OTHER_SET";
     if (intent.cardNumber && reading.cardNumber && !sameCardNumber(intent.cardNumber, reading.cardNumber)) return "OTHER_CARD";
     return null;
 }

@@ -44,6 +44,7 @@ import { photoReviewKey, restoreBoundedPhotoReview, reviewListingPhotos } from "
 import { isSearchDiagnosticId } from "./search-diagnostic-store.ts";
 import { findStampDecision, hasFreshStampTerms, ordinaryNeoDestinyStamp, stampCandidate, STAMP_TERMS_MAX_AGE_MS } from "./stamp-decision.ts";
 import { applyFrameReading, needsBaseSetFrame, readBaseSetFrame, storedFrameReading } from "./base-set-frame.ts";
+import { huntPrintingCheck, huntPrintingTerms } from "./deal-hunt-printing.ts";
 import { readStampCrop } from "./stamp-reading.ts";
 import { printingMarkConflicts, reconcileIdentityReadings, visibleReprintReading } from "./resolve-evidence.ts";
 import { assertPriceResearchAvailable, PriceResearchBudgetError, withPriceResearchSignal } from "../pricing/research-budget.ts";
@@ -54,7 +55,7 @@ import { hasUnlocatedConcern } from "./authenticity.ts";
 
 const CACHE_HOURS = 24 * 365 * 10;
 interface SavedBoundedReading extends BoundedReading { version: string; answeredAt: string; usage: Usage }
-export interface BoundedOptions { automatic?: boolean; typeFilter?: ListingFilters["typeFilter"]; includeOffers?: boolean; targets?: Targets; signal?: AbortSignal; current?: import("./types.ts").CurrentState | null; priceOnly?: boolean; verifySoldCondition?: boolean; addedPhotosOnly?: boolean }
+export interface BoundedOptions { automatic?: boolean; typeFilter?: ListingFilters["typeFilter"]; includeOffers?: boolean; targets?: Targets; signal?: AbortSignal; current?: import("./types.ts").CurrentState | null; priceOnly?: boolean; huntPrinting?: { maxDelivered?: number }; verifySoldCondition?: boolean; addedPhotosOnly?: boolean }
 export class PriceOnlyEvidenceError extends Error {}
 
 // A wider estimate can describe a photographed card, but it cannot support grading economics.
@@ -310,7 +311,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
     type ReadingConsumer = { needed: () => boolean; context: AiUsageContext };
     const neededReadings = new Map<string, Set<ReadingConsumer>>();
     const privateEvaluations = createPrivateEvaluationStore({ cached: deps.cached, save: deps.save });
-    return (itemId: string, options: BoundedOptions = {}): Promise<Evaluation> => share(JSON.stringify([getAiUsageContext().searchId ?? null, itemId, options.current ?? null, options.automatic ?? false, options.typeFilter ?? "all", options.includeOffers !== false, options.targets ?? null, options.priceOnly === true, options.verifySoldCondition === true, options.addedPhotosOnly === true]), signal => withPriceResearchSignal(signal, async () => {
+    return (itemId: string, options: BoundedOptions = {}): Promise<Evaluation> => share(JSON.stringify([getAiUsageContext().searchId ?? null, itemId, options.current ?? null, options.automatic ?? false, options.typeFilter ?? "all", options.includeOffers !== false, options.targets ?? null, options.priceOnly === true, options.huntPrinting ?? null, options.verifySoldCondition === true, options.addedPhotosOnly === true]), signal => withPriceResearchSignal(signal, async () => {
         signal.throwIfAborted();
         const searchId = getAiUsageContext().searchId;
         const savedForRefresh = options.priceOnly ? await privateEvaluations.load(itemId) : null;
@@ -356,6 +357,18 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             rawPricing: null, gradedPricing: null, slab: null, slabPricing: null, underwriting: null, rating: null, answeredAt: null, reusedSteps: [], usage: [] };
         const privateContext = { evidenceKey: listingEvidenceKey({ title: current?.title ?? listing.title, images: current?.images ?? listing.images }),
             contextKey: evaluationContextKey(listing), searchId: isSearchDiagnosticId(searchId) ? searchId : undefined };
+        // A hunt reuses its original accepted gallery. Only the set-specific detail
+        // can dispatch vision, and only while the refreshed purchase fits the goal.
+        if (options.huntPrinting && savedForRefresh && (savedForRefresh.contextKey !== privateContext.contextKey ||
+            savedForRefresh.evaluation.listing.buyingOption !== listing.buyingOption ||
+            savedForRefresh.evaluation.listing.cardCondition !== listing.cardCondition ||
+            JSON.stringify(savedForRefresh.evaluation.listing.conditionNotes) !== JSON.stringify(listing.conditionNotes))) {
+            throw new PriceOnlyEvidenceError("The listing changed since its photo assessment. The focused printing check was skipped.");
+        }
+        const huntPrinting = options.priceOnly && options.huntPrinting && savedForRefresh && huntPrintingCheck(savedForRefresh.evaluation)
+            ? options.huntPrinting : undefined;
+        const canCheckPrinting = () => huntPrinting ? huntPrintingTerms(evaluation.listing, deps.now(), huntPrinting.maxDelivered) : verifiedFixedPriceTerms();
+        const printingRequested = !options.priceOnly || !!huntPrinting;
         const printingClaim = printingClaimFromAspects(listing.aspects);
         // Legacy checkpoints and older private hashes did not include these
         // item specifics. Re-run identity with accepted photos when they change.
@@ -503,8 +516,8 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             return true;
         };
         const retryStampWithContext = (saved: Evaluation) => {
-            if (options.automatic || options.priceOnly || options.addedPhotosOnly || saved.focusedStamp?.result !== "CANT_TELL" ||
-                saved.focusedStamp.method !== undefined || !(priorSnapshot?.searchId || privateContext.searchId) || !verifiedFixedPriceTerms()) return false;
+            if (options.automatic || !printingRequested || options.addedPhotosOnly || saved.focusedStamp?.result !== "CANT_TELL" ||
+                saved.focusedStamp.method !== undefined || !(priorSnapshot?.searchId || privateContext.searchId) || !canCheckPrinting()) return false;
             const candidate = stampCandidate(saved);
             return Boolean(candidate && ordinaryNeoDestinyStamp(saved, candidate));
         };
@@ -1029,7 +1042,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             let focus = sameAssessment ? storedFrameReading(remembered.evaluation.focusedPrinting, check) : undefined;
             if (focus) evaluation.reusedSteps.push("focusedArtworkFrame");
             const scope = sameAssessment ? remembered.searchId ?? privateContext.searchId : privateContext.searchId;
-            if (!focus && deps.frame && scope && !options.priceOnly && !options.addedPhotosOnly && verifiedFixedPriceTerms()) {
+            if (!focus && deps.frame && scope && printingRequested && !options.addedPhotosOnly && canCheckPrinting()) {
                 const read = deps.frame;
                 const deadline = Math.min(Date.parse(details.retrievedAt!) + STAMP_TERMS_MAX_AGE_MS,
                     listing.endTime ? Date.parse(listing.endTime) : Infinity);
@@ -1069,20 +1082,20 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         }
         if (!readyForPricing(evaluation.identity)) {
             const candidate = stampCandidate(evaluation);
-            if (options.priceOnly || options.addedPhotosOnly || evaluation.focusedStamp || !candidate || !verifiedFixedPriceTerms()) return finish();
+            if (!printingRequested || options.addedPhotosOnly || evaluation.focusedStamp || !candidate || !canCheckPrinting()) return finish();
             const sameAssessment = remembered?.contextKey === privateContext.contextKey &&
                 remembered.evaluation.assessmentVersion === evaluation.assessmentVersion && remembered.evaluation.answeredAt === evaluation.answeredAt;
             const scope = (sameAssessment && remembered.searchId) || privateContext.searchId;
             // An individual assessment may resolve this edition from the existing
             // front. Automatic discovery pays only for an actionable price scenario.
-            const requestedRead = !options.automatic && scope && ordinaryNeoDestinyStamp(evaluation, candidate);
+            const requestedRead = scope && (huntPrinting || !options.automatic && ordinaryNeoDestinyStamp(evaluation, candidate));
             try {
                 const decision = requestedRead ? null : await findStampDecision(evaluation, {
                     targets: money.targets, now: deps.now(), identify, signal,
                     price: (identity, card) => priceRaw(identity, card, { allowSoldPhoto: false }),
                 });
                 if (hardFailure) throw hardFailure;
-                if ((!requestedRead && !decision) || evaluation.pricingDeferred || !verifiedFixedPriceTerms()) return finish();
+                if ((!requestedRead && !decision) || evaluation.pricingDeferred || !canCheckPrinting()) return finish();
                 const deadline = Math.min(Date.parse(details.retrievedAt!) + STAMP_TERMS_MAX_AGE_MS,
                     evaluation.listing.endTime ? Date.parse(evaluation.listing.endTime) : Infinity);
                 const dispatchSignal = AbortSignal.any([signal, AbortSignal.timeout(Math.max(0, deadline - deps.now()))]);
@@ -1109,7 +1122,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                 identified = await identify(observed);
                 evaluation.identity = identified.identity;
                 if (hardFailure) throw hardFailure;
-                if (!readyForPricing(evaluation.identity) || !verifiedFixedPriceTerms()) return finish();
+                if (!readyForPricing(evaluation.identity) || !canCheckPrinting()) return finish();
             } catch (error) {
                 signal.throwIfAborted();
                 const failure = hardFailure ?? storageFailure(error);

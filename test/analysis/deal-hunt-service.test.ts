@@ -45,22 +45,23 @@ function example() {
 
 const unexpected = async () => assert.fail("Unexpected provider or storage call");
 
-function service(fixture: ReturnType<typeof example>, overrides: Parameters<typeof createDealHuntService>[0] = {}) {
+function service(fixture: ReturnType<typeof example>, overrides: Parameters<typeof createDealHuntService>[0] = {}, onChoice?: (chosen: string, options: string[]) => void) {
     const cache = new Map();
     const choose = createModelExperimentRunner({
         cached: async key => cache.get(key) ?? null,
         save: async (key, value) => { cache.set(key, value); },
         run: async request => {
             const { menu } = JSON.parse(request.prompt) as { menu: { key: string }[] };
-            const options = ["0/finish/grading", "0/finish/photos", "0/finish/sales", "0/check_listing", "0/inspect_photos", "0/check_sales", "0/calculate_grading", "market-0/find_listings"];
+            const options = ["0/finish/grading", "0/finish/photos", "0/finish/sales", "0/check_listing", "0/inspect_photos", "0/check_sales", "0/check_price_references", "0/calculate_grading", "market-0/find_listings"];
             const choice = options.find(key => menu.some(entry => entry.key === key)) ?? menu.find(entry => entry.key.endsWith("/find_listings"))?.key;
             assert.ok(choice, "The fake chooser requires an option the app actually supplied");
+            onChoice?.(choice, menu.map(entry => entry.key));
             return { result: { choice, reason: "Check the relevant evidence for this card." }, usage: { inputTokens: 1, outputTokens: 1 } };
         },
     });
     return createDealHuntService({
         now: () => now, discovery: async () => fixture.discovery, inventory: async () => fixture.inventory, snapshot: async () => fixture.snapshot,
-        details: unexpected, evaluate: unexpected, plan: (input, signal) => runDealHunt(input, signal, choose), ...overrides,
+        details: unexpected, evaluate: unexpected, supplement: unexpected, plan: (input, signal) => runDealHunt(input, signal, choose), ...overrides,
     });
 }
 
@@ -214,14 +215,20 @@ test("omitting the hunt scope keeps a named search within its retained rows with
     assert.equal(result.report.decision, "BUY");
     assert.equal(result.report.destination?.listingId, listingId);
     assert.equal(result.alternative, undefined);
+    assert.equal(result.candidates, undefined);
 });
 
 test("a flip with no seed searches the liquid market with the buyer's filters and returns the checked copy", async () => {
     const f = example(), lead = liquidGradingMarket();
     const filters = { typeFilter: "FIXED_PRICE" as const, kindFilter: "raw" as const, minPrice: 3, maxPrice: 23 };
     let marketReads = 0, termsChecks = 0;
+    const other: ListingSummary = { ...f.inventory.rows[0].listing, id: "v1|120000000002|0",
+        url: "https://www.ebay.com/itm/120000000002", currentPrice: 6,
+        screen: { status: "UNSCREENED", needsAnalysis: "IDENTITY", reason: "Check the original photos.",
+            bestCase: null, assumed: null, card: null, evidence: { photos: 2, mainPhoto: "UNKNOWN" } } };
     const hunt = service(f, {
         discovery: unexpected, inventory: unexpected,
+        snapshot: async id => id === listingId ? f.snapshot : null,
         details: async id => { assert.equal(id, listingId); termsChecks++; return f.details; },
         markets: async (origin, goal, scope) => {
             assert.equal(origin, null); assert.equal(goal, "resell"); assert.equal(scope, "any_card");
@@ -234,7 +241,7 @@ test("a flip with no seed searches the liquid market with the buyer's filters an
             assert.equal(intent.finish, lead.finish); assert.equal(intent.graded, false);
             assert.deepEqual(constraints, filters); assert.equal(active.aborted, false);
             marketReads++;
-            return [f.inventory.rows[0].listing];
+            return [f.inventory.rows[0].listing, other, other];
         },
     });
     const result = await hunt(searchId, { ...goal, goal: "resell", listingIds: [], scope: "any_card", standalone: true, filters }, signal());
@@ -246,6 +253,40 @@ test("a flip with no seed searches the liquid market with the buyer's filters an
     assert.equal(result.alternative?.listing.id, listingId);
     assert.match(result.alternative!.reason, /3 matched sales in 30 days/);
     assert.equal(result.evaluation?.listing.id, listingId);
+    assert.deepEqual(result.candidates, [other]);
+});
+
+test("standalone auctions return actual live copies on a hunt-wide Wait and drop changed or ended copies", async () => {
+    const f = example(), lead = liquidGradingMarket();
+    let clock = now;
+    const copy = (number: number, end: number): ListingSummary => ({ ...f.inventory.rows[0].listing,
+        id: `v1|${number}|0`, url: `https://www.ebay.com/itm/${number}`, buyingOption: "AUCTION",
+        endTime: new Date(end).toISOString(), screen: { status: "UNSCREENED", needsAnalysis: "IDENTITY",
+            reason: "Check the photos.", bestCase: null, assumed: null, card: null, evidence: { photos: 2, mainPhoto: "UNKNOWN" } } });
+    const live = copy(120000000002, now + 3_600_000);
+    const changed = copy(120000000003, now + 3_600_000);
+    const ending = copy(120000000004, now + 1000);
+    const excluded = copy(120000000005, now + 10 * 3_600_000);
+    const hunt = service(f, {
+        now: () => clock, discovery: unexpected, inventory: unexpected, snapshot: async () => null,
+        markets: async () => [lead], researchAuctionSellers: async rows => rows,
+        discoverMarket: async () => [changed, live, ending, excluded, live],
+        details: async id => ({ ...f.details, id, buyingOption: "AUCTION", endTime: live.endTime, price: 8, shipping: 1,
+            bids: 2, auctionBids: { currentBid: 8, minimumBid: 9 }, title: id === changed.id ? "Different card" : live.title }),
+        plan: async ({ markets }) => {
+            const copies = await markets![0].discover();
+            assert.deepEqual(copies.map(copy => copy.listingId).sort(), [live.id, changed.id, ending.id]);
+            for (const candidate of copies.filter(c => c.listingId !== ending.id)) await candidate.read("check_listing");
+            clock += 2000;
+            return { searchId, goal: "resell", decision: "WAIT", reason: "The research limit was reached.", destination: null, steps: [] };
+        },
+    });
+    const result = await hunt(searchId, { ...goal, goal: "resell", listingIds: [], scope: "any_card", standalone: true,
+        filters: { typeFilter: "AUCTION" } }, signal());
+    assert.equal(result.evaluation, null);
+    assert.equal(result.alternative, undefined);
+    assert.deepEqual(result.candidates?.map(c => [c.id, c.currentPrice, c.shipping, c.bids, c.images, c.url]),
+        [[live.id, 8, 1, 2, live.images, live.url]]);
 });
 
 test("two empty live markets lead to a third copy and its checked grading breakdown in the same hunt", async () => {
@@ -305,6 +346,7 @@ test("a liquid comparison market cannot qualify a copy whose assessed printing d
     assert.equal(result.report.destination, null);
     assert.equal(result.evaluation, null);
     assert.equal(result.alternative, undefined);
+    assert.deepEqual(result.candidates, []);
 });
 
 test("a refreshed purchase total must fit the buyer's budget including shipping and estimated tax", async () => {
@@ -414,4 +456,123 @@ test("the planner can check an unassessed auction's legal next bid before paying
     assert.deepEqual(result.report.steps.map(s => s.action), ["check_listing"]);
     assert.match(result.report.reason, /No supported bid.*next bid of/);
     assert.match(result.report.steps[0].observation, /next bid of \$41\.00.*\$55\.21/);
+});
+
+test("the planner recovers a sparse slab reference under the hunt allowance and reuses it without photo or listing calls", async () => {
+    const f = example(), row = f.inventory.rows[0].listing;
+    f.e.condition = null;
+    f.e.rawPricing = null;
+    f.e.gradedPricing = null;
+    f.e.listing.endTime = null;
+    f.e.slab = { status: "OK", grader: "CGC", grade: "8.5", gradeQualifier: null, certNumber: null, certUrl: null,
+        labelText: "Venusaur 15/102 Unlimited Holo CGC 8.5", caseCondition: "INTACT", reasons: [], concerns: [] };
+    Object.assign(f.e.photoCheck!, { holder: "GRADED_SLAB", slab: { ...f.e.slab, present: true, authenticity: "NONE_SEEN" } });
+    f.e.slabPricing = { status: "PRICE_UNAVAILABLE", printing: "UNLIMITED", grader: "CGC", grade: 8.5 };
+    Object.assign(row, { isGraded: true });
+    f.inventory.intent.graded = true;
+    let settled = false;
+    const modes: boolean[] = [];
+    const second = { ...row, id: "v1|120000000002|0" };
+    f.inventory.rows.push({ listing: second, assessable: true });
+    f.discovery.discovery.retainedIds.push(second.id);
+    let hadAlternative = false;
+    const hunt = service(f, { snapshot: async id => id === listingId ? f.snapshot : null, restoreRaw: async () => null, supplement: async (e, options) => {
+        assert.equal(e.listing.id, listingId);
+        assert.deepEqual(getAiUsageContext(), { searchId, listingId });
+        modes.push(options.cacheOnly);
+        if (!settled && options.cacheOnly) return {};
+        settled = true;
+        return { trackerPriceReference: { source: "POKEMON_PRICE_TRACKER", printingLabel: "Unlimited Holofoil", tcgPlayerId: 4, caveat: "",
+            gradedMarket: { grader: "CGC", grade: "8.5", priceUsd: 110, statistic: "7_DAY_MEDIAN", reportedSales: 9, lastSaleAt: old, marketplaces: ["eBay"] } } };
+    } }, (action, menu) => {
+        if (action === "0/check_price_references" && menu.includes("1/inspect_photos")) hadAlternative = true;
+    });
+    const request = { ...goal, goal: "collect_slab", listingIds: [listingId, second.id] };
+    for (let i = 0; i < 2; i++) {
+        const { report, evaluation } = await hunt(searchId, request, signal());
+        assert.equal(report.decision, "WAIT", report.reason);
+        assert.match(report.reason, /\$110\.00.*Pokémon Price Tracker/);
+        assert.match(report.reason, /matched transaction is still needed/);
+        assert.equal(report.steps.filter(step => step.action === "check_price_references").length, 1);
+        assert.equal(evaluation?.slabPricing?.summary, undefined);
+        assert.equal(evaluation?.underwriting?.best, null);
+    }
+    assert.deepEqual(modes, [true, false, true]);
+    assert.equal(hadAlternative, true, "the planner could instead choose the other copy’s photos");
+});
+
+test("a collector can pursue an under-market auction that fails resale targets using existing slab evidence", async () => {
+    const f = example();
+    const listing = f.inventory.rows[0].listing;
+    const ends = new Date(now + 3_600_000).toISOString();
+    const terms = { price: 84, shipping: 5, buyingOption: "AUCTION" as const, endTime: ends, bids: 1 };
+    const slab = { status: "OK" as const, grader: "CGC", grade: "8.5", gradeQualifier: null, certNumber: null, certUrl: null,
+        labelText: "Venusaur CGC 8.5 Unlimited Holo", caseCondition: "INTACT" as const, reasons: [], concerns: [] };
+    Object.assign(f.e.listing, terms, { auctionQuote: { currentBid: 84, minimumBid: 85, checkedAt: stamp } });
+    Object.assign(listing, terms, { isGraded: true, currentPrice: 84 });
+    Object.assign(f.inventory.filters, { typeFilter: "AUCTION" });
+    f.inventory.intent.graded = true;
+    const summary = salesSummary("CGC", "8.5", [95, 100, 105]);
+    summary.sales.forEach((sale, i) => Object.assign(sale, { saleType: "auction", soldAt: old, url: `https://www.ebay.com/itm/${120000002110 + i}` }));
+    Object.assign(f.e, { condition: null, gradedPricing: null, rawPricing: null, slab,
+        slabPricing: { status: "PRICED", printing: "UNLIMITED", variant: "Holofoil", grade: 8.5, grader: "CGC", summary } });
+    Object.assign(f.e.photoCheck!, { holder: "GRADED_SLAB", slab: { ...slab, present: true, authenticity: "NONE_SEEN" } });
+    let detailReads = 0;
+    const leads = rankHuntMarkets([f.e], null, "collect_slab", "any_card", now);
+    assert.equal(leads.length, 1);
+    const hunt = service(f, { details: async () => {
+        detailReads++;
+        return { ...f.details, ...terms, auctionBids: { currentBid: 84, minimumBid: 85 } };
+    }, discoverMarket: async (_id, intent) => {
+        assert.equal(intent.grader, "CGC");
+        return [listing];
+    }, markets: async () => leads, researchAuctionSellers: async rows => rows });
+    const criteria = { ...goal, targets: { minProfit: 50, minRoi: 50 }, filters: { typeFilter: "AUCTION", maxPrice: 98 } };
+    const collector = await hunt(searchId, { ...criteria, goal: "collect_slab" }, signal());
+    assert.equal(collector.report.decision, "BID", collector.report.reason);
+    assert.equal(collector.collectorAuction?.marketValue, 100);
+    assert.equal(collector.collectorAuction?.nextTotal, 97.43);
+    assert.equal(collector.collectorAuction?.maxBid, 85.53);
+    assert.equal(collector.auctionOpportunity, undefined);
+    assert.equal(collector.report.destination?.section, "sales");
+    const reseller = await hunt(searchId, { ...criteria, goal: "resell" }, signal());
+    assert.equal(reseller.report.decision, "WAIT", reseller.report.reason);
+    const broad = await hunt(searchId, { ...criteria, goal: "collect_slab", standalone: true, listingIds: [], scope: "any_card" }, signal());
+    assert.equal(broad.report.decision, "BID", broad.report.reason);
+    assert.equal(broad.collectorAuction?.maxBid, collector.collectorAuction?.maxBid);
+    assert.equal(detailReads, 3);
+});
+
+test("a hunt dispatches only the eligible printing detail and reevaluates that copy against its verified edition", async () => {
+    const fixture = example(), { e } = fixture;
+    const identified = structuredClone(e);
+    e.identity = { ...e.identity!, printing: "UNKNOWN", status: "NEEDS_REVIEW",
+        reasons: ["The photos don't clearly show which printing this is."] };
+    e.photoCheck!.cardIdentity = { name: "Venusaur", set: "Base Set", cardNumber: "15/102", finish: "HOLO", language: "English", confidence: "HIGH", evidence: ["Name and number on the card."] };
+    e.photoCheck!.printingMarks = { firstEditionStamp: "CANT_TELL", artBoxShadow: "CANT_TELL", reprintMark: "NONE_SEEN", evidence: [] };
+    identified.focusedPrinting = { rightEdge: "PRESENT", bottomEdge: "PRESENT", stamp: "NOT_PRESENT", observation: "Printed shadows on both frame edges.",
+        photoNumber: 1, sourceSha256: "a".repeat(64) };
+    let detailCalls = 0;
+    const app = service(fixture, {
+        evaluate: async (id, options) => {
+            detailCalls++; assert.equal(id, listingId); assert.equal(options?.priceOnly, true);
+            assert.equal(options?.huntPrinting?.maxDelivered, 80); assert.equal(getAiUsageContext().searchId, searchId);
+            return identified;
+        },
+        plan: async ({ candidates }) => {
+            const copy = candidates[0];
+            const checked = new Set<import("../../shared/deal-hunt.ts").DealHuntAction>(["inspect_photos"]);
+            assert.ok(!copy.available(checked).includes("resolve_printing"));
+            await copy.read("check_listing"); checked.add("check_listing");
+            assert.ok(copy.available(checked).includes("resolve_printing"));
+            assert.equal(copy.outcome(checked), null);
+            const observed = await copy.read("resolve_printing");
+            assert.match(observed, /original photo 1.*Base Set.*Unlimited/);
+            assert.ok(!copy.available(checked).includes("resolve_printing"));
+            return { searchId, goal: "resell", decision: "WAIT", steps: [], reason: observed, destination: { listingId, section: "photos" } };
+        },
+    });
+    const response = await app(searchId, { ...goal, goal: "resell", filters: { maxPrice: 80 } }, signal());
+    assert.equal(detailCalls, 1);
+    assert.equal(response.evaluation?.identity?.printing, "UNLIMITED");
 });

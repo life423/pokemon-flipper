@@ -1,6 +1,7 @@
 import { normalizeWords, sameCardNumber, sameSetFamily, isPrinting } from "../identity/card-identity.ts";
 import type { ListingSummary, Screen, SearchIntent } from "../../shared/types.ts";
 import { cardLanguageStatus } from "../../shared/card-language.ts";
+import { matchesGallerySubset } from "../identity/screening-name.ts";
 
 // Which of eBay's results are the card searched for. Before any lookups,
 // the title has to name the card. After the free check identifies a
@@ -26,8 +27,9 @@ export function gradingMatches(isGraded: boolean, intent: SearchIntent): boolean
 
 // Whether a set (as read from a title, say) fits the search. An unknown
 // set fits: the free check decides.
-export function setMatches(setName: string | null | undefined, intent: SearchIntent): boolean {
-    return !setName || intent.sets.length === 0 || intent.sets.some((wanted) => sameSetFamily(setName, wanted));
+export function setMatches(setName: string | null | undefined, intent: SearchIntent, number?: string | null): boolean {
+    return !setName || intent.sets.length === 0 || intent.sets.some(wanted =>
+        sameSetFamily(setName, wanted) || matchesGallerySubset(setName, number, wanted, intent.cardNumber));
 }
 
 // Why an identified listing isn't the card searched for, or null when it
@@ -37,7 +39,7 @@ export function cardMismatch(screen: Screen | undefined, intent: SearchIntent): 
 
     if (!card) return null;
 
-    if (!setMatches(card.set, intent)) {
+    if (!setMatches(card.set, intent, card.cardNumber)) {
         return "OTHER_SET";
     }
 

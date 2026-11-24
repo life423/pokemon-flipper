@@ -133,10 +133,10 @@ function resaleRoutes(e: Evaluation, market: Market, targets: Targets, nextTotal
 }
 
 // Compare the rounded, tax-inclusive purchase in whole cents, including bids exactly at the cap.
-function affordableBidLimit(limit: number, shipping: number, budget: number) {
+export function affordableBidLimit(limit: number, shipping: number, budget: number) {
     let low = 0, high = cents(limit);
     while (low < high) {
-        const middle = Math.ceil((low + high) / 2);
+        const middle = low + Math.ceil((high - low) / 2);
         if (cents(acquisitionCost(middle / 100, shipping, MONEY_CONFIG.buying)) <= cents(budget)) low = middle;
         else high = middle - 1;
     }

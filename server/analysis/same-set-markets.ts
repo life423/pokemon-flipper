@@ -73,7 +73,7 @@ function copyMarkets(value: Evaluation, goal: DealHuntGoal, slab: boolean, inclu
 }
 
 function eligible(scope: Scope, origin: HuntOrigin | null, goal: DealHuntGoal) {
-    return scope === "same_set" ? !!origin?.set.trim() && !!origin.name.trim() : scope === "any_card" && goal === "resell";
+    return scope === "same_set" ? !!origin?.set.trim() && !!origin.name.trim() : scope === "any_card" && goal !== "grade_raw";
 }
 
 function inHuntScope(set: string, name: string, number: string, scope: Scope, origin: HuntOrigin | null) {
@@ -84,7 +84,8 @@ function inHuntScope(set: string, name: string, number: string, scope: Scope, or
 }
 
 export const MIN_RECENT_HUNT_SALES = 3;
-export function rankHuntMarkets(evaluations: Evaluation[], origin: HuntOrigin | null, goal: DealHuntGoal, scope: Scope, now: number, minimum: 1 | 3 = MIN_RECENT_HUNT_SALES, includeDownside = false): HuntMarket[] {
+export function rankHuntMarkets(evaluations: Evaluation[], origin: HuntOrigin | null, goal: DealHuntGoal, scope: Scope, now: number,
+    minimum: 1 | 3 = goal === "collect_slab" ? 1 : MIN_RECENT_HUNT_SALES, includeDownside = false): HuntMarket[] {
     if (!eligible(scope, origin, goal)) return [];
     type Market = Omit<HuntMarket, "sales30" | "sales90" | "latestSaleAt" | "medianUsd" | "listingIds" | "projectedProfit">;
     type Sale = { at: number; price: number };

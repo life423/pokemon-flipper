@@ -14,9 +14,7 @@ type SupplementalEvidence = Pick<Evaluation, "trackerPriceReference" | "trackerR
 type Providers = { tracker: typeof trackerMarketReferences; web: typeof searchWebPrices };
 const providers: Providers = { tracker: trackerMarketReferences, web: searchWebPrices };
 
-export async function supplementalResearch(value: Evaluation, options: { cacheOnly: boolean; signal: AbortSignal; now: number },
-    sources = providers): Promise<SupplementalEvidence> {
-    const result: SupplementalEvidence = {};
+export function supplementalMarket(value: Evaluation) {
     const identity = value.identity, photo = value.photoCheck;
     if (!identity || !readyForPricing(identity) || !identity.name || !identity.cardNumber || !identity.set || identity.notThisCard ||
         !photo || photo.cardCount !== "ONE" || !photo.images.some(p => p.usable && !p.isStockImage) ||
@@ -24,7 +22,7 @@ export async function supplementalResearch(value: Evaluation, options: { cacheOn
         !["HOLO", "NON_HOLO", "REVERSE_HOLO"].includes(identity.finish) || unsupportedVariantReason(value) ||
         obscuredDisclosedWear(value) || value.frontPhotoStop || value.pricingDeferred ||
         value.condition?.authenticity && value.condition.authenticity.concern !== "NONE_SEEN" ||
-        !value.underwriting || value.underwriting.verdict === "NEEDS_REVIEW" || value.underwriting.shippingUnconfirmed) return result;
+        !value.underwriting || value.underwriting.verdict === "NEEDS_REVIEW" || value.underwriting.shippingUnconfirmed) return null;
 
     const kind = observedCardKind(value), slab = value.slab, raw = value.condition?.rawCondition;
     const provisional = provisionalTrackerGrade(value);
@@ -40,10 +38,20 @@ export async function supplementalResearch(value: Evaluation, options: { cacheOn
         exactCount = Math.max(sameCondition?.count ?? 0, priced?.comps?.count ?? 0);
     } else if (provisional !== null) {
         market = { grader: "PSA", grade: String(provisional) };
-    } else return result;
+    } else return null;
 
-    const supported = value.underwriting.best?.status === "PRICED";
-    const settledPass = supported && value.underwriting.verdict === "PASS";
+    return { market, provisional, exactCount };
+}
+
+export async function supplementalResearch(value: Evaluation, options: { cacheOnly: boolean; signal: AbortSignal; now: number },
+    sources = providers): Promise<SupplementalEvidence> {
+    const result: SupplementalEvidence = {};
+    const target = supplementalMarket(value);
+    if (!target) return result;
+    const identity = value.identity!;
+    const { market, exactCount, provisional } = target;
+    const supported = value.underwriting?.best?.status === "PRICED";
+    const settledPass = supported && value.underwriting?.verdict === "PASS";
     // Read saved references for a settled purchase. Spend only where the exact market is sparse.
     const cacheOnly = options.cacheOnly || provisional !== null || settledPass || exactCount >= 3;
     async function lookup<T>(source: string, work: () => Promise<T>) {

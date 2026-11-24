@@ -186,3 +186,65 @@ test("a raw auction with only graded sales cannot claim a discount against its r
     assert.equal(outcome?.decision, "WAIT");
     assert.match(outcome!.reason, /did not establish a current below-market auction/);
 });
+
+test("a sparse auction can use a condition-specific reference for Wait after the verified next bid fits the buyer's cap", () => {
+    const e = rawCard();
+    Object.assign(e.listing, { buyingOption: "AUCTION", price: 35, bids: 1, auctionQuote: { checkedAt: stamp, currentBid: 35, minimumBid: 36 },
+        endTime: new Date(now + 3_600_000).toISOString() });
+    e.gradedPricing = null;
+    e.underwriting = { verdict: "CANT_PRICE", best: null, reasons: [], paths: [], assumptions: [] };
+    const checked = new Set<DealHuntAction>(["check_listing", "check_sales", "inspect_photos"]);
+    const hunt = (budget?: number) => dealHuntCandidate(e, "resell", now, undefined, MONEY_CONFIG.targets, budget)!;
+    assert.ok(!hunt().available(new Set(["check_sales"])).includes("check_price_references"));
+    assert.ok(!hunt(35).available(checked).includes("check_price_references"));
+    assert.ok(hunt(50).available(checked).includes("check_price_references"));
+    e.trackerRawReference = { source: "TCGPLAYER_MARKET", tcgPlayerId: 1, recordId: String(e.identity!.recordId), printing: "FIRST_EDITION",
+        finish: "HOLO", condition: "LIGHTLY_PLAYED", priceUsd: 100, updatedAt: stamp };
+    assert.ok(hunt().available(checked).includes("check_price_references"));
+    e.trackerRawReference.printing = "UNLIMITED";
+    assert.ok(!hunt().available(checked).includes("check_price_references"));
+    checked.add("check_price_references");
+    const result = hunt().outcome(checked);
+    assert.equal(result?.decision, "WAIT");
+    assert.match(result!.reason, /\$100\.00 TCGplayer market estimate for Lightly Played/);
+    e.listing.endTime = new Date(now + 10 * 3_600_000).toISOString();
+    delete e.trackerRawReference;
+    assert.ok(!hunt().available(new Set(["check_listing", "check_sales", "inspect_photos"])).includes("check_price_references"));
+});
+
+test("a price reference for a different slab printing or web grade cannot suppress a new lookup", () => {
+    const e = slabCard();
+    const checks = new Set<DealHuntAction>(["check_listing", "check_sales", "inspect_photos"]);
+    e.trackerPriceReference!.printingLabel = "1st Edition Holofoil";
+    e.webPriceResearch = { checkedAt: stamp, market: { cardName: "Dark Gengar", setName: "Neo Destiny", cardNumber: "6/105",
+        printingLabel: e.identity!.printingLabel!, finish: "HOLO", language: e.identity!.language, grader: "PSA", grade: "9" },
+        observations: [{ title: "Different slab", kind: "SOLD", priceUsd: 9999, date: stamp.slice(0, 10), url: "https://www.ebay.com/itm/123000000099" }] };
+    const candidate = dealHuntCandidate(e, "collect_slab", now)!;
+    assert.ok(candidate.available(checks).includes("check_price_references"));
+    assert.doesNotMatch(String(candidate.read("check_sales")), /925|9,999/);
+});
+
+test("the planner can inspect a raw exit directly on both auctions and Buy It Now and still honor the grade-only goal", () => {
+    const e = rawCard(15);
+    const comps = salesSummary("RAW", "LIGHTLY_PLAYED", [170, 175, 180]);
+    comps.sales.forEach((sale, i) => Object.assign(sale, { saleType: "auction", photoCondition: "LIGHTLY_PLAYED",
+        conditionEvidence: ["Edge wear on front and back."], url: `https://www.ebay.com/itm/${321000001000 + i}` }));
+    e.rawPricing = { status: "PRICED", printing: "UNLIMITED", finish: "HOLO", source: "pkmnprices", variant: "holo", conditionEvidence: "AI_PHOTOS",
+        prices: [{ basis: "EBAY_SOLD", condition: "LIGHTLY_PLAYED", price: 175, updatedAt: stamp, comps }] };
+    const targets = { minProfit: 0, minRoi: 0 };
+    const choices = new Set<DealHuntAction>(["inspect_photos", "check_raw_resale", "check_listing"]);
+    for (const format of ["FIXED_PRICE", "AUCTION"] as const) {
+        Object.assign(e.listing, { buyingOption: format, bids: 1, price: 35, shipping: 2, endTime: new Date(now + 3_600_000).toISOString(),
+            auctionQuote: { currentBid: 35, minimumBid: 36, checkedAt: stamp } });
+        e.underwriting = underwrite(e, { ...MONEY_CONFIG, targets });
+        const hunt = dealHuntCandidate(e, "resell", now, undefined, targets)!;
+        assert.ok(hunt.available(new Set()).includes("check_raw_resale"));
+        assert.match(String(hunt.read("check_raw_resale")), /Lightly Played estimate of \$175.00.*profit.*3 matched sales/);
+        const result = hunt.outcome(choices);
+        assert.equal(result?.decision, format === "AUCTION" ? "BID" : "BUY");
+        assert.equal(result?.section, "sales");
+        assert.ok(!dealHuntCandidate(e, "grade_raw", now)!.available(new Set()).includes("check_raw_resale"));
+    }
+    comps.sales.splice(1);
+    assert.notEqual(dealHuntCandidate(e, "resell", now)!.outcome(choices)?.decision, "BID");
+});

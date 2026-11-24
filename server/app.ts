@@ -189,7 +189,7 @@ app.post("/api/deal-hunt", tracked(async (req, res) => {
     const signal = requestSignal();
     try {
         const result = await runSearchDealHunt(id, req.body, signal);
-        if (result.report.decision === "BID" && !signal.aborted)
+        if (result.auctionOpportunity && result.report.goal !== "collect_slab" && result.report.decision === "BID" && !signal.aborted)
             await auctionTracker.remember(result.auctionOpportunity, result.evaluation, getBudgetContext().searchId ?? id);
         if (!signal.aborted) res.set("Cache-Control", "no-store").json(result);
     } catch (error) {

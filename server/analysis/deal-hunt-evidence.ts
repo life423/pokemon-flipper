@@ -1,22 +1,27 @@
-import { auctionOpportunity, withinOpportunityWindow } from "../../shared/auction-opportunity.ts";
+import { auctionOpportunity, nextAuctionBid, withinOpportunityWindow } from "../../shared/auction-opportunity.ts";
+import { collectorAuction } from "../../shared/collector-auction.ts";
 import { freshListingTime, GRADING_WATCH_FRESH_MS, type GradingOpportunity } from "../../shared/grading-watch.ts";
 import type { DealHuntAction, DealHuntGoal } from "../../shared/deal-hunt.ts";
 import { CONDITION_NAMES, isRawCondition } from "../../shared/conditions.ts";
+import { finishClaim } from "../../shared/finish.ts";
+import { finishOfVariant, mapVariantPrintings } from "../identity/card-identity.ts";
 import { dollars } from "../../shared/format.ts";
 import { readyForPricing } from "../../shared/identity.ts";
 import { cents, meetsMoneyTargets } from "../../shared/money/cents.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { isRawSoldPrice, referencePriceReason } from "../../shared/money/price-evidence.ts";
-import { rawBuyGuidance } from "../../shared/money/raw-buy-guidance.ts";
+import { rawBuyGuidance, rawPriceReferences } from "../../shared/money/raw-buy-guidance.ts";
 import { slabBuyGuidance } from "../../shared/money/slab-buy-guidance.ts";
 import { acquisitionCost } from "../../shared/money/underwriting.ts";
 import { displayedRawGrade, observedCardKind, photoCoverage, slabLabelConfidence } from "../../shared/photo-evidence.ts";
+import { huntPrintingCheck, huntPrintingTerms, huntPrintingObservation } from "./deal-hunt-printing.ts";
 import { currentPriceEvidence } from "../../shared/pricing-freshness.ts";
 import { BEST_BUY_TERMS_MAX_AGE_MS } from "../../shared/search-diagnostic.ts";
 import { verifiedSlabMarketKey } from "../../shared/slab-market.ts";
 import { soldMarketPrice } from "../../shared/sold-evidence.ts";
 import type { CompSummary, Evaluation, Grader, PricedPath, Targets } from "../../shared/types.ts";
 import type { DealHuntCandidate, DealHuntOutcome } from "./deal-hunt.ts";
+import { supplementalMarket } from "../pricing/supplemental-research.ts";
 import { MIN_RECENT_HUNT_SALES, rankHuntMarkets, salesForExit, type HuntMarket } from "./same-set-markets.ts";
 
 function listingTerms(value: Evaluation, now: number) {
@@ -66,7 +71,9 @@ function gradeMarket(value: Evaluation, grader: Grader, grade: number) {
 
 function rawMarket(value: Evaluation, now: number) {
     const pricing = value.rawPricing;
-    if (!readyForPricing(value.identity) || !pricing || pricing.printing !== value.identity?.printing) return null;
+    if (!readyForPricing(value.identity) || pricing?.status !== "PRICED" || pricing.printing !== value.identity?.printing ||
+        !(pricing.finish || pricing.variant) || pricing.variant && finishOfVariant(pricing.variant) !== value.identity?.finish ||
+        pricing.finish && pricing.finish !== value.identity?.finish) return null;
     const condition = value.condition?.rawCondition;
     const row = pricing.prices?.find(row => row.condition === condition && isRawSoldPrice(row));
     const comp = row?.comps ?? pricing.ebayComps?.find(row => row.grader === "RAW" && row.grade === condition);
@@ -111,18 +118,67 @@ function gradeMath(scenarios: Scenarios) {
     }).join(" ");
 }
 
+function huntSlabReference(value: Evaluation, now: number) {
+    const identity = value.identity, grade = value.slab;
+    if (!identity || !grade) return null;
+    const web = value.webPriceResearch, scope = web?.market;
+    const webAge = now - Date.parse(web?.checkedAt ?? "");
+    const matchesWeb = scope && scope.cardName === identity.name && scope.setName === identity.set && scope.cardNumber === identity.cardNumber &&
+        scope.grader === grade.grader && scope.grade === grade.grade && scope.finish === identity.finish && scope.language === identity.language &&
+        scope.printingLabel === (identity.printingLabel || identity.printing.replaceAll("_", " ")) && webAge >= 0 && webAge <= 7 * 86_400_000;
+    const label = value.trackerPriceReference?.printingLabel;
+    const finish = finishClaim(label);
+    const matchesTracker = label && mapVariantPrintings([label], identity.set)[label] === identity.printing &&
+        (finish === "NOT_STATED" ? "NON_HOLO" : finish) === identity.finish;
+    return slabBuyGuidance({ ...value, trackerPriceReference: matchesTracker ? value.trackerPriceReference : undefined,
+        webPriceResearch: matchesWeb ? web : undefined }, now);
+}
+
+// References explain what a thin market may be worth. They never enter underwriting or the liquidity count.
+export function huntReferenceEvidence(value: Evaluation, now: number): string | null {
+    const slab = huntSlabReference(value, now);
+    if (slab) return `Estimated ${slab.grade} market value ${dollars(slab.price)}. ${slab.evidence}`;
+    const identity = value.identity, wear = value.condition?.rawCondition;
+    if (!identity || !isRawCondition(wear) || observedCardKind(value) !== "raw") return null;
+    const { tracked, web, scopedWeb, recent } = rawPriceReferences(value, now, wear, identity);
+    const sales = scopedWeb && web?.observations.filter(row => row.kind === "SOLD" && row.url && row.priceUsd > 0 && recent(row.date, 90));
+    if (sales && sales.length) {
+        const latest = sales.slice().sort((a, b) => b.date!.localeCompare(a.date!))[0];
+        return `The latest cited seller-described ${CONDITION_NAMES[wear]} sale was ${dollars(latest.priceUsd)} on ${latest.date}. The sold copy’s condition has not been photo-verified.`;
+    }
+    if (tracked && tracked.condition === wear) return `Pokémon Price Tracker reports a ${dollars(tracked.priceUsd)} TCGplayer market estimate for ${CONDITION_NAMES[wear]} on ${tracked.updatedAt.slice(0, 10)}.`;
+    return null;
+}
+
 export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: number | (() => number) = Date.now, market?: HuntMarket | HuntMarket[], targets: Targets = MONEY_CONFIG.targets, maxDelivered?: number): DealHuntCandidate | null {
     const timestamp = typeof clock === "number" ? () => clock : clock;
     const kind = observedCardKind(value);
     const auction = value.listing.buyingOption === "AUCTION";
-    if (!kind || (auction && goal === "collect_slab") ||
+    if (!kind ||
         (goal === "grade_raw" && kind !== "raw") || (goal === "collect_slab" && kind !== "graded")) return null;
     const slab = kind === "graded";
     const grade = value.condition?.gradeRange?.likely;
     const gradeRoute = goal === "grade_raw" || (!slab && value.underwriting?.best?.path === "GRADE");
+    function canCheckReferences(completed: ReadonlySet<DealHuntAction>, now: number) {
+        if (!completed.has("check_sales") || !completed.has("inspect_photos") || !completed.has("check_listing") ||
+            goal === "grade_raw" || value.underwriting?.verdict !== "CANT_PRICE" || listingTerms(value, now).status ||
+            value.listing.endTime && Date.parse(value.listing.endTime) <= now ||
+            value.deeperPhotoReview?.findings.some(f => f.impact === "NEW_CONCERN") ||
+            (slab ? !verifiedSlabMarketKey(value, { allowScratchedCase: true }) || slabMarket(value, now) : rawMarket(value, now)) ||
+            huntReferenceEvidence(value, now)) return false;
+        const target = supplementalMarket(value);
+        if (!target || target.provisional !== null) return false;
+        const item = auction ? nextAuctionBid(value.listing, now) : value.listing.price;
+        if (item === null || auction && !withinOpportunityWindow(value.listing.endTime, now)) return false;
+        return maxDelivered === undefined || acquisitionCost(item, value.listing.shipping!, MONEY_CONFIG.buying) <= maxDelivered;
+    }
+    function checkedReferences(now: number) {
+        return [huntReferenceEvidence(value, now) ?? "No additional source supplied a current estimate or cited sale for this exact market.",
+            value.supplementalPriceNote].filter(Boolean).join(" ");
+    }
     function saleEvidence(now: number) {
         const slabSales = slab ? slabMarket(value, now) : null;
-        const reference = slab && !slabSales ? slabBuyGuidance(value, now) : null;
+        const reference = slab && !slabSales ? huntSlabReference(value, now) : null;
         const raw = slab ? null : rawMarket(value, now);
         if (slabSales) return `${slabSales.count} matched ${value.slab?.grader} ${value.slab?.grade} sales. Sold estimate ${dollars(slabSales.price)}.`;
         if (reference) return `${reference.evidence} Estimated market value ${dollars(reference.price)}. ${reference.caseNote ?? ""}`.trim();
@@ -141,14 +197,46 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
         }
         return observations.join(" ") || "No matching raw or grade-specific sales are established in the saved research.";
     }
+    function rawExit(now: number) {
+        const price = rawMarket(value, now);
+        const path = value.underwriting?.paths.find((p): p is PricedPath => p.status === "PRICED" && p.path === "RAW");
+        if (!price || !isRawCondition(price.condition) || !path || path.salePrice !== price.price || path.priceCondition !== value.condition?.rawCondition || referencePriceReason(value, path)) return null;
+        const markets = rankHuntMarkets([value], null, "resell", "any_card", now, 1);
+        if (market) markets.push(...(Array.isArray(market) ? market : [market]));
+        const sales = salesForExit(value, path, markets, now);
+        return { path, price, condition: price.condition, sales };
+    }
+    function rawObservation(now: number) {
+        const exit = rawExit(now);
+        if (!exit) return "The saved sales do not establish a condition-matched raw resale for this copy.";
+        const next = auction ? nextAuctionBid(value.listing, now) : value.listing.price;
+        const shipping = value.listing.shipping;
+        if (next === null || shipping === null) return "Fresh purchase and shipping terms are needed to calculate raw resale profit.";
+        const total = acquisitionCost(next, shipping, MONEY_CONFIG.buying);
+        const profit = (cents(exit.path.expectedNet) - cents(total) - cents(exit.path.fixedCosts)) / 100;
+        return `Selling raw at the ${CONDITION_NAMES[exit.condition]} estimate of ${dollars(exit.price.price)} projects a ${profit < 0 ? "loss" : "profit"} of ${dollars(Math.abs(profit))} after all costs${auction ? " at the next bid" : ""}. ${exit.sales} matched ${exit.sales === 1 ? "sale" : "sales"} in the last 30 days.`;
+    }
     function outcome(completed: ReadonlySet<DealHuntAction>): DealHuntOutcome | null {
         if (!completed.has("check_listing") || !completed.has("inspect_photos")) return null;
         const now = timestamp();
+        if (!completed.has("resolve_printing") && huntPrintingCheck(value) && huntPrintingTerms(value.listing, now, maxDelivered)) return null;
+        const rawChecked = goal === "resell" && !slab && completed.has("check_raw_resale");
         if (auction) {
             if (!withinOpportunityWindow(value.listing.endTime, now)) return { decision: "WAIT", section: "sales", reason: "The auction is outside the remaining ten-hour opportunity window." };
-            if (!completed.has("check_sales")) return null;
+            if (!completed.has("check_sales") && !rawChecked) return null;
+            if (goal === "collect_slab") {
+                const bid = collectorAuction(value, now, maxDelivered);
+                const reference = completed.has("check_price_references") ? checkedReferences(now) : huntReferenceEvidence(value, now);
+                return { decision: bid?.status === "BID" ? "BID" : "WAIT", section: "sales", reason: bid?.reason ??
+                    [reference, "Wait. Current auction terms and verified sales for this printing, grader and grade are needed to set your collector bid limit."].filter(Boolean).join(" ") };
+            }
             const offer = auctionOpportunity(value, targets, now, maxDelivered);
-            if (!offer) return { decision: "WAIT", section: "sales", reason: "The latest bid and matched sales did not establish a current below-market auction for this copy." };
+            if (!offer) {
+                const reference = completed.has("check_price_references") ? checkedReferences(now) : huntReferenceEvidence(value, now);
+                return { decision: "WAIT", section: "sales", reason: [reference,
+                    "The latest bid and matched sales did not establish a current below-market auction for this copy."].filter(Boolean).join(" ") };
+            }
+            if (!completed.has("check_sales") && offer.routeKind !== "RAW") return null;
             if ((offer.routeKind === "GRADE" || goal === "grade_raw") && !completed.has("calculate_grading")) return null;
             if (goal === "grade_raw" && offer.routeKind !== "GRADE") return { decision: "WAIT", section: "grading", reason: "A profitable grading route at the next bid has not been established." };
             return { decision: offer.status === "BID" ? "BID" : "WAIT", section: offer.routeKind === "GRADE" ? "grading" : "sales", reason: offer.reason };
@@ -157,12 +245,15 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
             const status = value.listing.availability === "UNAVAILABLE" ? "The listing has ended. " : "";
             return { decision: "WAIT", section: "photos", reason: status + "The photos did not establish the exact printing needed to price this copy." };
         }
-        if (!completed.has("check_sales") || gradeRoute && !completed.has("calculate_grading")) return null;
-        let section: DealHuntOutcome["section"] = gradeRoute ? "grading" : "sales";
+        const raw = rawChecked ? rawExit(now) : null;
+        const chooseRaw = raw && raw.path.clears && raw.path.profit > 0 && raw.sales >= MIN_RECENT_HUNT_SALES &&
+            (!completed.has("calculate_grading") || !gradeRoute);
+        if (!chooseRaw && (!completed.has("check_sales") || gradeRoute && !completed.has("calculate_grading"))) return null;
+        let section: DealHuntOutcome["section"] = gradeRoute && !chooseRaw ? "grading" : "sales";
         let hasGradeComparisons = false;
         const terms = listingTerms(value, now);
         const slabSales = slab ? slabMarket(value, now) : null;
-        const reference = slab && !slabSales ? slabBuyGuidance(value, now) : null;
+        const reference = slab && !slabSales ? huntSlabReference(value, now) : null;
         const markets = goal === "resell" ? rankHuntMarkets([value], null, goal, "any_card", now, 1) : [];
         if (market) markets.push(...(Array.isArray(market) ? market : [market]));
         let exit: PricedPath | undefined;
@@ -177,6 +268,10 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
             supported = !!slabSales && intact && terms.total !== null && cents(terms.total) <= cents(slabSales.price) &&
                 !!value.underwriting && value.underwriting.verdict !== "NEEDS_REVIEW" &&
                 !value.deeperPhotoReview?.findings.some(finding => finding.impact === "NEW_CONCERN");
+        } else if (chooseRaw) {
+            exit = raw.path;
+            supported = value.underwriting?.verdict.startsWith("BUY") === true;
+            reason = `Selling raw at the condition-matched ${dollars(raw.price.price)} estimate projects ${dollars(exit.profit)} after purchase and selling costs.`;
         } else if (gradeRoute) {
             const scenarios = gradeScenarios(value, now);
             hasGradeComparisons = scenarios.some(({ likely, lower }) => likely && lower);
@@ -215,6 +310,10 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
             }
             if (exit.profit > 0 && !exit.clears) reason += " The projected return falls short of your profit or ROI target.";
         }
+        if (!supported && completed.has("check_price_references") && !reference) {
+            reason = [checkedReferences(now), reason].join(" ");
+        }
+        if (reference && !supported && !reason.includes(reference.evidence)) reason += " " + reference.evidence;
         const stalePrices = supported && !currentPriceEvidence(value, now);
         const seller = value.listing.seller;
         const sellerConcern = !!seller && ((seller.feedbackScore != null && seller.feedbackScore < 10) ||
@@ -225,10 +324,14 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
     }
     return {
         listingId: value.listing.id, title: value.listing.title,
-        summary: [slab ? "Graded card" : "Raw card", value.listing.cardCondition && `seller describes it as ${value.listing.cardCondition}`,
+        summary: [slab ? "Graded card" : "Raw card", huntPrintingCheck(value) && "One set-specific original photo detail can resolve the printing.", value.listing.cardCondition && `seller describes it as ${value.listing.cardCondition}`,
             value.listing.createdAt && `listed ${value.listing.createdAt}`].filter(Boolean).join(" · "),
         available(completed) {
             const actions: DealHuntAction[] = ["check_listing", "inspect_photos", "check_sales"];
+            if (completed.has("check_listing") && huntPrintingCheck(value) && huntPrintingTerms(value.listing, timestamp(), maxDelivered)) actions.push("resolve_printing");
+            if (goal === "resell" && !slab && readyForPricing(value.identity) && isRawCondition(value.condition?.rawCondition))
+                actions.push("check_raw_resale");
+            if (canCheckReferences(completed, timestamp())) actions.push("check_price_references");
             if (!slab && completed.has("inspect_photos") && completed.has("check_sales")) actions.push("calculate_grading");
             return actions.filter(action => !completed.has(action));
         },
@@ -241,7 +344,10 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
                     return [price != null && `Current auction price ${dollars(price)}.`, auctionQuote?.minimumBid != null && `Next bid ${dollars(auctionQuote.minimumBid)}.`, endTime && `Ends ${endTime}.`].filter(Boolean).join(" ") || "Auction terms are unavailable.";
                 }
                 case "inspect_photos": return photos(value, slab);
+                case "resolve_printing": return huntPrintingObservation(value);
+                case "check_raw_resale": return rawObservation(now);
                 case "check_sales": return saleEvidence(now);
+                case "check_price_references": return checkedReferences(now);
                 case "calculate_grading": {
                     if (!auction) return gradeMath(gradeScenarios(value, now));
                     const grading = auctionOpportunity(value, targets, now, maxDelivered)?.grading;

@@ -16,6 +16,7 @@ import { SlabSection } from "./analysis/EvidenceSections";
 import { PricesSection } from "./analysis/PricingSections";
 import { Section } from "./analysis/primitives";
 import type { DealHuntReport } from "../../../shared/deal-hunt.ts";
+import { huntDecisionLabel } from "../search/hunt-result";
 import { OfferSection, type ReviewedDecision } from "./analysis/OfferSection";
 import { FinancialDecision } from "./analysis/FinancialDecision";
 import styles from "./DetailPanel.module.css";
@@ -48,9 +49,10 @@ interface Props {
 export function DetailPanel({ listing, analysis, automaticDecision, reviewPending, now, onClose, onAnalyze, onRefreshPrices, priceRefresh, closing = false, docked = false, returnFocus, huntFocus, minGrade = 0, targets = MONEY_CONFIG.targets, includeOffers, photoReviewState, onPhotoReview, onSave, saved, saving }: Props) {
     const unavailable = listing.availability === "UNAVAILABLE" || Boolean(listing.endTime && Date.parse(listing.endTime) <= now);
     const evaluation = analysis?.status === "done" ? analysis.evaluation : null;
-    const checking = Boolean(reviewPending && !automaticDecision && !unavailable);
-    const override = automaticDecision && automaticDecision.decision !== "BUY" ? automaticDecision : null;
-    const showPurchaseScenarios = !checking && !override;
+    const collecting = huntFocus?.report.goal === "collect_slab" && huntFocus.report.destination?.listingId === listing.id;
+    const checking = Boolean(!collecting && reviewPending && !automaticDecision && !unavailable);
+    const override = !collecting && automaticDecision && automaticDecision.decision !== "BUY" ? automaticDecision : null;
+    const showPurchaseScenarios = !collecting && !checking && !override;
     const pricingExpired = analysis?.status === "done" && analysis.pricingExpired;
     const canRefreshPrices = onRefreshPrices && !unavailable && evaluation?.photoCheck &&
         (readyForPricing(evaluation.identity) || evaluation.pricingDeferred?.identityLookupPending) &&
@@ -61,10 +63,13 @@ export function DetailPanel({ listing, analysis, automaticDecision, reviewPendin
     const panel = useRef<HTMLElement>(null);
     const huntEvidence = useRef<HTMLElement>(null);
     const destination = huntFocus?.report.destination;
-    const section = showPurchaseScenarios && evaluation && destination?.listingId === listing.id ? destination.section : null;
+    const sameWaitDecision = huntFocus?.report.decision === "WAIT" && override?.decision === "WAIT" &&
+        !override.auctionOpportunity && !unavailable;
+    const section = (collecting || showPurchaseScenarios || sameWaitDecision) && evaluation && destination?.listingId === listing.id ? destination.section : null;
     const label = section === "sales" ? "Price evidence" : section === "grading" ? "Grading breakdown" : "Photo evidence";
-    const action = section === "sales" ? "check_sales" : section === "grading" ? "calculate_grading" : "inspect_photos";
-    const observation = huntFocus?.report.steps.find(step => step.listingId === listing.id && step.action === action)?.observation;
+    const actions = section === "sales" ? ["check_sales", "check_price_references", "check_raw_resale"] :
+        section === "grading" ? ["calculate_grading"] : ["inspect_photos", "resolve_printing"];
+    const observation = huntFocus?.report.steps.filter(step => step.listingId === listing.id && actions.includes(step.action)).at(-1)?.observation;
 
     useEffect(() => {
         panel.current?.scrollTo({ top: 0 });
@@ -104,8 +109,8 @@ export function DetailPanel({ listing, analysis, automaticDecision, reviewPendin
                 {section && evaluation && huntFocus && <section className={styles.huntEvidence} ref={huntEvidence} tabIndex={-1}
                     aria-label={label} data-hunt-section={section}>
                     <h3>{label}</h3>
-                    <p><strong data-decision={huntFocus.report.decision}>{huntFocus.report.decision === "BID" ? "Bid opportunity" : huntFocus.report.decision === "BUY" ? "Buy" : "Wait"}</strong> · {huntFocus.report.reason}</p>
-                    {huntFocus.alternative && <p>{huntFocus.alternative.reason}</p>}
+                    <p><strong data-decision={huntFocus.report.decision}>{huntDecisionLabel(huntFocus.report)}</strong> · {huntFocus.report.reason}</p>
+                    {huntFocus.alternative && huntFocus.report.decision !== "BID" && <p>{huntFocus.alternative.reason}</p>}
                     {observation && observation !== huntFocus.report.reason && <p>{observation}</p>}
                     {section === "grading" && <GradingComparison evaluation={evaluation} expanded />}
                     {section === "photos" && photoReview}

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { auctionOpportunity, withinOpportunityWindow } from "../../shared/auction-opportunity.ts";
+import { collectorAuction } from "../../shared/collector-auction.ts";
 import { retargetEvaluation } from "../../shared/money/targets.ts";
 import { PRICING_VERSION } from "../../shared/pricing-freshness.ts";
 import { BEST_BUY_TERMS_MAX_AGE_MS } from "../../shared/search-diagnostic.ts";
@@ -71,6 +72,39 @@ test("a slab uses its exact certified market and can qualify as a single auction
     e.slabPricing = {status:"PRICED", grader:"CGC", grade:"8.5", printing:"UNLIMITED", variant:"Holofoil", summary:sales("CGC","8.5",[90,99,110])};
     const s = receipt(e); assert.equal(s?.status,"BID"); assert.equal(s.routeKind,"GRADED_RESALE"); assert.equal(s.marketValue,99);
     e.slabPricing.grade="9"; assert.equal(receipt(e),null);
+});
+
+test("collector bid limits use verified fair value and the delivered budget at the exact cent", () => {
+    const e = raw();
+    assert.equal(collectorAuction(e, now), null);
+    e.condition = null;
+    e.rawPricing = null;
+    e.slab = { status: "OK", grader: "CGC", grade: "8.5", gradeQualifier: null, certNumber: null, certUrl: null,
+        labelText: "Venusaur CGC 8.5", caseCondition: "INTACT", concerns: [], reasons: [] };
+    Object.assign(e.photoCheck!, { holder: "GRADED_SLAB", slab: { ...e.slab, present: true, authenticity: "NONE_SEEN" } });
+    e.slabPricing = { status: "PRICED", grader: "CGC", grade: 8.5, printing: "UNLIMITED", variant: "Holofoil", summary: sales("CGC", "8.5", [70, 75, 79]) };
+    const check = (budget?: number) => collectorAuction(retargetEvaluation(e, targets), now, budget);
+    assert.equal(check(44.38)?.status, "BID");
+    assert.equal(check(44.38)?.maxBid, 36);
+    assert.equal(check(44.37)?.status, "PASS");
+    assert.equal(check(200)?.maxBid, 64.28, "the market caps a larger budget");
+    e.listing.shipping = null;
+    assert.equal(check()?.status, "WATCH");
+    e.listing.shipping = 5;
+    e.listing.auctionQuote!.currentBid = 33;
+    assert.equal(check()?.status, "WATCH");
+    e.listing.auctionQuote!.currentBid = 35;
+    e.listing.seller!.feedbackScore = 2;
+    assert.equal(check()?.status, "WATCH");
+    e.listing.seller!.feedbackScore = 50;
+    e.listing.endTime = end(10 * 3600000);
+    assert.equal(check(), null);
+    e.listing.endTime = end(3600000);
+    e.slabPricing.printing = "FIRST_EDITION";
+    assert.equal(check(), null);
+    e.slabPricing.printing = "UNLIMITED";
+    e.slabPricing.summary!.sales[1].saleType = undefined;
+    assert.equal(check(), null, "a price with unconfirmed sale provenance cannot set a bid");
 });
 
 test("a grading exit must have sales one grade lower, with a ceiling that keeps that grade profitable", () => {

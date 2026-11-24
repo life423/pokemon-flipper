@@ -3,9 +3,21 @@ import { test } from "node:test";
 import type { DealHuntResponse } from "../../shared/deal-hunt.ts";
 import type { ListingSummary } from "../../shared/types.ts";
 import { selectedHuntListing } from "../../client/src/search/hunt-result.ts";
+import { auctionHuntPrompt } from "../../client/src/search/auction-goal.ts";
 import { cardEvaluation } from "../fixtures/card-evaluation.ts";
 
 const searchId = "1a87d6b7-402c-458d-ac49-8b6cf6056dbe";
+
+test("a collector auction goal preserves a delivered budget and edition-specific questions stay in named search", () => {
+    assert.deepEqual(auctionHuntPrompt("Find graded holo auctions from 1999 to 2003 for my collection under $150 delivered."), {
+        marketPreferences: { minYear: 1999, maxYear: 2003, finish: "HOLO" }, goal: "collect_slab", maxDelivered: 150,
+    });
+    assert.deepEqual(auctionHuntPrompt("Find slabs to collect in auctions"), { marketPreferences: {}, goal: "collect_slab" });
+    for (const query of ["Find PSA 8 auctions for my collection", "Find graded Dark Gengar auctions for my collection",
+        "Find raw holo auctions to collect", "Find graded auctions to collect under $20 profit",
+        "Find graded auctions to collect under $40 delivered in two hours", "Find graded auctions to collect under $30"])
+        assert.equal(auctionHuntPrompt(query), null, query);
+});
 
 function discovered() {
     const evaluation = cardEvaluation();
@@ -39,4 +51,27 @@ test("the alternative listing, gallery and eBay URL must match the assessed copy
     assert.throws(() => selectedHuntListing(response, searchId, "resell", "any_card", []));
     response.report.decision = "WAIT";
     assert.equal(selectedHuntListing({ report: response.report, evaluation: null }, searchId, "resell", "any_card", []), undefined);
+});
+
+test("collector auction bids only open with a current collector quote for the evaluated copy", () => {
+    const { response, listing } = discovered();
+    response.report.goal = "collect_slab";
+    response.report.decision = "BID";
+    response.evaluation!.listing.buyingOption = listing.buyingOption = "AUCTION";
+    const quote = { listingId: listing.id, status: "BID" as const, validUntil: Date.now() + 60_000 };
+    const select = () => selectedHuntListing(response, searchId, "collect_slab", "any_card", [], "AUCTION");
+    Object.assign(response, { auctionOpportunity: quote });
+    assert.throws(select, "a resale quote alone must not stand in for collector advice");
+    delete response.auctionOpportunity;
+    Object.assign(response, { collectorAuction: quote });
+    assert.equal(select(), listing);
+    assert.equal(selectedHuntListing({ ...response, alternative: undefined }, searchId, "collect_slab", "search", [listing], "AUCTION"), listing);
+    assert.throws(() => selectedHuntListing(response, searchId, "collect_slab", "any_card", []));
+    for (const change of [{ validUntil: Date.now() - 1 }, { status: "WATCH" }, { listingId: "another card" }]) {
+        Object.assign(response, { collectorAuction: { ...quote, ...change } });
+        assert.throws(select);
+    }
+    response.report.goal = "resell";
+    Object.assign(response, { collectorAuction: quote });
+    assert.throws(() => selectedHuntListing(response, searchId, "resell", "any_card", [], "AUCTION"), "collector quotes cannot qualify a flip");
 });

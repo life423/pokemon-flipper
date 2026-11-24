@@ -6,6 +6,37 @@ import { createServer } from "vite";
 import { fileURLToPath } from "node:url";
 import { cardEvaluation } from "../fixtures/card-evaluation.ts";
 
+test("a hunt that checked another price source opens that finding on the selected copy even when the search already said Wait", async t => {
+    const vite = await createServer({ configFile: fileURLToPath(new URL("../../client/vite.config.js", import.meta.url)),
+        server: { middlewareMode: true, hmr: false, ws: false, watch: null }, logLevel: "error" });
+    t.after(() => vite.close());
+    const { DetailPanel } = await vite.ssrLoadModule("/src/components/DetailPanel.tsx");
+    const value = cardEvaluation();
+    const listing = { ...value.listing, currentPrice: value.listing.price, images: value.listing.photos ?? [], isGraded: false };
+    const step = { listingId: listing.id, title: listing.title, reason: "", reused: false };
+    const report = { searchId: "demo", goal: "resell", decision: "WAIT", reason: "Wait for a matched sale.",
+        destination: { listingId: listing.id, section: "sales" }, steps: [
+            { ...step, action: "check_sales", observation: "No confirmed exact sale." },
+            { ...step, action: "check_price_references", observation: "The alternate source reports a $110 estimate." },
+            { ...step, listingId: "other", action: "check_price_references", observation: "Unrelated $500 estimate." },
+        ] };
+    const view = renderToStaticMarkup(createElement(DetailPanel, { listing, analysis: { status: "done", evaluation: value },
+        automaticDecision: { decision: "WAIT", reason: "Insufficient sales." }, huntFocus: {report},
+        now: Date.now(), onClose() {}, onAnalyze() {}, onPhotoReview() {}, onSave() {} }));
+    const focus = view.match(/<section[^>]*data-hunt-section="sales"[^>]*>([\s\S]*?)<\/section>/)?.[1];
+    assert.ok(focus);
+    assert.match(focus, /The alternate source reports a \$110 estimate/);
+    assert.doesNotMatch(focus, /Unrelated \$500|No confirmed exact sale/);
+    const collector = renderToStaticMarkup(createElement(DetailPanel, { listing, analysis: { status: "done", evaluation: value },
+        automaticDecision: { decision: "SKIP", reason: "Below the resale profit target." },
+        huntFocus: { report: { ...report, goal: "collect_slab", decision: "BID", reason: "Bid up to $87 for your collection." } },
+        now: Date.now(), onClose() {}, onAnalyze() {} }));
+    assert.match(collector, /data-hunt-section="sales"/);
+    assert.match(collector, /Collector bid/);
+    assert.match(collector, /Bid up to \$87 for your collection/);
+    assert.doesNotMatch(collector, /Below the resale profit target/);
+});
+
 test("detail view leads with eBay access and an open original-photo viewer before long analysis", async t => {
     const vite = await createServer({ configFile: fileURLToPath(new URL("../../client/vite.config.js", import.meta.url)),
         server: { middlewareMode: true, hmr: false, ws: false, watch: null }, logLevel: "error" });

@@ -6,10 +6,12 @@ import { readyForPricing } from "../../shared/identity.ts";
 import type { ListingFilters } from "../../shared/listing-filters.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { acquisitionCost, gradingTier, maxBid, netFromSale } from "../../shared/money/underwriting.ts";
+import { affordableBidLimit } from "../../shared/auction-opportunity.ts";
 import { observedCardKind } from "../../shared/photo-evidence.ts";
 import type { Evaluation, ListingSummary, SearchIntent, Targets } from "../../shared/types.ts";
 import { sameSetFamily } from "../identity/card-identity.ts";
 import { sameCatalogName } from "../identity/catalog-name.ts";
+import { matchesGallerySubset } from "../identity/screening-name.ts";
 import type { HuntMarket, HuntOrigin } from "./same-set-markets.ts";
 
 export function huntOrigin(intent: SearchIntent | undefined, evaluations: Iterable<Evaluation>): HuntOrigin | null {
@@ -37,10 +39,11 @@ export function keepsSetSearchPreferences(m: HuntMarket, original?: SearchIntent
         (original.maxGrade == null || graded && m.grade !== null && m.grade <= original.maxGrade);
 }
 
-export function matchesHuntMarket(e: Evaluation, m: HuntMarket) {
+export function matchesHuntMarket(e: Evaluation, m: HuntMarket, pendingPrinting = false) {
     const id = e.identity;
-    if (!id || !readyForPricing(id) || id.printing !== m.printing || id.finish !== m.finish ||
-        !sameSetFamily(id.set, m.set) || !sameCardNumber(id.cardNumber, m.cardNumber) || !sameCatalogName(id.name, m.name)) return false;
+    if (!id || !pendingPrinting && (!readyForPricing(id) || id.printing !== m.printing) || id.finish !== m.finish ||
+        !(sameSetFamily(id.set, m.set) || matchesGallerySubset(id.set, id.cardNumber, m.set, m.cardNumber)) ||
+        !sameCardNumber(id.cardNumber, m.cardNumber) || !sameCatalogName(id.name, m.name)) return false;
     if (m.kind === "slab") return observedCardKind(e) === "graded" && e.slab?.grader === m.grader && Number(e.slab?.grade) === m.grade;
     if (observedCardKind(e) !== "raw") return false;
     return m.condition ? e.condition?.rawCondition === m.condition : e.condition?.gradeRange?.likely === m.grade;
@@ -50,14 +53,14 @@ export function describeHuntMarket(m: HuntMarket) {
     const condition = m.condition ? CONDITION_NAMES[m.condition] : m.grader + " " + m.grade;
     const route = m.kind === "raw" && m.grader ? "after grading" : m.kind === "raw" ? "raw" : "slab";
     const printing = m.printing.replaceAll("_", " ").toLowerCase(), finish = m.finish.replaceAll("_", " ").toLowerCase();
-    return m.sales30 + " matched sales in 30 days for " + m.name + " " + m.cardNumber + " (" + m.set + ", " + printing + " " + finish + ", " +
+    return m.sales30 + (m.sales30 === 1 ? " matched sale" : " matched sales") + " in 30 days for " + m.name + " " + m.cardNumber + " (" + m.set + ", " + printing + " " + finish + ", " +
         condition + " " + route + "), with a median of " + dollars(m.medianUsd) + ".";
 }
 
 // A market median guides where to spend research. Each actual Buy still has to
 // qualify against the copy's own verified sales, live terms and all costs.
 export function marketItemLimit(m: HuntMarket, goal: DealHuntGoal, targets: Targets, shipping: number) {
-    if (goal === "collect_slab") return m.medianUsd;
+    if (goal === "collect_slab") return affordableBidLimit(m.medianUsd, shipping, m.medianUsd);
     const config = { ...MONEY_CONFIG, targets };
     let fixedCosts = 0;
     if (m.kind === "raw" && m.grader) {

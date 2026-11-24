@@ -19,9 +19,9 @@ import type { CollectorStrategyEvidence } from "../analysis/collector-strategy-e
 import { configuredShippingZip, EbayError } from "../ebay/api.ts";
 import { listingExclusion } from "../ebay/filters.ts";
 import { getListingDetails, searchListings, type ListingDetails } from "../ebay/listings.ts";
-import { lookAlikeProblem, mapVariantPrintings, normalizeSetName, printingClaimFromAspects, printingClaimFromText, sameSetFamily, titleContradiction } from "../identity/card-identity.ts";
+import { lookAlikeProblem, mapVariantPrintings, printingClaimFromAspects, printingClaimFromText, sameSetFamily, titleContradiction } from "../identity/card-identity.ts";
 import { canonicalCatalogName, sameCatalogName } from "../identity/catalog-name.ts";
-import { hasGalleryNumber, resolveScreeningName } from "../identity/screening-name.ts";
+import { matchesGallerySubset, resolveScreeningName } from "../identity/screening-name.ts";
 import { canMatchLabelText, isSv151Set } from "../identity/matches-label-text.ts";
 import { matchesSlabPhoto } from "../identity/slab-photo-text.ts";
 import { cachedSetNames } from "../search/set-catalog.ts";
@@ -40,9 +40,7 @@ function sameNumber(value: string | null | undefined, reference: ScreeningSoldRe
 
 function sameRelease(set: unknown, reference: ScreeningSoldReference, number?: string | null) {
     if (sameSetFamily(set, reference.set) && sameSetFamily(reference.set, set)) return true;
-    // A matching GG number identifies the Gallery subset on a Crown Zenith listing.
-    return normalizeSetName(set) === "crown zenith" && normalizeSetName(reference.set) === "crown zenith galarian gallery" &&
-        Boolean(number && hasGalleryNumber(number) && sameNumber(number, reference));
+    return matchesGallerySubset(set, number, reference.set, reference.cardNumber);
 }
 
 // Short release codes on English slab labels can be the seller's only set claim.

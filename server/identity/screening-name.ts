@@ -1,4 +1,5 @@
-import { cardNumberIn, normalizeWords, SWORD_SHIELD_RELEASE_CODES } from "./card-identity.ts";
+import { cardNumberIn, normalizeSetName, normalizeWords, SWORD_SHIELD_RELEASE_CODES } from "./card-identity.ts";
+import { sameCardNumber } from "../../shared/card-number.ts";
 import { canonicalCatalogName, sameCatalogName } from "./catalog-name.ts";
 import { searchAttributes } from "../../shared/search-criteria.ts";
 import { setKey } from "../../shared/sets.ts";
@@ -22,6 +23,14 @@ const RELEASE_CODE_151 = new RegExp(String.raw`(?<=\bscarlet\s*(?:&|and)?\s*viol
 export const GALLERY_TITLE = String.raw`\b(?:crown\s+zenith[\s:–—-]+)?galarian\s+gallery\b`;
 export function hasGalleryNumber(title: string): boolean {
     return /^GG(?:0?[1-9]|[1-6]\d|70)(?:\/(?:GG)?70)?$/i.test(cardNumberIn(title) ?? "");
+}
+
+// PSA labels often use the parent release and the GG numerator. Together
+// they identify the Gallery subset without borrowing a base-set card's sales.
+export function matchesGallerySubset(set: unknown, number: string | null | undefined, wantedSet: unknown, wantedNumber: string | null | undefined) {
+    return normalizeSetName(set) === "crown zenith" && normalizeSetName(wantedSet) === "crown zenith galarian gallery" &&
+        Boolean(number && /^#?GG(?:0?[1-9]|[1-6]\d|70)(?:\/(?:GG)?70)?$/i.test(number.replace(/\s+/g, "")) &&
+            sameCardNumber(number, wantedNumber));
 }
 
 // These release codes are publisher metadata only beside the corresponding

@@ -32,7 +32,7 @@ import { BestCurrentBuy, RawCopyComparison } from "./components/BestCurrentBuy";
 import { AuctionTracking } from "./components/AuctionTracking";
 import { AuctionOpportunities } from "./components/AuctionOpportunities";
 import { auctionHuntPrompt, type AuctionHuntPrompt } from "./search/auction-goal";
-import { auctionOpportunity } from "../../shared/auction-opportunity.ts";
+import { currentHuntBid } from "./search/hunt-result";
 import { GradingWatch } from "./components/GradingWatch";
 import { DealHunt } from "./components/DealHunt";
 import type { DealHuntReport, DealHuntResponse, DealHuntScope } from "../../shared/deal-hunt.ts";
@@ -134,6 +134,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
     };
     const [rawListings, setListings] = useState<ListingSummary[]>([]);
     const [standaloneHuntId, setStandaloneHuntId] = useState<string>(() => crypto.randomUUID());
+    const [startedHuntScope, setStartedHuntScope] = useState<string | null>(null);
     const [auctionPrompt, setAuctionPrompt] = useState<AuctionHuntPrompt | null>(null);
     const pendingHuntPrompt = useRef<string | null>(null);
     const [panelHunt, setPanelHunt] = useState<{ scope: string; report: DealHuntReport; alternative?: DealHuntResponse["alternative"] } | null>(null);
@@ -277,8 +278,11 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
 
     const [targets, setTargets] = useState<Targets>(readTargets);
     const standaloneHunt = page === "search" && searchStatus === "idle" && !linkInput;
-    const promptProfit = standaloneHunt && typeFilter === "AUCTION" ? auctionPrompt?.minProfit : undefined;
+    const activeAuctionPrompt = standaloneHunt && typeFilter === "AUCTION" ? auctionPrompt : null;
+    const promptProfit = activeAuctionPrompt?.minProfit;
     const huntTargets = useMemo(() => promptProfit === undefined ? targets : { ...targets, minProfit: promptProfit }, [targets, promptProfit]);
+    const huntFilters = activeAuctionPrompt?.maxDelivered !== undefined ? { ...currentFilters,
+        maxPrice: Math.min(activeAuctionPrompt.maxDelivered, currentFilters.maxPrice ?? Infinity) } : currentFilters;
     const [researchTargets, setResearchTargets] = useState(targets);
     useEffect(() => {
         if (targets.minProfit === researchTargets.minProfit && targets.minRoi === researchTargets.minRoi) return;
@@ -763,6 +767,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
             pendingHuntPrompt.current = runId;
             setStandaloneHuntId(runId);
             setTypeFilter("AUCTION");
+            if (prompt.goal === "collect_slab") setKindFilter("graded");
             setSubmittedFilters(null);
             setSearchStatus("idle");
             return;
@@ -946,6 +951,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
 
     const huntId = standaloneHunt ? standaloneHuntId : completedSearchRunId;
     const huntScope = JSON.stringify([page, huntId, linkInput, typeFilter, kindFilter, minPrice, maxPrice, minGrade, huntTargets, includeOffers]);
+    const showingStandaloneHunt = standaloneHunt && (Boolean(activeAuctionPrompt) || startedHuntScope === huntScope);
     const selectedAlternative = page === "search" && panelHunt?.scope === huntScope && panelHunt.alternative?.listing.id === selectedId
         ? panelHunt.alternative.listing : null;
     const selectedCandidate = selectedAlternative ?? (page === "shortlist" ? shortlist.map((entry) => entry.listing) : page === "listing" ? directListing ? [directListing] : [] : listings).find((listing) => listing.id === selectedId) ?? null;
@@ -1069,14 +1075,14 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
     const currentHunt = useRef({ scope: huntScope, listings: huntListings });
     currentHunt.current = { scope: huntScope, listings: huntListings };
     useEffect(() => { setPanelHunt(null); }, [huntScope]);
-    function openHuntEvidence(report: DealHuntReport, original: ListingSummary, evaluation: Evaluation, opener: HTMLElement, scope: DealHuntScope, alternative?: DealHuntResponse["alternative"]) {
+    function openHuntEvidence(report: DealHuntReport, original: ListingSummary, evaluation: Evaluation, opener: HTMLElement, scope: DealHuntScope, alternative?: DealHuntResponse["alternative"], showPanel = true) {
         const id = report.destination?.listingId;
         if (!id || report.searchId !== huntId || currentHunt.current.scope !== huntScope || searchRunId.current !== huntId) return false;
         const retained = currentHunt.current.listings.find(listing => listing.id === id);
         // Only broaden the original card identity. The selected goal, other buyer filters,
         // and the server's listing-specific evidence still apply to a discovered copy.
         if (alternative && (retained || discoveryRunByItem.current.get(id) === huntId || scope === "search" ||
-            scope === "any_card" && report.goal !== "resell" ||
+            scope === "any_card" && report.goal !== "resell" && !(report.goal === "collect_slab" && evaluation.listing.buyingOption === "AUCTION") ||
             scope === "same_set" && summary && evaluatedIdentityMismatch(evaluation, { ...summary.intent, titleWords: [], cardNumber: null }) === "OTHER_SET")) return false;
         const known = latestListings.current.get(id);
         const current = retained ?? (alternative && known && Date.parse(known.termsCheckedAt ?? "") > Date.parse(original.termsCheckedAt ?? "")
@@ -1096,7 +1102,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
         const listing = withFreshListing(current, evaluation);
         const state: AnalysisState = { status: "done", evaluation, evidenceKey: listingEvidenceKey(listing), searchRunId: report.searchId };
         if (report.decision === "BUY" || report.decision === "BID") {
-            if (report.decision === "BID" && (auctionOpportunity(evaluation, huntTargets, Date.now(), currentFilters.maxPrice)?.status !== "BID" ||
+            if (report.decision === "BID" && (currentHuntBid(report.goal, evaluation, huntTargets, Date.now(), huntFilters.maxPrice)?.status !== "BID" ||
                 (auctionUpdates.get(id) ?? 0) > Date.parse(evaluation.listing.termsCheckedAt ?? ""))) return false;
             const now = Date.now();
             const age = now - Date.parse(evaluation.listing.termsCheckedAt ?? "");
@@ -1106,7 +1112,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
         }
         if (!alternative && listing !== current) setListings(rows => rows.map(row => row.id === id ? listing : row));
         setAnalyses(rows => ({ ...rows, [id]: state }));
-        openPanel(id, opener);
+        if (showPanel) openPanel(id, opener);
         setPanelHunt({ scope: huntScope, report, alternative: alternative && { ...alternative, listing } });
         return true;
     }
@@ -1323,7 +1329,9 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                             </form>
                         </div>}
                         {saveNotice && <p className={saveNotice.error ? styles.warning : styles.saveNotice} role={saveNotice.error ? "alert" : "status"}>{saveNotice.text}</p>}
-                        {page === "search" && <SearchOptions filters={controlProps.filters} target={controlProps.target} />}
+                        {page === "search" && (showingStandaloneHunt
+                            ? <details className={styles.huntFilters}><summary>Search filters</summary><SearchOptions filters={controlProps.filters} target={controlProps.target} /></details>
+                            : <SearchOptions filters={controlProps.filters} target={controlProps.target} />)}
                     </header>
                     <ProviderUsageNotice usage={aiUsage?.providers} now={now} />
                     {!toolPage && analysisBlocked && <AnalysisBlockedNotice message={analysisBlocked} code={analysisBlockCode} onRetry={() => {
@@ -1393,11 +1401,19 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                             canScan={reviewReady && selectedId === null && !drawerOpen}
                             onScan={scanGradingWatch} onOpen={openPanel} onRecheck={buyerReviews.recheckQuote} />}
                     {huntId && (standaloneHunt || reviewReady && page === "search" && !needsWiderSearch) &&
-                        <DealHunt key={huntScope} searchId={huntId} standalone={standaloneHunt} now={now} updatedTerms={auctionUpdates} filters={currentFilters}
-                            marketPreferences={standaloneHunt && typeFilter === "AUCTION" ? auctionPrompt?.marketPreferences : undefined}
+                        <DealHunt key={huntScope} searchId={huntId} standalone={standaloneHunt} now={now} updatedTerms={auctionUpdates} filters={huntFilters}
+                            initialGoal={activeAuctionPrompt?.goal} marketPreferences={activeAuctionPrompt?.marketPreferences}
+                            onFormatChange={format => { setAuctionPrompt(null); setTypeFilter(format); }}
                             takePrompt={() => { if (pendingHuntPrompt.current !== huntId) return false; pendingHuntPrompt.current = null; return true; }} minPotentialGrade={minGrade}
                             listings={huntListings} targets={huntTargets} onOpen={openHuntEvidence}
-                            onStart={() => { if (standaloneHunt) searchRunId.current = standaloneHuntId; }}
+                            shortlistButton={listing => {
+                                const saved = shortlist.some(entry => entry.id === listing.id);
+                                const saving = savingIds.has(listing.id);
+                                return <button type="button" aria-pressed={saved} disabled={saving} onClick={() => void toggleSaved(listing)}>
+                                    {saving ? "Saving…" : saved ? "Saved ✓" : "Shortlist"}
+                                </button>;
+                            }}
+                            onStart={() => { if (standaloneHunt) { searchRunId.current = standaloneHuntId; setStartedHuntScope(huntScope); } }}
                             onClear={() => { if (selectedAlternative) setSelectedId(null); setPanelHunt(null); }} onUsage={refreshUsage} />}
                     {page === "search" && !needsWiderSearch && typeFilter !== "FIXED_PRICE" && <>
                         <AuctionOpportunities listings={filtered} decisions={buyerDecisions} now={now} onOpen={openPanel} />
@@ -1425,7 +1441,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                         }}>Rerun search</button>
                     </div>}
 
-                    {searchStatus === "idle" && (
+                    {searchStatus === "idle" && !showingStandaloneHunt && (
                         <EmptyState title={linkInput ? "Check a listing" : "Find the best buy for your card"}
                             text={linkInput ? "Paste its eBay link above for a photo assessment, resale estimates and a price limit." : "Compare matching listings, recent sales and the cost of buying. Try a search to get started."}>
                             {/* One tap to a search: recent ones, or a few to start with. */}
@@ -1563,7 +1579,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                         automaticDecision={page === "search" && !selectedAlternative ? buyerDecisions[selected.id] : undefined}
                         reviewPending={page === "search" && !selectedAlternative && !!checkingIds?.has(selected.id) && !buyerDecisions[selected.id]}
                         huntFocus={page === "search" && !needsWiderSearch && panelHunt?.scope === huntScope &&
-                            (panelHunt.report.decision !== "BID" || selectedEval && auctionOpportunity(selectedEval, huntTargets, now, currentFilters.maxPrice)?.status === "BID" &&
+                            (panelHunt.report.decision !== "BID" || selectedEval && currentHuntBid(panelHunt.report.goal, selectedEval, huntTargets, Date.now(), huntFilters.maxPrice)?.status === "BID" &&
                                 (auctionUpdates.get(selected.id) ?? 0) <= Date.parse(selectedEval.listing.termsCheckedAt ?? "")) &&
                             panelHunt.report.destination?.listingId === selected.id ? panelHunt : null}
                         returnFocus={analysisOpener}

@@ -195,3 +195,83 @@ test("an unrelated transport parse exception is never treated as a planner choic
         available: () => ["check_listing", "check_sales"], read: () => assert.fail("Unexpected dispatch"), outcome: () => null };
     await assert.rejects(runDealHunt({ searchId, goal: "collect_slab", candidates: [candidate] }, undefined, model.choose), error => error === broken);
 });
+
+test("the auction planner can check two different copies together and reuse the decision", async () => {
+    const cache = new Map();
+    let selections = 0;
+    const choose = createModelExperimentRunner({
+        cached: async key => cache.get(key) ?? null,
+        save: async (key, value) => { cache.set(key, value); },
+        run: async request => {
+            selections++;
+            const { observed, menu } = JSON.parse(request.prompt) as Prompt;
+            if (observed.length) {
+                assert.deepEqual(observed.map(step => step.listingId), ["Espeon", "Gengar"]);
+                return { result: { choice: "1/finish/sales", reason: "Gengar fits the bid limit." }, usage: { inputTokens: 20, outputTokens: 10 } };
+            }
+            assert.ok(menu.some(row => row.key === "1/check_sales"));
+            return { result: { choice: "0/check_listing", also: "1/check_sales", reason: "Check Espeon's shipping and Gengar's matching sales." },
+                usage: { inputTokens: 20, outputTokens: 10 } };
+        },
+    });
+    async function run() {
+        let started = 0;
+        const candidates: DealHuntCandidate[] = ["Espeon", "Gengar"].map((name, index) => ({
+            listingId: name, title: name, summary: "Graded auction under ten hours",
+            available: checked => checked.size ? [] : ["check_listing", "check_sales"],
+            async read() {
+                started++;
+                await new Promise(resolve => setImmediate(resolve));
+                assert.equal(started, 2, "Both independent reads must be dispatched before either returns");
+                assert.equal(getAiUsageContext().listingId, name);
+                return index ? "Gengar's next bid is under the supported ceiling." : "Espeon's shipping puts it over budget.";
+            },
+            outcome: checked => checked.size ? { decision: index ? "BID" : "WAIT", section: "sales",
+                alternateSections: ["photos"], reason: index ? "Matched sales support this bid." : "Over budget." } : null,
+        }));
+        return runDealHunt({ searchId, candidates, goal: "collect_slab", auction: true }, undefined, choose);
+    }
+    const first = await run();
+    assert.equal(first.decision, "BID");
+    assert.deepEqual(first.destination, { listingId: "Gengar", section: "sales" });
+    assert.deepEqual(first.steps.map(step => step.action), ["check_listing", "check_sales"]);
+    assert.deepEqual(first.steps.map(step => step.parallelGroup), [1, 1]);
+    assert.equal(selections, 2);
+    const replay = await run();
+    assert.ok(replay.steps.every(step => step.reused && step.selectedBy === "model"));
+    assert.equal(selections, 2);
+});
+
+test("a secondary auction check on the first listing cannot run ahead of its result", async () => {
+    const actions: string[] = [];
+    const choose = createModelExperimentRunner({ cached: async () => null, save: async () => {}, run: async () => ({
+        result: { choice: "0/check_listing", also: "0/inspect_photos", reason: "Check this auction." },
+        usage: { inputTokens: 5, outputTokens: 5 },
+    }) });
+    const candidates: DealHuntCandidate[] = ["Espeon", "Gengar"].map(name => ({
+        listingId: name, title: name, summary: "Auction",
+        available: () => ["check_listing", "inspect_photos"], read: action => { actions.push(action); return "Current terms."; },
+        outcome: checked => checked.has("check_listing") ? { decision: "BID", section: "sales", reason: "Fresh terms fit the collector budget." } : null,
+    }));
+    await runDealHunt({ searchId, candidates, goal: "collect_slab", auction: true }, undefined, choose);
+    assert.deepEqual(actions, ["check_listing"]);
+});
+
+test("a verified auction survives a simultaneous check exhausting its research allowance", async () => {
+    const choose = createModelExperimentRunner({ cached: async () => null, save: async () => {}, run: async () => ({
+        result: { choice: "0/check_listing", also: "1/check_sales", reason: "Check both copies." },
+        usage: { inputTokens: 5, outputTokens: 5 },
+    }) });
+    const candidates: DealHuntCandidate[] = [
+        { listingId: "A", title: "Espeon", summary: "Auction", available: () => ["check_listing"],
+            read() { throw new AiSearchAllowanceError("limit reached"); }, outcome: () => null },
+        { listingId: "B", title: "Ampharos", summary: "Auction with verified terms", available: () => ["check_sales"],
+            read: () => "Saved sales support the bid.", outcome: checked => checked.has("check_sales")
+                ? { decision: "BID", section: "sales", reason: "The next bid fits the checked ceiling." } : null },
+    ];
+    const result = await runDealHunt({ searchId, goal: "collect_slab", auction: true, candidates }, undefined, choose);
+    assert.equal(result.decision, "BID");
+    assert.equal(result.destination?.listingId, "B");
+    assert.deepEqual(result.steps.map(s => s.listingId), ["B"]);
+    assert.equal(result.steps[0].parallelGroup, undefined);
+});

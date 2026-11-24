@@ -34,6 +34,7 @@ interface DealHuntInput {
 
 export interface DealHuntMarket {
     cardKey?: string;
+    releaseYear?: number;
     title: string;
     summary: string;
     discover(signal?: AbortSignal): Promise<DealHuntCandidate[]>;
@@ -41,15 +42,14 @@ export interface DealHuntMarket {
 
 type ResearchChoice = { action: DealHuntAction; index: number };
 type DestinationChoice = { action: "finish"; index: number; section: DealHuntSection; decision: DealHuntOutcome["decision"]; reason: string };
-type MarketChoice = { action: "find_listings"; index: number; title: string; summary: string };
+type MarketChoice = { action: "find_listings"; index: number; title: string; summary: string; differentCard?: boolean; releaseYear?: number };
 type Option = ResearchChoice | DestinationChoice | MarketChoice;
 
-const researchLimit = 8;
+const initialResearchLimit = 8;
 // A newly discovered raw flip may need terms, photos, sales and grading economics.
 const resaleVerificationSteps = 4;
 const experiment = createModelExperimentRunner();
 const instructions = [
-    "Direct the research for the buyer's goal. Choose exactly one option from the supplied menu on each turn.",
     "The menu identifies each listing by index. check_listing reads terms and costs. inspect_photos reuses the saved assessment or runs the normal bounded assessment when needed.",
     "check_sales reads matching market evidence. calculate_grading reads grading costs and the likely and lower-grade scenarios.",
     "Use each observation to choose what to inspect next. Move to a more promising copy if the current one fails.",
@@ -64,27 +64,70 @@ function key(option: Option) {
     return option.action === "finish" ? `${option.index}/finish/${option.section}` : `${option.index}/${option.action}`;
 }
 
+function isListingCheck(option: Option): option is ResearchChoice {
+    return option.action !== "find_listings" && option.action !== "finish";
+}
+
 async function selectOption(options: Option[], searchId: string, goal: DealHuntGoal,
     inventory: { index: number; listingId: string; title: string; summary: string }[], steps: DealHuntReport["steps"],
-    choose: typeof experiment, signal?: AbortSignal, auction = false) {
-    if (options.length === 1) return { selected: options[0], reason: "This is the next available check.", reused: null };
+    choose: typeof experiment, remainingChecks: number, signal?: AbortSignal, auction = false, pivot = false) {
+    if (options.length === 1) return {
+        selected: options[0], reason: pivot ? "Only one eligible market remains to search and verify." : "This is the next available check.", reused: null,
+    };
     const choices = options.map(key);
-    const observed = steps.map(({ listingId, action, observation }) => ({ listingId, action, observation }));
+    const observed = steps.map(({ listingId, title, action, observation }) => ({ listingId, action, observation,
+        ...(pivot && action === "find_listings" && { market: title }) }));
     const menu = options.map(option => {
         if (option.action === "finish") return { key: key(option), decision: option.decision, reason: option.reason };
-        if (option.action === "find_listings") return { key: key(option), market: option.title, evidence: option.summary };
+        if (option.action === "find_listings") return { key: key(option), market: option.title, evidence: option.summary,
+            ...(option.differentCard !== undefined && { differentCard: option.differentCard }),
+            ...(option.releaseYear !== undefined && { releaseYear: option.releaseYear }) };
         return { key: key(option) };
     });
-    const hasMarkets = options.some(option => option.action === "find_listings");
-    const answer = await withAiUsageContext({ searchId }, () => choose({
+    const checks = options.filter(isListingCheck);
+    const allowPair = auction && remainingChecks >= 2 && new Set(checks.map(check => check.index)).size > 1;
+    const choiceInstruction = allowPair
+        ? "Direct the research for the buyer's goal. Choose a primary check and optionally an independent check on another listing."
+        : "Direct the research for the buyer's goal. Choose exactly one option from the supplied menu on each turn.";
+    const guidance: string[] = [];
+    if (auction) {
+        guidance.push("Only consider active auctions ending in under ten hours. Compare the next legal bid, destination shipping, estimated tax and time remaining.");
+        guidance.push(goal === "collect_slab"
+            ? "For a collector, choose a slab within the buyer's delivered budget and fair value supported by matching sold copies. Resale fees and profit targets do not apply."
+            : "For a flipper, prioritize recent sales activity and profit after costs at the next bid. An opening bid alone does not establish profit.");
+    }
+    if (options.some(option => option.action === "find_listings")) {
+        guidance.push(goal === "collect_slab"
+            ? "find_listings searches one exact slab market. Use matching sales, collector preferences and affordability to select a market. Verify the asking terms before recommending a copy."
+            : "find_listings opens current listings in the requested format for one exact market. Pick a promising market using recent matched sales and potential profit after costs. For resale the buyer cares about profit, regardless of card name. A historical profit or sales count is only a lead. Check an actual copy before recommending it.");
+    }
+    if (checks.some(check => check.action === "resolve_printing")) {
+        guidance.push("resolve_printing inspects the edition mark appropriate to the identified set. Choose it when resolving the edition could change the decision.");
+    }
+    if (checks.some(check => check.action === "check_raw_resale")) {
+        guidance.push("check_raw_resale tests selling the card as it is using matching condition, recent sales and costs. You can select it before grading, after an unprofitable grading result, or move to another liquid copy.");
+    }
+    if (allowPair) {
+        guidance.push("You may pair two independent listing checks in one decision. Use also for a check on a different listing only when it is worth running regardless of the first result. Give the reason for both choices. Use null when a result could change the next choice, or when choosing a market or finishing.");
+    }
+    const pivotInstructions = pivot
+        ? " The earlier market searches have yielded no supported purchase. Choose the next market yourself. Consider a different printing of the same Pokémon or another card from a similar release year when the supplied market permits it. Compare actual recent sales, item ceilings and any observed asking price. Prefer a different card or printing when evidence is comparable. Explain which evidence makes this market worth searching after the misses."
+        : "";
+    const referenceInstructions = options.some(option => option.action === "check_price_references")
+        ? " check_price_references checks additional price sources when exact sales are sparse. Use it to resolve a missing price. A provider estimate or asking price cannot substitute for a completed matching sale."
+        : "";
+    const answer = await withAiUsageContext({ searchId }, () => choose<{
+        choice: string; also?: ResearchChoice; reason: string; fallback: boolean;
+    }>({
         sourceKey: `deal-hunt:v1:${searchId}`, model: "gpt-6-luna", signal,
         request: {
             step: "Choose deal research", schemaName: "deal_hunt_action",
-            instructions: instructions + (auction ? " Research active auctions under ten hours. Prioritize liquid copies, time left, promising photo or seller clues and room below a bid ceiling. Below-market bids are leads. The next legal bid and the app’s expense calculation determine whether a buyer should bid." : "") + (hasMarkets ? " find_listings opens current listings in the requested format for one exact market. Pick a promising market using recent matched sales and potential profit after costs. For resale the buyer cares about profit, regardless of card name. A historical profit or sales count is only a lead. Check an actual copy before recommending it." : ""),
-            photos: [], maxOutputTokens: 160,
-            prompt: JSON.stringify({ goal: dealHuntGoals[goal], inventory, observed, remainingChecks: researchLimit - steps.length, menu }),
-            schema: { type: "object", additionalProperties: false, required: ["choice", "reason"], properties: {
+            instructions: [choiceInstruction, instructions, ...guidance].join(" ") + pivotInstructions + referenceInstructions,
+            photos: [], maxOutputTokens: allowPair ? 240 : 160,
+            prompt: JSON.stringify({ goal: dealHuntGoals[goal], inventory, observed, remainingChecks, menu }),
+            schema: { type: "object", additionalProperties: false, required: allowPair ? ["choice", "reason", "also"] : ["choice", "reason"], properties: {
                 choice: { type: "string", enum: choices }, reason: { type: "string", maxLength: 240 },
+                ...(allowPair && { also: { type: ["string", "null"], enum: [...checks.map(key), null] } }),
             } },
         },
         onMalformedOutput() {
@@ -93,6 +136,10 @@ async function selectOption(options: Option[], searchId: string, goal: DealHuntG
             const lastListing = steps.at(-1)?.listingId;
             const previous = options.filter(option => option.action !== "find_listings" && inventory[option.index].listingId === lastListing);
             const remaining = previous.length ? previous : options;
+            if (pivot) {
+                const market = options.find(option => option.action === "find_listings" && option.differentCard) ?? options[0];
+                return { choice: key(market), reason: "The AI returned an unreadable choice. The app selected the highest-ranked remaining market, preferring a different card.", fallback: true };
+            }
             const fallback = options.find(option => option.action === "finish")
                 ?? remaining.find(option => option.action === "check_listing")
                 ?? remaining.find(option => option.action === "check_sales")
@@ -100,13 +147,18 @@ async function selectOption(options: Option[], searchId: string, goal: DealHuntG
             return { choice: key(fallback), reason: "The AI returned an unreadable choice. The app used an available evidence check.", fallback: true };
         },
         validate(value) {
-            const result = value as { choice?: unknown; reason?: unknown } | null;
+            const result = value as { choice?: unknown; reason?: unknown; also?: unknown } | null;
             if (typeof result?.choice !== "string" || !choices.includes(result.choice) || typeof result.reason !== "string" ||
                 !result.reason.trim() || result.reason.length > 240) throw new Error("Invalid deal hunt selection.");
-            return { choice: result.choice, reason: result.reason.trim(), fallback: false };
+            const first = options[choices.indexOf(result.choice)];
+            // A second choice can never mutate the same listing or dispatch a market search.
+            const also = allowPair && isListingCheck(first)
+                ? checks.find(check => check.index !== first.index && key(check) === result.also) : undefined;
+            return { choice: result.choice, also, reason: result.reason.trim(), fallback: false };
         },
     }));
-    return { selected: options[choices.indexOf(answer.result.choice)], reason: answer.result.reason, reused: answer.reused, fallback: answer.result.fallback };
+    return { selected: options[choices.indexOf(answer.result.choice)], also: answer.result.also,
+        reason: answer.result.reason, reused: answer.reused, fallback: answer.result.fallback };
 }
 
 export async function runDealHunt({ searchId, goal, candidates: initial, markets = [], auction = false }: DealHuntInput, signal?: AbortSignal, choose = experiment): Promise<DealHuntReport> {
@@ -114,6 +166,8 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
     const format = auction ? "auction" : "Buy It Now";
     const candidates = [...initial];
     const searchedMarkets = new Set<number>();
+    const huntMarketsForBuyer = goal === "resell" || auction && goal === "collect_slab";
+    const verificationSteps = goal === "collect_slab" ? 3 : resaleVerificationSteps;
     if (!isSearchDiagnosticId(searchId) || !Object.hasOwn(dealHuntGoals, goal) || candidates.length > DEVELOPMENT_SEARCH_LIMIT ||
         new Set(candidates.map(candidate => candidate.listingId)).size !== candidates.length ||
         candidates.some(candidate => !candidate.listingId.trim() || !candidate.title.trim())) {
@@ -127,8 +181,11 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
     try {
         while (true) {
             signal?.throwIfAborted();
+            // Once there is an auction to examine, leave room to reject its exit and verify another copy.
+            const researchLimit = initialResearchLimit + (auction && candidates.length ? verificationSteps : 0);
             const options: Option[] = [];
             let hasUncheckedMarketCopy = false;
+            let canSwitchCopy = false;
             for (const [index, candidate] of candidates.entries()) {
                 const checked = completed[index];
                 const outcome = checked.size ? candidate.outcome(checked) : null;
@@ -137,6 +194,8 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                         if (checked.has(action)) continue;
                         options.push({ action, index });
                         if (!outcome && index >= initial.length) hasUncheckedMarketCopy = true;
+                        if (auction && index >= initial.length &&
+                            (checked.has("calculate_grading") || checked.has("check_raw_resale") || checked.has("resolve_printing"))) canSwitchCopy = true;
                     }
                 }
                 if (outcome) {
@@ -145,8 +204,8 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                     }
                 }
             }
-            const canVerifyNewCopy = researchLimit - steps.length > resaleVerificationSteps;
-            const canBrowse = goal === "resell" ? canVerifyNewCopy && !hasUncheckedMarketCopy
+            const canVerifyNewCopy = researchLimit - steps.length > verificationSteps;
+            const canBrowse = huntMarketsForBuyer ? canVerifyNewCopy && (!hasUncheckedMarketCopy || canSwitchCopy)
                 : steps.length < researchLimit && searchedMarkets.size < 2;
             if (canBrowse) {
                 markets.forEach(({ title, summary }, index) => {
@@ -155,7 +214,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             }
             if (!options.length) {
                 if (steps.length === researchLimit) return wait("The hunt reached its research limit before it could support a purchase for this goal.");
-                if (goal === "resell" && !canVerifyNewCopy && searchedMarkets.size < markets.length) {
+                if (huntMarketsForBuyer && !canVerifyNewCopy && searchedMarkets.size < markets.length) {
                     const finding = !candidates.length && searchedMarkets.size
                         ? `No eligible ${format} copy turned up in the ${searchedMarkets.size} markets checked. ` : "";
                     return wait(finding + "Other markets remain. This hunt has too few research steps left to check another one and verify a copy.");
@@ -167,18 +226,22 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             }
             // A supported buy for this goal has precedence over reporting a different copy's WAIT.
             const buys = options.filter(option => option.action === "finish" && option.decision !== "WAIT");
-            const eligible = buys.length ? buys : goal === "resell" && hasUncheckedMarketCopy
+            const eligible = buys.length ? buys : huntMarketsForBuyer && hasUncheckedMarketCopy
                 ? options.filter(option => option.action !== "finish") : options;
-            // Once the planner's first two searches turn up no copy to check, the
-            // service has already ranked the remaining markets using matched sales.
-            const nextRanked = goal === "resell" && searchedMarkets.size >= 2 &&
-                eligible.every(option => option.action === "find_listings" || option.action === "finish" && option.decision === "WAIT")
-                ? eligible.find(option => option.action === "find_listings" && auction && markets[option.index].cardKey &&
-                    [...searchedMarkets].every(index => markets[index].cardKey !== markets[option.index].cardKey))
-                    ?? eligible.find(option => option.action === "find_listings") : undefined;
-            const { selected, reason, reused, fallback } = nextRanked
-                ? { selected: nextRanked, reason: "Earlier markets yielded no supported buy. Check the next market ranked by saved sales evidence.", reused: null, fallback: false }
-                : await selectOption(eligible, searchId, goal, inventory, steps, choose, signal, auction);
+            // After two unsuccessful markets, reserve the remaining checks for a new copy.
+            // Let the planner compare every unsearched eligible market, including another printing.
+            const pivot = huntMarketsForBuyer && searchedMarkets.size >= 2 && eligible.some(option => option.action === "find_listings") &&
+                eligible.every(option => option.action === "find_listings" || option.action === "finish" && option.decision === "WAIT");
+            const menu = pivot ? eligible.filter((option): option is MarketChoice => option.action === "find_listings").map(option => {
+                const { cardKey, releaseYear } = markets[option.index];
+                return {
+                    ...option,
+                    releaseYear,
+                    ...(cardKey && { differentCard: [...searchedMarkets].every(index => markets[index].cardKey !== cardKey) }),
+                };
+            }) : eligible;
+            const { selected, also, reason, reused, fallback } = await selectOption(menu, searchId, goal, inventory, steps, choose, researchLimit - steps.length, signal, auction, pivot);
+            const selectedBy = reused === null || fallback ? "app" : "model";
             signal?.throwIfAborted();
             if (selected.action === "find_listings") {
                 searchedMarkets.add(selected.index);
@@ -193,7 +256,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                     added++;
                 }
                 const observation = `${selected.summary} Found ${added} additional eligible ${format} ${added === 1 ? "listing" : "listings"} to check.`;
-                steps.push({ listingId: null, title: selected.title, action: selected.action, reason, observation, reused });
+                steps.push({ listingId: null, title: selected.title, action: selected.action, reason, observation, reused, selectedBy });
                 continue;
             }
             const candidate = candidates[selected.index];
@@ -206,25 +269,45 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                     reason: fallback ? `${current.reason} The app selected this evidence after an unreadable AI choice.` : current.reason,
                     destination: { listingId: candidate.listingId, section } };
             }
-            const action = selected.action;
-            const observation = await withAiUsageContext({ searchId, listingId: candidate.listingId }, () => candidate.read(action, signal));
+            const checks = also ? [selected, also] : [selected];
+            const results = await Promise.allSettled(checks.map(async ({ index, action }) => {
+                const listing = candidates[index];
+                const observation = await withAiUsageContext({ searchId, listingId: listing.listingId }, () => listing.read(action, signal));
+                if (typeof observation !== "string" || !observation.trim()) throw new Error("The research function returned no observation.");
+                return observation.slice(0, 1800);
+            }));
             signal?.throwIfAborted();
-            if (typeof observation !== "string" || !observation.trim()) throw new Error("The research function returned no observation.");
-            completed[selected.index].add(action);
-            steps.push({ listingId: candidate.listingId, title: candidate.title, action, reason, observation: observation.slice(0, 1800), reused });
+            const parallelGroup = also && results.every(result => result.status === "fulfilled") ? steps.length + 1 : undefined;
+            for (const [i, result] of results.entries()) {
+                if (result.status === "rejected") continue;
+                const { index, action } = checks[i], { listingId, title } = candidates[index];
+                completed[index].add(action);
+                steps.push({ listingId, title, action, reason, observation: result.value, reused, selectedBy,
+                    ...(parallelGroup && { parallelGroup }) });
+            }
+            const failed = results.find(result => result.status === "rejected");
+            if (failed) throw failed.reason;
         }
     } catch (error) {
         signal?.throwIfAborted();
+        let reason: string;
         if (error instanceof EbayBudgetError && error.reason === "QUOTA") {
-            return wait("The eBay listing allowance ran out before the hunt could verify a purchase.");
+            reason = "The eBay listing allowance ran out before the hunt could verify a purchase.";
+        } else if (error instanceof PriceResearchBudgetError && error.reason === "LIMIT") {
+            reason = "The search reached its pricing allowance before the evidence supported a decision.";
+        } else {
+            const guard = aiSpendingFailure(error);
+            if (guard?.code !== "AI_BUDGET" && guard?.code !== "AI_PAUSED") throw error;
+            reason = "The search’s AI spending allowance or pause setting stopped research before it reached a decision.";
         }
-        if (error instanceof PriceResearchBudgetError && error.reason === "LIMIT") {
-            return wait("The search reached its pricing allowance before the evidence supported a decision.");
+        // A sibling check can finish verifying a bid while another exhausts an allowance.
+        for (const [index, candidate] of candidates.entries()) {
+            const outcome = completed[index].size && candidate.outcome(completed[index]);
+            if (outcome && outcome.decision !== "WAIT") return {
+                searchId, goal, steps, decision: outcome.decision, reason: outcome.reason,
+                destination: { listingId: candidate.listingId, section: outcome.section },
+            };
         }
-        const guard = aiSpendingFailure(error);
-        if (guard?.code === "AI_BUDGET" || guard?.code === "AI_PAUSED") {
-            return wait("The search’s AI spending allowance or pause setting stopped research before it reached a decision.");
-        }
-        throw error;
+        return wait(reason);
     }
 }
