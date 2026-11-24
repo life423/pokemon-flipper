@@ -4,7 +4,7 @@ import { inlineEbayImage } from "../ai/image-input.ts";
 import type { PhotoReport } from "../../shared/types.ts";
 
 type Box = { left: number; top: number; width: number; height: number };
-export type StampCrop = { photoNumber: number; box: Box; sourceSha256: string; dataUrl: string };
+export type StampCrop = { photoNumber: number; box: Box; sourceSha256: string; dataUrl: string; contextImage?: string };
 
 const INPUT_LIMIT = 8_000_000;
 const PREVIEW_SIZE = 320;
@@ -23,15 +23,24 @@ function yellowBorder(data: Buffer): Uint8Array {
 function hasYellowEdges(mask: Uint8Array, width: number, box: Box): boolean {
     // The yellow border is continuous along each side of an upright WotC card.
     // Check inside the corners so their curvature does not affect the fit.
-    const inset = Math.max(2, Math.round(box.width * 0.023));
+    // A slightly rotated card has sloped sides inside its axis-aligned box.
+    // Require a short, continuous yellow run near each side at each sample.
+    const depth = Math.max(3, Math.round(box.width * 0.08));
+    const yellowEdge = (start: number, step: number) => {
+        for (let offset = 0; offset < depth - 1; offset++) {
+            const index = start + offset * step;
+            if (mask[index] === 2 && mask[index + step] === 2) return 1;
+        }
+        return 0;
+    };
     let left = 0, right = 0, top = 0, bottom = 0;
     for (let sample = 1; sample < 10; sample++) {
         const row = box.top + Math.round(box.height * sample / 10);
         const col = box.left + Math.round(box.width * sample / 10);
-        left += Number(mask[row * width + box.left + inset] > 0);
-        right += Number(mask[row * width + box.left + box.width - 1 - inset] > 0);
-        top += Number(mask[(box.top + inset) * width + col] > 0);
-        bottom += Number(mask[(box.top + box.height - 1 - inset) * width + col] > 0);
+        left += yellowEdge(row * width + box.left, 1);
+        right += yellowEdge(row * width + box.left + box.width - 1, -1);
+        top += yellowEdge(box.top * width + col, width);
+        bottom += yellowEdge((box.top + box.height - 1) * width + col, -width);
     }
     return Math.min(left, right, top, bottom) >= 7;
 }
@@ -72,7 +81,7 @@ function findCard(mask: Uint8Array, width: number, height: number): Box | null {
     return card;
 }
 
-export async function cropStampFromImage(source: Buffer): Promise<Omit<StampCrop, "photoNumber"> | null> {
+export async function cropStampFromImage(source: Buffer, area: "STAMP" | "ARTWORK" = "STAMP"): Promise<Omit<StampCrop, "photoNumber"> | null> {
     const image = sharp(source, { autoOrient: true, limitInputPixels: INPUT_LIMIT });
     const metadata = await image.metadata();
     if ((metadata.pages ?? 1) !== 1) return null;
@@ -86,8 +95,8 @@ export async function cropStampFromImage(source: Buffer): Promise<Omit<StampCrop
     // Include that edge and the species strip so the model can verify placement.
     const scaleX = original.width / info.width, scaleY = original.height / info.height;
     const left = Math.floor((card.left + card.width * 0.025) * scaleX);
-    const top = Math.floor((card.top + card.height * 0.46) * scaleY);
-    const right = Math.ceil((card.left + card.width * 0.31) * scaleX);
+    const top = Math.floor((card.top + card.height * (area === "ARTWORK" ? 0.075 : 0.46)) * scaleY);
+    const right = Math.ceil((card.left + card.width * (area === "ARTWORK" ? 0.985 : 0.31)) * scaleX);
     const bottom = Math.ceil((card.top + card.height * 0.64) * scaleY);
     const box = { left, top, width: right - left, height: bottom - top };
     const crop = await image.extract(box).png().toBuffer();
@@ -95,10 +104,13 @@ export async function cropStampFromImage(source: Buffer): Promise<Omit<StampCrop
         dataUrl: `data:image/png;base64,${crop.toString("base64")}` };
 }
 
-export async function selectStampCrop(images: readonly string[], reports: readonly PhotoReport[], signal?: AbortSignal): Promise<StampCrop | null> {
+export async function selectStampCrop(images: readonly string[], reports: readonly PhotoReport[], signal?: AbortSignal, includeContext = false): Promise<StampCrop | null> {
     signal?.throwIfAborted();
-    const frontPhotos = reports.filter(report => report.view === "FRONT" && report.usable && !report.isStockImage &&
-        !report.obscuresCondition && images[report.number - 1]);
+    const fronts = reports.filter(report => report.view === "FRONT" && report.usable && !report.isStockImage && images[report.number - 1]);
+    const clearFronts = fronts.filter(report => !report.obscuresCondition);
+    // Glare elsewhere can hide surface wear while the printed stamp area is clear.
+    // The reader must see the complete expected region before it can report absence.
+    const frontPhotos = clearFronts.length ? clearFronts : fronts;
     const attempted = new Set<string>();
     let best: StampCrop | null = null;
     for (const report of frontPhotos) {
@@ -111,7 +123,7 @@ export async function selectStampCrop(images: readonly string[], reports: readon
             signal?.throwIfAborted();
             const crop = await cropStampFromImage(Buffer.from(source.slice(source.indexOf(",") + 1), "base64"));
             signal?.throwIfAborted();
-            if (crop && (!best || crop.box.width > best.box.width)) best = { ...crop, photoNumber: report.number };
+            if (crop && (!best || crop.box.width > best.box.width)) best = { ...crop, photoNumber: report.number, ...(includeContext ? { contextImage: source } : {}) };
         } catch {
             signal?.throwIfAborted();
         }

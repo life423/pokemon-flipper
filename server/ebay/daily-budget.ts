@@ -7,7 +7,9 @@ import { createLimiter } from "../lib/concurrency.ts";
 import { withFileLease } from "../lib/file-lease.ts";
 import type { EbayUsage } from "../../shared/types.ts";
 
-export class EbayBudgetError extends Error {}
+export class EbayBudgetError extends Error {
+    constructor(message: string, readonly reason: "QUOTA" | "ACCOUNTING" = "ACCOUNTING") { super(message); }
+}
 interface Ledger { used: number; limit: number; resetAt: number }
 const DAY = 24 * 60 * 60_000;
 
@@ -36,7 +38,7 @@ export function createDailyBrowseBudget({ file, now = Date.now }: { file: string
         const remaining = Math.max(0, limit - used);
         if (consume && remaining <= (keepReserve ? Math.ceil(limit * .1) : 0)) throw new EbayBudgetError(keepReserve
             ? "Saving the rest of today's eBay allowance; cached evidence and AI work remain available."
-            : "eBay's daily allowance is used up. Cached evidence and AI work remain available until it resets.");
+            : "eBay's daily allowance is used up. Cached evidence and AI work remain available until it resets.", "QUOTA");
         const ledger = { limit, used: used + (consume ? 1 : 0), resetAt };
         await writeJsonAtomic(file, ledger);
         return { limit, used: ledger.used, remaining: Math.max(0, limit - ledger.used), resetsAt: new Date(resetAt).toISOString(), braking: limit - ledger.used <= limit * .1 };

@@ -158,6 +158,69 @@ test("raw pricing explains why matching sold records did not price the assessed 
     assert.match(raw.evidenceNote!, /Damaged is the closest lower condition/);
 });
 
+test("the collector comparison keeps condition, printing, finish and transaction provenance apart from flip pricing", async () => {
+    const title = "Venusaur Base Set 15/102 Unlimited Holo";
+    const sales = [
+        sale(1, 32, { title: title + " LP+" }), sale(2, 38, { title: title + " Lightly Played" }),
+        sale(3, 40), sale(4, 150, { title: title + " NM/LP" }), sale(5, 150, { title: title + " not LP" }),
+        sale(6, 150, { title: title.replace("Unlimited", "Shadowless") + " LP" }),
+        sale(7, 150, { title: title.replace("Holo", "Reverse Holo") + " LP" }),
+        sale(8, 150, { title: title.replace("Venusaur", "Blastoise") + " LP" }), sale(9, 150, { sale_type: null }),
+        sale(10, 150, { title: "LP" }),
+    ];
+    const result = await rawPricesWithSales(card, identity, { now, requestedCondition: "LIGHTLY_PLAYED",
+        fetchRawComps: async () => [...sales, sales[0]],
+        assessCondition: async source => source.id === 3 ? { condition: "MODERATELY_PLAYED", evidence: ["Edge chipping"], photoCount: 2 } : null,
+    });
+    const ref = result.sellerConditionComps!;
+    assert.deepEqual(ref.sales.map(row => [row.price, row.url, row.sellerCondition, row.photoCondition]),
+        [[32, sales[0].listing_url, "LIGHTLY_PLAYED", undefined], [38, sales[1].listing_url, "LIGHTLY_PLAYED", undefined]]);
+    assert.equal(ref.grade, "LIGHTLY_PLAYED"); assert.equal(ref.count, 2);
+    assert.equal(ref.marketEstimate?.price, 35);
+    assert.deepEqual(result.prices?.map(row => [row.condition, row.price]), [["MODERATELY_PLAYED", 40]]);
+});
+
+test("raw recovery continues past an HP title contradicted by saved photos and reports only the closest cleaner market as context", async () => {
+    const title = "Venusaur Base Set 15/102 Unlimited Holo ";
+    const damaged = sale(1, 10, { title: title + "HP" });
+    const cleaner = sale(2, 45, { title: title + "MP" });
+    const tooClean = sale(3, 110, { title: title + "NM" });
+    const exact = sale(4, 19, { title: title + "HP" });
+    const reads: number[] = [];
+    const result = await rawPricesWithSales(card, identity, { now, requestedCondition: "HEAVILY_PLAYED",
+        fetchRawComps: async (_id, _variant, selection) => {
+            assert.equal(await selection!.stopWhen!([damaged, cleaner, tooClean]), false);
+            assert.equal(await selection!.stopWhen!([damaged, cleaner, tooClean, exact]), true);
+            return [damaged, cleaner, tooClean, exact];
+        },
+        assessCondition: async source => {
+            reads.push(Number(source.id));
+            return source.id === 1 ? { condition: "DAMAGED", evidence: ["Crease"], photoCount: 2 } : null;
+        },
+    });
+    assert.deepEqual(reads, [1, 2, 3, 4], "selection and final reviews share each saved photo observation");
+    assert.deepEqual(result.prices?.map(row => row.condition), ["DAMAGED"]);
+    assert.equal(result.sellerConditionComps?.count, 1);
+    assert.equal(result.sellerConditionComps?.median, 19);
+    assert.equal(result.cleanerSellerConditionComps?.grade, "MODERATELY_PLAYED");
+    assert.equal(result.cleanerSellerConditionComps?.median, 45);
+});
+
+test("a failed saved-photo read during raw pagination stops before another market request", async () => {
+    let pages = 0;
+    const raw = await rawPricesWithSales(card, identity, { now, requestedCondition: "HEAVILY_PLAYED",
+        fetchRawComps: async (_id, _variant, selection) => {
+            pages++;
+            await selection!.stopWhen!([sale(1)]);
+            pages++;
+            return [];
+        },
+        assessCondition: async () => { throw new Error("saved evidence is unavailable"); },
+    });
+    assert.equal(raw.status, "PRICE_UNAVAILABLE");
+    assert.equal(pages, 1);
+});
+
 test("unresolved photo targets remain unpriced without fetching or assessing historical copies", async () => {
     let fetches = 0, assessments = 0;
     const unresolved: Partial<Identity>[] = [{ finish: "NOT_STATED" }, { finish: "UNKNOWN" }, { finish: "CONFLICTING" },

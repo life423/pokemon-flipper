@@ -25,7 +25,7 @@ import { resolveListingLink, ListingLinkError } from "./listings/resolve.ts";
 import { pricingRetries, PricingRetryError } from "./deals/pricing-retries.ts";
 import { localApi, validSearchRequest } from "./lib/local-api.ts";
 import { aiUsageToday } from "./ai/usage.ts";
-import { withAiUsageContext } from "./ai/usage-context.ts";
+import { getBudgetContext, withAiUsageContext } from "./ai/usage-context.ts";
 import { readListingFilters, readMarketplaceOrder } from "./search/listing-filters.ts";
 import { assertSqlStorageReady, closeDatabase, storageBackend } from "./storage/index.ts";
 import { storageFailure } from "./lib/storage-failure.ts";
@@ -38,6 +38,11 @@ import { completeSearchDiagnostic, loadDiagnosticDiscovery, loadDiagnosticResult
 import { isSearchDiagnosticId, SearchDiagnosticInputError } from "./analysis/search-diagnostic-store.ts";
 import { drainSharedWork, trackSharedWork } from "./lib/shared-work.ts";
 import { loadPrivateEvaluation } from "./analysis/private-evaluation.ts";
+import { saveCollectorStrategyEvidence } from "./analysis/collector-strategy-evidence.ts";
+import { BuyerReviewInputError, reviewBuyerListing } from "./analysis/wait-skip-review.ts";
+import { DealHuntInputError, runSearchDealHunt, saveDealHuntInventory } from "./analysis/deal-hunt-service.ts";
+import type { ListingSummary } from "../shared/types.ts";
+import { auctionTracker } from "./auction-tracking/service.ts";
 
 const app = express();
 
@@ -76,9 +81,13 @@ function searchTargets(req: express.Request) {
         minRoi: read(req.query.roi, MONEY_CONFIG.targets.minRoi),
     };
 }
-const server = http.createServer(app);
-const shutdown = new AbortController();
 const PORT = Number(process.env.PORT || 3017);
+const SECONDARY_PORT = 3018;
+const server = http.createServer(app);
+// Both loopback listeners serve the same Express instance, DB pool and job scheduler.
+// Custom ports (including port 0 for isolated tests) keep a single listener.
+const secondaryServer = PORT === 3017 ? http.createServer(app) : null;
+const shutdown = new AbortController();
 const isProduction = process.env.NODE_ENV === "production";
 
 const tracked = (handler: (req: express.Request<Record<string, string>>, res: express.Response) => Promise<void>): express.RequestHandler<Record<string, string>> =>
@@ -90,7 +99,8 @@ app.use("/api", (_req, res, next) => {
     if (shutdown.signal.aborted) { res.status(503).json({ error: "The app is shutting down." }); return; }
     next();
 });
-app.use("/api", (req, _res, next) => withAiUsageContext({ searchId: searchId(req.get("X-Pokemon-Flipper-Search-Id")) }, next));
+app.use("/api", (req, _res, next) => withAiUsageContext({ searchId: searchId(req.get("X-Pokemon-Flipper-Search-Id")),
+    watchBudgetId: isSearchDiagnosticId(req.get("X-Pokemon-Flipper-Watch-Budget")) ? req.get("X-Pokemon-Flipper-Watch-Budget") : undefined }, next));
 app.use("/api", (req, res, next) => {
     const stopped = new AbortController();
     const disconnect = () => { if (!res.writableEnded) stopped.abort(); };
@@ -125,6 +135,16 @@ app.post("/api/camera/grade", (req, res, next) => {
     }
 }));
 app.use(express.json());
+app.get("/api/auction-tracking", tracked(async (_req, res) => {
+    try { res.set("Cache-Control", "no-store").json(await auctionTracker.list()); }
+    catch { res.status(503).json({ error: "Auction outcomes could not be read." }); }
+}));
+app.post("/api/auction-tracking/:id/recheck", tracked(async (req, res) => {
+    try {
+        if (!await auctionTracker.recheck(req.params.id)) { res.status(409).json({ error: "This auction is not due for another closing-price check." }); return; }
+        res.set("Cache-Control", "no-store").json(await auctionTracker.list());
+    } catch { res.status(503).json({ error: "Auction outcomes could not be refreshed." }); }
+}));
 app.get("/api/storage", async (_req, res) => {
     try {
         const backend = storageBackend();
@@ -152,13 +172,33 @@ function searchCoverage(summary: SearchSummary | undefined, sourceDispositions: 
     };
 }
 
-async function recordDiagnosticDiscovery(req: express.Request, summary: SearchSummary | undefined, retainedIds: Set<string>, coverage: SearchSourceCoverage) {
+async function recordDiagnosticDiscovery(req: express.Request, summary: SearchSummary | undefined, listings: Map<string, ListingSummary>, coverage: SearchSourceCoverage) {
     const id = req.get("X-Pokemon-Flipper-Search-Id");
     if (!summary || !isSearchDiagnosticId(id)) return;
-    await saveDiagnosticDiscovery(id, { ...summary, ...coverage, retainedIds: [...retainedIds] }).catch(error => {
+    await saveDiagnosticDiscovery(id, { ...summary, ...coverage, retainedIds: [...listings.keys()] }).catch(error => {
         console.error("Completed search diagnostic could not be saved", error);
     });
+    await saveDealHuntInventory(id, summary.intent, readListingFilters(req.query), [...listings.values()]).catch(error => {
+        console.error("Deal hunt inventory could not be saved", error instanceof Error ? error.name : "unknown error");
+    });
 }
+
+app.post("/api/deal-hunt", tracked(async (req, res) => {
+    const id = req.get("X-Pokemon-Flipper-Search-Id");
+    if (!isSearchDiagnosticId(id)) { res.status(400).json({ error: "A valid completed search is required." }); return; }
+    const signal = requestSignal();
+    try {
+        const result = await runSearchDealHunt(id, req.body, signal);
+        if (result.report.decision === "BID" && !signal.aborted)
+            await auctionTracker.remember(result.auctionOpportunity, result.evaluation, getBudgetContext().searchId ?? id);
+        if (!signal.aborted) res.set("Cache-Control", "no-store").json(result);
+    } catch (error) {
+        if (signal.aborted) return;
+        if (error instanceof DealHuntInputError) { res.status(error.status).json({ error: error.message }); return; }
+        const failure = evaluationFailure(error);
+        res.status(failure.status).json(failure.status === 500 ? { error: "The hunt could not complete. Completed research was saved." } : failure);
+    }
+}));
 
 app.get("/api/search-diagnostic", async (req, res) => {
     const id = req.query.searchId;
@@ -197,7 +237,7 @@ app.post("/api/pricing/retry", tracked(async (req, res) => {
 app.post("/api/listings/resolve", tracked(async (req, res) => {
     const signal = requestSignal();
     try {
-        const listing = await resolveListingLink(req.body?.input, signal);
+        const listing = await resolveListingLink(req.body?.input, signal, req.body?.comparison === true);
         if (!signal.aborted) res.json(listing);
     }
     catch (error) {
@@ -245,7 +285,7 @@ app.post("/api/deals/new", tracked(async (req, res) => {
     res.setHeader("Content-Type", "application/x-ndjson");
     const send = (message: object) => res.write(`${JSON.stringify(message)}\n`);
     const signal = requestSignal();
-    const retained = new Set<string>();
+    const retained = new Map<string, ListingSummary>();
     const overflowRows: ScreenedOverflowRow[] = [];
     const sourceDispositions: SourceDispositionRow[] = [];
     let discovery: SearchSummary | undefined;
@@ -257,7 +297,7 @@ app.post("/api/deals/new", tracked(async (req, res) => {
             onStart: (summary) => { discovery = summary; send({ type: "start", ...summary }); },
             onScreenedOverflow: row => { overflowRows.push(row); },
             onSourceDisposition: row => { sourceDispositions.push(row); },
-            onListing: (listing) => { retained.add(listing.id); send({ type: "listing", listing }); } }, known as string[]);
+            onListing: (listing) => { retained.set(listing.id, listing); send({ type: "listing", listing }); } }, known as string[], req.body?.gradingWatch === true);
         const coverage = searchCoverage(discovery, sourceDispositions, overflowRows);
         if (!signal.aborted) await recordDiagnosticDiscovery(req, discovery, retained, coverage);
         if (!signal.aborted) send({ type: "done", ...coverage });
@@ -279,7 +319,7 @@ app.get("/api/deals", tracked(async (req, res) => {
 
     // A stopped search (the page closed the connection) stops the work too.
     const signal = requestSignal();
-    const seen = new Set<string>();
+    const seen = new Map<string, ListingSummary>();
     const overflowRows: ScreenedOverflowRow[] = [];
     const sourceDispositions: SourceDispositionRow[] = [];
     let discovery: SearchSummary | undefined;
@@ -298,19 +338,51 @@ app.get("/api/deals", tracked(async (req, res) => {
             onScreenedOverflow: row => { overflowRows.push(row); },
             onSourceDisposition: row => { sourceDispositions.push(row); },
             onCompetition: reference => { competition = reference; },
-            onListing: (listing) => { seen.add(listing.id); send({ type: "listing", listing }); },
+            onCollectorEvidence: async evidence => {
+                const id = req.get("X-Pokemon-Flipper-Search-Id");
+                if (isSearchDiagnosticId(id)) await saveCollectorStrategyEvidence(id, evidence);
+            },
+            onListing: (listing) => { seen.set(listing.id, listing); send({ type: "listing", listing }); },
         });
         const coverage = searchCoverage(discovery, sourceDispositions, overflowRows);
         if (!signal.aborted) await recordDiagnosticDiscovery(req, discovery, seen, coverage);
-        await searchHistory.remember(searchText(req), Math.max(0, Number(req.query.min) || 0), [...seen], readListingFilters(req.query)).catch((error) => console.error("Search history was not saved", error));
+        await searchHistory.remember(searchText(req), Math.max(0, Number(req.query.min) || 0), [...seen.keys()], readListingFilters(req.query)).catch((error) => console.error("Search history was not saved", error));
         if (!signal.aborted) send({ type: "done", ...coverage, ...(competition && { competition }) });
     } catch (error) {
-        await searchHistory.remember(searchText(req), Math.max(0, Number(req.query.min) || 0), [...seen], readListingFilters(req.query)).catch((failure) => console.error("Partial search history was not saved", failure));
+        await searchHistory.remember(searchText(req), Math.max(0, Number(req.query.min) || 0), [...seen.keys()], readListingFilters(req.query)).catch((failure) => console.error("Partial search history was not saved", failure));
         console.error(error);
         if (!signal.aborted) send({ type: "error", error: searchFailureMessage(error) });
     }
 
     res.end();
+}));
+
+async function originalListingSearch(itemId: string, saved: Awaited<ReturnType<typeof loadPrivateEvaluation>>, requested?: string) {
+    if (!saved) return undefined;
+    if (isSearchDiagnosticId(saved.searchId)) return saved.searchId;
+    if (!isSearchDiagnosticId(requested)) return undefined;
+    const discovery = await loadDiagnosticDiscovery(requested);
+    return discovery?.discovery.retainedIds.includes(itemId) ? requested : undefined;
+}
+
+app.post("/api/listings/:id/buyer-review", tracked(async (req, res) => {
+    const id = req.get("X-Pokemon-Flipper-Search-Id");
+    if (!isSearchDiagnosticId(id) || typeof req.body?.allowResearch !== "boolean") {
+        res.status(400).json({ error: "A completed search and its research setting are required." });
+        return;
+    }
+    const signal = requestSignal();
+    try {
+        const result = await reviewBuyerListing(id, req.params.id, searchTargets(req), req.query.offers !== "0", req.body.allowResearch, signal);
+        if (req.body.allowResearch && result.auctionOpportunity && !signal.aborted)
+            await auctionTracker.remember(result.auctionOpportunity, result.evaluation, getBudgetContext().searchId ?? id);
+        if (!signal.aborted) res.set("Cache-Control", "no-store").json(result);
+    } catch (error) {
+        if (signal.aborted) return;
+        if (error instanceof BuyerReviewInputError) { res.status(error.status).json({ error: error.message }); return; }
+        const failure = evaluationFailure(error);
+        res.status(failure.status).json(failure.status === 500 ? { error: "The buyer review could not read or save the listing evidence." } : failure);
+    }
 }));
 
 // The evaluator bounds visual work and reuses saved evidence.
@@ -320,17 +392,14 @@ app.post("/api/listings/:id/evaluate", tracked(async (req, res) => {
     try {
         const current = currentState(req.body);
         const priceOnly = req.query.priceOnly === "1";
+        const addedPhotosOnly = req.query.addedPhotosOnly === "1";
         let account = searchId(req.get("X-Pokemon-Flipper-Search-Id"));
-        if (priceOnly) {
+        if (priceOnly || addedPhotosOnly) {
             const saved = await loadPrivateEvaluation(req.params.id);
-            const original = saved?.searchId;
-            if (isSearchDiagnosticId(original)) account = original;
-            else {
-                const discovery = isSearchDiagnosticId(account) ? await loadDiagnosticDiscovery(account) : null;
-                if (!saved || !discovery?.discovery.retainedIds.includes(req.params.id)) {
-                    res.status(409).json({ error: "The original search account could not be found for this saved assessment. Its prior results are still available.", retryable: false });
-                    return;
-                }
+            account = await originalListingSearch(req.params.id, saved, account);
+            if (!account) {
+                res.status(409).json({ error: "The original search account could not be found for this saved assessment. Its prior results are still available.", retryable: false });
+                return;
             }
         }
         signal.throwIfAborted();
@@ -340,14 +409,16 @@ app.post("/api/listings/:id/evaluate", tracked(async (req, res) => {
             includeOffers: req.query.offers !== "0",
             targets: searchTargets(req),
             current: priceOnly || req.query.refreshTerms === "1" || req.query.fresh === "1" ? null : current,
-            priceOnly,
+            priceOnly, addedPhotosOnly,
             signal,
         };
         const evaluation = await withAiUsageContext({ searchId: account }, () => evaluateBoundedListing(req.params.id, options));
         signal.throwIfAborted();
         const evidenceKey = listingEvidenceKey({ title: priceOnly || req.query.fresh === "1" ? evaluation.listing.title : current?.title ?? evaluation.listing.title,
             images: priceOnly || req.query.fresh === "1" ? evaluation.listing.photos ?? [] : current?.images ?? evaluation.listing.photos ?? [] });
-        await shortlistService.remember(evaluation, evidenceKey).catch((error) => console.error("Saved evaluation was not updated", error));
+        const remembered = shortlistService.remember(evaluation, evidenceKey);
+        if (addedPhotosOnly) await remembered;
+        else await remembered.catch((error) => console.error("Saved evaluation was not updated", error));
 
         if (!signal.aborted) res.json(evaluation);
     } catch (error) {
@@ -362,6 +433,7 @@ app.post("/api/listings/:id/evaluate", tracked(async (req, res) => {
         res.status(failure.status).json(failure);
     }
 }));
+
 
 // Optional focused photo review: cached details, one paid request on first use.
 app.post("/api/listings/:id/photo-review", tracked(async (req, res) => {
@@ -418,7 +490,7 @@ if (isProduction) {
         configLoader: "native",
         // Keep the server log on screen.
         clearScreen: false,
-        server: { middlewareMode: true, hmr: { server } },
+        server: { middlewareMode: true, hmr: { server, ...(secondaryServer ? { clientPort: PORT } : {}) } },
         appType: "spa",
     });
 
@@ -428,11 +500,14 @@ if (isProduction) {
 async function stopServer() {
     if (shutdown.signal.aborted) return;
     shutdown.abort();
+    auctionTracker.stop();
     server.close();
+    if (secondaryServer?.listening) secondaryServer.close();
     const timeoutMs = 120_000;
     const { complete, pending } = await drainSharedWork({ timeoutMs });
     if (!complete) console.error(`Shutdown timed out with ${pending} unfinished operations. Unresolved provider claims were retained.`);
     server.closeAllConnections();
+    secondaryServer?.closeAllConnections();
     if (complete) {
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
@@ -460,4 +535,11 @@ catch (error) {
 }
 server.listen(PORT, "127.0.0.1", () => {
     console.log(`Server listening on http://localhost:${PORT}`);
+    if (secondaryServer && !shutdown.signal.aborted) {
+        secondaryServer.on("error", error => {
+            console.error(`Secondary app port ${SECONDARY_PORT} unavailable: ${error.message}. The app remains available on port ${PORT}.`);
+        });
+        secondaryServer.listen(SECONDARY_PORT, "127.0.0.1", () => console.log(`Same app available on http://localhost:${SECONDARY_PORT}`));
+    }
+    auctionTracker.start();
 });

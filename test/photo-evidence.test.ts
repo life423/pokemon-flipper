@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { photoEvidence } from "../shared/photo-evidence.ts";
+import { displayedRawGrade, photoEvidence } from "../shared/photo-evidence.ts";
 import { cardEvaluation } from "./fixtures/card-evaluation.ts";
 
 test("upper-end potential is distinguished from the likely grade and photo confidence", () => {
@@ -37,4 +37,19 @@ test("slab photo confidence survives separate review holds and never becomes raw
     evaluation.condition = originalCondition;
     evaluation.condition!.confidence = "LOW";
     assert.equal(photoEvidence(evaluation).confidence, "LOW", "raw condition confidence stays distinct from high photo identification confidence");
+});
+
+test("a saved raw estimate in a nonstandard holder stays visible only with usable card evidence", () => {
+    const evaluation = cardEvaluation();
+    evaluation.photoCheck!.cardCount = "ONE";
+    evaluation.photoCheck!.holder = "OTHER";
+    evaluation.condition!.gradeRange = null;
+    evaluation.provisionalGradeRange = { low: 3, likely: 4, high: 5 };
+    assert.deepEqual(displayedRawGrade(evaluation), { range: evaluation.provisionalGradeRange, confidence: "LOW", source: "PROVISIONAL" });
+    assert.equal(evaluation.condition!.gradeRange, null);
+    evaluation.condition!.authenticity.concern = "LIKELY_FAKE";
+    assert.equal(displayedRawGrade(evaluation), null);
+    evaluation.condition!.authenticity.concern = "NONE_SEEN";
+    evaluation.photoCheck!.images.forEach(photo => { photo.isStockImage = true; });
+    assert.equal(displayedRawGrade(evaluation), null);
 });

@@ -29,6 +29,19 @@ test("stamp crop locates a card in the scene and extracts its native pixels", as
     assert.deepEqual(pixels, await sharp(source).extract(result.box).raw().toBuffer());
 });
 
+test("slightly tilted original photos keep the edition region inside the native crop", async () => {
+    const rotated = await sharp(await front(true)).rotate(-3, { background: "#40342a" }).png().toBuffer();
+    const crop = await cropStampFromImage(rotated);
+    assert.ok(crop);
+    const { width, height } = await sharp(rotated).metadata();
+    // Transform the known original point below the left artwork edge with the full image.
+    const angle = -3 * Math.PI / 180, x = 150 - 320, y = 425 - 400;
+    const stampX = Math.round(width / 2 + x * Math.cos(angle) - y * Math.sin(angle));
+    const stampY = Math.round(height / 2 + x * Math.sin(angle) + y * Math.cos(angle));
+    assert.ok(crop.box.left <= stampX && stampX < crop.box.left + crop.box.width);
+    assert.ok(crop.box.top <= stampY && stampY < crop.box.top + crop.box.height);
+});
+
 test("stamp crop abstains when an edge is missing or the photo has no card geometry", async () => {
     assert.equal(await cropStampFromImage(await front(false)), null);
     const plain = await sharp({ create: { width, height, channels: 3, background: "#e6b923" } }).png().toBuffer();
@@ -50,4 +63,14 @@ test("stamp crop uses assessed front photos and retains the original photo numbe
     assert.equal(result?.photoNumber, 4);
     assert.equal(fetch.mock.callCount(), 1);
     assert.equal(fetch.mock.calls[0].arguments[0], "https://i.ebayimg.com/images/g/good/s-l1600.jpg");
+});
+
+test("a usable sleeved front is still a stamp crop source when the surface is obscured", async t => {
+    const image = await front(true);
+    const fetch = t.mock.method(globalThis, "fetch", async () => new Response(image, { headers: { "content-type": "image/png" } }));
+    const result = await selectStampCrop(["https://i.ebayimg.com/images/g/sleeved/s-l500.jpg"], [
+        { view: "FRONT", number: 1, usable: true, isStockImage: false, obscuresCondition: true, issues: ["Sleeve glare limits fine surface assessment."] },
+    ]);
+    assert.equal(result?.photoNumber, 1);
+    assert.equal(fetch.mock.callCount(), 1);
 });

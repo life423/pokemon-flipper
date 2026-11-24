@@ -12,6 +12,41 @@ import type { ActiveReference, ListingSummary } from "../../shared/types.ts";
 import { underwrite } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 
+test("best current buy shows an honest losing resale scenario and seller risk", async t => {
+    const server = await createServer({ configFile: path.resolve("client/vite.config.js"), envFile: false, appType: "custom", logLevel: "silent",
+        server: { middlewareMode: true, hmr: false, watch: null } });
+    t.after(() => server.close());
+    const { BestCurrentBuy } = await server.ssrLoadModule("/src/components/BestCurrentBuy.tsx");
+    const reference = { title: "Mewtwo 10/102 Base Set Unlimited Holo PSA 8", url: "https://www.ebay.com/itm/123456789012",
+        price: 190, shipping: 5.95, ceiling: 150, identity: "LISTING", coverage: { found: 40, checked: 3 },
+        pricing: { resale: 220, totalCost: 212.12, profit: -50, roi: -.236, sales: 4 },
+        seller: { username: "example", feedbackScore: 3, feedbackPercentage: 90 } };
+    const render = (value = reference) => renderToStaticMarkup(createElement(BestCurrentBuy, { reference: { ...value, basis: "Compared with PSA 8 sales of this printing" } }));
+    const markup = render();
+    assert.match(markup, /Best value among checked listings/);
+    assert.match(markup, /\$7\.88 below sold estimate/);
+    assert.match(markup, /\$16\.17 estimated tax/);
+    assert.match(markup, /\$212\.12/);
+    assert.match(markup, /Projected resale loss/);
+    assert.match(markup, /Outside Deals because a resale/);
+    assert.match(markup, /\$162\.12 after selling costs/);
+    assert.match(markup, /-24% return/);
+    assert.match(markup, /4 matched sales/);
+    assert.match(markup, /photos not checked/);
+    assert.match(markup, /limited or weak seller feedback/);
+    assert.match(markup, /3 listings checked from 40 fetched/);
+    assert.doesNotMatch(markup, /Guaranteed|Profitable deal|AI review/i);
+    assert.equal(render({ ...reference, url: "https://example.com/fake" }), "", "purchase action only links to a validated eBay listing");
+    const profitable = render({ ...reference, pricing: { ...reference.pricing, profit: 15, roi: .1 } });
+    assert.match(profitable, /Projected resale profit/);
+    assert.doesNotMatch(profitable, /Projected resale loss|Outside Deals/);
+    const labelChecked = { ...reference, identity: "LABEL", seller: { username: "example", feedbackScore: 350, feedbackPercentage: 100 } };
+    assert.match(render(labelChecked), /Fair buy for a collector/);
+    assert.match(render(labelChecked), /Matched the card and PSA label/);
+    assert.doesNotMatch(render({ ...labelChecked, seller: reference.seller }), /Fair buy for a collector/);
+    assert.match(render({ ...reference, shipping: 0 }), /free shipping/);
+});
+
 test("the result card explains a two-market price lead while a verified loss stays in Projected losses", async t => {
     const server = await createServer({ configFile: path.resolve("client/vite.config.js"), envFile: false, appType: "custom", logLevel: "silent",
         server: { middlewareMode: true, hmr: false, watch: null } });
@@ -95,10 +130,10 @@ test("saved unsupported raw prices are hidden from the card and analysis", async
     const render = (component: any, other: object = {}) => renderToStaticMarkup(createElement(component, { ...props, ...other }));
     assert.equal(value.underwriting.verdict, "BUY_RAW", "simulate a stale saved verdict");
     const card = render(DealCard, { analysis: { status: "done", evaluation: value }, selected: false, onOpen() {}, years: {} });
-    assert.match(card, /Price unconfirmed/);
+    assert.match(card, /Wait for resale evidence/);
     assert.doesNotMatch(card, /Max price:|Est\. net profit|Offer \$|Below your price limit/);
     const decision = render(FinancialDecision);
-    assert.match(decision, /Resale price unconfirmed/);
+    assert.match(decision, /Wait for resale evidence/);
     assert.doesNotMatch(decision, /Run full research|Max price|Your review needed/);
     const details = render(AnalysisDetails, { onReanalyze() {}, minGrade: 0, reviewing: false });
     assert.doesNotMatch(details + card + decision, /\$500|TCGplayer/i);
@@ -116,7 +151,8 @@ test("saved unsupported raw prices are hidden from the card and analysis", async
     value.underwriting.verdict = "BUY_RAW";
     value.condition!.authenticity = { concern: "UNCERTAIN", reasons: ["Unresolved physical authenticity evidence."] };
     const stale = render(DealCard, { analysis: { status: "done", evaluation: value }, selected: false, onOpen() {}, years: {} });
-    assert.match(stale, /Your review needed/);
+    assert.match(stale, /Wait/);
+    assert.doesNotMatch(stale, /Your review needed/);
     assert.doesNotMatch(stale, /Max price:|Est\. net profit|Offer \$/);
     assert.doesNotMatch(render(AnalysisDetails, { onReanalyze() {}, minGrade: 0, reviewing: false }), /Suggested offer|Walk away above|Est\. profit if accepted/);
     value.underwriting.verdict = "NEEDS_REVIEW";
@@ -199,7 +235,7 @@ test("unquoted Buy It Now shipping labels estimated profit and limits as provisi
     const card = renderToStaticMarkup(createElement(DealCard, { ...props, analysis: { status: "done", evaluation }, selected: false, onOpen() {}, years: {}, includeOffers: true }));
     const decision = renderToStaticMarkup(createElement(FinancialDecision, props));
     const details = renderToStaticMarkup(createElement(AnalysisDetails, { ...props, minGrade: 0, reviewing: false }));
-    assert.match(card, /Shipping unconfirmed/);
+    assert.match(card, /Wait for shipping/);
     assert.match(card + decision, /Modeled net profit at asking/);
     assert.match(card + decision + details, /Provisional max price/);
     assert.doesNotMatch(card + decision + details, /Free shipping|Clears your targets|Below your price limit|Suggested offer|Selected strategy/);

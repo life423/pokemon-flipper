@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { SearchDiagnosticResult } from "../../../shared/search-diagnostic.ts";
-import { aiCents } from "./AiBudgetStatus";
+import { formatAiCost } from "./AiBudgetStatus";
 import styles from "./SearchReview.module.css";
 
 export function SearchReview({ ready, onReview }: {
@@ -64,7 +64,7 @@ export function SearchReview({ ready, onReview }: {
         {error && <p className={styles.error} role="alert">{error}</p>}
         {copyFeedback && <p role="status">{copyFeedback}</p>}
         {result?.message && <p role="status">{result.message}</p>}
-        {reviewBudget?.configured && <p className={styles.cost}>Review cost {aiCents(reviewBudget.settledUsd)}{reviewBudget.capUsd === null ? "" : ` of ${aiCents(reviewBudget.capUsd)}`}.</p>}
+        {reviewBudget?.configured && <p className={styles.cost}>Review cost {formatAiCost(reviewBudget.settledUsd)}{reviewBudget.capUsd === null ? "" : ` of ${formatAiCost(reviewBudget.capUsd)}`}.</p>}
         {result?.review && <div className={styles.report}>
             <p role="status">{result.review.summary}</p>
             {result.review.proposedTasks.length > 0 && <details>

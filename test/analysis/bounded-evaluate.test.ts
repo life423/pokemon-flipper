@@ -1,4 +1,6 @@
 import { test } from "node:test";
+import sharp from "sharp";
+import { matchesFrontBackComposite } from "../../server/analysis/front-back-composite.ts";
 import assert from "node:assert/strict";
 import { createBoundedEvaluator, selectBoundedPhotos, boundedAssessmentKey, boundedAssessmentPlan, validateBoundedReading, BOUNDED_ASSESSMENT_VERSION, PriceOnlyEvidenceError, type BoundedReading } from "../../server/analysis/bounded-evaluate.ts";
 import { compatibleBoundedPlans, stagedPhotoPlan } from "../../server/analysis/bounded-plan.ts";
@@ -6,7 +8,9 @@ import { ANALYSIS_VERSION, CONDITION_VERSION } from "../../server/analysis/legac
 import { createDeeperPhotoReviewer } from "../../server/analysis/deeper-review.ts";
 import { photoFingerprint } from "../../server/analysis/store.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
+import { evaluationFailure, RejectedPhotoAssessmentError } from "../../server/analysis/failure.ts";
 import { AiSearchAllowanceError, AiSpendingError } from "../../server/ai/spending.ts";
+import { applyFrameReading } from "../../server/analysis/base-set-frame.ts";
 import { getAiUsageContext, withAiUsageContext } from "../../server/ai/usage-context.ts";
 import { PriceResearchBudgetError } from "../../server/pricing/research-budget.ts";
 import { EnglishOnlyError } from "../../shared/card-language.ts";
@@ -17,6 +21,7 @@ import { createPrivateEvaluationStore, evaluationContextKey, PRIVATE_EVALUATION_
 import { createShortlistStore } from "../../server/shortlist/store.ts";
 import { createShortlistService } from "../../server/shortlist/service.ts";
 import { displayedRawGrade } from "../../shared/photo-evidence.ts";
+import { legendaryCharizardLabelFinish } from "../../shared/psa-legendary-charizard.ts";
 import { photoReviewStatus } from "../../shared/photo-review.ts";
 import { canAutoAnalyze, resultGroup } from "../../shared/analysis.ts";
 import { filterSearchResults, groupSearchResults } from "../../client/src/search/results.ts";
@@ -73,6 +78,7 @@ function harness(extra: Parameters<typeof createBoundedEvaluator>[0] = {}) {
         fetchRawComps: async () => { calls.raw++; return [{ id: "raw-sale", title: "Venusaur Base Set 15/102 Holo NM", price: 150, sold_at: new Date(now - 86400000).toISOString(),
             variant: "Holofoil", currency: "USD", attribution: "exact", sale_type: "fixed_price", listing_url: "https://www.ebay.com/itm/223456789012", grader: null, grade: null, grade_qualifier: null }]; },
         fetchComps: async (_id, options) => { calls.comps++; return gradedSales(options); },
+        fetchCachedComps: async () => [],
         compChecks: async () => new Map(), ...extra });
     return { cache, calls, evaluate };
 }
@@ -477,6 +483,46 @@ test("a single card in a later photo cannot override multiple cards seen in the 
     }
 });
 
+test("a front/back composite can recover a cached multiple-card decision while a lot stays blocked", async () => {
+    // JPEG panels are resized versions of the separate seller photos. Fine lines
+    // make inconsistent decoder downsampling visible, as on the real Mewtwo.
+    const side = async (offset: number) => {
+        const pixels = Buffer.alloc(375 * 500 * 3);
+        for (let y = 0; y < 500; y++) for (let x = 0; x < 375; x++) {
+            const value = (Math.floor(x / 8) + Math.floor(y / 8) + offset) % 2 ? 50 : 210;
+            pixels.fill(value, (y * 375 + x) * 3, (y * 375 + x + 1) * 3);
+        }
+        return sharp(pixels, { raw: { width: 375, height: 500, channels: 3 } }).jpeg({ quality: 92 }).toBuffer();
+    };
+    const [front, back] = await Promise.all([side(0), side(1)]);
+    const panels = await Promise.all([front, back].map(image => sharp(image).resize(250, 333, { fit: "fill" }).toBuffer()));
+    const overview = await sharp({ create: { width: 500, height: 333, channels: 3, background: "black" } })
+        .composite(panels.map((input, i) => ({ input, left: i * 250, top: 0 }))).jpeg({ quality: 92 }).toBuffer();
+    assert.equal(await matchesFrontBackComposite([overview, front, back]), true);
+    assert.equal(await matchesFrontBackComposite([overview, front, front]), false);
+    const listing = details({ bestOffer: false, images: [photo(1), photo(2), photo(3)] });
+    let compared = 0, paid = 0;
+    const { evaluate } = harness({ details: async () => listing,
+        assess: async (_listing, photos, _signal, _mode, stage) => {
+            paid++;
+            const answer = reading(photos.length);
+            if (stage?.kind === "front") {
+                answer.photoCheck.cardCount = "MULTIPLE";
+                answer.photoCheck.images[0].view = "OTHER";
+            }
+            return { result: answer, usage: { inputTokens: 500, outputTokens: 300 } };
+        },
+        checkComposite: async () => ++compared === 1 ? null : matchesFrontBackComposite([overview, back, front]),
+    });
+    assert.equal((await evaluate(listing.id)).photoCheck?.cardCount, "MULTIPLE");
+    assert.equal((await evaluate(listing.id)).photoCheck?.cardCount, "ONE");
+    assert.equal(compared, 2);
+    assert.equal(paid, 2, "recovering a previously blocked overview reuses the same two assessments");
+    listing.title += " lot of 2 cards";
+    assert.equal((await evaluate(listing.id)).photoCheck?.cardCount, "MULTIPLE");
+    assert.equal(compared, 2, "seller's explicit lot is ineligible for composite recovery");
+});
+
 test("direct evaluation cannot price a seller's reverse holo when a clear front shows non-holo", async t => {
     t.mock.method(globalThis, "fetch", () => assert.fail("finish mismatch regression must remain offline"));
     const listing = details({ id: "v1|conflicting-finish|0", title: "Primeape Aquapolis 29/147 Reverse Holo English",
@@ -500,7 +546,8 @@ test("direct evaluation cannot price a seller's reverse holo when a clear front 
     assert.equal(result.listing.aspects.Finish, "Reverse Holo");
     assert.equal(result.identity?.finish, "CONFLICTING");
     assert.equal(result.underwriting?.verdict, "NEEDS_REVIEW");
-    assert.match(result.underwriting?.reasons.join(" ") ?? "", /photographed finish/i);
+    assert.match(result.underwriting?.reasons.join(" ") ?? "", /photo shows non holo\. the listing title says reverse holo/i);
+    assert.doesNotMatch(result.underwriting!.reasons.join(" "), /slab label/i);
     assert.equal(result.rawPricing, null);
     assert.equal(result.gradedPricing, null);
 
@@ -769,12 +816,12 @@ for (const limit of ["model", "missing back"]) test(`a low-confidence grade from
     assert.notEqual(result.underwriting?.verdict, "BUY_AND_GRADE");
 });
 
-test("a fresh raw resale acquires one relevant sold copy and reuses its photo evidence across live listings", async () => {
+for (const [claim, observed] of [["LP", "LIGHTLY_PLAYED"], ["MP", "MODERATELY_PLAYED"]] as const) test(`a fresh raw resale acquires one ${claim} sold copy and reuses its photo evidence across live listings`, async () => {
     const live = reading(); live.condition!.rawCondition = "LIGHTLY_PLAYED"; live.condition!.gradeRange = null;
     let reviews = 0;
     const { evaluate, calls, cache } = harness({
         assess: async () => { calls.assessed++; return { result: structuredClone(live), usage: { inputTokens: 700, outputTokens: 450 } }; },
-        fetchRawComps: async () => [{ id: "raw-lp", title: "Venusaur Base Set 15/102 Unlimited Holo LP", price: 150,
+        fetchRawComps: async () => [{ id: "sold-venusaur", title: `Venusaur Base Set 15/102 Unlimited Holo ${claim}`, price: 150,
             sold_at: new Date(now - 86400000).toISOString(), variant: "Holofoil", currency: "USD", attribution: "exact",
             sale_type: "fixed_price", listing_url: "https://www.ebay.com/itm/223456789012", grader: null, grade: null, grade_qualifier: null },
             { id: "wrong-newer", title: "Charizard Base Set 4/102 Unlimited Holo LP", price: 999,
@@ -784,14 +831,16 @@ test("a fresh raw resale acquires one relevant sold copy and reuses its photo ev
             reviews++;
             const result: SoldConditionReading = { card: { name: identity.name, set: identity.set, cardNumber: identity.cardNumber,
                 language: "English", finish: "HOLO", confidence: "HIGH", evidence: ["Readable name, number and set artwork"] },
-                printing: "UNLIMITED", condition: "LIGHTLY_PLAYED", confidence: "HIGH", oneRawCard: true, frontVisible: true,
-                backVisible: true, closeUps: true, structuralDamage: false, evidence: ["Minor whitening, no structural damage"], limitations: [] };
+                printing: "UNLIMITED", condition: observed, confidence: "HIGH", oneRawCard: true, frontVisible: true,
+                backVisible: true, closeUps: true, structuralDamage: false, evidence: [claim === "LP" ? "Minor whitening on one corner" : "Distinct whitening across several edges and corners"], limitations: [] };
             return { result, usage: { inputTokens: 800, outputTokens: 300 } };
         } }),
     });
     const first = await evaluate("v1|fresh-raw|0");
     assert.equal(first.underwriting?.verdict, "BUY_RAW");
-    const quote = first.rawPricing?.prices?.find(value => value.condition === "LIGHTLY_PLAYED");
+    assert.equal(first.underwriting?.best?.priceCondition, observed);
+    assert.equal(first.underwriting?.best?.salePrice, 150);
+    const quote = first.rawPricing?.prices?.find(value => value.condition === observed);
     assert.equal(quote?.basis, "EBAY_SOLD"); assert.equal(quote?.comps?.count, 1); assert.equal(quote?.comps?.confidence, "LOW");
     assert.equal(reviews, 1); assert.equal(calls.assessed, 1);
     assert.ok(first.usage.some(value => value.step === "soldConditionAssessment" && value.outputTokens === 300));
@@ -941,12 +990,19 @@ test("raw sold-photo work stops when no remaining comp can meet targets and resu
         details: async id => details({ id, price: 100, shipping: 5.96 }),
         assess: async () => { liveReads++; return { result: live, usage: { inputTokens: 700, outputTokens: 450 } }; },
         fetchRawComps: async () => [sale],
+        fetchCachedComps: async (_id, target) => {
+            assert.deepEqual([target.grader, target.grade], ["PSA", 6]);
+            return gradedSales(target);
+        },
         soldCondition: () => ({ usage: [], read: async () => null, status: () => "UNREVIEWED",
             acquire: async () => { soldReads++; return { condition: "LIGHTLY_PLAYED", evidence: ["Accepted physical wear evidence."], photoCount: 4 }; } }),
     });
     const id = "v1|raw-target-deferral|0", targets = { minProfit: 0, minRoi: 0.5 };
     const blocked = await evaluate(id, { targets });
     assert.equal(blocked.underwriting?.verdict, "CANT_PRICE");
+    assert.equal(blocked.rawPricing?.sellerConditionComps?.marketEstimate?.price, 175);
+    assert.equal(blocked.gradedPricing?.PSA?.referenceGradeComps?.grade, 6);
+    assert.equal(blocked.gradedPricing?.PSA?.byGrade, undefined);
     assert.match(blocked.rawPricing?.evidenceNote ?? "", /skipped because none/);
     assert.equal(soldReads, 0);
     const repeated = await evaluate(id, { targets });
@@ -1053,6 +1109,32 @@ test("catalog-corroborated photos correct stale seller fields without repurchasi
     assert.equal(listing.aspects.Finish, "Regular");
 });
 
+test("a stale generic finish disagreement is repriced from saved photo evidence", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("this replay must remain offline"));
+    const listing = details({ title: "Venusaur 15/102 Base Set Rare 1999 Wizards of the Coast Eng HP 100",
+        aspects: { ...details().aspects, Finish: "Regular" } });
+    const { evaluate, cache } = harness({ details: async () => listing,
+        assess: async () => assert.fail("the original photo reading must be reused"), fetchRawComps: async () => [] });
+    const plan = boundedAssessmentPlan(listing);
+    cache.set(plan.key, { ...reading(), version: plan.version, answeredAt: new Date(now).toISOString() });
+    const first = await evaluate(listing.id);
+    assert.equal(first.identity?.status, "IDENTIFIED");
+    const store = createPrivateEvaluationStore({ cached: async key => cache.get(key) ?? null,
+        save: async (key, value) => { cache.set(key, structuredClone(value)); } });
+    const saved = (await store.load(listing.id))!;
+    const stale = { ...first, identity: { ...first.identity!, status: "NEEDS_REVIEW" as const, finish: "CONFLICTING",
+        reasons: ["The photographed finish disagrees with the listing or slab label."] } };
+    await store.save(stale, saved);
+    assert.equal(currentPriceEvidence(stale, now), false);
+    const replay = await evaluate(listing.id);
+    assert.equal(replay.identity?.status, "IDENTIFIED");
+    assert.equal(replay.identity?.finish, "HOLO");
+    assert.equal(replay.listing.aspects.Finish, "Regular");
+    assert.match(replay.identity!.reasons.join(" "), /seller lists the finish as Regular.*front photo shows holo/i);
+    assert.doesNotMatch(replay.underwriting!.reasons.join(" "), /photographed finish|slab label/);
+    assert.deepEqual(replay.usage, []);
+});
+
 test("a seller set typo with matching title, saved photos and exact sales can reach Deals", async t => {
     t.mock.method(globalThis, "fetch", () => assert.fail("seller set replay must stay offline"));
     const listing = details({ aspects: { ...details().aspects, Set: "Base Set 2", "Card Number": "15/130" } });
@@ -1109,6 +1191,7 @@ test("a sold-copy AI allowance denial preserves a supported grading deal", async
     assert.equal(result.rawPricing?.prices, undefined);
     assert.equal(calls.comps, 6);
     assert.equal(result.underwriting?.verdict, "BUY_AND_GRADE");
+    assert.equal(currentPriceEvidence({ ...result, pricingVersion: "ebay-resale-17" }, now), true, "a supported grading deal needs no raw-floor migration");
     assert.equal(resultGroup({ ...item, currentPrice: item.price, isGraded: false }, result), "deals");
     assert.deepEqual(cache.get(plan.key), saved);
     assert.deepEqual(result.usage, []);
@@ -1120,7 +1203,7 @@ test("a sold-copy AI allowance denial preserves a supported grading deal", async
 });
 
 test("a sold-copy accounting, pause, or storage failure stops the evaluation", async () => {
-    for (const failure of [new AiSpendingError("AI_BUDGET", "The saved ledger is invalid."), new AiSpendingError("AI_PAUSED", "Paid AI is paused."), new StorageUnavailableError()]) {
+    for (const failure of [new AiSpendingError("AI_BUDGET", "The saved ledger is invalid."), new AiSpendingError("AI_PAUSED", "Paid AI is paused."), new AiSpendingError("AI_EVIDENCE_HELD", "Previous assessment unresolved."), new StorageUnavailableError()]) {
         const live = reading(); live.condition!.rawCondition = "NEAR_MINT"; live.condition!.gradeRange = null;
         const { evaluate, calls } = harness({ assess: async () => ({ result: live, usage: { inputTokens: 700, outputTokens: 450 } }),
             soldCondition: options => createSoldConditionAcquirer({ ...options, assess: async () => { throw failure; } }) });
@@ -1267,6 +1350,122 @@ test("subset assessment reports original listing photo indices instead of claimi
     assert.equal(result.listing.photosAnalyzed, 6);
     assert.deepEqual(result.photoCheck?.images.map(image => image.number), selectBoundedPhotos(listing.images).map(photo => photo.number));
     assert.match(result.modeReasons.join(" "), /Unselected photos were not assessed/);
+});
+
+test("a missing full back in an accepted sample checks only unseen gallery photos and reuses the answer", async () => {
+    const listing = details({ images: Array.from({ length: 8 }, (_, index) => photo(index)) });
+    const sampled = boundedAssessmentPlan(listing);
+    const prior = reading(6);
+    for (const image of prior.photoCheck.images) if (image.view === "BACK") image.view = "BACK_DETAIL";
+    prior.photoCheck.missingViews = ["FULL_BACK"];
+    prior.condition!.rawCondition = "LIGHTLY_PLAYED";
+    const paid: number[][] = [];
+    const { cache, evaluate } = harness({
+        details: async () => listing,
+        assess: async (_listing, photos, _signal, _mode, stage) => {
+            assert.equal(stage?.kind, "gallery");
+            assert.equal(stage.prior.photoCheck.images.length, 6);
+            paid.push(photos.map(p => p.number));
+            const result = reading(2);
+            result.photoCheck.images[0].view = "BACK";
+            result.photoCheck.images[1].view = "BACK_DETAIL";
+            result.photoCheck.cardIdentity!.finish = "NON_HOLO";
+            result.photoCheck.cardMatch!.verdict = "CANT_TELL";
+            result.condition!.rawCondition = "UNKNOWN";
+            result.condition!.gradeRange = { low: 4, likely: 5, high: 6 };
+            return { result, usage: { inputTokens: 700, outputTokens: 450 } };
+        },
+    });
+    cache.set(sampled.key, { ...prior, version: sampled.version, answeredAt: new Date(now - 60000).toISOString() });
+    for (let run = 0; run < 2; run++) {
+        const result = await evaluate(listing.id);
+        assert.deepEqual(paid, [[3, 6]]);
+        assert.equal(result.listing.photosAnalyzed, 8);
+        assert.equal(result.photoCheck?.images.find(photo => photo.number === 3)?.view, "BACK");
+        assert.equal(result.photoCheck?.cardIdentity?.finish, "HOLO");
+        assert.equal(result.condition?.rawCondition, "LIGHTLY_PLAYED");
+        assert.equal(result.provisionalGradeRange?.likely, 5);
+        assert.equal(result.usage.length, run === 0 ? 1 : 0);
+    }
+    assert.equal(cache.get(sampled.key).photoCheck.missingViews[0], "FULL_BACK");
+});
+
+test("a seller adds a back to a shortlisted front: inspect only the addition, reprice, and reuse it on replay", async t => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "shortlist-gallery-"));
+    t.after(() => fs.rm(dir, { recursive: true, force: true }));
+    const listing = details({ images: [photo(1)], retrievedAt: new Date(now).toISOString() });
+    const store = createShortlistStore(path.join(dir, "shortlist.json"));
+    const service = createShortlistService({ store, details: async () => listing, now: () => now });
+    const paid: Array<[number[], string | undefined]> = [];
+    const { evaluate } = harness({ details: async () => listing, assess: async (_listing, photos, _signal, _mode, stage) => {
+        paid.push([photos.map(p => p.number), stage?.kind]);
+        const result = reading(1);
+        if (stage?.kind === "gallery") {
+            assert.equal(stage.prior.photoCheck.images[0].view, "FRONT");
+            result.photoCheck.images[0].view = "BACK";
+            result.photoCheck.images[0].issues = ["White bottom-left corner and a visible crease on the back."];
+            result.condition!.creases = "PRESENT";
+            result.condition!.rawCondition = "DAMAGED";
+            result.condition!.gradeRange = null;
+        }
+        return { result, usage: { inputTokens: 600, outputTokens: 200 } };
+    } });
+    const initial = await evaluate(listing.id);
+    assert.equal(initial.listing.photosAnalyzed, 1);
+    const summary = { id: listing.id, title: listing.title, url: listing.url, currentPrice: listing.price, shipping: listing.shipping,
+        buyingOption: listing.buyingOption, bids: listing.bids, endTime: listing.endTime, isGraded: false, images: listing.images, seller: null };
+    await store.save(summary, initial);
+    listing.images = [photo(1, 500), photo(2)];
+    const refreshed = (await service.refresh([listing.id])).entries[0];
+    assert.equal(refreshed.evaluation, null, "a gallery edit invalidates the displayed advice");
+    assert.equal(refreshed.photoChange?.neededBack, true);
+    assert.equal(refreshed.photoChange?.previousVerdict, initial.underwriting?.verdict);
+    listing.aspects.Edition = "1st Edition";
+    await assert.rejects(evaluate(listing.id, { addedPhotosOnly: true }), /cannot be matched/);
+    assert.deepEqual(paid, [[[1], undefined]], "a conflicting printing cannot authorize extra spending");
+    delete listing.aspects.Edition;
+    const updated = await evaluate(listing.id, { addedPhotosOnly: true });
+    assert.deepEqual(paid, [[[1], undefined], [[2], "gallery"]]);
+    assert.deepEqual(updated.photoCheck?.images.map(i => [i.number, i.view]), [[1, "FRONT"], [2, "BACK"]]);
+    assert.equal(updated.condition?.rawCondition, "DAMAGED");
+    assert.equal(updated.condition?.creases, "PRESENT");
+    assert.equal(updated.reusedSteps.includes("previousGalleryPhotos"), true);
+    assert.ok(!updated.underwriting?.verdict.startsWith("BUY"));
+    await service.remember(updated, listingEvidenceKey(refreshed.listing));
+    const [saved] = await store.list();
+    assert.equal(saved.needsAnalysis, false);
+    assert.equal(saved.photoChange?.reviewedVerdict, saved.evaluation?.underwriting?.verdict);
+    assert.equal(saved.photoChange?.previousVerdict, refreshed.photoChange?.previousVerdict);
+    const replay = await evaluate(listing.id, { addedPhotosOnly: true });
+    assert.deepEqual(replay.photoCheck?.images, updated.photoCheck?.images);
+    assert.equal(replay.underwriting?.verdict, updated.underwriting?.verdict);
+    assert.equal(replay.usage.length, 0);
+    assert.equal(paid.length, 2);
+    listing.images = [photo(5), photo(2)];
+    await assert.rejects(evaluate(listing.id, { addedPhotosOnly: true }), /cannot be matched/);
+    assert.equal(paid.length, 2, "replaced front cannot trigger a new full-gallery charge");
+});
+
+test("clear added back and detail photos can unlock an evidenced grading deal without resending the front", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("saved photo update tests must use offline providers"));
+    const listing = details({ images: [photo(1)], bestOffer: false, retrievedAt: new Date(now).toISOString() });
+    const batches: number[][] = [];
+    const { evaluate } = harness({ details: async () => listing, assess: async (_listing, photos) => {
+        batches.push(photos.map(p => p.number));
+        const answer = reading(photos.length);
+        const views = ["FRONT", "BACK", "FRONT_DETAIL", "BACK_DETAIL"] as const;
+        answer.photoCheck.images.forEach((image, index) => { image.view = views[photos[index].number - 1]; });
+        answer.condition!.rawCondition = "LIGHTLY_PLAYED";
+        if (photos.length === 1) answer.condition!.gradeRange = null;
+        return { result: answer, usage: { inputTokens: 500, outputTokens: 300 } };
+    } });
+    const front = await evaluate(listing.id);
+    assert.ok(!front.underwriting?.verdict.startsWith("BUY"));
+    listing.images = [photo(1), photo(2), photo(3), photo(4)];
+    const complete = await evaluate(listing.id, { addedPhotosOnly: true });
+    assert.deepEqual(batches, [[1], [2, 3, 4]]);
+    assert.equal(complete.underwriting?.verdict, "BUY_AND_GRADE");
+    assert.equal(resultGroup({ ...listing, currentPrice: listing.price, isGraded: false }, complete), "deals");
 });
 
 test("saved legacy full evidence is preferred without overwriting or repurchasing it", async () => {
@@ -1574,8 +1773,8 @@ test("seller metadata cannot turn an unknown photographed card language into a c
     assert.ok(!result.underwriting?.verdict.startsWith("BUY"));
 });
 
-test("corrupt cached assessments and unsupported broad ranges fail closed without replacement AI", async () => {
-    const invalid = reading(); invalid.condition!.gradeRange = { low: 3, likely: 6, high: 8 };
+test("corrupt cached assessments with an out-of-range likely grade stop without replacement AI", async () => {
+    const invalid = reading(); invalid.condition!.gradeRange = { low: 3, likely: 9, high: 8 };
     assert.throws(() => validateBoundedReading(invalid, 4), StorageUnavailableError);
     const { evaluate, calls, cache } = harness();
     cache.set(boundedAssessmentKey(details()), { version: BOUNDED_ASSESSMENT_VERSION, answeredAt: new Date(now).toISOString(), ...invalid });
@@ -1592,7 +1791,7 @@ test("a rejected paid remainder is retained across evaluator instances without r
     const front = reading(1); front.condition!.gradeRange = null;
     const remainder = stagedPhotoPlan(item, plan, "remainder", front);
     const firstKey = stagedPhotoPlan(item, plan, "front").key;
-    const rejected = reading(remainder.photos.length); rejected.condition!.gradeRange = { low: 3, likely: 6, high: 8 };
+    const rejected = reading(remainder.photos.length); rejected.condition!.gradeRange = { low: 3, likely: 9, high: 8 };
     const usage = { inputTokens: 900, outputTokens: 700 };
     const attempts: string[] = [];
     const makeEvaluator = () => harness({ details: async () => item, cached: store.read, save: store.write,
@@ -1601,7 +1800,13 @@ test("a rejected paid remainder is retained across evaluator instances without r
             return { result: stage?.kind === "front" ? front : rejected, usage };
         } }).evaluate;
 
-    await assert.rejects(makeEvaluator()(item.id), StorageUnavailableError);
+    const assertListingRejection = (error: unknown) => {
+        assert.ok(error instanceof RejectedPhotoAssessmentError);
+        assert.match(error.message, /grade and its range/);
+        assert.deepEqual(evaluationFailure(error), { status: 422, code: "PHOTO_ASSESSMENT_REJECTED", error: error.message, retryable: false });
+        return true;
+    };
+    await assert.rejects(makeEvaluator()(item.id), assertListingRejection);
     const savedFront = await store.read(firstKey, 1);
     assert.deepEqual(savedFront?.photoCheck, front.photoCheck);
     assert.equal(await store.read(remainder.key, 1), null);
@@ -1612,7 +1817,12 @@ test("a rejected paid remainder is retained across evaluator instances without r
     assert.deepEqual(savedRejection?.photoNumbers, remainder.photos.map(photo => photo.number));
     assert.match(savedRejection?.reason ?? "", /incomplete or invalid/);
 
-    await assert.rejects(makeEvaluator()(item.id), StorageUnavailableError);
+    await assert.rejects(makeEvaluator()(item.id), assertListingRejection);
+    for (const damaged of [{ ...savedRejection, photoNumbers: [] }, { ...savedRejection, result: reading(remainder.photos.length) }]) {
+        await store.write(`${remainder.key}:rejected`, damaged);
+        await assert.rejects(makeEvaluator()(item.id), StorageUnavailableError);
+    }
+    await store.write(`${remainder.key}:rejected`, savedRejection);
     await store.write(plan.key, { ...reading(), version: plan.version, answeredAt: new Date(now).toISOString(), usage });
     const recovered = await makeEvaluator()(item.id);
     assert.equal(recovered.underwriting?.verdict, "BUY_AND_GRADE");
@@ -1621,7 +1831,178 @@ test("a rejected paid remainder is retained across evaluator instances without r
     assert.deepEqual(await store.read(`${remainder.key}:rejected`, 1), savedRejection);
 });
 
+test("a documented authenticity concern without a photo location recovers paid observations and stays out of Deals", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("replaying the saved reading must remain offline"));
+    const item = details(), plan = boundedAssessmentPlan(item), input = reading();
+    input.condition!.authenticity = { concern: "POSSIBLE", reasons: ["No clear manufacturing anomaly is visible."],
+        limitations: ["Sleeve glare hides the surface and card stock."], observations: [] };
+    const { evaluate, cache, calls } = harness({ details: async () => item,
+        assess: async () => assert.fail("the original photos were already assessed"),
+        stamp: async () => assert.fail("pricing and stamp checks cannot resolve authenticity"),
+    });
+    cache.set(`${plan.key}:rejected`, { result: input, version: plan.version, answeredAt: new Date(now).toISOString(),
+        photoNumbers: plan.photos.map(photo => photo.number), usage: { inputTokens: 800, outputTokens: 600 },
+        reason: "The bounded photo assessment is incomplete or invalid. Saved evidence was kept; no automatic replacement assessment was authorized." });
+    for (const attempt of [1, 2]) {
+        const result = await evaluate(item.id);
+        assert.equal(result.identity?.name, "Venusaur");
+        assert.equal(result.listing.photosAnalyzed, plan.photos.length);
+        assert.equal(result.condition?.rawCondition, input.condition?.rawCondition);
+        assert.equal(result.condition?.authenticity.concern, "POSSIBLE");
+        assert.deepEqual(result.condition?.authenticity.observations, []);
+        assert.equal(result.underwriting?.verdict, "NEEDS_REVIEW");
+        assert.ok(result.underwriting.reasons.some(reason => reason.includes("without identifying a specific feature")));
+        assert.deepEqual(result.usage, [], `attempt ${attempt} must reuse all paid photo work`);
+        assert.equal(resultGroup({ ...item, currentPrice: item.price, isGraded: false }, result), "review");
+    }
+    assert.equal(calls.comps + calls.raw, 0);
+});
+
+test("an unlocated front-photo concern stops the staged search before a second paid reading", async () => {
+    const item = details({ bestOffer: false });
+    const stages: string[] = [];
+    const { evaluate } = harness({ details: async () => item, assess: async (_listing, photos, _signal, _mode, stage) => {
+        stages.push(stage?.kind ?? "combined");
+        const report = reading(photos.length);
+        report.condition!.authenticity = { concern: "POSSIBLE", reasons: ["Authenticity uncertain."],
+            limitations: ["Card stock obscured in sleeve."], observations: [] };
+        return { result: report, usage: { inputTokens: 900, outputTokens: 500 } };
+    } });
+    const result = await evaluate(item.id);
+    assert.deepEqual(stages, ["front"]);
+    assert.equal(result.listing.photosAnalyzed, 1);
+    assert.equal(result.underwriting?.verdict, "NEEDS_REVIEW");
+    assert.equal(result.condition?.authenticity.concern, "POSSIBLE");
+});
+
+test("a wide photo grade keeps its original estimate and raw resale route on first assessment and saved rejection replay", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("the wide grade replay must stay offline"));
+    const listing = details({ bestOffer: false, images: [photo(1), photo(2)] });
+    const plan = boundedAssessmentPlan(listing);
+    const front = reading(1); front.condition!.gradeRange = null;
+    const back = reading(1); back.photoCheck.images[0].view = "BACK";
+    back.condition!.rawCondition = "LIGHTLY_PLAYED";
+    back.condition!.gradeRange = { low: 3, likely: 5, high: 6 };
+    const remainder = stagedPhotoPlan(listing, plan, "remainder", front);
+    const frontPlan = stagedPhotoPlan(listing, plan, "front");
+    const usage = { inputTokens: 1200, outputTokens: 700 };
+    const answeredAt = new Date(now).toISOString();
+    for (const saved of [false, true]) {
+        let sales: Comp[] = [];
+        const charged: string[] = [];
+        const { evaluate, cache } = harness({ details: async () => listing,
+            fetchRawComps: async () => sales,
+            fetchComps: async () => assert.fail("a broad range cannot sponsor grading research"),
+            assess: async (_listing, _photos, _signal, _mode, stage) => {
+                charged.push(stage?.kind ?? "combined");
+                return { result: stage?.kind === "front" ? front : back, usage };
+            } });
+        sales = seedRawSoldCopies(cache, listing, "LIGHTLY_PLAYED", 150, now);
+        if (saved) {
+            cache.set(frontPlan.key, { ...front, version: frontPlan.version, answeredAt, usage });
+            cache.set(`${remainder.key}:rejected`, { result: back, version: remainder.version, answeredAt, usage, photoNumbers: [2],
+                reason: "The bounded photo assessment is incomplete or invalid. Saved evidence was kept; no automatic replacement assessment was authorized." });
+        }
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const result = await evaluate(listing.id);
+            assert.deepEqual(result.photoCheck?.images.map(({ number, view }) => [number, view]), [[1, "FRONT"], [2, "BACK"]]);
+            assert.equal(result.condition?.rawCondition, "LIGHTLY_PLAYED");
+            assert.equal(result.condition.gradeRange, null);
+            assert.deepEqual(displayedRawGrade(result), { range: { low: 3, likely: 5, high: 6 }, confidence: "LOW", source: "PROVISIONAL" });
+            assert.equal(result.rawPricing?.status, "PRICED");
+            assert.equal(result.underwriting?.verdict, "BUY_RAW");
+            if (saved || attempt > 0) assert.deepEqual(result.usage, []);
+        }
+        assert.deepEqual(charged, saved ? [] : ["front", "remainder"]);
+    }
+});
+
+test("a tentative grade with only lower-condition photo sales reuses surrounding PSA sales, independently of the grading verdict", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("no new provider work during the replay"));
+    const listing = details({ price: 99 });
+    const input = reading();
+    input.condition!.rawCondition = "HEAVILY_PLAYED";
+    input.condition!.gradeRange = { low: 2, likely: 3, high: 4 };
+    input.condition!.confidence = "LOW";
+    let rawSales: Comp[] = [], rawLookups = 0, cachedRecordLookups = 0;
+    const queried: string[] = [];
+    const { evaluate, cache } = harness({ details: async () => listing,
+        assess: async () => assert.fail("the saved listing photos must be reused"),
+        fetchRawComps: async () => { rawLookups++; return rawSales; },
+        cachedPricingRecord: async id => { cachedRecordLookups++; assert.equal(id, String(card.id)); return card; },
+        fetchComps: async () => assert.fail("tentative estimates cannot sponsor live grade pricing"),
+        fetchCachedComps: async (_id, target) => { queried.push(`${target.grader} ${target.grade}`); return gradedSales(target); },
+    });
+    const plan = boundedAssessmentPlan(listing);
+    cache.set(plan.key, { ...input, version: plan.version, answeredAt: new Date(now).toISOString() });
+    rawSales = seedRawSoldCopies(cache, listing, "DAMAGED", 8, now);
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const result = await evaluate(listing.id);
+        assert.equal(result.condition?.gradeRange, null);
+        assert.deepEqual(result.gradedPricing?.PSA?.referenceByGrade?.map(row => [row.grade, row.count]), [[2, 5], [3, 5], [4, 5]]);
+        assert.equal(result.gradedPricing?.PSA?.referenceGradeComps?.grade, 3);
+        assert.equal(result.gradedPricing?.PSA?.status, "PRICE_UNAVAILABLE");
+        assert.equal(result.gradedPricing?.PSA?.byGrade, undefined);
+        assert.equal(result.underwriting?.verdict, "CANT_PRICE");
+        assert.deepEqual(result.usage, []);
+        if (attempt > 0) assert.ok(result.reusedSteps.includes("savedEvaluation"));
+    }
+    const neighboringQueries = ["PSA 2", "PSA 3", "PSA 4"];
+    assert.deepEqual(queried, neighboringQueries);
+    assert.equal(cachedRecordLookups, 0);
+
+    // Install an otherwise fresh private evaluation written before neighboring reference sales were stored.
+    const key = [...cache.keys()].find(key => key.startsWith(PRIVATE_EVALUATION_PREFIX))!;
+    const older = cache.get(key).evaluation;
+    delete older.gradedPricing.PSA.referenceByGrade;
+    const originalRawLookups = rawLookups;
+    for (let replay = 0; replay < 2; replay++) {
+        const result = await evaluate(listing.id);
+        assert.ok(result.reusedSteps.includes("savedEvaluation"));
+        assert.deepEqual(result.usage, []);
+        assert.equal(result.pricesCheckedAt, older.pricesCheckedAt);
+        assert.deepEqual(result.gradedPricing?.PSA?.referenceByGrade?.map(row => row.grade), [2, 3, 4]);
+        assert.equal(result.gradedPricing?.PSA?.byGrade, undefined);
+        assert.equal(result.underwriting?.verdict, "CANT_PRICE");
+    }
+    assert.equal(cachedRecordLookups, 1);
+    assert.equal(rawLookups, originalRawLookups, "an accepted raw valuation must not be refreshed to add grading context");
+    assert.deepEqual(queried, [...neighboringQueries, ...neighboringQueries]);
+});
+
+test("a provisional grade with unknown raw wear can show cached exact slab sales for context", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("a grade reference must stay offline"));
+    const listing = details(), input = reading();
+    input.condition!.rawCondition = "UNKNOWN";
+    input.condition!.gradeRange = { low: 5, likely: 7, high: 8 };
+    const queried: string[] = [];
+    const { evaluate, cache } = harness({ details: async () => listing,
+        assess: async () => assert.fail("the saved listing photos must be reused"),
+        fetchRawComps: async () => assert.fail("no raw sale category has been established"),
+        fetchComps: async () => assert.fail("provisional grade references must use only cached sales"),
+        fetchCachedComps: async (_id, options) => {
+            queried.push(`${options.grader} ${options.grade}`); return gradedSales(options);
+        } });
+    const plan = boundedAssessmentPlan(listing);
+    cache.set(plan.key, { ...input, version: plan.version, answeredAt: new Date(now).toISOString() });
+    const result = await evaluate(listing.id);
+    assert.deepEqual(queried, ["PSA 7"]);
+    assert.equal(result.gradedPricing?.PSA?.referenceGradeComps?.grade, 7);
+    assert.equal(result.gradedPricing?.PSA?.status, "PRICE_UNAVAILABLE");
+    assert.equal(result.gradedPricing?.PSA?.byGrade, undefined);
+    assert.equal(result.rawPricing, null);
+    assert.equal(result.underwriting?.verdict, "CANT_PRICE");
+    assert.deepEqual(result.usage, []);
+});
+
 test("budget and storage stops propagate instead of launching remaining research", async () => {
+    const writeFailure = harness({
+        assess: async () => ({ result: reading(1), usage: { inputTokens: 900, outputTokens: 700 } }),
+        save: async key => { assert.ok(key.endsWith(":rejected")); throw new Error("Disk full"); },
+    });
+    await assert.rejects(writeFailure.evaluate("v1|failed-rejection-write|0"), error =>
+        error instanceof StorageUnavailableError && evaluationFailure(error).code === "STORAGE_UNAVAILABLE" &&
+        error.cause instanceof Error && error.cause.message === "Disk full");
     for (const failure of [new AiSpendingError("AI_BUDGET", "Search budget exhausted."), new StorageUnavailableError()]) {
         const { evaluate, calls } = harness({ fetchComps: async () => { calls.comps++; throw failure; } });
         await assert.rejects(evaluate("v1|bounded|0"), error => error === failure);
@@ -1759,7 +2140,7 @@ test("a fixed-price search skips a refreshed auction before paying, even when an
     assert.equal(calls.assessed, 1);
 });
 
-test("automatic auctions recheck the 12-hour window while explicit manual analysis remains available", async () => {
+test("automatic auctions recheck the 10-hour window while explicit manual analysis remains available", async () => {
     const far = details({ buyingOption: "AUCTION", endTime: new Date(now + 24 * 3600000).toISOString() });
     const { evaluate, calls } = harness({ details: async id => ({ ...far, id }) });
     const deferred = await evaluate("v1|far-auction|0", { automatic: true });
@@ -2099,6 +2480,9 @@ test("an eligible stamp crop changes the real evaluator's verdict and survives a
     const storageError = new StorageUnavailableError("Focused stamp evidence could not be read.");
     stampFailure = new Error("Wrapped crop error", { cause: storageError });
     await assert.rejects(evaluate(item.id), error => error === storageError);
+    const heldStamp = new AiSpendingError("AI_EVIDENCE_HELD", "The previous stamp check has an unresolved outcome.");
+    stampFailure = new Error("Wrapped crop error", { cause: heldStamp });
+    await assert.rejects(evaluate(item.id), error => error === heldStamp);
     stampFailure = new AiSpendingError("AI_BUDGET", "The optional stamp request could not be reserved.");
     const denied = await evaluate(item.id);
     assert.equal(denied.underwriting?.verdict, "NEEDS_REVIEW");
@@ -2109,13 +2493,230 @@ test("an eligible stamp crop changes the real evaluator's verdict and survives a
     assert.equal(result.focusedStamp?.result, "VISIBLE");
     assert.equal(result.identity?.printing, "FIRST_EDITION");
     assert.equal(result.underwriting?.verdict, "BUY_RAW");
-    assert.equal(stampCalls, 3);
+    assert.equal(stampCalls, 4);
     assert.equal(originalCalls, 1);
     assert.equal(report.photoCheck.printingMarks.firstEditionStamp, "CANT_TELL");
     item.price = 300;
     const repriced = await evaluate(item.id);
     assert.equal(repriced.identity?.printing, "FIRST_EDITION");
     assert.equal(repriced.underwriting?.verdict, "PASS");
-    assert.equal(stampCalls, 3);
+    assert.equal(stampCalls, 4);
     assert.equal(originalCalls, 1);
+});
+
+test("Neo Destiny resolves a manually requested ordinary printing from its saved front and reuses the observation", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("the replay must not contact providers"));
+    const searchId = randomUUID();
+    for (const observed of ["NOT_PRESENT", "VISIBLE", "CANT_TELL"] as const) {
+        const item = details({ id: "v1|840157638714|0", title: "Dark Gengar 6/105 Neo Destiny Holo Pokemon Card NM",
+            price: 1076, shipping: 5.95, retrievedAt: new Date(now).toISOString(), images: [photo(1), photo(2)],
+            aspects: { "Card Name": "Dark Gengar", "Card Number": "6/105", Set: "Neo Destiny", Finish: "Holo", Language: "English" } });
+        const report = reading(2);
+        Object.assign(report.photoCheck, { holder: "SLEEVE", printedName: "Dark Gengar", printedNumber: "6/105" });
+        Object.assign(report.photoCheck.cardIdentity!, { name: "Dark Gengar", cardNumber: "6/105", set: "Neo Destiny" });
+        report.photoCheck.images[0].obscuresCondition = true;
+        report.photoCheck.printingMarks = { firstEditionStamp: "CANT_TELL", artBoxShadow: "CANT_TELL", reprintMark: "NONE_SEEN", evidence: [] };
+        let cropCount = 0;
+        const { evaluate, cache } = harness({
+            details: async () => item, assess: async () => assert.fail("use the saved original photos"),
+            lookup: async () => [{ ...card, name: "Dark Gengar", setName: "Neo Destiny", cardNumber: "006/105",
+                variants: [{ name: "Unlimited Holofoil", printing: "UNLIMITED", finish: "HOLO" },
+                    { name: "1st Edition Holofoil", printing: "FIRST_EDITION", finish: "HOLO" }] }],
+            fetchRawComps: async () => [], fetchComps: async () => [],
+            stamp: async () => {
+                assert.equal(getAiUsageContext().searchId, searchId);
+                cropCount++;
+                return { result: observed, reused: false, key: "fixture", answeredAt: new Date(now).toISOString(),
+                    usage: { inputTokens: 100, outputTokens: 10 },
+                    source: { method: "NEO_DESTINY_CONTEXT_V1", observation: "Compared the artwork corner to the enlarged stamp area.", photoNumber: 1, sourceSha256: "d".repeat(64), box: { left: 90, top: 90, width: 200, height: 140 } } };
+            },
+        });
+        const plan = boundedAssessmentPlan(item);
+        cache.set(plan.key, { ...report, version: plan.version, answeredAt: new Date(now).toISOString() });
+        await withAiUsageContext({ searchId }, () => evaluate(item.id, { automatic: true }));
+        assert.equal(cropCount, 0, "automatic screening needs a financially actionable comparison");
+        const checkpoint = [...cache.entries()].find(([key]) => key.startsWith(PRIVATE_EVALUATION_PREFIX))![1];
+        checkpoint.evaluation.focusedStamp = { result: "CANT_TELL", photoNumber: 1,
+            sourceSha256: "d".repeat(64), box: { left: 90, top: 90, width: 200, height: 140 } };
+        const priceOnly = await withAiUsageContext({ searchId }, () => evaluate(item.id, { priceOnly: true }));
+        assert.equal(priceOnly.focusedStamp?.result, "CANT_TELL");
+        assert.equal(cropCount, 0, "price-only refresh cannot buy a context retry");
+        const assessment = await withAiUsageContext({ searchId }, () => evaluate(item.id));
+        assert.equal(assessment.focusedStamp?.result, observed);
+        assert.equal(assessment.identity?.printing, observed === "NOT_PRESENT" ? "UNLIMITED" : "UNKNOWN");
+        assert.equal(assessment.photoCheck?.printingMarks?.firstEditionStamp, observed);
+        const again = await withAiUsageContext({ searchId }, () => evaluate(item.id, { priceOnly: true }));
+        assert.deepEqual(again.focusedStamp, assessment.focusedStamp);
+        assert.equal(again.identity?.printing, assessment.identity?.printing);
+        const repeat = await withAiUsageContext({ searchId }, () => evaluate(item.id));
+        assert.deepEqual(repeat.focusedStamp, assessment.focusedStamp, "even an inconclusive full-context answer is final for this source");
+        assert.equal(cropCount, 1);
+        assert.equal(report.photoCheck.printingMarks.firstEditionStamp, "CANT_TELL");
+    }
+});
+
+test("a focused artwork-frame check resolves a photographed English Base Set printing and reuses its result on reprice", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("the offline replay must not contact a provider"));
+    const originalSearch = randomUUID();
+    for (const edge of ["PRESENT", "UNCLEAR"] as const) {
+        const item = details({ title: "Mewtwo Base Set Unlimited 10/102 Holo English", price: 24.99, shipping: 6.65, retrievedAt: new Date(now).toISOString() });
+        Object.assign(item.aspects, { "Card Name": "Mewtwo", "Card Number": "10/102" });
+        const report = reading();
+        report.photoCheck.printedName = "Mewtwo";
+        report.photoCheck.printedNumber = "10/102";
+        Object.assign(report.photoCheck.cardIdentity!, { name: "Mewtwo", cardNumber: "10/102" });
+        report.photoCheck.printingMarks = { artBoxShadow: "CANT_TELL", firstEditionStamp: "CANT_TELL", reprintMark: "NONE_SEEN", evidence: ["The frame could not be read."] };
+        const record: CardRecord = { ...card, name: "Mewtwo", cardNumber: "10/102" };
+        let calls = 0;
+        const { evaluate, cache } = harness({
+            details: async () => item, lookup: async () => [record],
+            assess: async () => assert.fail("reuse the paid gallery"),
+            fetchRawComps: async () => [], fetchComps: async () => [], compChecks: async () => new Map(),
+            frame: async () => {
+                calls++;
+                assert.equal(getAiUsageContext().searchId, originalSearch);
+                assert.equal(getAiUsageContext().listingId, item.id);
+                return { focus: { rightEdge: edge, bottomEdge: edge, stamp: "NOT_PRESENT", observation: "The view shows the artwork border and stamp area.", sourceSha256: "b".repeat(64), photoNumber: 1 }, reused: false, usage: { inputTokens: 112, outputTokens: 24 } };
+            },
+        });
+        const plan = boundedAssessmentPlan(item);
+        cache.set(plan.key, { ...report, version: plan.version, answeredAt: new Date(now).toISOString() });
+        const initial = await withAiUsageContext({ searchId: originalSearch }, () => evaluate(item.id));
+        assert.equal(calls, 1);
+        assert.equal(initial.focusedPrinting?.rightEdge, edge);
+        assert.equal(initial.identity?.printing, edge === "PRESENT" ? "UNLIMITED" : "UNKNOWN");
+        assert.equal(initial.identity?.status, edge === "PRESENT" ? "IDENTIFIED" : "NEEDS_REVIEW");
+        if (edge === "UNCLEAR") assert.equal(initial.underwriting?.verdict, "NEEDS_REVIEW");
+        assert.equal(report.photoCheck.printingMarks.artBoxShadow, "CANT_TELL");
+        const again = await withAiUsageContext({ searchId: originalSearch }, () => evaluate(item.id, { priceOnly: true }));
+        assert.deepEqual(again.focusedPrinting, initial.focusedPrinting);
+        assert.deepEqual(again.identity?.printing, initial.identity?.printing);
+        assert.ok(again.reusedSteps.includes("focusedArtworkFrame"));
+        assert.equal(calls, 1);
+    }
+});
+
+
+test("a new frame observation cannot erase an explicit disagreement, invent a stamp, or establish a premium edition from two different edges", () => {
+    const check = reading().photoCheck;
+    const observation = { rightEdge: "PRESENT", bottomEdge: "PRESENT", stamp: "CANT_TELL", observation: "A dark band follows both gold edges.", sourceSha256: "b".repeat(64), photoNumber: 1 } as const;
+    check.printingMarks!.firstEditionStamp = "CANT_TELL";
+    assert.equal(applyFrameReading(check, observation)?.printingMarks?.firstEditionStamp, "CANT_TELL");
+    assert.equal(applyFrameReading(check, { ...observation, rightEdge: "ABSENT" }), null);
+    assert.equal(applyFrameReading(check, { ...observation, rightEdge: "ABSENT", bottomEdge: "ABSENT", stamp: "NOT_PRESENT" }), null);
+    assert.equal(applyFrameReading(check, { ...observation, stamp: "VISIBLE" }), null);
+    check.printingMarks!.conflicts = ["artBoxShadow"];
+    assert.equal(applyFrameReading(check, { ...observation, stamp: "NOT_PRESENT" }), null);
+});
+
+test("Legendary Collection Charizard uses the complete PSA subject for pricing and invalidates a stale holo valuation", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("this replay must use saved evidence"));
+    const listing = details({ title: "Charizard #3/110 Holo - Pokemon 2002 Legendary Collection - PSA 9",
+        price: 1350, shipping: 5.99, condition: "Graded", cardCondition: null, images: [photo(1), photo(2)],
+        aspects: { "Card Name": "Charizard", Set: "Legendary Collection", "Card Number": "3/110", Language: "English", Finish: "Holo",
+            "Professional Grader": "PSA", Grade: "9" } });
+    for (const [subject, expected] of [["CHARIZARD", "NON_HOLO"], ["CHARIZARD-HOLO", "HOLO"],
+        ["CHARIZARD-REVERSE FOIL", "REVERSE_HOLO"], ["CHARIZARD ???", "UNKNOWN"]] as const) {
+        const accepted = reading(2); accepted.condition = null;
+        accepted.photoCheck.holder = "GRADED_SLAB";
+        accepted.photoCheck.printedName = "Charizard"; accepted.photoCheck.printedNumber = "3/110";
+        accepted.photoCheck.cardIdentity = { name: "Charizard", set: "Legendary Collection", cardNumber: "3/110", language: "English",
+            confidence: "HIGH", finish: "HOLO", evidence: ["Charizard #3/110 is visible.", "Holographic foil is visible in the artwork."] };
+        accepted.photoCheck.slab = { present: true, grader: "PSA", grade: "9", gradeQualifier: null, certNumber: "12345678",
+            labelText: `2002 POKEMON ${subject} LEGENDARY COLLECTION #3 MINT 9 12345678`, caseCondition: "INTACT", authenticity: "NONE_SEEN", authenticityEvidence: [], concerns: [] };
+        const catalog: CardRecord = { ...card, name: "Charizard", setName: "Legendary Collection", cardNumber: "003/110", variants: [
+            { name: "Normal", finish: "NON_HOLO", printing: "UNLIMITED" }, { name: "Holofoil", finish: "HOLO", printing: "UNLIMITED" },
+            { name: "Reverse Holofoil", finish: "REVERSE_HOLO", printing: "UNLIMITED" }] };
+        const { evaluate, cache } = harness({ details: async () => listing, lookup: async () => [catalog],
+            assess: async () => assert.fail("reuse the accepted slab photo"), fetchComps: async () => [] });
+        const plan = boundedAssessmentPlan(listing);
+        const original = { ...accepted, version: plan.version, answeredAt: new Date(now).toISOString() };
+        cache.set(plan.key, structuredClone(original));
+        const result = await evaluate(listing.id);
+        assert.equal(result.photoCheck?.cardIdentity?.finish, expected);
+        assert.equal(result.identity?.finish, expected === "UNKNOWN" ? "CONFLICTING" : expected);
+        assert.equal(result.identity?.status, expected === "UNKNOWN" ? "NEEDS_REVIEW" : "IDENTIFIED");
+        assert.equal(result.slabPricing?.variant, expected === "UNKNOWN" ? undefined : catalog.variants.find(v => v.finish === expected)?.name);
+        assert.deepEqual(result.usage, []); assert.deepEqual(cache.get(plan.key), original);
+        if (expected === "NON_HOLO") {
+            const entry = [...cache.entries()].find(([key]) => key.startsWith(PRIVATE_EVALUATION_PREFIX))![1];
+            Object.assign(entry.evaluation.identity, { finish: "HOLO", reasons: [] });
+            entry.evaluation.photoCheck = structuredClone(accepted.photoCheck);
+            entry.evaluation.slabPricing = { status: "PRICED", variant: "Holofoil", grader: "PSA", grade: "9", summary: salesSummary("PSA", "9", [2000, 2300]) };
+            assert.equal(currentPriceEvidence(entry.evaluation, now), false);
+            const replay = await evaluate(listing.id);
+            assert.equal(replay.identity?.finish, "NON_HOLO");
+            assert.equal(replay.slabPricing?.variant, "Normal");
+            assert.deepEqual(replay.usage, []);
+
+            const wrongGrade = structuredClone(accepted.photoCheck);
+            wrongGrade.slab!.grade = "8";
+            assert.equal(legendaryCharizardLabelFinish(wrongGrade), "UNKNOWN");
+            const wrongCert = structuredClone(accepted.photoCheck);
+            wrongCert.slab!.certNumber = "87654321";
+            assert.equal(legendaryCharizardLabelFinish(wrongCert), "UNKNOWN");
+            const otherSet = structuredClone(accepted.photoCheck);
+            otherSet.cardIdentity!.set = "Base Set";
+            assert.equal(legendaryCharizardLabelFinish(otherSet), null);
+            const raw = structuredClone(accepted.photoCheck);
+            raw.holder = "TOPLOADER";
+            assert.equal(legendaryCharizardLabelFinish(raw), null);
+
+            const holoOnly = { ...catalog, variants: catalog.variants.filter(v => v.finish === "HOLO") };
+            const missing = harness({ details: async () => listing, lookup: async () => [holoOnly],
+                assess: async () => assert.fail("the label already identifies the finish"),
+                fetchComps: async () => assert.fail("a holo record cannot authorize non-holo sales") });
+            missing.cache.set(plan.key, structuredClone(original));
+            const waiting = await missing.evaluate(listing.id);
+            assert.equal(waiting.identity?.status, "IDENTIFIED");
+            assert.equal(waiting.identity?.finish, "NON_HOLO");
+            assert.equal(waiting.identity?.recordId, null);
+            assert.equal(waiting.underwriting?.verdict, "CANT_PRICE");
+            assert.match(waiting.underwriting!.reasons.join(" "), /non-holo price record/i);
+            assert.deepEqual(waiting.usage, []);
+
+            const nonHoloRecord = { ...catalog, id: 42, name: "Charizard (Non-Holo)", variants: catalog.variants.filter(v => v.finish === "NON_HOLO") };
+            const separate = harness({ details: async () => listing, lookup: async () => [holoOnly, nonHoloRecord],
+                assess: async () => assert.fail("reuse the label"),
+                fetchComps: async (id, request) => {
+                    assert.equal(id, 42); assert.equal(request.variant, "Normal"); return [];
+                } });
+            separate.cache.set(plan.key, structuredClone(original));
+            const exact = await separate.evaluate(listing.id);
+            assert.equal(exact.identity?.recordId, 42);
+            assert.equal(exact.slabPricing?.variant, "Normal");
+
+        }
+    }
+});
+
+test("buyer price research can settle a previously inspected sold condition on an overpriced listing without buying cold photo reviews", async () => {
+    const item = details(), report = reading(), searchId = randomUUID();
+    report.condition!.rawCondition = "LIGHTLY_PLAYED";
+    report.condition!.gradeRange = null;
+    let confirmed = false, authorizations = 0;
+    const evidence = { condition: "LIGHTLY_PLAYED" as const, evidence: ["Two readings agree on edge whitening."], photoCount: 2 };
+    const sale: Comp = { id: "saved-medium", title: "Venusaur Base Set 15/102 Unlimited Holo", price: 10,
+        sold_at: new Date(now - 86400000).toISOString(), variant: "Holofoil", currency: "USD", attribution: "exact",
+        sale_type: "fixed_price", listing_url: "https://www.ebay.com/itm/223456789010", grader: null, grade: null, grade_qualifier: null };
+    const cold: Comp = { ...sale, id: "cold", price: 1000, listing_url: "https://www.ebay.com/itm/223456789011" };
+    const { evaluate, cache } = harness({ assess: async () => assert.fail("reuse the buyer's listing photos"), fetchRawComps: async () => [sale, cold],
+        soldCondition: () => ({ usage: [], read: async row => row === sale && confirmed ? evidence : null,
+            status: row => row === sale ? "CORROBORATABLE" : "UNREVIEWED",
+            acquire: async (row, _, __, verify) => {
+                assert.equal(row, sale); assert.equal(verify, true); authorizations++; confirmed = true; return evidence;
+            } }) });
+    const plan = boundedAssessmentPlan(item);
+    cache.set(plan.key, { ...report, version: plan.version, answeredAt: new Date(now).toISOString() });
+    // Seed the saved price gap; ordinary price refreshes only reuse historical photos.
+    const store = createPrivateEvaluationStore({ cached: async key => cache.get(key) ?? null, save: async (key, value) => { cache.set(key, value); } });
+    const fixture = harness({ assess: async () => ({ result: report, usage: { inputTokens: 1, outputTokens: 1 } }), fetchRawComps: async () => [] });
+    const initial = await fixture.evaluate(item.id);
+    await store.save(initial, { evidenceKey: listingEvidenceKey(item), contextKey: evaluationContextKey(item), searchId });
+    const refresh = (verifySoldCondition: boolean) => withAiUsageContext({ searchId, listingId: item.id }, () => evaluate(item.id, { priceOnly: true, verifySoldCondition }));
+    assert.equal((await refresh(false)).rawPricing?.status, "PRICE_UNAVAILABLE");
+    const verified = await refresh(true);
+    assert.equal(verified.rawPricing?.prices?.find(p => p.condition === "LIGHTLY_PLAYED")?.price, 10);
+    assert.equal((await refresh(true)).rawPricing?.status, "PRICED");
+    assert.equal(authorizations, 1, "an accepted single physical match closes the acquisition stage");
 });

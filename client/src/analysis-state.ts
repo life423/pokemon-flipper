@@ -5,7 +5,7 @@ import type { Evaluation, ListingSummary, Targets } from "./types.ts";
 export type AnalysisState = (
     | { status: "loading"; startedAt: number }
     | { status: "done"; evaluation: Evaluation; pricingExpired?: true; searchRunId?: string }
-    | { status: "error"; message: string }
+    | { status: "inconclusive" | "held" | "error"; message: string }
 ) & { evidenceKey: string };
 
 export type PriceRefreshState = { evidenceKey: string } & (

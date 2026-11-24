@@ -117,6 +117,9 @@ export function stripListingNameBoilerplate(value: string, title = value, set?: 
             // A trailing seller condition or slab-label note belongs to the
             // listing, while another occurrence may be part of the card name.
             const metadata = [/\bcosmos[ -]+holo(?:graphic|foil)?\b/gi];
+            if (setKey(set ?? "") === "plasma blast" && /\bEX\b/i.test(title) && /\bfull[ -]art\b/i.test(title)) {
+                descriptions.push(/\bteam\s+plasma\b(?!['’]|\s+blast\b)/gi, /\bholo(?:graphic|foil)?\s+UR\b(?!['’])/gi);
+            }
             const grader = graded ? searchAttributes(title).grader : null;
             if (!graded) metadata.push(/\b(?:nm|near[ -]+mint)\s+clean\s*[.!]?\s*$/gi);
             if (graded) metadata.push(/\bnew\s+cert\s+clean\s*[.!]?\s*$/gi);

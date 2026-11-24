@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import sharp from "sharp";
 import { CameraInputError, createCameraGrader } from "../../server/analysis/camera-grade.ts";
+import { AiSpendingError } from "../../server/ai/spending.ts";
 import { getAiUsageContext } from "../../server/ai/usage-context.ts";
 import { cardEvaluation } from "../fixtures/card-evaluation.ts";
 
@@ -117,4 +118,14 @@ test("independent graders cannot re-dispatch an in-flight capture or an indeterm
     await assert.rejects(pending);
     await assert.rejects(grade(body), /duplicate paid review is blocked/);
     assert.equal(count, 1);
+});
+
+test("a held model request keeps its camera claim after restart", async () => {
+    const cache = new Map(), body = await inputs();
+    let calls = 0;
+    const deps = { read: async key => cache.get(key) ?? null, save: async (key, value) => { cache.set(key, value); },
+        review: async () => { calls++; throw new AiSpendingError("AI_EVIDENCE_HELD", "Previous request unresolved."); } };
+    await assert.rejects(createCameraGrader(deps)(body), { code: "AI_EVIDENCE_HELD" });
+    await assert.rejects(createCameraGrader(deps)(body), /duplicate paid review is blocked/);
+    assert.equal(calls, 1);
 });

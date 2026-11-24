@@ -1,7 +1,10 @@
 import type { Evaluation, ListingSummary, PhotoCheck } from "./types.ts";
-import { hasSlabEvidence, obscuredDisclosedWear, photoAssessmentConfidence, photoCoverage, photoIssueNotes } from "./photo-evidence.ts";
+import { hasSlabEvidence, missingGalleryViews, obscuredDisclosedWear, photoAssessmentConfidence, photoCoverage, photoIssueNotes } from "./photo-evidence.ts";
 import { isRawCondition } from "./conditions.ts";
 import { priceEvidenceGap } from "./money/price-evidence.ts";
+import { ordinaryBaseSetPokemonNumber, setKey } from "./sets.ts";
+import { cardLanguageStatus } from "./card-language.ts";
+import { sameCardNumber } from "./card-number.ts";
 
 const DEEP_PHOTO_LIMIT = 6;
 export function planDeeperPhotos(check: PhotoCheck | null, photos: string[]) {
@@ -14,7 +17,7 @@ export function planDeeperPhotos(check: PhotoCheck | null, photos: string[]) {
         seen.add(url); return true;
     });
     if (!useful.some((image) => image.view === "FRONT" && !image.obscuresCondition)) {
-        return { photos: [], reason: "Ask the seller for a clear, unobscured front photo before paying for a deeper review." };
+        return { photos: [], reason: "A clear, unobscured front photo is needed for a second reading." };
     }
     // Give each useful view a turn before adding more of the same view.
     const selected: typeof useful = [];
@@ -41,6 +44,34 @@ function wholeSideCoverageNote(side: "front" | "back", overviews: number, review
     return overviews
         ? `Every usable whole-${side} view ${scope} has obscured detail; ${remaining}`
         : `No usable whole-${side} view ${scope}; ${remaining}`;
+}
+
+const unresolvedPrinting = "The photos don't clearly show which printing this is.";
+const baseSetMarks = "The photo review identified the card. That review could not confirm the shadow along the artwork border or the First Edition stamp.";
+
+// Search cards and analysis details can both render reasons from older assessments.
+// Translate only the known printing templates. Explicit claims, mismatches and
+// observations remain available in the underlying assessment.
+export function printingReviewReasons(evaluation: Evaluation, reasons: string[]): string[] {
+    if (!reasons.some(reason => reason === unresolvedPrinting || reason === baseSetMarks)) return [...new Set(reasons)];
+    const identity = evaluation.identity, observed = evaluation.photoCheck?.cardIdentity, marks = evaluation.photoCheck?.printingMarks;
+    const set = setKey(identity?.set ?? "");
+    let message = unresolvedPrinting;
+    if (identity?.status === "NEEDS_REVIEW" && observed?.confidence === "HIGH" && set && setKey(observed.set ?? "") === set) {
+        if (set === "base set" && ordinaryBaseSetPokemonNumber(observed.cardNumber) &&
+            cardLanguageStatus("", [observed.language, identity.language]) === "ENGLISH" &&
+            marks?.artBoxShadow === "CANT_TELL" && marks.firstEditionStamp === "CANT_TELL") {
+            message = baseSetMarks;
+        } else if (set !== "base set" && identity.hasEditions && !identity.notThisCard && !hasSlabEvidence(evaluation) &&
+            evaluation.photoCheck?.cardMatch?.verdict === "MATCH" && !evaluation.photoCheck.cardMatch.problems.length &&
+            !marks?.conflicts?.length && marks?.reprintMark === "NONE_SEEN" && sameCardNumber(identity.cardNumber, observed.cardNumber) &&
+            identity.name?.toLowerCase() === observed.name?.toLowerCase() && observed.name && observed.cardNumber &&
+            identity.printing === "UNKNOWN" && identity.evidence?.title === "NOT_STATED" && identity.evidence.itemSpecifics === "NOT_STATED" &&
+            identity.evidence.label === "NOT_STATED" && identity.evidence.photo === "UNKNOWN") {
+            message = `The photos identify ${observed.name} ${observed.cardNumber} from ${observed.set}. Use Unlimited as the price reference. A premium edition is unverified.`;
+        }
+    }
+    return [...new Set(reasons.map(reason => reason === unresolvedPrinting || reason === baseSetMarks ? message : reason))];
 }
 
 export function photoReviewStatus(evaluation: Evaluation | null, listing?: ListingSummary) {
@@ -71,8 +102,8 @@ export function photoReviewStatus(evaluation: Evaluation | null, listing?: Listi
     // review reasons; presentation never discards them by matching their text.
     if (evaluation.slab?.status === "OK") photoNotes.push(...evaluation.slab.concerns);
     if (evaluation.identity?.status !== "IDENTIFIED") reasons.push(...(evaluation.identity?.reasons.length ? evaluation.identity.reasons : ["The exact card identity is uncertain."]));
-    if (evaluation.slab?.status !== "OK" && evaluation.slab) reasons.push(...(evaluation.slab.reasons.length ? evaluation.slab.reasons : evaluation.slab.concerns.length ? evaluation.slab.concerns : ["The slab label or authenticity needs review."]));
-    if (evaluation.underwriting?.verdict === "NEEDS_REVIEW" && (!deferred || evaluation.condition)) reasons.push(...(evaluation.underwriting.reasons.length ? evaluation.underwriting.reasons : ["The purchase recommendation needs review."]));
+    if (evaluation.slab?.status !== "OK" && evaluation.slab) reasons.push(...(evaluation.slab.reasons.length ? evaluation.slab.reasons : evaluation.slab.concerns.length ? evaluation.slab.concerns : ["The photos leave the slab label or authenticity uncertain."]));
+    if (evaluation.underwriting?.verdict === "NEEDS_REVIEW" && (!deferred || evaluation.condition)) reasons.push(...(evaluation.underwriting.reasons.length ? evaluation.underwriting.reasons : ["The available evidence is too uncertain to recommend buying."]));
     if (!hasSlabEvidence(evaluation)) {
         const coverage = photoCoverage(check);
         const best = evaluation.underwriting?.best;
@@ -105,21 +136,13 @@ export function photoReviewStatus(evaluation: Evaluation | null, listing?: Listi
         // A cropped or glared close-up describes that image, not every view of
         // the card. Requested extra views remain visible without replacing the
         // whole-side coverage or the model's completed condition assessment.
-        photoNotes.push(...check.missingViews.map(view => `Additional view requested by AI: ${view}`));
+        photoNotes.push(...missingGalleryViews(check).map(view => `Additional view requested by AI: ${view}`));
         photoNotes.push(...evaluation.modeReasons.map(reason => `Assessment note: ${reason}`));
     }
     const concerns = reasons.length > 0;
-    const printingMarks = check.printingMarks;
-    const unclearPrintingMarks = evaluation.identity?.status === "NEEDS_REVIEW" && check.cardIdentity?.confidence === "HIGH" &&
-        printingMarks?.artBoxShadow === "CANT_TELL" && printingMarks.firstEditionStamp === "CANT_TELL";
-    // Saved assessments already contain this generic reason. Explain what the
-    // model could read without modifying their accepted photo evidence.
-    const displayReasons = unclearPrintingMarks ? reasons.map(reason => reason === "The photos don't clearly show which printing this is."
-        ? "The photo review identified the card. That review could not confirm the shadow along the artwork border or the First Edition stamp."
-        : reason) : reasons;
     return { title: evaluation.frontPhotoStop ? "Front photo checked" : deferred && !evaluation.condition ? "AI identity check complete" : "AI photo review complete", confidence, checked: check.images.length,
         total: evaluation.listing.photosInListing, reviewedAt: evaluation.answeredAt,
-        reasons: [...new Set(displayReasons)], photoNotes: [...new Set(photoNotes)], needsYourReview: concerns };
+        reasons: printingReviewReasons(evaluation, reasons), photoNotes: [...new Set(photoNotes)], needsYourReview: concerns };
 }
 
 export function isResearchDeferred(evaluation: Evaluation | null): boolean {

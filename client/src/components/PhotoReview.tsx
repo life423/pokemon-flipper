@@ -1,3 +1,4 @@
+import type { AnalysisState } from "../analysis-state";
 import type { Evaluation, ListingSummary } from "../types";
 import { name } from "../format";
 import { hasSlabEvidence, obscuredDisclosedWear, slabLabelConfidence } from "../../../shared/photo-evidence.ts";
@@ -8,12 +9,12 @@ export type DeeperReviewState = { status: "loading"; key: string } | { status: "
 interface Props {
     evaluation: Evaluation | null;
     listing: ListingSummary;
-    phase?: "loading" | "error";
+    assessment?: Exclude<AnalysisState, { status: "done" }>;
     compact?: boolean;
     state?: DeeperReviewState;
     onReview?: () => void;
 }
-export function PhotoReview({ evaluation, listing, phase, compact = false, state, onReview }: Props) {
+export function PhotoReview({ evaluation, listing, assessment, compact = false, state, onReview }: Props) {
     const status = photoReviewStatus(evaluation, listing);
     const labelConfidence = evaluation ? slabLabelConfidence(evaluation) : null;
     const current = state?.key === evaluation?.photoReviewKey ? state : undefined;
@@ -21,13 +22,14 @@ export function PhotoReview({ evaluation, listing, phase, compact = false, state
     const obscuredWear = evaluation?.underwriting?.verdict === "PASS" && obscuredDisclosedWear(evaluation);
     const plan = evaluation ? planDeeperPhotos(evaluation.photoCheck, evaluation.listing.photos ?? listing.images) : null;
     return <section className={styles.review} aria-label="AI photo review">
-        <p className={styles.title}>{phase === "loading" ? "Analyzing photos and checking resale prices…" : phase === "error" ? "Listing analysis could not finish" : status.title}</p>
+        <p className={styles.title}>{assessment?.status === "loading" ? "Analyzing photos and checking resale prices…" : assessment?.status === "held" ? "Previous AI check unresolved" : assessment?.status === "inconclusive" ? "Photo check inconclusive" : assessment?.status === "error" ? "Listing analysis could not finish" : status.title}</p>
+        {!compact && (assessment?.status === "inconclusive" || assessment?.status === "held") && <p className={styles.meta}>{assessment.message}</p>}
         {evaluation?.researchMode === "DEFERRED_LOW_RESALE" && <p className={styles.meta}>Further condition and resale research was deferred for this low-value card. Full research remains available.</p>}
         {evaluation?.photoCheck && <p className={styles.meta}>{status.checked} of {status.total} photos checked · Photo confidence: {name(status.confidence)}</p>}
         {labelConfidence && evaluation?.slab && <p className={styles.meta}>Slab label confidence: {name(labelConfidence)} · Case: {name(evaluation.slab.caseCondition)}</p>}
         {obscuredWear && <p className={styles.caution}>{obscuredWear}</p>}
         {status.needsYourReview && <div className={styles.caution}>
-            <strong>Your review needed</strong>
+            <strong>Photo evidence affecting this decision</strong>
             {compact ? <p>{status.reasons[0]}</p> : <ul>{status.reasons.slice(0, 4).map((reason) => <li key={reason}>{reason}</li>)}</ul>}
         </div>}
         {status.photoNotes.length > 0 && <details className={styles.notes}><summary>Photo notes ({status.photoNotes.length})</summary><ul>{status.photoNotes.map(note => <li key={note}>{note}</li>)}</ul></details>}
@@ -41,18 +43,18 @@ export function PhotoReview({ evaluation, listing, phase, compact = false, state
                 <p>{deep.summary}</p>
                 <p className={styles.meta}>This second opinion adds evidence notes. It does not raise the grade estimate, confidence or bid limit. New concerns pause purchase advice.</p>
                 {deep.findings.map((finding, i) => <div className={styles.finding} key={i}>
-                    <p><strong>{name(finding.area)}</strong> · {finding.impact === "NEW_CONCERN" ? "New concern — your review needed" : finding.impact === "SUPPORTS_PRIOR" ? "Supports earlier assessment" : "Still uncertain"}</p>
+                    <p><strong>{name(finding.area)}</strong> · {finding.impact === "NEW_CONCERN" ? "New visible concern" : finding.impact === "SUPPORTS_PRIOR" ? "Supports earlier assessment" : "Still uncertain"}</p>
                     <p>{finding.observation}</p>
                     <p className={styles.meta}>Listing {finding.photoNumbers.length === 1 ? "photo" : "photos"} {finding.photoNumbers.join(", ")}</p>
                 </div>)}
-                {deep.requestedPhotos.length > 0 && <div><h4>Photos to request from the seller</h4><ul>{deep.requestedPhotos.map((photo) => <li key={photo}>{photo}</li>)}</ul></div>}
+                {deep.requestedPhotos.length > 0 && <div><h4>Views missing from the listing</h4><ul>{deep.requestedPhotos.map((photo) => <li key={photo}>{photo}</li>)}</ul></div>}
                 <p className={styles.meta}>Reopening this saved review makes no AI request.</p>
             </div> : <div className={styles.action}>
-                <p>Ask AI to focus on unresolved corners, edges, surface and printing evidence. Your current assessment stays visible.</p>
+                <p>An optional second opinion can check the visible corners, edges and surface.</p>
                 <button type="button" onClick={onReview} disabled={!onReview || !evaluation.photoReviewKey || !plan?.photos.length || current?.status === "loading"}>
                     {current?.status === "loading" ? "AI reviewing details…" : "Deeper AI photo review · paid"}
                 </button>
-                <p className={styles.meta}>{!evaluation.photoReviewKey ? "Refresh the app and open the listing to enable a saved review." : plan?.reason ?? `One AI request using up to ${plan?.photos.length} existing photos. Results are saved; better seller photos may still be needed.`}</p>
+                <p className={styles.meta}>{!evaluation.photoReviewKey ? "No second opinion is available for this saved assessment." : plan?.reason ?? `One AI request using up to ${plan?.photos.length} existing photos. Results are saved; better seller photos may still be needed.`}</p>
                 {current?.status === "error" && <p role="alert" className={styles.caution}>{current.message} Your previous assessment is still shown.</p>}
             </div>}
         </>}

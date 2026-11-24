@@ -1,3 +1,4 @@
+import { PRICE_SEARCH_MODEL, priceSearchTools } from "./web-search-policy.ts";
 import OpenAI from "openai";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Usage } from "../analysis/types.ts";
@@ -46,6 +47,13 @@ function photoInputs(photos: Photo[]) {
     ]);
 }
 
+export class MalformedStructuredOutputError extends SyntaxError {
+    constructor(step: string, readonly usage: Usage, cause: unknown) {
+        super(`${step}: the completed response did not contain one valid JSON value.`, { cause });
+        this.name = "MalformedStructuredOutputError";
+    }
+}
+
 // Structured output is only trusted when the response finished
 // normally and the model didn't refuse.
 function readStructuredOutput(response: OpenAI.Responses.Response, step: string): unknown {
@@ -66,7 +74,12 @@ function readStructuredOutput(response: OpenAI.Responses.Response, step: string)
         throw new Error(`${step}: model refused (${refusal.refusal})`);
     }
 
-    return JSON.parse(response.output_text);
+    try {
+        return JSON.parse(response.output_text);
+    } catch (error) {
+        if (error instanceof SyntaxError) throw new MalformedStructuredOutputError(step, readUsage(response), error);
+        throw error;
+    }
 }
 
 function readUsage(response: OpenAI.Responses.Response): Usage {
@@ -88,6 +101,7 @@ export async function runStructured<T>({
     maxRetries,
     maxOutputTokens,
     bounded = false,
+    webPriceSearch = false,
     model: explicitModel,
 }: {
     step: string;
@@ -103,11 +117,13 @@ export async function runStructured<T>({
     maxOutputTokens?: number;
     // One compact immutable assessment for the bounded search workflow.
     bounded?: boolean;
+    webPriceSearch?: boolean;
     // Explicit bounded comparisons/refinements can select a verified model.
     // Normal callers keep their configured policy; the spending guard still
     // requires exact model rates, immutable input and the original search cap.
     model?: string;
-}): Promise<{ result: T; usage: Usage }> {
+}): Promise<{ result: T; usage: Usage; sourceUrls?: string[] }> {
+    if (webPriceSearch && (!bounded || explicitModel !== PRICE_SEARCH_MODEL || photos.length)) throw new Error("Web price research requires its bounded text-only request.");
     if (explicitModel !== undefined && !bounded) throw new Error("An explicit model is supported only for bounded research.");
     const waitingSignal = signal && dispatchSignal ? AbortSignal.any([signal, dispatchSignal]) : signal ?? dispatchSignal;
     waitingSignal?.throwIfAborted();
@@ -143,7 +159,8 @@ export async function runStructured<T>({
             store: false,
             ...(instructions ? { instructions } : {}),
             max_output_tokens: bounded ? Math.min(maxOutputTokens ?? policy.maxOutputTokens, BOUNDED_MAX_OUTPUT_TOKENS) : maxOutputTokens ?? policy.maxOutputTokens,
-            ...(policy.supportsReasoning ? { reasoning: { effort: policy.effort } } : {}),
+            ...(policy.supportsReasoning ? { reasoning: { effort: webPriceSearch ? "low" : policy.effort } } : {}),
+            ...(webPriceSearch ? priceSearchTools() : {}),
             metadata: { app_step: step },
             input: [{ role: "user" as const, content: [{ type: "input_text" as const, text: prompt }, ...photoInputs(immutablePhotos)] }],
             text: { format: { type: "json_schema" as const, name: schemaName, strict: true, schema } },
@@ -185,6 +202,24 @@ export async function runStructured<T>({
 
     return {
         result: readStructuredOutput(response, step) as T,
+        ...(webPriceSearch ? { sourceUrls: webSearchSources(response.output) } : {}),
         usage: readUsage(response),
     };
+}
+
+// URLs invented in generated JSON cannot enter the evidence list. The hosted
+// tool supplies the consulted URLs and the API annotates citations separately.
+export function webSearchSources(output: OpenAI.Responses.Response["output"]): string[] {
+    const calls = output.filter(item => item.type === "web_search_call");
+    if (calls.length !== 1 || calls[0].status !== "completed") throw new Error("OpenAI did not complete the required price search.");
+    const urls = new Set<string>();
+    for (const item of output) {
+        if (item.type === "web_search_call" && item.action.type === "search") {
+            for (const source of item.action.sources ?? []) if (source.type === "url") urls.add(source.url);
+        }
+        if (item.type === "message") for (const part of item.content) {
+            if (part.type === "output_text") for (const citation of part.annotations) if (citation.type === "url_citation") urls.add(citation.url);
+        }
+    }
+    return [...urls];
 }

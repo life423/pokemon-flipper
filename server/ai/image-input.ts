@@ -2,7 +2,7 @@ import { createLimiter } from "../lib/concurrency.ts";
 const limit = createLimiter(3);
 const MAX_BYTES = 8 * 1024 * 1024;
 
-export async function inlineEbayImage(url: string, signal: AbortSignal): Promise<string> {
+export async function downloadEbayImage(url: string, signal: AbortSignal) {
     const parsed = new URL(url);
     if (parsed.protocol !== "https:" || parsed.hostname !== "i.ebayimg.com" || parsed.port || parsed.username || parsed.password || !parsed.pathname.startsWith("/images/")) throw new Error("Only public eBay listing images can be downloaded for review.");
     return limit(async () => {
@@ -18,6 +18,11 @@ export async function inlineEbayImage(url: string, signal: AbortSignal): Promise
                 chunks.push(value);
             }
         } finally { await reader.cancel().catch(() => {}); }
-        return `data:${type};base64,${Buffer.concat(chunks).toString("base64")}`;
+        return { type, bytes: Buffer.concat(chunks) };
     });
+}
+
+export async function inlineEbayImage(url: string, signal: AbortSignal): Promise<string> {
+    const { type, bytes } = await downloadEbayImage(url, signal);
+    return `data:${type};base64,${bytes.toString("base64")}`;
 }

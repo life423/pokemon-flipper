@@ -1,3 +1,4 @@
+import { isBoundedPriceSearch } from "./web-search-policy.ts";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -5,7 +6,7 @@ import { DATA_DIR } from "../lib/paths.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { createSharedWork } from "../lib/shared-work.ts";
 import { assertSqlStorageReady, StorageUnavailableError } from "../storage/index.ts";
-import { getAiDispatchSignal, getAiUsageContext, type AiUsageContext } from "./usage-context.ts";
+import { getAiDispatchSignal, getBudgetContext, type AiUsageContext } from "./usage-context.ts";
 
 export interface AiInputProof { inputHash: string; inputTokens: number }
 export const aiInputHash = (body: unknown) => createHash("sha256").update(JSON.stringify(body)).digest("hex");
@@ -41,7 +42,8 @@ export function verifiedCacheOptions(body: any): boolean {
 // counts the exact text, instructions, schema and inline image bytes instead.
 function countPayload(body: any): Record<string, unknown> {
     if (!body || typeof body !== "object" || Array.isArray(body) || typeof body.model !== "string" || !verifiedCacheOptions(body) ||
-        Object.keys(body).some(key => !GENERATION_FIELDS.has(key)) || body.tools?.length || body.tool_choice && body.tool_choice !== "none" ||
+        Object.keys(body).some(key => !GENERATION_FIELDS.has(key) && !(isBoundedPriceSearch(body) && ["max_tool_calls", "include"].includes(key))) ||
+        ((body.tools?.length || body.tool_choice && body.tool_choice !== "none") && !isBoundedPriceSearch(body)) ||
         body.previous_response_id || body.conversation || body.stream || body.background || body.truncation && body.truncation !== "disabled") {
         return fail("The AI request contains unsupported counting or mutable-context fields.");
     }
@@ -120,7 +122,7 @@ export function createAiInputPreflight({ fetch: request = (...args) => globalThi
                 if (error instanceof InputPreflightError || error instanceof StorageUnavailableError) throw error;
                 return fail("Exact AI input counting could not finish.");
             } finally {
-                try { await record({ ...getAiUsageContext(), at: new Date(started).toISOString(), inputHash, model, status, inputTokens, durationMs: Date.now() - started }); }
+                try { await record({ ...getBudgetContext(), at: new Date(started).toISOString(), inputHash, model, status, inputTokens, durationMs: Date.now() - started }); }
                 catch (cause) { throw new StorageUnavailableError("The exact AI counting audit could not be saved. No paid AI generation was authorized.", { cause }); }
             }
         }, waiting);

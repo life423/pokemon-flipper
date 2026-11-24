@@ -1,7 +1,8 @@
 import { withAiUsageContext } from "../ai/usage-context.ts";
 import { assertSqlStorageReady, storageBackend } from "../storage/index.ts";
 import { SEARCH_DIAGNOSTIC_CONFIDENCE, SEARCH_DIAGNOSTIC_EVIDENCE_GROUPS, type SearchDiagnosticReview } from "../../shared/search-diagnostic.ts";
-import { createModelExperimentRunner } from "./model-experiment.ts";
+import { readCache } from "../lib/cache.ts";
+import { createModelExperimentRunner, modelExperimentKey } from "./model-experiment.ts";
 
 export const SEARCH_DIAGNOSTIC_MODEL = "gpt-6-luna";
 const SEARCH_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -48,13 +49,15 @@ function validateReview(value: unknown, exampleCount: number | undefined): Searc
     }) };
 }
 
-// Keep the original CLI request stable so previous paid answers stay reusable.
+const CLI_CAP_NOTE = "Use the reported AI allowance for this search. A null cap denotes uncapped spending.";
+// Only reconstruct this wording when reading a previously paid answer.
+const LEGACY_CLI_CAP_NOTE = "The report's original AI cap applies to this search; the app's newer 25-cent cap applies only to new searches.";
 const CLI_INSTRUCTIONS = "Review these saved search aggregates for actionable causes of missed or unverified opportunities. " +
     "Return at most three proposed Codex tasks for human review with observed evidence, a bounded fix or investigation, confidence, and offline verification checks. " +
     "The lower-price pass counts new source rows before matching and sold-price screening. Its added assessment candidates were eligible for possible follow-up, and their count says nothing about whether photos were reviewed or a deal was verified. " +
     "Supplemental review holds count resolved rechecks separately from still-unresolved listings. The loss count only describes resolved rechecks; zero losses with zero resolved rechecks leaves the economics unknown. " +
     "Distinguish observations from hypotheses. Price exclusions may be correct. Preserve profitable evidence standards, existing per-search limits and saved assessments. " +
-    "The report's original AI cap applies to this search; the app's newer 25-cent cap applies only to new searches. " +
+    CLI_CAP_NOTE + " " +
     "Do not invent sales or imply an assessed loss is a deal. Do not return executable commands or instructions to act without review.";
 
 const APP_INSTRUCTIONS = "Review this completed app search for actionable causes of missed or unverified opportunities. " +
@@ -64,14 +67,41 @@ const APP_INSTRUCTIONS = "Review this completed app search for actionable causes
     "Use exampleRows only for actual numbered examples in the supplied evidence, with at most three distinct numbers per task. Use an empty array when there is no relevant example. " +
     "Preserve profitable evidence standards, spending limits and saved assessments. Do not invent sales, code locations, or listing identities. Do not return executable commands or instructions to act without review.";
 
+export const APP_REVIEW_OUTPUT_TOKENS = 1800;
+
+export function diagnosticReviewRequest(evidence: Readonly<Record<string, unknown>>, exampleCount?: number, outputTokens?: number) {
+    const expanded = exampleCount !== undefined && outputTokens === APP_REVIEW_OUTPUT_TOKENS;
+    const instructions = exampleCount === undefined ? CLI_INSTRUCTIONS : APP_INSTRUCTIONS;
+    return {
+        step: "Search diagnostic review", schemaName: "search_diagnostic_review", schema: reviewSchema(exampleCount),
+        maxOutputTokens: expanded ? APP_REVIEW_OUTPUT_TOKENS : 1000, photos: [], prompt: JSON.stringify(evidence),
+        instructions: expanded ? instructions + " Limit the summary to two sentences and each task field or check to one sentence." : instructions,
+    };
+}
+
+export async function savedLegacyCliReview(sourceKey: string, current: ReturnType<typeof diagnosticReviewRequest>, signal?: AbortSignal,
+    cached: (key: string, maxAgeHours: number) => Promise<unknown | null> = readCache) {
+    signal?.throwIfAborted();
+    const request = { ...current, instructions: current.instructions.replace(CLI_CAP_NOTE, LEGACY_CLI_CAP_NOTE) };
+    const input = { sourceKey, model: SEARCH_DIAGNOSTIC_MODEL, request };
+    const previous = await cached(modelExperimentKey(input), Infinity);
+    signal?.throwIfAborted();
+    if (previous === null) return null;
+    // Pin this exact entry so the normal experiment validator can check it without
+    // a second storage read or a paid retry if the entry changes concurrently.
+    const replay = createModelExperimentRunner({ cached: async () => previous });
+    return replay({ ...input, validate: value => validateReview(value, undefined), signal });
+}
+
 const experiment = createModelExperimentRunner();
 
-export async function runSearchDiagnosticReview({ searchId, budgetSearchId, evidence, exampleCount, signal }: {
+export async function runSearchDiagnosticReview({ searchId, budgetSearchId, evidence, exampleCount, outputTokens, signal }: {
     searchId: string;
     budgetSearchId: string;
     /** Use only sanitized counts, fixed labels, and anonymous examples. */
     evidence: Readonly<Record<string, unknown>>;
     exampleCount?: number;
+    outputTokens?: number;
     signal?: AbortSignal;
 }) {
     if (!SEARCH_ID.test(searchId) || !SEARCH_ID.test(budgetSearchId) ||
@@ -84,16 +114,15 @@ export async function runSearchDiagnosticReview({ searchId, budgetSearchId, evid
     signal?.throwIfAborted();
 
     const browserReview = exampleCount !== undefined;
-    const answer = await withAiUsageContext({ searchId: budgetSearchId }, () => experiment({
-        sourceKey: `${browserReview ? "app-search-diagnostic-review" : "search-diagnostic-review"}:v1:${searchId}`,
+    const sourceKey = `${browserReview ? "app-search-diagnostic-review" : "search-diagnostic-review"}:v1:${searchId}`;
+    const request = diagnosticReviewRequest(evidence, exampleCount, outputTokens);
+    const legacy = browserReview ? null : await savedLegacyCliReview(sourceKey, request, signal);
+    const answer = legacy ?? await withAiUsageContext({ searchId: budgetSearchId }, () => experiment({
+        sourceKey,
         model: SEARCH_DIAGNOSTIC_MODEL,
         validate: value => validateReview(value, exampleCount),
         signal,
-        request: {
-            step: "Search diagnostic review", schemaName: "search_diagnostic_review", schema: reviewSchema(exampleCount),
-            maxOutputTokens: 1000, photos: [], prompt: JSON.stringify(evidence),
-            instructions: browserReview ? APP_INSTRUCTIONS : CLI_INSTRUCTIONS,
-        },
+        request,
     }));
     return { review: answer.result, usage: answer.usage, reused: answer.reused };
 }

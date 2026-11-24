@@ -4,7 +4,8 @@ import { ANALYSIS_VERSION } from "../analysis/legacy-evidence.ts";
 import { createLimiter } from "../lib/concurrency.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
 import { EbayError } from "../ebay/api.ts";
-import { listingEvidenceKey, photoEvidenceKey } from "../../shared/listing-evidence.ts";
+import { addedPhotoNumbers, listingEvidenceKey, photoEvidenceKey } from "../../shared/listing-evidence.ts";
+import { needsAddedBackPhoto } from "../../shared/photo-evidence.ts";
 import { retargetEvaluation } from "../../shared/money/targets.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import type { Evaluation, ListingSummary, DeeperPhotoReview } from "../../shared/types.ts";
@@ -50,13 +51,16 @@ export function createShortlistService({ store = shortlistStore, details = getLi
         return store.save(evaluation ? withFreshListing(listing, evaluation) : listing, evaluation, new Date(now()).toISOString());
     };
     const remember = async (evaluation: Evaluation, evidenceKey: string) => store.update(evaluation.listing.id, (entry) => {
-        if (evaluation.listing.termsCheckedAt) {
-            const listing = withFreshListing(entry.listing, evaluation);
-            if (listing === entry.listing && listingEvidenceKey(listing) !== evidenceKey) return entry;
-            return { ...entry, listing, evaluation: retargetEvaluation(evaluation, MONEY_CONFIG.targets, listing), needsAnalysis: false };
-        }
-        if (listingEvidenceKey(entry.listing) !== evidenceKey) return entry;
-        return { ...entry, evaluation, needsAnalysis: false };
+        const listing = withFreshListing(entry.listing, evaluation);
+        if (listing === entry.listing && listingEvidenceKey(listing) !== evidenceKey) return entry;
+        const revised = evaluation.listing.termsCheckedAt ? retargetEvaluation(evaluation, MONEY_CONFIG.targets, listing) : evaluation;
+        let photoChange = entry.photoChange;
+        if (photoChange && listingEvidenceKey(listing) === listingEvidenceKey(entry.listing)) {
+            const added = addedPhotoNumbers(photoChange.previousPhotos, listing.images);
+            const inspected = revised.photoCheck?.images.some(image => added.includes(image.number));
+            photoChange = { ...photoChange, reviewedVerdict: photoChange.reviewedVerdict ?? (inspected ? revised.underwriting?.verdict : undefined) };
+        } else photoChange = undefined;
+        return { ...entry, listing, evaluation: revised, needsAnalysis: false, photoChange };
     });
     const rememberReview = async (id: string, review: DeeperPhotoReview) => store.update(id, (entry) => entry.evaluation?.photoReviewKey === review.inputKey
         ? { ...entry, evaluation: retargetEvaluation({ ...entry.evaluation, deeperPhotoReview: review }, MONEY_CONFIG.targets) } : entry);
@@ -93,7 +97,15 @@ export function createShortlistService({ store = shortlistStore, details = getLi
                     listedAt: listing.listedAt, createdAt: listing.createdAt, termsCheckedAt: listing.termsCheckedAt, bestOffer: listing.bestOffer,
                     bids: refreshed.bids, endTime: refreshed.endTime, seller: refreshed.seller, availability: listing.availability,
                     cardCondition: refreshed.cardCondition, conditionNotes: refreshed.conditionNotes } }, MONEY_CONFIG.targets) : null;
-                return { ...latest, listing, evaluation, needsAnalysis: !evaluation, checkedAt: new Date(now()).toISOString() };
+                const previousPhotos = latest.evaluation?.listing.photos ?? latest.listing.images;
+                let photoChange = latest.photoChange;
+                if (latest.evaluation && addedPhotoNumbers(previousPhotos, refreshed.images).length) {
+                    photoChange = { previousPhotos, previousVerdict: latest.evaluation.underwriting?.verdict ?? null,
+                        neededBack: needsAddedBackPhoto(latest.evaluation) };
+                }
+                if (listing.title.trim() !== latest.listing.title.trim() ||
+                    photoChange && !addedPhotoNumbers(photoChange.previousPhotos, refreshed.images).length) photoChange = undefined;
+                return { ...latest, listing, evaluation, photoChange, needsAnalysis: !evaluation, checkedAt: new Date(now()).toISOString() };
             });
             failures.delete(id);
         } catch (error) {

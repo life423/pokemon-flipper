@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { createSqlAiDispatch } from "../../server/ai/sql-dispatch.ts";
+import { evaluationFailure } from "../../server/analysis/failure.ts";
 import { StorageUnavailableError, type TaskClaim, type TaskResult } from "../../server/storage/index.ts";
 
 const body = { model: "offline-model", input: [{ text: "same exact evidence" }], max_output_tokens: 10 };
@@ -164,7 +165,7 @@ test("ambiguous 429 or 5xx outcomes retain their claims", async t => {
         };
         assert.equal((await dispatch(body, send)).status, outcome.status);
         assert.equal([...state.rows.values()][0].state, "UNKNOWN");
-        await assert.rejects(dispatch(body, send), { code: "AI_PAUSED" });
+        await assert.rejects(dispatch(body, send), { code: "AI_EVIDENCE_HELD" });
         assert.equal(providerCalls, 1);
     }
 });
@@ -201,10 +202,21 @@ test("an unknown paid outcome or an expired dispatched claim cannot buy another 
         assert.equal(row.state, "UNKNOWN");
         row.state = stateAfter;
         row.leaseUntil = "2000-01-01T00:00:00Z";
-        await assert.rejects(dispatch(body, async beforeSend => { await beforeSend(); providerCalls++; return response("must-not-run"); }), error => error.code === "AI_PAUSED");
+        await assert.rejects(dispatch(body, async beforeSend => { await beforeSend(); providerCalls++; return response("must-not-run"); }), error => {
+            const failure = evaluationFailure(new Error("SDK request failed", { cause: error }));
+            assert.deepEqual(failure, { status: 409, code: "AI_EVIDENCE_HELD", error: error.message, retryable: false });
+            return true;
+        });
         assert.equal(providerCalls, 1);
         assert.equal(state.calls.dispatched, 1);
         assert.equal(state.calls.releases, 0);
+        assert.equal(row.state, stateAfter);
+        // The hold applies only to the original evidence. Other cards can still be assessed.
+        const next = await dispatch({ ...body, input: [{ text: "another listing" }] }, async beforeSend => {
+            await beforeSend(); providerCalls++; return response("independent-listing");
+        });
+        assert.equal((await next.json()).id, "independent-listing");
+        assert.equal(providerCalls, 2);
         assert.equal(row.state, stateAfter);
     }
 });
@@ -322,7 +334,7 @@ test("SQL and local checkpoint failures retain the dispatched claim instead of r
     assert.equal((await accepted.json()).id, "returned-despite-checkpoint-failure");
     assert.equal([...state.rows.values()][0].state, "DISPATCHED");
     await fs.rm(recoveryDirectory);
-    await assert.rejects(dispatch(body, async beforeSend => { await beforeSend(); providerCalls++; return response(); }), error => error.code === "AI_PAUSED");
+    await assert.rejects(dispatch(body, async beforeSend => { await beforeSend(); providerCalls++; return response(); }), error => error.code === "AI_EVIDENCE_HELD");
     assert.equal(providerCalls, 1);
     assert.equal(state.calls.releases, 0);
 });

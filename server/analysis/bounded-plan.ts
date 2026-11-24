@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import type { ListingDetails } from "../ebay/listings.ts";
 import { readTitleByRules } from "../ai/title-reader.ts";
 import { graderCode, normalizeGrade } from "../identity/slab-check.ts";
-import { normalizedPhoto } from "../../shared/listing-evidence.ts";
-import { BOUNDED_REVIEW_REVISION, BOUNDED_REVIEW_REVISIONS, PREVIOUS_BOUNDED_REVIEW_REVISION, BOUNDED_CONDITION_REVISION, BOUNDED_SLAB_REVIEW_REVISION } from "../../shared/pricing-freshness.ts";
+import { addedPhotoNumbers, normalizedPhoto } from "../../shared/listing-evidence.ts";
+import { BOUNDED_REVIEW_REVISION, BOUNDED_REVIEW_REVISIONS, BOUNDED_FRONT_REVISION, BOUNDED_CONDITION_REVISION, BOUNDED_SLAB_REVIEW_REVISION } from "../../shared/pricing-freshness.ts";
 import { CONDITION_RULES_VERSION } from "../../shared/conditions.ts";
 import { BOUNDED_PHOTO_LIMIT } from "../../shared/research-policy.ts";
 export { BOUNDED_PHOTO_LIMIT } from "../../shared/research-policy.ts";
@@ -19,12 +19,7 @@ export interface BoundedPhoto { number: number; url: string }
 export interface BoundedAssessmentPlan { mode: BoundedAssessmentMode; model: string; version: string; conditionVersion?: string; photos: BoundedPhoto[]; key: string }
 
 function uniquePhotos(urls: readonly string[]): BoundedPhoto[] {
-    const seen = new Set<string>();
-    return urls.flatMap((url, index) => {
-        const key = normalizedPhoto(url);
-        if (!url || seen.has(key)) return [];
-        seen.add(key); return [{ number: index + 1, url }];
-    });
+    return addedPhotoNumbers([], urls).map(number => ({ number, url: urls[number - 1] }));
 }
 
 // Keep the original combined selector/key stable so existing paid evidence can
@@ -47,7 +42,7 @@ export function stagedPhotoPlan(listing: ListingDetails, plan: BoundedAssessment
     const photos = stage === "front" ? plan.photos.slice(0, 1) : plan.photos.slice(1);
     // The first-photo request is unchanged from revision 2.
     const baseVersion = stage === "front" && plan.mode === "RAW"
-        ? `${plan.model}/bounded-prompts-${PREVIOUS_BOUNDED_REVIEW_REVISION}` : plan.version;
+        ? `${plan.model}/bounded-prompts-${BOUNDED_FRONT_REVISION}` : plan.version;
     const version = `${baseVersion}/${stage}-1`;
     const key = keyFor(listing, version, photos, listing.images.length);
     // A corrected first observation changes the evidence supplied to the second
@@ -55,6 +50,18 @@ export function stagedPhotoPlan(listing: ListingDetails, plan: BoundedAssessment
     return { ...plan, photos, version, key: front === undefined ? key
         : `${key}:${createHash("sha256").update(JSON.stringify(front)).digest("hex")}` };
 }
+// A follow-up sees only seller photos not represented in the accepted evidence.
+export function unseenGalleryPhotos(urls: readonly string[], reviewedNumbers: readonly number[]): BoundedPhoto[] {
+    const reviewed = reviewedNumbers.flatMap(number => urls[number - 1] ? [urls[number - 1]] : []);
+    return addedPhotoNumbers(reviewed, urls).map(number => ({ number, url: urls[number - 1] }));
+}
+
+export function galleryReviewPlan(listing: ListingDetails, plan: BoundedAssessmentPlan, photos: BoundedPhoto[], prior: unknown) {
+    const version = `${plan.version}/gallery-back-1`;
+    const evidence = createHash("sha256").update(JSON.stringify(prior)).digest("hex");
+    return { ...plan, version, photos, key: `${keyFor(listing, version, photos)}:${evidence}` };
+}
+
 export function boundedAssessmentKey(listing: ListingDetails): string {
     return keyFor(listing, BOUNDED_ASSESSMENT_VERSION, selectBoundedPhotos(listing.images));
 }
@@ -98,8 +105,8 @@ export function compatibleBoundedPlans(listing: ListingDetails): BoundedAssessme
     const legacyRawModels = [...new Set([BOUNDED_VISION_MODEL, "gpt-5.6-luna"])];
     const slabModels = [...new Set([BOUNDED_SLAB_MODEL, BOUNDED_VISION_MODEL, "gpt-5.6-luna", "gpt-6-luna"])];
     const candidates = [requested, planFor(listing, "RAW"),
-        ...(requested.mode === "RAW" && listing.images.length <= BOUNDED_PHOTO_LIMIT ? [boundedSecondLookPlan(listing)] : []),
         ...legacyRawModels.flatMap(model => BOUNDED_REVIEW_REVISIONS.map(revision => planFor(listing, "RAW", model, revision))),
+        ...(requested.mode === "RAW" && listing.images.length <= BOUNDED_PHOTO_LIMIT ? BOUNDED_REVIEW_REVISIONS.map(revision => planFor(listing, "RAW", "gpt-5.6-terra", revision)) : []),
         ...slabModels.map(model => planFor(listing, "SLAB_LABEL", model))];
     return [...new Map(candidates.map(plan => [plan.key, plan])).values()];
 }

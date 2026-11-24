@@ -1,11 +1,13 @@
+import { withinOpportunityWindow } from "./auction-window.ts";
 import type { BuyingOption, Evaluation, ListingSummary } from "./types.ts";
 import { observedCardKind } from "./photo-evidence.ts";
 import { searchPhotosFitDetails } from "./listing-evidence.ts";
 
 export const AUTOMATIC_PRICE_CEILING = 200_000;
-export const AUTOMATIC_AUCTION_WINDOW_HOURS = 12;
+export { AUCTION_OPPORTUNITY_HOURS as AUTOMATIC_AUCTION_WINDOW_HOURS } from "./auction-window.ts";
 
 export type MarketplaceOrder = "newest" | "lowest";
+export type DiscoveryOrder = MarketplaceOrder | "ending";
 
 export interface ListingFilters {
     typeFilter?: BuyingOption | "all";
@@ -42,9 +44,7 @@ export function matchesListingFilters(listing: ListingSummary, filters: ListingF
 }
 
 export function withinAutomaticAuctionWindow(listing: Pick<ListingSummary, "buyingOption" | "endTime">, now = Date.now()): boolean {
-    if (listing.buyingOption !== "AUCTION") return true;
-    const end = Date.parse(listing.endTime ?? "");
-    return Number.isFinite(end) && end > now && end - now <= AUTOMATIC_AUCTION_WINDOW_HOURS * 3600000;
+    return listing.buyingOption !== "AUCTION" || withinOpportunityWindow(listing.endTime, now);
 }
 
 export function screeningBlock(listing: ListingSummary, filters: ListingFilters = {}, asOf = Date.now()) {

@@ -36,10 +36,30 @@ test("detail view leads with eBay access and an open original-photo viewer befor
     assert.match(markup, /Loading photo 1/);
     assert.match(markup, /Reset view/); assert.match(markup, /cannot recover missing detail/);
     assert.ok(markup.indexOf('aria-label="Zoomable listing photo"') < markup.indexOf("<details"), "the main photo is visible without opening a disclosure");
+    const inconclusive = renderToStaticMarkup(createElement(DetailPanel, { listing, analysis: { status: "inconclusive", message: "Conflicting readings for photo 2." },
+        now: Date.now(), onClose() {}, onAnalyze() { assert.fail("saved conflicts must not repeat analysis"); }, onPhotoReview() {} }));
+    assert.match(inconclusive, /Photo check inconclusive/);
+    assert.match(inconclusive, /Conflicting readings for photo 2/);
+    assert.match(inconclusive, /aria-label="Listing photos"/);
+    assert.doesNotMatch(inconclusive, /Try again|analysis failed|Estimated grade|Analyze listing \(paid\)/i);
+    const held = renderToStaticMarkup(createElement(DetailPanel, { listing, analysis: { status: "held", message: "An earlier request is unresolved for this photo." },
+        now: Date.now(), onClose() {}, onAnalyze() { assert.fail("held evidence must not be reanalyzed"); } }));
+    assert.match(held, /Previous AI check unresolved/);
+    assert.match(held, /An earlier request is unresolved for this photo/);
+    assert.doesNotMatch(held, /Try again|Analyze listing \(paid\)|Photo check inconclusive/);
     const empty = renderToStaticMarkup(createElement(PhotoGallery, { images: [] }));
     assert.match(empty, /No listing photos available/); assert.doesNotMatch(empty, /<img/);
     const single = renderToStaticMarkup(createElement(PhotoGallery, { images: [first, first] }));
     assert.match(single, /Photo 1 of 1/);
     assert.match(single, /disabled="" aria-label="Previous photo"/);
     assert.doesNotMatch(single, /Choose a photo/);
+
+    const docked = renderToStaticMarkup(createElement(DetailPanel, { docked: true, listing,
+        analysis: { status: "done", evaluation: value }, now: Date.now(),
+        onClose() {}, onAnalyze() { assert.fail("opening saved analysis cannot purchase research"); }, onPhotoReview() {} }));
+    assert.match(docked, /data-docked="true" aria-label="Listing analysis" role="region"/);
+    assert.doesNotMatch(docked, /aria-modal|role="dialog"|backdrop/);
+    assert.match(markup, /role="dialog" aria-modal="true"/, "compact screens retain modal semantics");
+    assert.match(docked, /Open on eBay/);
+    assert.match(docked, /aria-label="Zoomable listing photo"/);
 });

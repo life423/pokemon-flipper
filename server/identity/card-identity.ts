@@ -1,21 +1,22 @@
 import { normalizeText, withoutAccompanyingCustomHolder } from "../ebay/filters.ts";
-import { PRINTINGS, isPrinting, readyForPricing } from "../../shared/identity.ts";
+import { PRINTINGS, isPrinting, readyForPricing, printingName, printingClaimFromText, printingClaimFromAspects, type PrintingClaim } from "../../shared/identity.ts";
 import { finishClaim, type FinishClaim } from "../../shared/finish.ts";
 import { compareCardNumbers, normalizeCardNumber, sameCardNumber } from "../../shared/card-number.ts";
 import { canonicalCatalogName, sameCatalogName } from "./catalog-name.ts";
 import { cardLanguageStatus } from "../../shared/card-language.ts";
-import { confirmedPhotoCard, conflictsWithPhotoFinish } from "../../shared/photo-evidence.ts";
+import { confirmedPhotoCard, photoFinishConflictReason } from "../../shared/photo-evidence.ts";
 import { BASE_SET_2_TITLE, hasBaseSetFourthPrint, PRISMATIC_EVOLUTIONS_TITLE, withoutReprintRelease, XY_EVOLUTIONS_TITLE } from "../../shared/reprint-release.ts";
-import { canonicalBaseSet2 } from "../../shared/sets.ts";
+import { legendaryCharizardLabelFinish, legendaryCharizardFinishNote } from "../../shared/psa-legendary-charizard.ts";
+import { canonicalBaseSet2, ordinaryBaseSetPokemonNumber } from "../../shared/sets.ts";
 import { checkSlab } from "./slab-check.ts";
 import type { readTitleByRules } from "../ai/title-reader.ts";
 
-export { PRINTINGS, isPrinting, normalizeCardNumber, readyForPricing, sameCardNumber };
+export { PRINTINGS, isPrinting, printingClaimFromText, printingClaimFromAspects, printingName, normalizeCardNumber, ordinaryBaseSetPokemonNumber, readyForPricing, sameCardNumber };
 import type { Identity, PhotoCheck, Printing, PrintingMarks } from "../../shared/types.ts";
 import type { LookupCards, PricedCard, CardRecord, PrintingOrUnknown } from "../pricing/types.ts";
 
 // A printing claim in seller text or on a label.
-export type PrintingClaim = Printing | "NOT_STATED" | "CONFLICTING";
+export type { PrintingClaim } from "../../shared/identity.ts";
 
 export type { PrintingOrUnknown };
 
@@ -54,12 +55,6 @@ interface PrintingDecision {
 
 // Identify first, price second. A listing gets its canonical identity
 // here, and no price source is allowed to change it.
-
-const PRINTING_NAMES: Record<string, string> = {
-    FIRST_EDITION: "1st Edition",
-    SHADOWLESS: "Shadowless",
-    UNLIMITED: "Unlimited",
-};
 
 // WOTC-era sets printed in both 1st Edition and Unlimited. Cards from
 // these always need printing evidence, whatever a database says.
@@ -100,10 +95,6 @@ const SET_PRINTING_RULES: Record<string, { unlimited?: Printing; unlabeled?: Pri
     "base set": { unlabeled: "UNLIMITED" },
     "base set shadowless": { unlimited: "SHADOWLESS", unlabeled: "SHADOWLESS" },
 };
-
-export function printingName(printing: string): string {
-    return PRINTING_NAMES[printing] ?? "an unknown printing";
-}
 
 // Base Set printings, named the way collectors say them.
 const BASE_SET_PRINTING_NAMES: Record<string, string> = {
@@ -231,28 +222,6 @@ function sameName(a: unknown, b: unknown): boolean {
 
 // Printing claims in seller text
 
-const FIRST_EDITION_TEXT = /\b(1st|first)[\s-]*ed(ition|it)?\b/;
-const NOT_FIRST_EDITION_TEXT = /\b(non|not|no|without)[\s-]*(1st|first)\b/;
-const SHADOWLESS_TEXT = /\bshadowless\b/;
-const UNLIMITED_TEXT = /\bunlimited\b/;
-
-// Returns a printing, NOT_STATED, or CONFLICTING.
-export function printingClaimFromText(text: unknown): PrintingClaim {
-    const value = normalizeText(text);
-    const denied = NOT_FIRST_EDITION_TEXT.test(value);
-    const firstEdition = !denied && FIRST_EDITION_TEXT.test(value);
-    const shadowless = SHADOWLESS_TEXT.test(value);
-    const unlimited = denied || UNLIMITED_TEXT.test(value);
-
-    if (firstEdition && unlimited) return "CONFLICTING";
-    if (firstEdition) return "FIRST_EDITION";
-    // "Unlimited Shadowless" is a common name for the Shadowless printing.
-    if (shadowless) return "SHADOWLESS";
-    if (unlimited) return "UNLIMITED";
-
-    return "NOT_STATED";
-}
-
 export function finishClaimFromText(text: unknown): FinishClaim {
     return finishClaim(text);
 }
@@ -275,9 +244,10 @@ export function mapVariantPrintings(variantNames: string[], setName: unknown): R
     const setKey = normalizeSetName(setName);
     const rule = SET_PRINTING_RULES[setKey] ?? {};
 
-    const labeled = variantNames.map((name): [string, Printing | null] => {
+    const labeled = variantNames.map((name): [string, PrintingOrUnknown | null] => {
         const value = normalizeText(name);
 
+        if (/\bshadowless\b/.test(value) && !SHADOWLESS_SETS.has(setKey)) return [name, "UNKNOWN"];
         if (/\b1st edition\b/.test(value)) return [name, "FIRST_EDITION"];
         if (/\bshadowless\b/.test(value)) return [name, "SHADOWLESS"];
         if (/\bunlimited\b/.test(value)) return [name, rule.unlimited ?? "UNLIMITED"];
@@ -362,6 +332,9 @@ export function resolvePrinting(
     }
 
     const [claim] = stated;
+    if (setName && !SHADOWLESS_SETS.has(normalizeSetName(setName)) && (photo === "SHADOWLESS" || label === "SHADOWLESS")) {
+        return review(`The reported Shadowless printing is unavailable for ${setName}.`);
+    }
 
     if (!hasEditions) {
         // Printed only once, so a 1st Edition or Shadowless claim is wrong.
@@ -403,7 +376,7 @@ export function resolvePrinting(
     // The pricier printings need both the seller's word and the photos.
     if (!claim && photo !== "UNLIMITED") {
         return review(
-            `The photos suggest ${printingName(photo)}, but the seller doesn't say so. Possible sleeper: check it yourself.`
+            `The photos suggest ${printingName(photo)}, but the seller doesn't say so. Possible sleeper. The premium printing needs corroborating evidence.`
         );
     }
 
@@ -415,10 +388,6 @@ function aspectText(aspects: Record<string, string>, namePattern: RegExp): strin
         .filter(([name]) => namePattern.test(name))
         .map(([, value]) => value)
         .join(" ");
-}
-
-export function printingClaimFromAspects(aspects: Record<string, string>): PrintingClaim {
-    return printingClaimFromText(aspectText(aspects, /edition|feature|print/i));
 }
 
 // PSA's readable English 1999 Base Set label names premium printings. A
@@ -459,7 +428,7 @@ function pickNamedVersions(cards: CardRecord[], title: string): CardRecord[] {
 
 // One card as it appears across a family of database records, with every
 // printing tagged by the record it came from.
-function mergeFamily(records: CardRecord[]): PricedCard {
+export function mergeFamily(records: CardRecord[]): PricedCard {
     const [first] = records;
 
     return {
@@ -728,15 +697,20 @@ type SellerFieldCorrections = Partial<Record<"Set" | "Card Number" | "Finish", s
 
 function corroboratedSellerClaims(listing: IdentityListing, photos: IdentityPhotos, readTitle?: typeof readTitleByRules): SellerFieldCorrections | null {
     const card = photos.cardIdentity, aspects = listing.aspects ?? {};
+    const titleFinish = finishClaim(listing.title);
+    const genericFinish = titleFinish === "NOT_STATED" && /^(?:regular|normal)$/i.test(aspects.Finish?.trim() ?? "");
     if (!card?.name || !card.set || !aspects.Set || !card.cardNumber || !collectorFraction.test(card.cardNumber.trim()) || card.confidence !== "HIGH" || !card.evidence.length ||
         photos.cardCount !== "ONE" || !["NONE", "SLEEVE", "TOPLOADER"].includes(photos.holder ?? "") || photos.slab?.present ||
         !photos.images?.some(photo => photo.view === "FRONT" && photo.usable && !photo.isStockImage) ||
         !sameCatalogName(card.name, photos.printedName) || !sameCatalogName(card.name, aspects["Card Name"] ?? aspects.Character) ||
         !collectorFraction.test(photos.printedNumber?.trim() ?? "") || !sameCardNumber(card.cardNumber, photos.printedNumber) ||
         cardLanguageStatus("", [card.language]) !== "ENGLISH" || cardLanguageStatus(listing.title, [aspects.Language, card.language]) !== "ENGLISH" ||
-        !["HOLO", "NON_HOLO", "REVERSE_HOLO"].includes(card.finish) || finishClaim(listing.title) !== card.finish ||
+        !["HOLO", "NON_HOLO", "REVERSE_HOLO"].includes(card.finish) || (!genericFinish && titleFinish !== card.finish) ||
         titleContradiction(listing.title, card.set, card.cardNumber)) return null;
     const setConflict = !sameSetFamily(card.set, aspects.Set);
+    if (genericFinish && (setConflict || !sameCardNumber(aspects["Card Number"], card.cardNumber) ||
+        photos.cardMatch?.verdict !== "MATCH" || photos.cardMatch.problems.length ||
+        !["NOT_STATED", card.finish].includes(finishClaim(aspectText(aspects, /feature/i))))) return null;
     const title = setConflict ? withoutReprintRelease(listing.title) : listing.title;
     const numbers = [...title.matchAll(fractionsInText)].map(match => match[0]);
     if (!numbers.length || numbers.some(number => !sameCardNumber(number, card.cardNumber))) return null;
@@ -756,7 +730,7 @@ function corroboratedSellerClaims(listing: IdentityListing, photos: IdentityPhot
             if (!words.includes(explicit)) return null;
             words = words.replace(explicit, " ");
         }
-        words = words.replace(/\bwizards of the coast\b|\bthe pokemon company\b/g, " ")
+        words = words.replace(/\b(?:hp\s+\d+|\d+\s+hp)\b/g, " ").replace(/\bwizards of the coast\b|\bthe pokemon company\b/g, " ")
             .replace(/\b(?:pokemon|tcg|cards?|holo(?:graphic|foil)?|foil|non|reverse|rare|english|eng|en|raw|ungraded|unlimited|wotc|vintage|first|1st|edition|\d+)\b/g, " ").trim();
         if (words) return null;
     }
@@ -811,13 +785,6 @@ export function corroboratedSlabName(listing: IdentityListing, photos: IdentityP
     return card.name;
 }
 
-export function ordinaryBaseSetPokemonNumber(value: string | null | undefined): boolean {
-    const collector = Number(value?.match(/^0*([1-9][0-9]?)\s*\/\s*102$/)?.[1]);
-    // Base Set Pokémon are numbered 1–69. Machamp's stamped deck copies
-    // are an exception to the ordinary artwork-shadow and stamp rules.
-    return collector <= 69 && collector !== 8;
-}
-
 function shadowConfirmsUnlimited(photos: IdentityPhotos, card: PricedCard): boolean {
     const observed = photos.cardIdentity, marks = photos.printingMarks;
     // A reflection can hide wear while leaving the printed frame readable.
@@ -833,14 +800,47 @@ function shadowConfirmsUnlimited(photos: IdentityPhotos, card: PricedCard): bool
         card.variants.some(variant => variant.printing === "UNLIMITED" && variant.finish === observed.finish));
 }
 
+// The Team Plasma emblem is shared across releases. The official English BW10
+// checklist has Palkia-EX at both 66 and 100; only #100/101 is the full art.
+// https://assets.pokemon.com/assets/cms/pdf/tcg/checklists/BW10_CardList_EN.pdf
+function photographedPlasmaBlastPalkia(photos: IdentityPhotos | null): boolean {
+    const card = confirmedPhotoCard(photos);
+    if (!photos || !card || normalizeSetName(card.set) !== "plasma storm" || !sameCatalogName(card.name, "Palkia-EX") ||
+        !sameCatalogName(photos.printedName, card.name) || ![card.cardNumber, photos.printedNumber].every(isPalkiaFullArtNumber) ||
+        cardLanguageStatus("", [card.language]) !== "ENGLISH" || card.finish !== "HOLO" || photos.slab?.present ||
+        !["NONE", "SLEEVE", "TOPLOADER"].includes(photos.holder ?? "") || photos.cardMatch?.verdict !== "MATCH" ||
+        photos.cardMatch.problems.length || photos.printingMarks?.reprintMark !== "NONE_SEEN" ||
+        !photos.images?.some(photo => photo.view === "FRONT" && photo.usable && !photo.isStockImage)) return false;
+    const artworkNotes = card.evidence.filter(note => /\bfull[- ]art\b/i.test(note));
+    return artworkNotes.length > 0 && !artworkNotes.some(note =>
+        /\b(?:not|no|unclear|unknown|possible|possibly|may|might|could|cannot|unsure|unconfirmed)\b|n['’]t\b|\?/i.test(note));
+}
+
+function isPalkiaFullArtNumber(value?: string | null): boolean {
+    return /^#?0*100\s*\/\s*0*101$/i.test(value?.trim() ?? "");
+}
+
+function listedPlasmaStormPalkia(listing: IdentityListing, readTitle?: typeof readTitleByRules): boolean {
+    const aspects = listing.aspects ?? {};
+    if (normalizeSetName(aspects.Set) !== "plasma storm" || !sameCatalogName(aspects["Card Name"], "Palkia-EX") ||
+        !isPalkiaFullArtNumber(aspects["Card Number"]) || !/\bfull[- ]art\b/i.test(listing.title) ||
+        cardLanguageStatus(listing.title, [aspects.Language]) !== "ENGLISH" ||
+        (aspects["Year Manufactured"] && aspects["Year Manufactured"] !== "2013") ||
+        finishClaim(listing.title) !== "HOLO" || (aspects.Finish && finishClaim(aspects.Finish) !== "HOLO")) return false;
+    const title = readTitle?.(listing.title, ["Plasma Storm", "Plasma Freeze", "Plasma Blast"]);
+    return sameCatalogName(title?.cardName, "Palkia-EX") && title?.set === "Plasma Storm" &&
+        isPalkiaFullArtNumber(title.cardNumber) && literalCollectorNumbers(listing.title).every(isPalkiaFullArtNumber);
+}
+
 export function structuredPhotoIdentityConflict(photos: IdentityPhotos | null, claims: Partial<Pick<Identity, "name" | "set" | "cardNumber">>): string | null {
     const card = confirmedPhotoCard(photos);
     if (!card?.name || !card.set || !card.cardNumber || !card.evidence?.length) return null;
     const nameDiffers = claims.name && !sameCatalogName(card.name, claims.name);
-    const setDiffers = claims.set && !sameSetFamily(card.set, claims.set) && !sameSetFamily(claims.set, card.set);
+    const set = photographedPlasmaBlastPalkia(photos) ? "Plasma Blast" : card.set;
+    const setDiffers = claims.set && !sameSetFamily(set, claims.set) && !sameSetFamily(claims.set, set);
     const numberDiffers = compareCardNumbers(card.cardNumber, claims.cardNumber) === false;
     return nameDiffers || setDiffers || numberDiffers
-        ? `the photos show ${card.name} #${card.cardNumber} from ${card.set}` : null;
+        ? `the photos show ${card.name} #${card.cardNumber} from ${set}` : null;
 }
 
 // Builds the canonical identity for a listing. lookupCards returns
@@ -860,7 +860,8 @@ export async function identifyCard(
         };
     }
     const correctedNumber = corroboratedDateNumber(listing, photoCheck);
-    const correctedClaims = photoIdentity ? null : corroboratedSellerClaims(listing, photoCheck, readTitle);
+    const checklistSet = !photoIdentity && photographedPlasmaBlastPalkia(photoCheck) && listedPlasmaStormPalkia(listing, readTitle);
+    const correctedClaims = checklistSet ? { Set: "Plasma Blast" } : photoIdentity ? null : corroboratedSellerClaims(listing, photoCheck, readTitle);
     const correctedSlabName = readTitle && !photoIdentity ? corroboratedSlabName(listing, photoCheck, readTitle) : null;
     const aspects = correctedNumber || correctedClaims || correctedSlabName ? { ...listing.aspects,
         ...(correctedNumber ? { "Card Number": correctedNumber } : {}), ...correctedClaims,
@@ -921,6 +922,15 @@ export async function identifyCard(
         );
     }
 
+    const certifiedFinish = legendaryCharizardLabelFinish(photoCheck);
+    if (certifiedFinish === "UNKNOWN") {
+        identity.finish = "CONFLICTING";
+        return needsReview(legendaryCharizardFinishNote(certifiedFinish));
+    }
+    if (certifiedFinish) {
+        identity.finish = certifiedFinish;
+        identity.reasons.push(legendaryCharizardFinishNote(certifiedFinish));
+    }
     let candidates: CardRecord[];
 
     try {
@@ -935,30 +945,33 @@ export async function identifyCard(
 
     // The database never decides what the card is: every record has to
     // match the listing's set (or its family), number, and name.
-    const matches = pickNamedVersions(
-        candidates.filter(
-            (card) =>
-                sameSetFamily(card.setName, identity.set) &&
-                sameCardNumber(card.cardNumber, identity.listedCardNumber) &&
-                (!correctedClaims?.Set || normalizeCardNumber(card.cardNumber)?.total != null) &&
-                (correctedSlabName ? sameCatalogName(card.name, listedName) : sameName(card.name, listedName)) &&
-                (!correctedClaims || sameCatalogName(card.name, photoCheck.cardIdentity?.name))
-        ),
-        listing.title
+    const matchingCards = candidates.filter(card =>
+        sameSetFamily(card.setName, identity.set) &&
+        sameCardNumber(card.cardNumber, identity.listedCardNumber) &&
+        (!correctedClaims?.Set || normalizeCardNumber(card.cardNumber)?.total != null) &&
+        (correctedSlabName || certifiedFinish ? sameCatalogName(card.name, listedName) : sameName(card.name, listedName)) &&
+        (!correctedClaims || sameCatalogName(card.name, photoCheck.cardIdentity?.name))
     );
+    const labelMatches = certifiedFinish
+        ? matchingCards.filter(card => card.variants.some(v => v.finish === certifiedFinish && v.printing === "UNLIMITED"))
+        : [];
+    const matches = pickNamedVersions(labelMatches.length ? labelMatches : matchingCards, listing.title);
 
     if (matches.length === 0) {
         // Independently corroborated physical identity does not disappear just
         // because a pricing catalog lacks this card. Alternative price sources
         // still have to match that identity; no nearby record is substituted.
         if (photoIdentity?.printing && photoIdentity.finish) {
+            if (photoIdentity.printing === "SHADOWLESS" && !SHADOWLESS_SETS.has(normalizeSetName(photoIdentity.set))) {
+                return needsReview(`The reported Shadowless printing is unavailable for ${photoIdentity.set}.`);
+            }
             identity.status = "IDENTIFIED";
             identity.name = photoIdentity.name;
             identity.set = photoIdentity.set;
             identity.cardNumber = photoIdentity.cardNumber;
             identity.printing = photoIdentity.printing;
             identity.printingLabel = printingLabel(photoIdentity.printing, photoIdentity.set);
-            identity.finish = photoIdentity.finish;
+            identity.finish = certifiedFinish ?? photoIdentity.finish;
             identity.evidence = { title: printingClaimFromText(sellerListing.title), itemSpecifics: "NOT_STATED", photo: photoIdentity.printing,
                 photoSource: "Independent agreeing photo readings", photoNotes: photoCheck.printingMarks?.evidence ?? [] };
             identity.reasons.push("Photos establish the identity; this exact card has no matching price-catalog record.");
@@ -989,21 +1002,21 @@ export async function identifyCard(
         return needsReview(`The listing ${lookAlike}.`, card);
     }
     const setKey = normalizeSetName(identity.set);
-    const pricier = (v: { printing: PrintingOrUnknown }) => v.printing === "FIRST_EDITION" || v.printing === "SHADOWLESS";
+    const shadowMatters = SHADOWLESS_SETS.has(setKey);
 
     identity.name = card.name;
     identity.cardNumber = card.cardNumber;
-    identity.hasEditions = EDITION_SETS.has(setKey) || card.variants.some(pricier);
-
-    const shadowMatters =
-        SHADOWLESS_SETS.has(setKey) || card.variants.some((v) => v.printing === "SHADOWLESS");
+    identity.hasEditions = EDITION_SETS.has(setKey) || card.variants.some(v => v.printing === "FIRST_EDITION");
 
     const slab = photoCheck.slab?.present ? photoCheck.slab : null;
     // A complete PSA Base Set label identifies its printing independently of
     // glare or model mistakes about the artwork border.
-    const labelNamesNone =
-        Boolean(slab?.labelText && printingClaimFromText(slab.labelText) === "NOT_STATED");
-    let label: PrintingClaim = slab?.labelText ? printingClaimFromText(slab.labelText) : "NOT_STATED";
+    const labelText = slab?.labelText ?? "";
+    let label = printingClaimFromText(labelText);
+    // A grade or certificate can be readable while the card-description line is cropped.
+    const labelNamesNone = label === "NOT_STATED" && Boolean(labelText && card.name &&
+        (` ${normalizeWords(labelText)} `).includes(` ${normalizeWords(card.name)} `) &&
+        sameCardNumber(cardNumberIn(labelText), card.cardNumber));
 
     if (labelNamesNone && !shadowMatters) {
         label = "UNLIMITED";
@@ -1036,8 +1049,8 @@ export async function identifyCard(
     // Inside a slab the stamp and shadow can be hard to see, but graders
     // print 1st Edition and Shadowless on the label. A legible label that
     // names neither marks the Unlimited printing.
-    if (photo === "UNKNOWN" && slab?.labelText && label !== "CONFLICTING") {
-        photo = label === "NOT_STATED" ? "UNLIMITED" : label;
+    if (photo === "UNKNOWN" && (isPrinting(label) || labelNamesNone)) {
+        photo = isPrinting(label) ? label : "UNLIMITED";
         photoSource = "slab label";
     }
 
@@ -1074,9 +1087,11 @@ export async function identifyCard(
         identity.notThisCard = problems;
         return needsReview(`The photos don't match the listing: ${problems}.`, card);
     }
-    if (conflictsWithPhotoFinish(photoCheck, identity.finish)) {
+    if (certifiedFinish) identity.finish = certifiedFinish;
+    const finishConflict = certifiedFinish ? null : photoFinishConflictReason(photoCheck, identity.finish, sellerListing);
+    if (finishConflict) {
         identity.finish = "CONFLICTING";
-        return needsReview("The photographed finish disagrees with the listing or slab label.", card);
+        return needsReview(finishConflict, card);
     }
     const marks = photoCheck.printingMarks;
     if (identity.hasEditions && marks?.conflicts?.includes("firstEditionStamp")) {
@@ -1109,7 +1124,7 @@ export async function identifyCard(
     const holders = [
         ...new Set(
             card.variants
-                .filter((variant) => variant.printing === identity.printing)
+                .filter((variant) => variant.printing === identity.printing && (!certifiedFinish || variant.finish === certifiedFinish))
                 .map((variant) => variant.recordId)
         ),
     ];
@@ -1124,6 +1139,17 @@ export async function identifyCard(
     }
 
     identity.printingLabel = printingLabel(identity.printing, identity.set);
+    if (certifiedFinish && !card.variants.some(v => v.printing === identity.printing && v.finish === certifiedFinish)) {
+        identity.reasons.push("The price catalog has no matching finish for this slab. A recent sale of this exact finish and grade is needed to establish resale value.");
+    }
+    // A broad eBay "Regular" field can disagree with an unmistakable holo.
+    // When the title omits finish, require the resolved catalog printing to
+    // have only the photographed finish. Multiple finishes remain unresolved.
+    if (correctedClaims?.Finish && finishClaim(sellerListing.title) === "NOT_STATED" &&
+        card.variants.some(variant => variant.printing === identity.printing && variant.finish !== correctedClaims.Finish)) {
+        identity.finish = "CONFLICTING";
+        return needsReview("The seller's finish and the photographed finish differ. The catalog lists multiple finishes for this printing.", card);
+    }
     if ((correctedClaims || correctedSlabName) && !card.variants.some(variant => variant.printing === identity.printing && variant.finish === photoCheck.cardIdentity?.finish)) {
         return needsReview("The catalog does not corroborate the title and photographed finish for this printing.", card);
     }
@@ -1131,9 +1157,13 @@ export async function identifyCard(
         return needsReview("The listing and photographed finish disagree.", card);
     }
     identity.status = "IDENTIFIED";
-    if (correctedClaims) {
+    if (checklistSet) {
+        identity.reasons.push("The seller lists Plasma Storm. The photographed Palkia-EX name, full artwork and printed #100/101 match the English Plasma Blast checklist and the exact catalog record. The Team Plasma emblem appears in multiple sets.");
+    } else if (correctedClaims) {
         const fields = Object.keys(correctedClaims).map(field => field.toLowerCase()).join(", ");
-        identity.reasons.push(`The explicit title, readable photos and exact catalog agree. Pricing uses the corrected ${fields}.`);
+        identity.reasons.push(correctedClaims.Finish && finishClaim(sellerListing.title) === "NOT_STATED"
+            ? `The seller lists the finish as ${sellerListing.aspects?.Finish}. The front photo shows ${correctedClaims.Finish.toLowerCase().replaceAll("_", " ")} and the exact catalog printing corroborates it.`
+            : `The explicit title, readable photos and exact catalog agree. Pricing uses the corrected ${fields}.`);
     }
     if (correctedSlabName) identity.reasons.push("The title, readable slab label and matching catalog agree on the card name. The seller's card name was corrected for pricing.");
     return { identity, card, ...(correctedClaims ? { sellerClaimsCorrected: true } : {}) };

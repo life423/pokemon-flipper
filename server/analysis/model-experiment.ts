@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { runStructured, type Photo } from "../ai/openai.ts";
+import { MalformedStructuredOutputError, runStructured, type Photo } from "../ai/openai.ts";
 import { BOUNDED_MAX_OUTPUT_TOKENS } from "../ai/policy.ts";
 import { getAiUsageContext, withAiUsageContext } from "../ai/usage-context.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
@@ -24,6 +24,8 @@ interface ExperimentInput {
 }
 export interface ModelExperimentOptions<T> extends ExperimentInput {
     validate(value: unknown): T;
+    /** A caller may recover from a completed, paid response whose body was malformed. */
+    onMalformedOutput?(): T;
     signal?: AbortSignal;
 }
 interface AcceptedExperiment {
@@ -31,6 +33,7 @@ interface AcceptedExperiment {
     key: string;
     model: string;
     answeredAt: string;
+    malformedOutput?: true;
     result: unknown;
     usage: Usage;
 }
@@ -70,6 +73,7 @@ function acceptedRecord(value: unknown, key: string, model: string, now: number)
     const saved = value as Partial<AcceptedExperiment> | null;
     if (!saved || typeof saved !== "object" || Array.isArray(saved) || saved.version !== 1 || saved.key !== key || saved.model !== model ||
         typeof saved.answeredAt !== "string" || !Number.isFinite(Date.parse(saved.answeredAt)) || Date.parse(saved.answeredAt) > now ||
+        ("malformedOutput" in saved && (saved.malformedOutput !== true || saved.result !== null)) ||
         !Object.hasOwn(saved, "result") || !saved.usage || !count(saved.usage.inputTokens) || !count(saved.usage.outputTokens)) return invalid();
     return structuredClone(saved as AcceptedExperiment);
 }
@@ -77,7 +81,7 @@ function acceptedRecord(value: unknown, key: string, model: string, now: number)
 export function createModelExperimentRunner(overrides: Partial<Dependencies> = {}) {
     const deps: Dependencies = { run: request => runStructured<unknown>(request), cached: readCache, save: writeCache, now: Date.now, ...overrides };
     const share = createSharedWork();
-    return async function experiment<T>({ sourceKey, model, request, validate, signal }: ModelExperimentOptions<T>): Promise<{
+    return async function experiment<T>({ sourceKey, model, request, validate, onMalformedOutput, signal }: ModelExperimentOptions<T>): Promise<{
         result: T; usage: Usage; reused: boolean; answeredAt: string; key: string;
     }> {
         signal?.throwIfAborted();
@@ -91,17 +95,23 @@ export function createModelExperimentRunner(overrides: Partial<Dependencies> = {
             if (!context.searchId || !UUID.test(context.searchId)) throw new Error("A model experiment needs the original capped search ID before new work can start.");
             // Dispatch-only cancellation permits a paid answer already accepted
             // by the provider to finish saving. Never pass a response-abort signal.
-            const accepted = await deps.run({ ...snapshot, model, bounded: true, maxRetries: 0, dispatchSignal: workSignal });
+            const accepted = await deps.run({ ...snapshot, model, bounded: true, maxRetries: 0, dispatchSignal: workSignal }).catch(error => {
+                if (!onMalformedOutput || !(error instanceof MalformedStructuredOutputError)) throw error;
+                return { malformedOutput: true as const, result: null, usage: error.usage };
+            });
             const record: AcceptedExperiment = { version: 1, key, model, answeredAt: new Date(deps.now()).toISOString(),
-                result: structuredClone(accepted.result), usage: structuredClone(accepted.usage) };
+                result: structuredClone(accepted.result), usage: structuredClone(accepted.usage),
+                ...("malformedOutput" in accepted && { malformedOutput: true }) };
             // Save even an invalid accepted answer: reopening must not buy it again.
             await deps.save(key, record);
             return { record: acceptedRecord(record, key, model, deps.now()), reused: false };
         }), signal);
         signal?.throwIfAborted();
         let result: T;
-        try { result = validate(structuredClone(answer.record.result)); }
-        catch (cause) { return invalid(cause); }
+        if (answer.record.malformedOutput && !onMalformedOutput) return invalid();
+        try {
+            result = answer.record.malformedOutput ? onMalformedOutput!() : validate(structuredClone(answer.record.result));
+        } catch (cause) { return invalid(cause); }
         return { result, usage: structuredClone(answer.record.usage), reused: answer.reused, answeredAt: answer.record.answeredAt, key };
     };
 }

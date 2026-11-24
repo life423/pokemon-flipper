@@ -152,7 +152,9 @@ export function createCameraGrader({ read = readCache, save = writeCache, review
                 } catch (error) {
                     // runStructured can surface cancellation AFTER transport. Only a definite refusal reopens a started claim.
                     const refusal = (failure: unknown) => [400, 401, 403, 429].includes((failure as { status?: number })?.status ?? 0);
-                    if (aiSpendingFailure(error) || isAiCreditFailure(error) || refusal(error) || refusal((error as Error)?.cause))
+                    const spending = aiSpendingFailure(error);
+                    if (spending?.code === "AI_EVIDENCE_HELD") throw spending;
+                    if (spending || isAiCreditFailure(error) || refusal(error) || refusal((error as Error)?.cause))
                         await save(key, { state: "retry" });
                     throw error;
                 }
@@ -161,7 +163,7 @@ export function createCameraGrader({ read = readCache, save = writeCache, review
                 await save(key, { reading });
                 unsaved.delete(key);
             }
-            return cameraResult(validateBoundedReading(reading, photos.length, "CAMERA"), photos.length);
+            return cameraResult(validateBoundedReading(reading, photos.length), photos.length);
         }, signal);
     };
 }

@@ -3,6 +3,7 @@ import type { Condition, PhotoCheck, PhotoReport } from "../../shared/types.ts";
 import type { GradingMode } from "./types.ts";
 import { cleanPhotoCard } from "../ai/photo-card-schema.ts";
 import { normalizeSlabReading } from "../identity/slab-check.ts";
+import { legendaryCharizardLabelFinish, legendaryCharizardFinishNote } from "../../shared/psa-legendary-charizard.ts";
 import { normalizeAuthenticity } from "./authenticity.ts";
 
 // Code-enforced rules on the model's answers. The model reports what it
@@ -44,6 +45,12 @@ export function applyPhotoCheckRules(photoCheck: PhotoCheck, photoCount: number)
 
     const checked = { ...photoCheck, images, slab: normalizeSlabReading(photoCheck.slab), ...(photoCheck.cardIdentity ? { cardIdentity: cleanPhotoCard(photoCheck.cardIdentity) } : {}) };
 
+    const certifiedFinish = legendaryCharizardLabelFinish(checked);
+    if (certifiedFinish && checked.cardIdentity && checked.cardIdentity.finish !== certifiedFinish) {
+        const note = legendaryCharizardFinishNote(certifiedFinish);
+        const evidence = checked.cardIdentity.evidence.filter(line => !/\b(?:holo(?:foil|graphic)?|foil|sparkle|holography)\b/i.test(line));
+        checked.cardIdentity = { ...checked.cardIdentity, finish: certifiedFinish, evidence: [...evidence, note] };
+    }
     if (!hasCloseUps(checked) && checked.confidence === "HIGH") {
         checked.confidence = "MEDIUM";
     }

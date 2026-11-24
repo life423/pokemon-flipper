@@ -1,15 +1,20 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-    countSearchResults, filterSearchResults, groupSearchResults, sortSearchResults, selectDealAlternatives,
+    countSearchResults, filterSearchResults, groupSearchResults, sortSearchResults, selectDealAlternatives, selectBestCurrentBuy, selectRawBuyingComparison, rawComparisonQuoteIds,
     type SearchFilters,
 } from "../../client/src/search/results.ts";
+import { competingAuctions } from "../../client/src/search/competing-auctions.ts";
+import { searchDiagnosticRows } from "../../client/src/search/diagnostic.ts";
 import type { AnalysisState } from "../../client/src/analysis-state.ts";
 import type { Evaluation, ListingSummary, RatingLevel, Screen, SearchIntent } from "../../shared/types.ts";
-import { underwrite } from "../../shared/money/underwriting.ts";
+import { acquisitionCost, underwrite } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { canAutoAnalyze } from "../../shared/analysis.ts";
 import { salesSummary } from "../fixtures/card-evaluation.ts";
+import { PRICING_VERSION } from "../../shared/pricing-freshness.ts";
+import { BEST_BUY_TERMS_MAX_AGE_MS } from "../../shared/search-diagnostic.ts";
+import type { SearchCompetition } from "../../shared/search-diagnostic.ts";
 
 const NOW = Date.parse("2026-11-02T12:00:00Z");
 const targets = { minProfit: 0, minRoi: 0 };
@@ -57,6 +62,13 @@ const filter = (listings: ListingSummary[], analyses: Record<string, AnalysisSta
 
 const holoIntent: SearchIntent = { cardName: "Venusaur", sets: ["Base Set"], cardNumber: "15/102", printing: null, graded: null,
     finish: "HOLO", titleWords: ["venusaur"], source: "rules" };
+
+test("replaying a search excludes auctions with unknown end times or ten hours or more remaining", () => {
+    const end = (hours: number) => new Date(NOW + hours * 3_600_000).toISOString();
+    const auctions = [end(9.999), end(10), end(11), end(0), null].map((endTime, index) =>
+        listing(String(index), { buyingOption: "AUCTION", endTime }));
+    assert.deepEqual(ids(filter(auctions)), ["0"]);
+});
 
 test("known reprint titles leave Base Set results rather than become a manual-review task when metadata conflicts", t => {
     const fetch = t.mock.method(globalThis, "fetch", () => { assert.fail("classifying existing reprint evidence must not purchase another check"); });
@@ -609,4 +621,330 @@ test("result projections and alternate sorts neither mutate saved evidence nor r
     countSearchResults({ listings, analyses, page: "search", newMode: false, newIds: new Set() });
     assert.deepEqual({ listings, analyses }, before); assert.deepEqual(ids(visible), ["later", "bin", "sooner"]);
     assert.equal(requests, 0);
+});
+
+function currentBuy(item: ListingSummary, resale: number, grade?: string): Evaluation {
+    const value = grade ? slab(item, "PSA", grade) : evaluation(item, resale);
+    value.listing.termsCheckedAt = new Date(NOW).toISOString();
+    value.assessmentVersion = "offline/bounded-prompts-3";
+    value.conditionVersion = "offline/bounded-condition-1/prompts-1";
+    value.pricingVersion = PRICING_VERSION;
+    value.pricesCheckedAt = new Date(NOW).toISOString();
+    if (grade) {
+        value.condition = null;
+        value.rawPricing = null;
+        value.slabPricing = { status: "PRICED", printing: "UNLIMITED", summary: salesSummary("PSA", grade, [resale, resale, resale]) };
+    } else value.rawPricing!.prices![0].comps = salesSummary("RAW", "LIGHTLY_PLAYED", [resale, resale, resale]);
+    value.underwriting = underwrite(value, { ...MONEY_CONFIG, targets });
+    return value;
+}
+
+test("best current buy can show a verified loss without adding it to Deals or purchasing more research", t => {
+    const requests = t.mock.method(globalThis, "fetch", () => assert.fail("best buy reuses accepted evidence"));
+    const item = listing("best-loss"), value = currentBuy(item, 110);
+    const analyses = { [item.id]: done(value) }, before = structuredClone({ item, analyses });
+    const best = selectBestCurrentBuy([item], analyses, holoIntent, NOW);
+    assert.equal(best?.listingId, item.id);
+    assert.equal(best?.pricing?.profit, value.underwriting!.best!.profit);
+    assert.ok(best!.pricing!.profit < 0);
+    assert.equal(best!.pricing!.sales, 3);
+    assert.deepEqual(groupSearchResults([item], analyses, false, new Set()).deals, []);
+    assert.deepEqual(ids(groupSearchResults([item], analyses, false, new Set()).losses), [item.id]);
+    assert.deepEqual({ item, analyses }, before);
+    assert.equal(requests.mock.callCount(), 0);
+});
+
+test("a lower-condition downside scenario cannot support a current buy recommendation", () => {
+    const item = listing("played-copy", { currentPrice: 15 });
+    const value = currentBuy(item, 15);
+    value.photoCheck!.images.push({ number: 2, view: "BACK", usable: true, isStockImage: false, issues: [] });
+    value.listing.photosInListing = value.listing.photosAnalyzed = 2;
+    value.condition!.rawCondition = "MODERATELY_PLAYED";
+    value.photoCheck!.images[0].issues = ["Only the front is supplied."];
+    value.condition!.limitations = ["The back photo limits fine inspection."];
+    const sold = value.rawPricing!.prices![0];
+    sold.condition = "DAMAGED";
+    sold.comps = salesSummary("RAW", "DAMAGED", [15]);
+    value.underwriting = underwrite(value, { ...MONEY_CONFIG, targets });
+    assert.equal(value.underwriting.verdict, "CANT_PRICE");
+    const best = selectBestCurrentBuy([item], { [item.id]: done(value) }, holoIntent, NOW);
+    assert.equal(best, null);
+});
+
+test("best current buy withholds stale or unknown terms, material concerns and unsupported raw valuation", () => {
+    const item = listing("current-buy"), accepted = currentBuy(item, 120);
+    const changes: ((value: Evaluation) => void)[] = [
+        value => { value.listing.shipping = null; },
+        value => { value.listing.availability = "UNKNOWN"; },
+        value => { value.listing.termsCheckedAt = new Date(NOW - BEST_BUY_TERMS_MAX_AGE_MS).toISOString(); },
+        value => { value.pricesCheckedAt = new Date(NOW - 7 * 3600000).toISOString(); },
+        value => { value.identity!.status = "NEEDS_REVIEW"; },
+        value => { value.identity!.printing = "UNKNOWN"; },
+        value => { value.condition!.authenticity.concern = "POSSIBLE"; },
+        value => { value.rawPricing!.prices = []; value.gradedPricing = { PSA: { status: "PRICED", byGrade: [salesSummary("PSA", 7)] } }; },
+    ];
+    for (const change of changes) {
+        const value = structuredClone(accepted); change(value);
+        const row = { ...item, shipping: value.listing.shipping, availability: value.listing.availability };
+        assert.equal(selectBestCurrentBuy([row], { [item.id]: done(value) }, holoIntent, NOW), null);
+    }
+    for (const sale of [11.44, 105, 108.25]) {
+        const value = currentBuy(item, sale);
+        assert.equal(selectBestCurrentBuy([item], { [item.id]: done(value) }, holoIntent, NOW), null,
+            "the full purchase cost of $108.25 must beat the matched market");
+    }
+    const changed = { ...item, currentPrice: 125 };
+    assert.equal(selectBestCurrentBuy([changed], { [item.id]: done(accepted) }, holoIntent, NOW), null,
+        "changed terms cannot reuse old profit math");
+});
+
+test("collector value ranks exact condition-specific savings before nominal condition and includes shipping and tax", () => {
+    const cheapPlayed = listing("cheap-played", { currentPrice: 20 });
+    const nearMint = listing("near-mint", { currentPrice: 100 });
+    const costlyShipping = listing("near-mint-shipping", { currentPrice: 95, shipping: 15 });
+    const rows = [cheapPlayed, costlyShipping, nearMint];
+    const analyses = Object.fromEntries(rows.map(item => {
+        const value = currentBuy(item, 130);
+        if (item !== cheapPlayed) {
+            value.condition!.rawCondition = "NEAR_MINT";
+            value.rawPricing!.prices![0].condition = "NEAR_MINT";
+            value.rawPricing!.prices![0].comps!.grade = "NEAR_MINT";
+            value.underwriting = underwrite(value, { ...MONEY_CONFIG, targets });
+        }
+        return [item.id, done(value)];
+    }));
+    const best = selectBestCurrentBuy(rows, analyses, holoIntent, NOW);
+    assert.equal(best?.listingId, cheapPlayed.id);
+    assert.equal(best?.basis, "Compared with Lightly Played sales of this printing");
+    assert.deepEqual(best?.coverage, { found: 3, checked: 3 });
+    assert.equal(selectBestCurrentBuy(rows.slice(1), analyses, holoIntent, NOW)?.listingId, nearMint.id);
+});
+
+test("slab best buy keeps grades and printings separate and includes destination shipping", () => {
+    const first = listing("psa-nine", { currentPrice: 100, shipping: 12, isGraded: true });
+    const second = listing("cheaper-delivered", { currentPrice: 105, shipping: 0, isGraded: true });
+    const eight = listing("psa-eight", { currentPrice: 80, isGraded: true });
+    const rows = [first, second, eight];
+    const analyses = Object.fromEntries(rows.map(item => [item.id, done(currentBuy(item, 130, item === eight ? "8" : "9"))]));
+    const exact = { ...holoIntent, graded: true, grader: "PSA", minGrade: 9, maxGrade: 9 };
+    assert.equal(selectBestCurrentBuy(rows, analyses, exact, NOW)?.listingId, second.id);
+    assert.equal(selectBestCurrentBuy(rows, analyses, holoIntent, NOW)?.listingId, eight.id,
+        "a broad search compares savings against each grade’s own sales");
+    const wrongPrinting = structuredClone(analyses[second.id]);
+    if (wrongPrinting.status === "done") wrongPrinting.evaluation.identity!.printing = "FIRST_EDITION";
+    assert.equal(selectBestCurrentBuy([second], { [second.id]: wrongPrinting }, { ...exact, printing: "UNLIMITED" }, NOW), null);
+});
+
+test("fresh marketplace comparisons reuse known terms while newer photo conflicts and stale quotes suppress the badge", t => {
+    const fetch = t.mock.method(globalThis, "fetch", () => assert.fail("recommendations must not dispatch research"));
+    const exact = { ...holoIntent, graded: true, grader: "PSA", minGrade: 9, maxGrade: 9 };
+    const reference: SearchCompetition = { title: "Venusaur Base Set 15/102 PSA 9 Holo", url: "https://www.ebay.com/itm/123456789012",
+        price: 100, shipping: 5, ceiling: 90, identity: "LISTING", checkedAt: new Date(NOW).toISOString(),
+        pricing: { resale: 130, totalCost: 113.66, profit: -10, roi: -8.8, sales: 3 } };
+    assert.equal(selectBestCurrentBuy([], {}, exact, NOW, reference)?.listingId, "v1|123456789012|0");
+    assert.equal(selectBestCurrentBuy([], {}, exact, NOW + BEST_BUY_TERMS_MAX_AGE_MS, reference), null);
+    assert.equal(selectBestCurrentBuy([], {}, exact, NOW, { ...reference, pricing: { ...reference.pricing!, resale: 110 } }), null,
+        "a marketplace comparison over market after tax cannot be recommended");
+    assert.equal(selectBestCurrentBuy([], {}, exact, NOW, { ...reference, checkedAt: undefined }), null,
+        "old saved comparisons remain readable but cannot claim a current price");
+    const item = listing("v1|123456789012|0", { currentPrice: 100, shipping: 5, isGraded: true });
+    const inconclusive = { [item.id]: { status: "inconclusive", message: "Conflicting readings", evidenceKey: "front" } } as const;
+    const groups = groupSearchResults([item], inconclusive, true, new Set());
+    assert.deepEqual(ids(groups.review), [item.id]);
+    assert.deepEqual(groups.deals, []);
+    assert.deepEqual(selectDealAlternatives([item], inconclusive, targets, NOW, true), []);
+    assert.equal(selectBestCurrentBuy([item], inconclusive, exact, NOW, reference), null);
+    assert.deepEqual(searchDiagnosticRows([item], inconclusive, groups, () => null, "NOT_ASSESSED"),
+        [{ id: item.id, outcome: "REVIEW", reason: "PHOTO_EVIDENCE_INCONSISTENT" }]);
+    const held = { [item.id]: { status: "held", message: "The earlier photo check is unresolved.", evidenceKey: "front" } } as const;
+    const next = listing("another-slab", { isGraded: true });
+    const rows = [item, next], heldGroups = groupSearchResults(rows, held, true, new Set());
+    assert.deepEqual(ids(heldGroups.review), [item.id]);
+    assert.equal(countSearchResults({ listings: rows, analyses: held, page: "search", intent: exact, newMode: false, newIds: new Set() }).waiting, 1);
+    assert.deepEqual(searchDiagnosticRows(rows, held, heldGroups, () => null, "NOT_ASSESSED"), [
+        { id: item.id, outcome: "SKIPPED", reason: "AI_EVIDENCE_HELD" },
+        { id: next.id, outcome: "SKIPPED", reason: "NOT_ASSESSED" },
+    ]);
+    const decisions = {
+        [item.id]: { decision: "WAIT", reason: "The grade on the label could not be verified." },
+        [next.id]: { decision: "SKIP", reason: "The listing ended." },
+    } as const;
+    assert.deepEqual(searchDiagnosticRows(rows, held, heldGroups, () => null, "NOT_ASSESSED", decisions), [
+        { id: item.id, photoChecked: false, outcome: "WAIT", reason: "BUYER_WAIT" },
+        { id: next.id, photoChecked: false, outcome: "SKIP", reason: "BUYER_SKIP" },
+    ]);
+    assert.equal(searchDiagnosticRows(rows, held, heldGroups, () => null, "NOT_ASSESSED",
+        { [item.id]: { ...decisions[item.id], unavailable: true } })[0].reason, "BUYER_CHECK_UNAVAILABLE");
+    assert.equal(selectBestCurrentBuy(rows, held, exact, NOW, reference), null);
+    const saved = { [item.id]: done(currentBuy(item, 130, "9")) };
+    const sameItem = selectBestCurrentBuy([item], saved, exact, NOW, { ...reference, pricing: { ...reference.pricing!, resale: 180 } });
+    assert.equal(sameItem?.listingId, item.id);
+    assert.equal(sameItem?.identity, "PHOTO");
+    assert.equal(sameItem?.pricing.resale, 130, "the same eBay URL cannot enter again with a higher marketplace estimate");
+    const wrongGrade = currentBuy(item, 130, "8");
+    assert.equal(selectBestCurrentBuy([item], { [item.id]: done(wrongGrade) }, exact, NOW, reference), null);
+    const changed = currentBuy({ ...item, currentPrice: 120 }, 130, "9");
+    const changedAnalyses = { [item.id]: done(changed) };
+    assert.equal(selectBestCurrentBuy([], changedAnalyses, exact, NOW, reference), null,
+        "a newer verified price change invalidates the earlier comparison math");
+    const lower = listing("v1|123456789013|0", { currentPrice: 95, shipping: 0, isGraded: true });
+    const lowerValue = currentBuy(lower, 130, "9");
+    assert.equal(selectBestCurrentBuy([lower], { [lower.id]: done(lowerValue) }, exact, NOW, reference)?.listingId, lower.id);
+    assert.equal(fetch.mock.callCount(), 0);
+});
+
+test("raw collector comparison uses both sides, same-condition sales and quoted total without promoting an overpriced copy", () => {
+    const cheap = listing("cheap", { currentPrice: 39.99, shipping: 5.59 });
+    const next = listing("next", { currentPrice: 39.99, shipping: 6.25 });
+    const expensive = listing("expensive", { currentPrice: 84.99, shipping: 5.99 });
+    const rows = [expensive, next, cheap];
+    const analyses = Object.fromEntries(rows.map(row => {
+        const value = currentBuy(row, 11.44);
+        value.rawPricing!.prices![0].condition = "DAMAGED";
+        value.rawPricing!.prices![0].comps = salesSummary("RAW", "DAMAGED", [8, 11.44, 15]);
+        value.rawPricing!.sellerConditionComps = salesSummary("RAW", "LIGHTLY_PLAYED", [32, 39, 41]);
+        value.photoCheck!.images.push({ number: 2, view: "BACK", usable: true, isStockImage: false, issues: [] });
+        value.listing.photosInListing = value.listing.photosAnalyzed = 2;
+        value.underwriting = underwrite(value, { ...MONEY_CONFIG, targets });
+        return [row.id, done(value)];
+    }));
+    const choose = () => selectRawBuyingComparison(rows, analyses, holoIntent, NOW);
+    const selected = choose()!;
+    assert.equal(selected.listing.id, cheap.id);
+    assert.equal(selected.totalCost, 49.34);
+    assert.equal(selected.nextTotal, 50.05);
+    assert.equal(selected.highestTotal, 98.49);
+    assert.equal(selected.sales.median, 39);
+    assert.equal(selected.sellerReported, true);
+    assert.equal(selectBestCurrentBuy(rows, analyses, holoIntent, NOW), null);
+    assert.deepEqual(groupSearchResults(rows, analyses, false, new Set()).deals, []);
+    analyses.cheap.evaluation.listing.termsCheckedAt = new Date(NOW - BEST_BUY_TERMS_MAX_AGE_MS).toISOString();
+    assert.deepEqual(rawComparisonQuoteIds(rows, analyses, holoIntent, NOW), ["cheap"]);
+    assert.equal(choose()?.listing.id, next.id);
+    analyses.next.evaluation.photoCheck!.images.pop();
+    assert.equal(choose(), null);
+    analyses.next.evaluation.photoCheck!.images.push({ number: 2, view: "BACK", usable: true, isStockImage: false, issues: [] });
+    analyses.next.evaluation.identity!.printing = "FIRST_EDITION";
+    assert.equal(choose(), null, "separate printings never compete within a raw cohort");
+});
+
+test("raw comparison finds the $0.48 condition upgrade only with a current quote on the same printing", t => {
+    const fetch = t.mock.method(globalThis, "fetch", () => assert.fail("comparing checked copies must not dispatch"));
+    const listings = [
+        listing("moderate", { currentPrice: 39.49, shipping: 5.65 }),
+        listing("also-moderate", { currentPrice: 40, shipping: 5.72 }),
+        listing("light", { currentPrice: 39.99, shipping: 5.59 }),
+        listing("first-edition", { currentPrice: 32, shipping: 0 }),
+    ];
+    const analyses = Object.fromEntries(listings.map(item => {
+        item.title = "Mewtwo 10/102 Base Set Holo";
+        const wear = item.id.includes("moderate") ? "MODERATELY_PLAYED" : "LIGHTLY_PLAYED";
+        const resale = wear === "MODERATELY_PLAYED" ? 39.25 : 39;
+        const value = currentBuy(item, resale);
+        value.identity = { ...value.identity!, name: "Mewtwo", cardNumber: "010/102",
+            printing: item.id === "first-edition" ? "FIRST_EDITION" : "UNLIMITED" };
+        value.condition!.rawCondition = wear;
+        value.rawPricing!.prices![0] = { ...value.rawPricing!.prices![0], condition: wear, comps: { ...salesSummary("RAW", wear, [resale]), median: resale } };
+        value.photoCheck!.images.push({ number: 2, view: "BACK", usable: true, isStockImage: false, issues: [] });
+        value.listing.photosInListing = value.listing.photosAnalyzed = 2;
+        return [item.id, done(value)];
+    }));
+    const compare = () => selectRawBuyingComparison(listings, analyses, null, NOW);
+    assert.equal(compare()?.totalCost, 48.86);
+    assert.deepEqual(compare()?.betterConditionCopy, { listing: listings[2], condition: "LIGHTLY_PLAYED", totalCost: 49.34, difference: 0.48 });
+    const terms = analyses.light.evaluation.listing;
+    terms.termsCheckedAt = new Date(NOW - BEST_BUY_TERMS_MAX_AGE_MS).toISOString();
+    assert.equal(compare()?.betterConditionCopy, undefined, "the cheaper First Edition and stale Lightly Played quote cannot substitute");
+    terms.termsCheckedAt = new Date(NOW).toISOString();
+    terms.shipping = listings[2].shipping = null;
+    assert.equal(compare()?.betterConditionCopy, undefined);
+    terms.shipping = listings[2].shipping = 15;
+    assert.equal(compare()?.betterConditionCopy, undefined, "a much more expensive listing stays out");
+    terms.shipping = listings[2].shipping = 0;
+    assert.ok(compare()!.betterConditionCopy!.difference < 0, "a better copy at a lower total is also shown");
+    assert.equal(fetch.mock.callCount(), 0);
+});
+
+test("nearby auctions compare exact photographed slabs with current bid terms and a checked BIN after shipping and tax", t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("Comparing checked slabs must not call any provider."));
+    const at = (minutes: number) => new Date(NOW + minutes * 60_000).toISOString();
+    const first = listing("first", { buyingOption: "AUCTION", bids: 1, currentPrice: 30, shipping: 15, endTime: at(45) });
+    const second = listing("second", { buyingOption: "AUCTION", bids: 2, currentPrice: 32, endTime: at(54) });
+    const fixed = listing("bin", { currentPrice: 41, shipping: 3 });
+    const rows = [first, second, fixed];
+    const analyses = Object.fromEntries(rows.map(item => {
+        const value = currentBuy(item, 195, "9");
+        value.slab!.certNumber = value.photoCheck!.slab!.certNumber = item.id;
+        value.listing.auctionQuote = { checkedAt: at(0), currentBid: item.currentPrice, minimumBid: item.currentPrice! + 1 };
+        return [item.id, done(value)];
+    }));
+    const compare = (items = rows) => competingAuctions(items, analyses, holoIntent, targets, NOW);
+    const [group] = compare();
+    assert.equal(group.preferredId, second.id);
+    assert.equal(group.bin?.total, acquisitionCost(41, 3, MONEY_CONFIG.buying));
+    assert.deepEqual(group.rows.map(row => [row.listing.id, row.nextTotal, row.ceiling, row.status]), [
+        [first.id, acquisitionCost(31, 15, MONEY_CONFIG.buying), 29, "PASS"],
+        [second.id, acquisitionCost(33, 0, MONEY_CONFIG.buying), 44, "WITHIN"],
+    ]);
+    assert.equal(compare([first, second])[0].bin, null);
+    assert.equal(compare([first, first, fixed]).length, 0);
+    const change = analyses[second.id].evaluation;
+    change.listing.auctionQuote!.checkedAt = at(-3);
+    assert.equal(compare()[0].rows[1].status, "CHECK", "cached bids cannot become a current bid recommendation");
+    change.listing.auctionQuote!.checkedAt = at(0);
+    change.listing.auctionQuote!.currentBid = 25;
+    assert.equal(compare()[0].rows[1].next, null);
+    delete change.listing.auctionQuote;
+    assert.equal(compare()[0].preferredId, null, "a legacy auction with no next-bid quote is never called below limit");
+    change.listing.shipping = null;
+    assert.equal(compare()[0].rows[1].ceiling, null);
+    change.identity!.printing = "FIRST_EDITION";
+    assert.equal(compare().length, 0);
+    change.identity!.printing = "UNLIMITED";
+    change.slab!.certNumber = analyses[first.id].evaluation.slab!.certNumber;
+    assert.equal(compare().length, 0, "two listings with one certificate cannot create apparent competing supply");
+    change.slab!.certNumber = second.id;
+    change.slab!.gradeQualifier = "OC";
+    assert.equal(compare().length, 0);
+    change.slab!.gradeQualifier = null;
+    for (const minutes of [61, 721, 0]) {
+        second.endTime = change.listing.endTime = at(minutes);
+        assert.equal(compare().length, 0);
+    }
+    second.endTime = change.listing.endTime = at(54);
+    assert.equal(compare([{ ...first, images: ["https://example.invalid/replaced"] }, second]).length, 0);
+});
+
+test("automatic sorting keeps earlier positive estimates out of Deals until the current buyer decision arrives", () => {
+    const earlierBuy = listing("prior-buy");
+    const incoming = listing("first-review");
+    const prior = { [earlierBuy.id]: done(evaluation(earlierBuy)) };
+    const retained = [earlierBuy, incoming];
+    const checking = new Set(ids(retained));
+    const before = groupSearchResults(retained, prior, false, new Set(), {}, checking);
+    assert.deepEqual(ids(before.candidates), ids(retained));
+    assert.deepEqual(before.deals, []);
+
+    const after = groupSearchResults(retained, prior, false, new Set(), {
+        [earlierBuy.id]: { decision: "WAIT" }, [incoming.id]: { decision: "SKIP" },
+    }, checking);
+    assert.deepEqual(after.deals, []);
+    assert.deepEqual(after.candidates, []);
+    assert.deepEqual(ids(after.review), ids(retained));
+});
+
+test("a live bid opportunity has its own filter and returns to Wait or skip when its quote expires", () => {
+    const auction = { ...listing("bid-one"), buyingOption: "AUCTION" as const };
+    const now = Date.now();
+    const opportunity = { listingId: auction.id, status: "BID" as const, currentPrice: 10, nextBid: 11, marketValue: 20,
+        nextTotal: 12, maxBid: 16, profitAtNext: 5, sales30: 3, sampleSize: 3, marketLabel: "Lightly Played",
+        checkedAt: new Date(now).toISOString(), endsAt: new Date(now+5000).toISOString(), validUntil: now+1000,
+        reason: "Bid up to $16.", route: "Sell raw", exitSales30: 3, routeKind: "RAW" as const, grading: null };
+    const decisions = { [auction.id]: { decision: "WAIT" as const, auctionOpportunity: opportunity } };
+    const group = (clock: number) => groupSearchResults([auction], {}, false, new Set(), decisions, undefined, clock);
+    assert.deepEqual(ids(group(now).bids), [auction.id]);
+    assert.deepEqual(group(now).review, []);
+    assert.deepEqual(group(now).deals, []);
+    assert.deepEqual(group(now+1000).bids, []);
+    assert.deepEqual(ids(group(now+1000).review), [auction.id]);
 });

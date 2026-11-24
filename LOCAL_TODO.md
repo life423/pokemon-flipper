@@ -405,7 +405,7 @@ Mew ex replay.
   pass when fewer than three candidates clear preliminary financial screening
   and inventory remains. Both passes share sold research and deduplicate rows.
   Listing format, raw/graded and purchase-price controls remain visible. Search
-  is English-only, with a fixed next-12-hours window for automatic auctions.
+  is English-only, with a strict under-10-hour window for automatic auctions.
 - [x] Shared sold-price screening before photos, confirmed transaction filters,
   bounded sparse pagination, safe legacy cache/cursor reuse and exact graded
   matching. One applicable sale can support sparse research/LOW-confidence
@@ -575,7 +575,7 @@ Mew ex replay.
 - [ ] Cap slab snipes against cheaper verified equivalent BINs on comparable
   terms. Show item bid, shipping/tax/total investment, modeled profit and downside.
 - [ ] Compare the saved Mewtwo PSA7 Shadowless example against the implementation
-  and preserve the 12-hour auction requirement. Record forecasts/outcomes.
+  and preserve the under-10-hour auction requirement. Record forecasts/outcomes.
 - [ ] Add a snipe assistant for auctions ending within 12 hours. Show the current
   bid, next valid bid, maximum profitable item bid, total cost at that limit and
   a separate expected closing range when supported. Add an ending-soon alert
@@ -664,3 +664,10 @@ Mew ex replay.
 Computer-maintenance follow-up retained from older notes: verify the user's
 removal of the Claude browser extension and obsolete Full Disk Access entry.
 This is separate from Pokémon Flipper's product milestone.
+
+## AI auction hunt
+
+- [x] Surface **Auction opportunities** in Results. Require strictly less than 10 hours remaining and a current auction price below supported resale value for the exact copy. Show the next valid bid with shipping and tax, recent matched sales, expected after-cost profit and the maximum item bid.
+- [x] Let the AI choose auction markets, listing checks, original photos, sale comparisons and grading math. The prompt `Find vintage holos from 1999–2003 I can flip for at least $25.` carries the requested years, finish and return into the cross-card hunt.
+- [x] Replay the strict 10-hour boundary, a bid that reaches market value and rising acquisition costs. Persist the original maximum and subsequent bid checks. In the saved First Edition Dark Machamp PSA 8 auction, the $127.50 bid rose to a confirmed $274 close, above the original $136.90 ceiling. Repeating the closing-price lookup used zero additional credits.
+- [ ] Measure how many new auction alerts close within their original ceiling. Report unresolved closing prices separately. Compare the yield and cost of photo checks with and without seller-inventory prioritization and record how often a cleaner raw copy still makes money one grade lower.

@@ -19,6 +19,11 @@ test("search spending distinguishes settled charges and unresolved holds without
     assert.match(html, /2¢ maximum/); assert.match(html, /Reported cost/); assert.match(html, /0\.1¢/);
     assert.match(html, /Reserved \/ unresolved/); assert.match(html, /0\.5¢/); assert.match(html, /1\.4¢/);
     assert.match(html, /2 generation requests/); assert.match(html, /Unresolved requests keep their reservation/);
+    const largerCap = renderToStaticMarkup(createElement(AiBudgetStatus, {
+        budget: { ...budget, capUsd: 5, remainingUsd: 4.994 }, calls: 2,
+    }));
+    assert.match(largerCap, /\$5\.00 maximum/);
+    assert.match(largerCap, /Available <b>\$4\.994<\/b>/);
     assert.equal(renderToStaticMarkup(createElement(AiBudgetStatus, { budget: { ...budget, searchId: null }, calls: 0 })), "");
     const uncapped = renderToStaticMarkup(createElement(AiBudgetStatus, {
         budget: { ...budget, capUsd: null, remainingUsd: null, committedUsd: 0.505, settledUsd: 0.5 }, calls: 2,

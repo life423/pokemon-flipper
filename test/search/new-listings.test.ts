@@ -63,3 +63,24 @@ test("filtered-out new listings are never remembered and a broader scan has its 
     assert.deepEqual(await history.seen("pokemon", 30), ["raw", "slab"]);
     assert.equal(calls, 2);
 });
+
+test("a failed grading watch scan preserves its buffered rows for retry and scopes successful checks to raw Buy It Now", async () => {
+    const remembered = new Set<string>();
+    let attempts = 0;
+    const history = { seen: async () => [...remembered], remember: async (_query: string, _minimum: number, ids: string[]) => {
+        for (const id of ids) remembered.add(id);
+    } };
+    const discover = createNewListingDiscovery({ history, usage: async () => null, find: async (_query, options) => {
+        assert.equal(options?.newOnly?.gradingWatch, true);
+        assert.equal(options?.filters?.typeFilter, "FIXED_PRICE"); assert.equal(options?.filters?.kindFilter, "raw");
+        assert.equal(options?.newOnly?.excludeIds.includes("copy"), attempts > 1);
+        options?.onListing?.({ id: "copy", currentPrice: 45, isGraded: false, buyingOption: "FIXED_PRICE" } as ListingSummary);
+        if (attempts++ === 0) throw Error("interrupted");
+        return [];
+    } });
+    await assert.rejects(discover("vintage holo", {}, [], true), /interrupted/);
+    assert.equal(remembered.size, 0);
+    await discover("vintage holo", {}, [], true);
+    await discover("vintage holo", {}, [], true);
+    assert.deepEqual([...remembered], ["copy"]);
+});

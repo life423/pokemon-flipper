@@ -1,3 +1,4 @@
+import { isBoundedPriceSearch, WEB_SEARCH_CONTEXT_BOUND, WEB_SEARCH_FEE_NANO_USD } from "./web-search-policy.ts";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -9,7 +10,7 @@ export { aiInputHash } from "./input-preflight.ts";
 export type { AiInputProof } from "./input-preflight.ts";
 
 export class AiSpendingError extends Error {
-    constructor(readonly code: "AI_PAUSED" | "AI_BUDGET", message: string, options?: ErrorOptions) { super(message, options); }
+    constructor(readonly code: "AI_PAUSED" | "AI_BUDGET" | "AI_EVIDENCE_HELD", message: string, options?: ErrorOptions) { super(message, options); }
 }
 export class AiSearchAllowanceError extends AiSpendingError {
     constructor(message: string) { super("AI_BUDGET", message); }
@@ -19,8 +20,9 @@ export function aiSpendingFailure(error: unknown): AiSpendingError | null {
     for (let current = error; current && typeof current === "object" && !seen.has(current);) {
         seen.add(current);
         const value = current as { code?: unknown; message?: unknown; cause?: unknown };
-        if (value.code === "AI_PAUSED" || value.code === "AI_BUDGET") return current instanceof AiSpendingError ? current
-            : new AiSpendingError(value.code, typeof value.message === "string" ? value.message : "Paid AI is paused by the local spending guard.");
+        if (value.code === "AI_PAUSED" || value.code === "AI_BUDGET" || value.code === "AI_EVIDENCE_HELD") return current instanceof AiSpendingError ? current
+            : new AiSpendingError(value.code, typeof value.message === "string" ? value.message : value.code === "AI_EVIDENCE_HELD"
+                ? "A previous AI assessment for this evidence is still unresolved." : "Paid AI is paused by the local spending guard.");
         current = value.cause;
     }
     return null;
@@ -30,6 +32,7 @@ interface Control { version: 1; paused: boolean; perSearchCapUsd: number | null;
 interface Attempt {
     id: string; inputHash: string; model: string; createdAt: string;
     maxInputTokens: number; maxOutputTokens: number; reservedNanoUsd: number;
+    webSearch?: true;
     heldNanoUsd: number; state: "RESERVED" | "SETTLED";
 }
 interface Account { capNanoUsd: number; heldNanoUsd: number; attempts: Attempt[] }
@@ -39,7 +42,8 @@ export interface AiReservation { ledgerId: string; searchId: string; attemptId: 
 // number in seller data, request metadata, JSON length or image dimensions.
 interface Options { directory?: string; preflight?: (body: unknown) => Promise<AiInputProof> }
 const NANO_USD = 1_000_000_000;
-export const AI_SEARCH_HARD_CAP_USD = 0.25;
+// Upper limit for an explicitly configured dollar cap. A null control is uncapped.
+export const AI_SEARCH_HARD_CAP_USD = 5;
 export const MAX_STANDARD_INPUT_TOKENS = 272_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // USD / million tokens, represented exactly as nano-USD / token. Only the
@@ -86,7 +90,8 @@ function validateLedger(value: any, id: string): Ledger {
         for (const attempt of account.attempts) {
             if (!attempt || !UUID.test(attempt.id) || typeof attempt.inputHash !== "string" || !Object.hasOwn(RATES, attempt.model) || !count(attempt.maxInputTokens) || !count(attempt.maxOutputTokens) || !count(attempt.reservedNanoUsd) || !count(attempt.heldNanoUsd) || !["RESERVED", "SETTLED"].includes(attempt.state)) return fail("Paid AI is blocked because a saved reservation is invalid.");
             const rates = RATES[attempt.model];
-            if (ids.has(attempt.id) || attempt.reservedNanoUsd !== attempt.maxInputTokens * Math.max(rates.input, rates.write) + attempt.maxOutputTokens * rates.output ||
+            if ((attempt.webSearch !== undefined && attempt.webSearch !== true) || ids.has(attempt.id) ||
+                attempt.reservedNanoUsd !== attempt.maxInputTokens * Math.max(rates.input, rates.write) + attempt.maxOutputTokens * rates.output + (attempt.webSearch ? WEB_SEARCH_FEE_NANO_USD : 0) ||
                 attempt.state === "RESERVED" && attempt.heldNanoUsd < attempt.reservedNanoUsd || attempt.state === "SETTLED" && attempt.heldNanoUsd > attempt.reservedNanoUsd) return fail("Paid AI is blocked because a saved reservation no longer agrees with its original bound.");
             ids.add(attempt.id);
             total += attempt.heldNanoUsd;
@@ -189,9 +194,10 @@ export function createAiSpendingGuard({ directory = DATA_DIR, preflight }: Optio
                 const rates = typeof body?.model === "string" && Object.hasOwn(RATES, body.model) ? RATES[body.model] : null;
                 if (!rates || body.service_tier !== "default") return fail("Paid AI is blocked because the requested model or service tier has no verified spending bound.");
                 if (!verifiedCacheOptions(body)) return fail("Paid AI requires verified 30-minute cache options with no legacy retention or policy overrides.");
-                if (body.tools?.length || body.previous_response_id || body.conversation || body.stream || body.background) return fail("Paid AI cannot bound tool, conversation or streaming charges for this request.");
+                const webSearch = isBoundedPriceSearch(body);
+                if ((body.tools?.length || body.tool_choice && body.tool_choice !== "none" || body.max_tool_calls !== undefined || body.include !== undefined) && !webSearch || body.previous_response_id || body.conversation || body.stream || body.background) return fail("Paid AI cannot bound tool, conversation or streaming charges for this request.");
                 if (!count(body.max_output_tokens) || body.max_output_tokens === 0) return fail("Paid AI needs a bounded maximum output before dispatch.");
-                const minimum = body.max_output_tokens * rates.output;
+                const minimum = body.max_output_tokens * rates.output + (webSearch ? WEB_SEARCH_FEE_NANO_USD : 0);
                 if (!count(minimum)) return fail("Paid AI cannot record the maximum output cost. No paid request was sent.");
                 if (minimum > remaining) throw new AiSearchAllowanceError(budgetMessage("This request's maximum output alone exceeds the search's remaining AI budget. No paid request was sent."));
                 const immutableInput = typeof body.input === "string" || Array.isArray(body.input) && body.input.every((item: any) =>
@@ -200,7 +206,10 @@ export function createAiSpendingGuard({ directory = DATA_DIR, preflight }: Optio
                         part?.type === "input_text" && typeof part.text === "string" && Object.keys(part).every(key => ["type", "text"].includes(key)) ||
                         part?.type === "input_image" && typeof part.image_url === "string" && part.image_url.startsWith("data:image/") && Object.keys(part).every(key => ["type", "image_url", "detail"].includes(key)))));
                 if (!immutableInput) return fail("Paid AI cannot prove an input bound for mutable image URLs or unsupported input items. Exact immutable-input preflight is required.");
-                return { account, rates, minimum, remaining };
+                if (webSearch && Object.values(book.searches).some(saved => saved.attempts.some(attempt => attempt.webSearch && attempt.inputHash === aiInputHash(body)))) {
+                    throw new AiSpendingError("AI_EVIDENCE_HELD", "This web price search already has a spending record. No replacement request was sent.");
+                }
+                return { account, rates, minimum, remaining, webSearch };
             };
             // Validate cheap rejection rules before counting. The remote count
             // never holds the local spending lock; independent searches continue.
@@ -210,7 +219,8 @@ export function createAiSpendingGuard({ directory = DATA_DIR, preflight }: Optio
             const proof = await preflight(body);
             signal?.throwIfAborted();
             if (proof.inputHash !== inputHash || aiInputHash(body) !== inputHash || !count(proof.inputTokens)) return fail("The exact AI input bound does not match this request. No paid request was sent.");
-            if (proof.inputTokens > MAX_STANDARD_INPUT_TOKENS) return fail("This request crosses the verified standard-context price boundary.");
+            const maxInputTokens = proof.inputTokens + (isBoundedPriceSearch(body) ? WEB_SEARCH_CONTEXT_BOUND : 0);
+            if (maxInputTokens > MAX_STANDARD_INPUT_TOKENS) return fail("This request crosses the verified standard-context price boundary.");
             return locked(async () => {
                 signal?.throwIfAborted();
                 const settings = await control();
@@ -218,12 +228,12 @@ export function createAiSpendingGuard({ directory = DATA_DIR, preflight }: Optio
                 if (settings.ledgerId !== initial.ledgerId || aiInputHash(body) !== inputHash) return fail("The AI request or spending ledger changed during input counting.");
                 const book = await ledger(settings);
                 // Re-read all concurrent reservations, lower caps and pauses.
-                const { account, rates, minimum, remaining } = validateRequest(settings, book);
-                const amount = proof.inputTokens * Math.max(rates.input, rates.write) + minimum;
+                const { account, rates, minimum, remaining, webSearch } = validateRequest(settings, book);
+                const amount = maxInputTokens * Math.max(rates.input, rates.write) + minimum;
                 if (!count(account.heldNanoUsd + amount)) return fail("Paid AI cannot record the cost of this request. No paid request was sent.");
                 if (amount > remaining) throw new AiSearchAllowanceError(budgetMessage("This request would exceed the search's remaining AI budget. No paid request was sent."));
                 const attempt: Attempt = { id: randomUUID(), inputHash, model: body.model, createdAt: new Date().toISOString(),
-                    maxInputTokens: proof.inputTokens, maxOutputTokens: body.max_output_tokens, reservedNanoUsd: amount, heldNanoUsd: amount, state: "RESERVED" };
+                    maxInputTokens, ...(webSearch ? { webSearch: true } : {}), maxOutputTokens: body.max_output_tokens, reservedNanoUsd: amount, heldNanoUsd: amount, state: "RESERVED" };
                 account.heldNanoUsd += amount; account.attempts.push(attempt); book.searches[context.searchId!] = account;
                 await durableJson(ledgerFile, book);
                 const latest = await control();
@@ -249,7 +259,9 @@ export function createAiSpendingGuard({ directory = DATA_DIR, preflight }: Optio
                 if (cached + writes > usage.input_tokens) return;
                 if (writes && (details.cache_write_tokens_details?.ttl_30m_tokens !== writes || details.cache_write_tokens_details?.ttl_12h_tokens !== 0)) return;
                 const rates = RATES[attempt.model];
-                const actual = (usage.input_tokens - cached - writes) * rates.input + cached * rates.cached + writes * rates.write + usage.output_tokens * rates.output;
+                if (attempt.webSearch && (!Array.isArray(result.output) || result.output.filter((item: any) => item?.type === "web_search_call" && item.status === "completed").length !== 1 ||
+                    result.output.filter((item: any) => item?.type === "web_search_call").length !== 1)) return;
+                const actual = (attempt.webSearch ? WEB_SEARCH_FEE_NANO_USD : 0) + (usage.input_tokens - cached - writes) * rates.input + cached * rates.cached + writes * rates.write + usage.output_tokens * rates.output;
                 if (!count(actual)) return;
                 // An uncapped search can settle an input-count discrepancy when
                 // reported usage still fits the reserved dollars and rate tier.

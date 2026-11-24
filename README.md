@@ -151,7 +151,10 @@ every legacy diagnostic or buy missing evidence solely to fill a UI section.
   searches use the bounded query workflow; the unused broad photo-discovery
   writers have been retired. Supported opportunities appear in **Deals**.
 - **Best Offer:** for a Buy It Now that takes offers, show a realistic offer and walk-away amount when supported. Conditional offer opportunities are separate from profit at asking price; the app submits no offers.
-- **Auction guidance:** maximum bids include the modeled costs and targets. Observed sales provide market references, without a forecast of the closing price.
+- To hunt across auctions, type `Find vintage holos from 1999–2003 I can flip for at least $25.` into the search bar. The AI chooses markets with recent sales and decides which listings, photos, sale comparisons or grading costs to check. **Research steps** shows its choices.
+- **Auction opportunities** shows open auctions with strictly less than 10 hours left and a current price below matching sales. Each bid recommendation gives a maximum item bid, the next bid with shipping and estimated tax, and projected resale profit after costs if you win at that next bid. You place the bid on eBay.
+- Open **Tracked auction outcomes** in auction Results to see whether an alerted copy sold within its original bid limit. While the local server runs, it refreshes bids near closing and looks for a completed sale for that exact eBay item. Only confirmed sales count toward the displayed result.
+- **Competing auctions** compares matching certified slabs ending within 15 minutes of each other.
 - **The exact printing:** 1st Edition, Shadowless, and Unlimited are priced apart. Supported photo/label evidence can resolve a wrong title or item detail; an unresolved material identity problem still blocks purchase advice.
 - **Reprints caught:** Celebrations, Classic Collection (2021 and 2026), Base Set 2, metal cards, and Topps cards don't get priced as vintage originals.
 - **Checked comps:** sold comps pass identity, printing, finish, grader/grade and other eligibility rules. Bounded HTTP research reuses saved AI comp checks and sold-copy condition evidence; it does not purchase new comp-review batches or historical photo assessments. Missing matched sales leave a pricing route unavailable.
@@ -490,7 +493,7 @@ boundaries and the regressions added for their failure cases:
 | --- | --- |
 | Dispatch and cancellation | Stop/disconnect blocks queued titles, photos, pricing, comparisons and retries; accepted paid answers finish saving. |
 | Reuse and concurrency | Same evidence shares work; canceled/restarted consumers wait for saved results; successful and unresolved answers do not expire into automatic repurchases. |
-| Candidate selection | Source/known filters precede paid work; auctions use a fixed search-start 12-hour window and expire before later stages. The historical batch restriction has since been replaced by the current 50-row metadata admission and eligibility-based automatic queue. |
+| Candidate selection | Source/known filters precede paid work; auctions use a strict under-10-hour search window and expire before later stages. The historical batch restriction has since been replaced by the current 50-row metadata admission and eligibility-based automatic queue. |
 | Evidence and messages | Exact identity/finish gates reject unusable comparisons; numbered close-up notes cannot masquerade as listing-wide missing coverage; deliberate deferrals do not create false deals or routine review tasks. |
 | Cost and quota | Persistent, cross-process reservations track AI spending and enforce any configured ceiling; unknown costs and missing/corrupt accounting block dispatch; Browse has a separate 100-request ceiling for new searches and account-wide daily protection. |
 | Lifecycle and outcomes | Changed filters stop old-scope work; target/price changes recheck hypothetical upside; manual upgrades reuse photo work; Sorting and Deals reflect actual assessment state. |

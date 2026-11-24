@@ -77,6 +77,16 @@ test("the revised raw prompt pinpoints printing and surface evidence within the 
     assert.equal(fetch.mock.callCount(), 0);
 });
 
+test("Neo Destiny uses the visible empty stamp position for Unlimited even when the title omits the edition", () => {
+    const gengar = { ...listing, title: "Dark Gengar 6/105 Neo Destiny Holo Pokemon Card NM",
+        aspects: { ...listing.aspects, Set: "Neo Destiny", "Card Number": "6/105", "Card Name": "Dark Gengar" } };
+    for (const mode of ["RAW", "SLAB_LABEL"] as const) {
+        const { prompt } = buildBoundedAssessmentRequest(gengar, photos, mode);
+        assert.match(prompt, /clearly empty stamp position on English Neo Destiny identifies Unlimited/);
+        assert.doesNotMatch(prompt, /RIGHT and LOWER edges|lone 99/);
+    }
+});
+
 test("completed raw photo reports require a numeric grade, including when confidence is low", () => {
     const raw = labelReading();
     raw.photoCheck.holder = "NONE";
@@ -87,9 +97,11 @@ test("completed raw photo reports require a numeric grade, including when confid
     const completed = buildBoundedAssessmentRequest(listing, photos);
     const front = buildBoundedAssessmentRequest(listing, photos, "RAW", true);
     strictObjects(completed.schema);
-    assert.equal(accepts(completed.schema, { ...raw, condition: { ...condition, gradeRange: { low: 5, likely: 6, high: 7 } } }), true);
-    assert.equal(accepts(completed.schema, { ...raw, condition: { ...condition, gradeRange: null } }), false);
-    assert.equal(accepts(completed.schema, { ...raw, condition: { ...condition, gradeRange: { low: 5, likely: null, high: 7 } } }), false);
+    const listingCondition = { ...condition, binderAppearance: { front: "UNCLEAR", back: "WORN",
+        frontEvidence: "Glare covers the front edge.", backEvidence: "Whitening along the back lower edge." } };
+    assert.equal(accepts(completed.schema, { ...raw, condition: { ...listingCondition, gradeRange: { low: 5, likely: 6, high: 7 } } }), true);
+    assert.equal(accepts(completed.schema, { ...raw, condition: { ...listingCondition, gradeRange: null } }), false);
+    assert.equal(accepts(completed.schema, { ...raw, condition: { ...listingCondition, gradeRange: { low: 5, likely: null, high: 7 } } }), false);
     assert.equal(accepts(front.schema, { ...raw, condition: { ...condition, gradeRange: null } }), true);
     assert.equal(accepts(completed.schema, labelReading()), true, "a photographed slab can still return a null raw report");
 });

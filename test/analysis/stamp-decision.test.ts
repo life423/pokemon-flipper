@@ -12,6 +12,7 @@ const cases = [
     { name: "Venusaur", set: "Base Set", number: "15/102", absent: "SHADOWLESS" },
     { name: "Dark Blastoise", set: "Team Rocket", number: "3/82", absent: "UNLIMITED" },
     { name: "Espeon", set: "Neo Discovery", number: "1/75", absent: "UNLIMITED" },
+    { name: "Dark Gengar", set: "Neo Destiny", number: "6/105", absent: "UNLIMITED" },
 ] as const;
 
 async function setup(card = cases[0] as (typeof cases)[number]) {
@@ -55,11 +56,34 @@ test("only exact alternatives that change the deal verdict qualify for a stamp c
             now, identify, targets: figures, signal: new AbortController().signal,
             price: async identity => ({ rawPricing: matchedSales(identity.printing as Printing, identity.printing === "FIRST_EDITION" ? 220 : 70), gradedPricing: null }),
         });
-        assert.equal(decisions?.VISIBLE.identity.printing, "FIRST_EDITION");
-        assert.equal(decisions?.VISIBLE.underwriting.verdict, "BUY_RAW");
+        assert.equal(decisions?.VISIBLE?.identity.printing, "FIRST_EDITION");
+        assert.equal(decisions?.VISIBLE?.underwriting.verdict, "BUY_RAW");
         assert.equal(decisions?.NOT_PRESENT.identity.printing, card.absent);
         assert.equal(decisions?.NOT_PRESENT.underwriting.verdict, "PASS");
         assert.equal(stamp?.firstEditionStamp, "CANT_TELL", "scenario pricing must not apply hypothetical evidence");
+    }
+});
+
+test("ordinary Neo Destiny candidates price only Unlimited and can request one stamp reading when that sale is profitable", async () => {
+    for (const sellerClaim of ["Unlimited", ""]) {
+        const { evaluation, identify } = await setup(cases[3]);
+        evaluation.listing.title = `Dark Gengar Neo Destiny Holo 6/105 ${sellerClaim}`;
+        evaluation.identity = (await identify(evaluation.photoCheck!)).identity;
+        async function decide(salePrice: number) {
+            const requested: string[] = [];
+            const result = await findStampDecision(evaluation, { now, identify, targets: figures, signal: new AbortController().signal,
+                price: async identity => {
+                    requested.push(identity.printing!);
+                    return { rawPricing: matchedSales("UNLIMITED", salePrice), gradedPricing: null };
+                } });
+            assert.deepEqual(requested, ["UNLIMITED"]);
+            return result;
+        }
+        assert.equal(await decide(50), null, "an expensive ordinary copy cannot authorize automatic photo spend");
+        const profitable = await decide(250);
+        assert.equal(profitable?.NOT_PRESENT.underwriting.verdict, "BUY_RAW");
+        assert.equal(profitable.VISIBLE, null);
+        assert.equal(evaluation.identity?.printing, "UNKNOWN", "hypothetical sales do not verify the actual printing");
     }
 });
 

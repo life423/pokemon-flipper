@@ -3,19 +3,18 @@ import type { EbayUsage, Targets } from "../types";
 import type { AiUsageDay } from "../../../shared/ai-usage.ts";
 import type { ResultGroups, View, SortKey, SearchFilters, TypeFilter, KindFilter } from "./results";
 import { ALL, AUTO_OPTIONS } from "./settings";
-import { DEVELOPMENT_SEARCH_LIMIT } from "../../../shared/research-policy.ts";
+import { DEVELOPMENT_SEARCH_LIMIT, SEARCH_SOURCE_PAGE_LIMIT } from "../../../shared/research-policy.ts";
 import type { MarketplaceOrder } from "../../../shared/listing-filters.ts";
 import { MAX_OFFER_DISCOUNT_PERCENT } from "../../../shared/money/cents.ts";
 import { describeUsage } from "./presentation";
 import { withViewTransition } from "../motion";
 import { Drawer } from "../components/Drawer";
-import { Dropdown } from "../components/Dropdown";
-import { ClockIcon, CloseIcon, DollarIcon, GridIcon, ReviewIcon, SparkleIcon, TagIcon, TrendDownIcon, TrendIcon } from "../components/Icons";
-import { TargetFields, TargetMenu, type TargetInputProps } from "./TargetFields";
+import { ClockIcon, CloseIcon, DollarIcon, GridIcon, ReviewIcon, SparkleIcon, TagIcon, TrendDownIcon } from "../components/Icons";
+import { TargetFields, type TargetInputProps } from "./TargetFields";
 import styles from "../App.module.css";
 
 interface SearchControlsProps {
-    showSearchOptions?: boolean;
+    searchPage?: boolean;
     hidden: boolean;
     idle: boolean;
     views: {
@@ -51,6 +50,7 @@ interface SearchControlsProps {
 const VIEW_ICONS: Record<View, ReactNode> = {
     new: <SparkleIcon />,
     deals: <TagIcon />,
+    bids: <DollarIcon />,
     offers: <DollarIcon />,
     candidates: <ClockIcon />,
     review: <ReviewIcon />,
@@ -61,9 +61,10 @@ const VIEW_ICONS: Record<View, ReactNode> = {
 const VIEW_NAMES: Record<View, string> = {
     new: "New listings",
     deals: "Deals",
+    bids: "Bid opportunities",
     offers: "Offers",
     candidates: "Sorting",
-    review: "Needs attention",
+    review: "Wait or skip",
     losses: "Projected losses",
     all: "All matching",
 };
@@ -91,9 +92,60 @@ function Segmented<T extends string>({
     );
 }
 
-export function SearchControls({ showSearchOptions = false, hidden, idle, views, filters, target, settings, drawer, usage, aiUsage }: SearchControlsProps) {
+function PurchaseFields({ filters }: Pick<SearchControlsProps, "filters">) {
+    const { typeFilter, kindFilter, marketplaceOrder, minPrice, maxPrice, setTypeFilter, setKindFilter, setMarketplaceOrder, changeMinPrice, setMaxPrice } = filters;
+    return <>
+                <label className={styles.field}>
+                    <span>Listing format</span>
+                    <select value={typeFilter} onChange={({ target: { value } }) => withViewTransition(() => setTypeFilter(value as TypeFilter))}>
+                        <option value="FIXED_PRICE">Buy It Now</option>
+                        <option value="AUCTION">Auctions ending in under 10 hours</option>
+                        <option value="all">Both formats</option>
+                    </select>
+                </label>
+                <label className={styles.field}>
+                    <span>Card type</span>
+                    <select value={kindFilter} onChange={({ target: { value } }) => withViewTransition(() => setKindFilter(value as KindFilter))}>
+                        <option value="all">Both</option>
+                        <option value="raw">Raw cards</option>
+                        <option value="graded">Graded cards</option>
+                    </select>
+                </label>
+                {typeFilter !== "AUCTION" && <label className={styles.field}>
+                    <span>eBay search order</span>
+                    <select value={marketplaceOrder} onChange={({ target: { value } }) => setMarketplaceOrder(value === "lowest" ? "lowest" : "newest")}>
+                        <option value="newest">Newest first</option>
+                        <option value="lowest">Lowest price first</option>
+                    </select>
+                </label>}
+                <label className={styles.field}>
+                    <span>Minimum Buy It Now price</span>
+                    <span className={styles.affix}><span>$</span><input type="number" min="0" inputMode="decimal" placeholder="Any" value={minPrice} onChange={(event) => changeMinPrice(event.target.value)} /></span>
+                </label>
+                <label className={styles.field}>
+                    <span>Maximum purchase price</span>
+                    <span className={styles.affix}><span>$</span><input type="number" min="0" inputMode="decimal" placeholder="Any" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} /></span>
+                </label>
+    </>;
+}
+
+export function SearchOptions({ filters, target }: Pick<SearchControlsProps, "filters" | "target">) {
+    return <section className={styles.searchOptions} data-marketplace-order={filters.typeFilter !== "AUCTION" || undefined} aria-label="Search options">
+        <PurchaseFields filters={filters} />
+        <div className={styles.searchTargets}>
+            <span>Profit &amp; return targets</span>
+            <div className={styles.targets}><TargetFields targetInputs={target.targetInputs} changeTarget={target.changeTarget} /></div>
+        </div>
+        <details className={styles.searchHelp}>
+            <summary>How this search works</summary>
+            <p>English cards only. Each discovery pass fetches up to {SEARCH_SOURCE_PAGE_LIMIT} listing summaries; the app keeps up to {DEVELOPMENT_SEARCH_LIMIT} results for display and assessment. Screening can continue past {DEVELOPMENT_SEARCH_LIMIT} unresolved rows, and a thin newest-first Buy It Now search can add a lower-price pass. Listing coverage below records exclusions and rows not reached. Identity and condition remain preliminary until photo assessment. All prices by default. The minimum applies to Buy It Now and the maximum to both formats.</p>
+        </details>
+    </section>;
+}
+
+export function SearchControls({ searchPage = false, hidden, idle, views, filters, target, settings, drawer, usage, aiUsage }: SearchControlsProps) {
     const { view, availableViews, groups, allTab, setView } = views;
-    const { typeFilter, kindFilter, sort, marketplaceOrder, minPrice, maxPrice, minGrade, setTypeFilter, setKindFilter, setSort, setMarketplaceOrder, changeMinPrice, setMaxPrice, changeMinGrade } = filters;
+    const { typeFilter, kindFilter, sort, minPrice, maxPrice, minGrade, setTypeFilter, setKindFilter, setSort, changeMinPrice, setMaxPrice, changeMinGrade } = filters;
     const { targets, targetInputs, changeTarget } = target;
     const { includeOffers, autoSetting, changeIncludeOffers, changeAutoSetting } = settings;
     const { drawerOpen, setDrawerOpen } = drawer;
@@ -102,6 +154,7 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
     // deals green, review amber.
     const COUNT_TONES: Partial<Record<View, string>> = {
         deals: styles.countBuy,
+        bids: styles.countBuy,
         review: styles.countWatch,
     };
     const viewCount = (key: View) => {
@@ -147,46 +200,11 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
         });
     };
 
-    const purchaseFields = <>
-                <label className={styles.field}>
-                    <span>Listing format</span>
-                    <select value={typeFilter} onChange={({ target: { value } }) => withViewTransition(() => setTypeFilter(value as TypeFilter))}>
-                        <option value="FIXED_PRICE">Buy It Now</option>
-                        <option value="AUCTION">Auctions ending within 12 hours</option>
-                        <option value="all">Both formats</option>
-                    </select>
-                </label>
-                <label className={styles.field}>
-                    <span>Card type</span>
-                    <select value={kindFilter} onChange={({ target: { value } }) => withViewTransition(() => setKindFilter(value as KindFilter))}>
-                        <option value="all">Both</option>
-                        <option value="raw">Raw cards</option>
-                        <option value="graded">Graded cards</option>
-                    </select>
-                </label>
-                {typeFilter !== "AUCTION" && <label className={styles.field}>
-                    <span>eBay search order</span>
-                    <select value={marketplaceOrder} onChange={({ target: { value } }) => setMarketplaceOrder(value === "lowest" ? "lowest" : "newest")}>
-                        <option value="newest">Newest first</option>
-                        <option value="lowest">Lowest price first</option>
-                    </select>
-                </label>}
-                <label className={styles.field}>
-                    <span>Minimum Buy It Now price</span>
-                    <span className={styles.affix}><span>$</span><input type="number" min="0" inputMode="decimal" placeholder="Any" value={minPrice} onChange={(event) => changeMinPrice(event.target.value)} /></span>
-                </label>
-                <label className={styles.field}>
-                    <span>Maximum purchase price</span>
-                    <span className={styles.affix}><span>$</span><input type="number" min="0" inputMode="decimal" placeholder="Any" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} /></span>
-                </label>
-    </>;
+
 
     return (
         <>
-            {showSearchOptions && <div className={styles.searchOptions} data-marketplace-order={typeFilter !== "AUCTION" || undefined} role="group" aria-label="Search options">
-                {purchaseFields}
-                <p className={styles.preferenceNote}>English cards only. Up to {DEVELOPMENT_SEARCH_LIMIT} matching listings per scan. Recent sales guide which listings the app assesses first. Identity and condition remain preliminary until photo assessment. All prices by default. The minimum applies to Buy It Now and the maximum to both formats.</p>
-            </div>}
+
             <div className={styles.controlPanel} hidden={hidden} data-idle={idle || undefined}>
                 <div className={styles.controlRow}>
                     {/* Every view remains visible in wrapping tabs. */}
@@ -198,7 +216,7 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
                             onChange={setView}
                             options={availableViews.map((key) => [
                                 key,
-                                <span className={styles.tabLabel}>
+                                <span className={styles.tabLabel} data-view={key}>
                                     {VIEW_ICONS[key]}
                                     {VIEW_NAMES[key]}
                                     {viewCount(key)}
@@ -207,26 +225,21 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
                         />
                     </div>
 
-                    {/* Wide screens: your deal criteria in view. Phones reach them through the menu. */}
-                    <div className={`${styles.criteria} ${styles.wideOnly}`}>
-                        <Dropdown
-                            icon={<DollarIcon />}
-                            label="Min profit"
-                            value={targets.minProfit > 0 ? `$${targets.minProfit}` : "Any"}
-                        >
-                            {(close) => <TargetMenu field="minProfit" close={close} targetInputs={targetInputs} changeTarget={changeTarget} />}
-                        </Dropdown>
-                        <Dropdown
-                            icon={<TrendIcon />}
-                            label="ROI"
-                            value={targets.minRoi > 0 ? `${Math.round(targets.minRoi * 100)}%` : "Any"}
-                        >
-                            {(close) => <TargetMenu field="minRoi" close={close} targetInputs={targetInputs} changeTarget={changeTarget} />}
-                        </Dropdown>
-                    </div>
+                    <label className={`${styles.field} ${styles.resultSort}`}>
+                        <span>Sort results</span>
+                        <select value={sort} onChange={event => setSort(event.target.value as SortKey)}>
+                            <option value="best">Best deal first</option>
+                            <option value="ending">Ending soonest</option>
+                            <option value="priceLow">Price, low to high</option>
+                            <option value="priceHigh">Price, high to low</option>
+                            <option value="overlooked">Most overlooked first</option>
+                        </select>
+                    </label>
                 </div>
 
-                <div className={`${styles.searchPreferences} ${styles.wideOnly}`}>
+                <details className={styles.resultPreferences}>
+                    <summary>More filters and options</summary>
+                <div className={styles.searchPreferences}>
                     <label className={styles.offerToggle} title={`Include opportunities that need seller acceptance, up to ${MAX_OFFER_DISCOUNT_PERCENT}% below asking`}>
                         <span>Include Best Offers</span>
                         <input type="checkbox" role="switch" aria-label="Include Best Offer opportunities" checked={includeOffers} onChange={(event) => changeIncludeOffers(event.target.checked)} />
@@ -241,6 +254,7 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
                     {minGrade > 0 && <p className={styles.preferenceNote}>Includes cards whose upper estimated grade meets your target. Check the likely grade, confidence and photo evidence.</p>}
                 </div>
 
+                </details>
                 {/* What's narrowing the results, each one a click to remove. */}
                 {activeChips.length > 0 && (
                     <div className={styles.activeFilters}>
@@ -295,7 +309,7 @@ export function SearchControls({ showSearchOptions = false, hidden, idle, views,
                 <section className={styles.drawerSection}>
                     <h3>Filters</h3>
                     <p className={styles.usage}>English cards only. Listings with unconfirmed language remain preliminary.</p>
-                    {!showSearchOptions && purchaseFields}
+                    {!searchPage && <PurchaseFields filters={filters} />}
                     <label className={styles.field}>
                         <span>Sort results</span>
                         <select

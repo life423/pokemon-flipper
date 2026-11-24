@@ -1,4 +1,4 @@
-import type { Evaluation, ListingSummary } from "./types.ts";
+import type { Evaluation, ListingSummary, Verdict } from "./types.ts";
 
 export interface ShortlistEntry {
     id: string;
@@ -9,6 +9,12 @@ export interface ShortlistEntry {
     notes: string;
     ceiling: number | null;
     needsAnalysis: boolean;
+    photoChange?: {
+        previousPhotos: string[];
+        previousVerdict: Verdict | null;
+        neededBack: boolean;
+        reviewedVerdict?: Verdict;
+    };
 }
 export interface RefreshResult {
     entries: ShortlistEntry[];

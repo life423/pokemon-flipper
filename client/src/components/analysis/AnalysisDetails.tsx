@@ -1,7 +1,9 @@
 import type { Evaluation, ListingSummary } from "../../types";
+import type { DealHuntSection } from "../../../../shared/deal-hunt.ts";
 import { name } from "../../format";
 import { hasSlabEvidence, photoEvidence, slabLabelConfidence } from "../../../../shared/photo-evidence.ts";
 import { resaleActivity, matchedSoldActivity } from "../../../../shared/liquidity.ts";
+import { printingReviewReasons } from "../../../../shared/photo-review.ts";
 import { GradingComparison } from "../GradingComparison";
 import { PathCard } from "./FinancialDecision";
 import { ListingEvidenceSection, ListingSection, IdentitySection, SlabSection, ConditionSection, PhotosSection } from "./EvidenceSections";
@@ -17,6 +19,8 @@ export function AnalysisDetails({
     onReanalyze,
     minGrade,
     reviewing,
+    promoted,
+    showPurchaseScenarios = true,
 }: {
     listing: ListingSummary;
     evaluation: Evaluation;
@@ -24,6 +28,8 @@ export function AnalysisDetails({
     onReanalyze?: () => void;
     minGrade: number;
     reviewing: boolean;
+    promoted?: DealHuntSection | null;
+    showPurchaseScenarios?: boolean;
 }) {
     const tokens = evaluation.usage.reduce(
         (total, step) => total + (step.inputTokens ?? 0) + (step.outputTokens ?? 0),
@@ -37,7 +43,7 @@ export function AnalysisDetails({
 
     return (
         <>
-            {!slab && evaluation.condition && <Section title="PSA and CGC comparison"><GradingComparison evaluation={evaluation} expanded /></Section>}
+            {showPurchaseScenarios && !slab && evaluation.condition && promoted !== "grading" && <Section title="PSA and CGC comparison"><GradingComparison evaluation={evaluation} expanded /></Section>}
             <Section title="Photo evidence and grading confidence">
                 <p>{slab ? "Photo confidence" : "Assessment confidence"}: {name(evidence.confidence)}. {evidence.coverage}.</p>
                 {labelConfidence && <p>Slab label confidence: {name(labelConfidence)}.</p>}
@@ -45,7 +51,7 @@ export function AnalysisDetails({
                 <Notes items={evidence.issues} tone="muted" />
             </Section>
 
-            {evaluation.underwriting && evaluation.underwriting.paths.length > 0 && (
+            {showPurchaseScenarios && evaluation.underwriting && evaluation.underwriting.paths.length > 0 && (
                 <Section title="Every path">
                     <div className={styles.paths}>
                         {evaluation.underwriting.paths.filter(path => path.path !== "RAW" || path.status !== "PRICED" || !referencePriceReason(evaluation, path)).map((path) => (
@@ -74,11 +80,11 @@ export function AnalysisDetails({
                 {evaluation.marketActivity?.status === "UNAVAILABLE" && <p className={styles.small}>{evaluation.marketActivity.reason}</p>}
             </Section>
             <ListingSection listing={listing} evaluation={evaluation} />
-            {evaluation.identity && <IdentitySection identity={evaluation.identity} isSlab={Boolean(evaluation.slab)} />}
-            {evaluation.slab && <SlabSection slab={evaluation.slab} pricing={evaluation.slabPricing} />}
+            {evaluation.identity && <IdentitySection identity={evaluation.identity} reasons={printingReviewReasons(evaluation, evaluation.identity.reasons)} isSlab={Boolean(evaluation.slab)} />}
+            {evaluation.slab && promoted !== "sales" && <SlabSection slab={evaluation.slab} pricing={evaluation.slabPricing} />}
             {!slab && evaluation.condition && <ConditionSection evaluation={evaluation} condition={evaluation.condition} />}
 
-            {!slab && (evaluation.rawPricing || evaluation.gradedPricing) && (
+            {!slab && promoted !== "sales" && (evaluation.rawPricing || evaluation.gradedPricing) && (
                 <PricesSection raw={evaluation.rawPricing} graded={evaluation.gradedPricing} />
             )}
 

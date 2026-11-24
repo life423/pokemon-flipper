@@ -13,6 +13,7 @@ function dispositionReason(reason: SourceDispositionRow["reason"]): string {
         case "SEALED": return "Sealed product";
         case "MERCHANDISE": return "Merchandise or card accessory";
         case "EMPTY_HOLDER": return "Empty card holder";
+        case "OUTSIDE_GRADING_WATCH": return "Listing date falls outside the last 24 hours or is unavailable";
         case "ALREADY_SEEN": return "Already seen in an earlier scan";
         case "ABOVE_SOLD_CEILING": return "Asking above the purchase limit set by recent sales";
         case "OTHER_CARD": return "Listing did not match the requested card or collector number";

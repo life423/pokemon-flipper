@@ -35,5 +35,5 @@ test("manual pricing retries retain cooldown, search waiting and cancellation wi
     assert.match(render({ listings: [waiting] }), /disabled="">Retry pricing in 30s/);
     assert.match(render({ busy: true }), /Cancel pricing retries/);
     assert.equal(render({ analyzed: new Set([listing.id]) }), "");
-    assert.match(render({ listings: [], reviewCount: 2 }), /2 listings need attention/);
+    assert.match(render({ listings: [], reviewCount: 2 }), /2 listings in Wait or skip/);
 });

@@ -146,7 +146,7 @@ test("card headers distinguish listed, checked, raw, unknown and qualified grade
     assert.deepEqual(cardDetails(listing(),evaluation),{source:"Label checked",grade:"CGC 8.5",finish:"Reverse holo"});
     assert.deepEqual(cardDetails({...listing(),isGraded:false},{identity:{finish:"HOLO"},condition:{gradeRange:{high:10}}}),{source:"Photo assessed",grade:"Raw",finish:"Holo"});
     assert.equal(cardDetails(listing(),{photoCheck:{slab:{present:false}},identity:{finish:"UNKNOWN"}}).finish,"Finish unknown");
-    assert.deepEqual(cardDetails(listing(),{photoCheck:{slab:{present:true,grader:"PSA",grade:"9",gradeQualifier:"OC"}}}),{source:"Review needed",grade:"PSA 9 (OC)",finish:"Finish unknown"});
+    assert.deepEqual(cardDetails(listing(),{photoCheck:{slab:{present:true,grader:"PSA",grade:"9",gradeQualifier:"OC"}}}),{source:"Slab label unverified",grade:"PSA 9 (OC)",finish:"Finish unknown"});
 });
 
 test("fresh server snapshots replace old header attributes and discard old retry hints",()=>{

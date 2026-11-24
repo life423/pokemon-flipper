@@ -2,8 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import {
     SEARCH_DIAGNOSTIC_OUTCOMES, SEARCH_DIAGNOSTIC_REASONS, SOURCE_REJECTION_REASONS,
-    type SearchDiagnosticDiscovery, type SearchDiagnosticOverflow, type SearchDiagnosticResult, type SearchDiagnosticRow, type SourceDispositionRow,
+    type SearchCompetition, type SearchDiagnosticDiscovery, type SearchDiagnosticOverflow, type SearchDiagnosticResult, type SearchDiagnosticRow, type SourceDispositionRow,
 } from "../../shared/search-diagnostic.ts";
+import { FIRST_REVIEW_COUNT } from "../../shared/search-review-selection.ts";
+import { parseListingLink } from "../../shared/listing-link.ts";
 import { DEVELOPMENT_SEARCH_LIMIT, SEARCH_SOURCE_PAGE_LIMIT } from "../../shared/research-policy.ts";
 import { writeJsonAtomic } from "../lib/atomic-json.ts";
 import { withFileLease } from "../lib/file-lease.ts";
@@ -88,12 +90,49 @@ function sourceRows(rows: SourceDispositionRow[], accountedIds: readonly string[
     });
 }
 
+export function competitionRecord(value: SearchCompetition): SearchCompetition {
+    const { title, url, price, shipping, ceiling, identity, pricing, image, seller, checkedAt, coverage, concerns } = value ?? {};
+    const money = (amount: unknown): amount is number => typeof amount === "number" && Number.isFinite(amount) && amount >= 0;
+    const link = parseListingLink(url);
+    if (typeof title !== "string" || !title.trim() || title.length > 2000 || !link ||
+        !money(price) || price === 0 || !money(shipping) || !money(ceiling) || !["PHOTO", "LABEL", "LISTING"].includes(identity) ||
+        pricing !== undefined && (!pricing || !money(pricing.resale) || pricing.resale === 0 || !money(pricing.totalCost) ||
+            !Number.isFinite(pricing.profit) || pricing.roi !== null && !Number.isFinite(pricing.roi) || !count(pricing.sales) || pricing.sales < 1) ||
+        checkedAt !== undefined && (typeof checkedAt !== "string" || !Number.isFinite(Date.parse(checkedAt))) ||
+        coverage !== undefined && (!coverage || !count(coverage.found) || !count(coverage.checked) || coverage.checked > coverage.found) ||
+        concerns !== undefined && (!Array.isArray(concerns) || concerns.length > 16 || concerns.some(note => typeof note !== "string" || note.length > 1200))) {
+        throw new SearchDiagnosticInputError("Completed search has an invalid Buy It Now comparison.");
+    }
+    if (image !== undefined) {
+        let photo: URL;
+        try { photo = new URL(image); } catch { throw new SearchDiagnosticInputError("Completed search has an invalid comparison photo."); }
+        if (typeof image !== "string" || image.length > 2048 || photo.protocol !== "https:" || photo.username || photo.password || photo.port ||
+            !(photo.hostname === "ebayimg.com" || photo.hostname.endsWith(".ebayimg.com"))) {
+            throw new SearchDiagnosticInputError("Completed search has an invalid comparison photo.");
+        }
+    }
+    if (seller !== undefined && seller !== null && (typeof seller !== "object" ||
+        seller.username !== null && (typeof seller.username !== "string" || seller.username.length > 200) ||
+        seller.feedbackScore !== null && !count(seller.feedbackScore) ||
+        seller.feedbackPercentage !== null && (!money(seller.feedbackPercentage) || seller.feedbackPercentage > 100))) {
+        throw new SearchDiagnosticInputError("Completed search has an invalid comparison seller.");
+    }
+    return { title, url: link.url, price, shipping, ceiling, identity,
+        ...(pricing && { pricing: { resale: pricing.resale, totalCost: pricing.totalCost, profit: pricing.profit, roi: pricing.roi, sales: pricing.sales } }),
+        ...(image !== undefined && { image }), ...(seller !== undefined && { seller: seller === null ? null : {
+            username: seller.username, feedbackScore: seller.feedbackScore, feedbackPercentage: seller.feedbackPercentage,
+        } }), ...(checkedAt !== undefined && { checkedAt }),
+        ...(coverage && { coverage: { found: coverage.found, checked: coverage.checked } }),
+        ...(concerns && { concerns: [...concerns] }),
+    };
+}
+
 function discoveryRecord(value: SearchDiagnosticDiscovery): SearchDiagnosticDiscovery {
     const { total, found, screened, priceExcluded, unresolvedOverflow, overflow, skipped, deferred, previouslySeen, soldPurchaseCeiling, pricePass, marketplaceOrder, retainedIds } = value;
-    const { sourceCoverage, sourceDispositions } = value;
+    const { sourceCoverage, sourceDispositions, reviewSelection } = value;
     if (![total, found, skipped, deferred].every(count) ||
         ![screened, priceExcluded, unresolvedOverflow, previouslySeen].every(number => number === undefined || count(number)) ||
-        (marketplaceOrder !== undefined && marketplaceOrder !== "newest" && marketplaceOrder !== "lowest") ||
+        (marketplaceOrder !== undefined && marketplaceOrder !== "newest" && marketplaceOrder !== "lowest" && marketplaceOrder !== "ending") ||
         (sourceCoverage !== undefined && sourceCoverage !== "COMPLETE" && sourceCoverage !== "PARTIAL") ||
         (sourceCoverage === undefined) !== (sourceDispositions === undefined) ||
         (soldPurchaseCeiling !== undefined && (!Number.isFinite(soldPurchaseCeiling) || soldPurchaseCeiling < 0)) ||
@@ -102,6 +141,12 @@ function discoveryRecord(value: SearchDiagnosticDiscovery): SearchDiagnosticDisc
         pricePass !== undefined && (!pricePass || !["COMPLETE", "UNAVAILABLE"].includes(pricePass.status) ||
             !count(pricePass.newListings) || !count(pricePass.candidates))) {
         throw new SearchDiagnosticInputError("Completed search discovery has invalid diagnostic totals or retained listings.");
+    }
+    if (reviewSelection !== undefined && (!reviewSelection || !["ai", "rules"].includes(reviewSelection.source) ||
+        !Array.isArray(reviewSelection.listingIds) || reviewSelection.listingIds.length > FIRST_REVIEW_COUNT ||
+        new Set(reviewSelection.listingIds).size !== reviewSelection.listingIds.length ||
+        reviewSelection.listingIds.some(id => !retainedIds.includes(id)))) {
+        throw new SearchDiagnosticInputError("Photo review selections must identify distinct retained listings.");
     }
     const cleanOverflow = overflow === undefined ? undefined : overflowRecord(overflow, retainedIds, unresolvedOverflow ?? 0, screened ?? found);
     return { total, found, skipped, deferred,
@@ -115,6 +160,8 @@ function discoveryRecord(value: SearchDiagnosticDiscovery): SearchDiagnosticDisc
         ...(previouslySeen === undefined ? {} : { previouslySeen }),
         ...(soldPurchaseCeiling === undefined ? {} : { soldPurchaseCeiling }),
         ...(pricePass === undefined ? {} : { pricePass: { status: pricePass.status, newListings: pricePass.newListings, candidates: pricePass.candidates } }),
+        ...(value.competition === undefined ? {} : { competition: competitionRecord(value.competition) }),
+        ...(reviewSelection && { reviewSelection: { source: reviewSelection.source, listingIds: [...reviewSelection.listingIds] } }),
         retainedIds: [...retainedIds] };
 }
 
@@ -195,7 +242,7 @@ export function createSearchDiagnosticStore<T>({
             return result;
         }, { timeoutError: () => new StorageUnavailableError("Saved search diagnostics are busy.") });
     }
-    const discoveryFrom = ({ searchId, savedAt, discovery }: Entry<T>) => ({ searchId, savedAt, discovery });
+    const discoveryFrom = ({ searchId, savedAt, discovery }: Entry<T>) => ({ searchId, savedAt, discovery: discoveryRecord(discovery) });
     function snapshotFrom(entry: Entry<T>): SavedSearchDiagnostic<T> | null {
         if (!entry.snapshot) return null;
         const discovery = discoveryRecord(entry.discovery);
@@ -219,6 +266,21 @@ export function createSearchDiagnosticStore<T>({
         async loadDiscovery(searchId: string): Promise<SavedSearchDiagnosticDiscovery | null> {
             const entry = await find(searchId);
             return entry ? discoveryFrom(entry) : null;
+        },
+        async recentAssessedListingIds(): Promise<string[]> {
+            const rows = (await read()).entries.filter(entry => active(entry)).map(entry => entry.snapshot?.rows ?? []);
+            const result = new Set<string>();
+            // Sample across searches so one set's 50 copies cannot crowd out the rest.
+            for (const eligible of [(r: SearchDiagnosticRow) => r.priced, (r: SearchDiagnosticRow) => r.photoChecked]) {
+                const searches = rows.map(group => group.filter(eligible));
+                for (let i = 0; i < DEVELOPMENT_SEARCH_LIMIT; i++) {
+                    for (const search of searches) {
+                        if (search[i]) result.add(search[i].id);
+                        if (result.size === 3 * DEVELOPMENT_SEARCH_LIMIT) return [...result];
+                    }
+                }
+            }
+            return [...result];
         },
         async saveSnapshot(searchId: string, rows: unknown, data: T): Promise<SavedSearchDiagnostic<T> | null> {
             requireSearchId(searchId);

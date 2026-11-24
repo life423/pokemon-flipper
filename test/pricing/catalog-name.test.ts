@@ -2,6 +2,7 @@ import "../fixtures/isolated-data.ts";
 import { test } from "../fixtures/search-context.ts";
 import assert from "node:assert/strict";
 import { writeCache } from "../../server/lib/cache.ts";
+import { catalogPrintedName } from "../../server/identity/catalog-name.ts";
 import { setSearchTerm } from "../../server/identity/card-identity.ts";
 import { createScreeningPriceSource, lookupCards } from "../../server/pricing/pkmnprices.ts";
 
@@ -16,6 +17,7 @@ test("saved real-shape catalog records survive descriptor-only differences in bo
         { setId: 503, set: "Evolving Skies", query: "Leafeon V", term: "leafeon v", item: detail(17178, "Leafeon V (Alternate Full Art)", "167", "203", "Evolving Skies") },
         { setId: 633, set: "Fusion Strike", query: "Mew VMAX", term: "mew vmax", item: detail(34436, "Mew VMAX (Alternate Art Secret)", "269", "264", "SWSH08: Fusion Strike") },
         { setId: 606, set: "Vivid Voltage", query: "Pikachu VMAX", term: "pikachu vmax", item: detail(27943, "Pikachu VMAX (Secret)", "188", "185", "SWSH04: Vivid Voltage") },
+        { setId: 482, set: "Plasma Blast", query: "Palkia-EX", term: "palkia ex", item: detail(14616, "Palkia EX (Team Plasma) (100 Full Art)", "100", "101", "Plasma Blast") },
         { setId: 529, set: "Shining Legends", query: "Mewtwo GX", term: "mewtwo gx", item: detail(19490, "Mewtwo GX (Secret Shining)", "78", "73", "Shining Legends") },
         { setId: 704, set: "Lost Origin", querySet: "Sword & Shield - Lost Origin", query: "Aerodactyl V", term: "aerodactyl v", item: detail(70401, "Aerodactyl V (Alternate Full Art)", "180", "196", "SWSH11: Lost Origin") },
     ];
@@ -108,4 +110,16 @@ test("detail responses must retain the requested catalog name, set family and co
         assert.deepEqual(await createScreeningPriceSource({ maxRequests: 0 }).lookupCards(query), []);
         assert.deepEqual(await lookupCards(query), []);
     }
+});
+
+test("a Plasma Blast catalog annotation binds to the printed number and preserves other names and variants", () => {
+    const printed = "Palkia EX";
+    const label = printed + " (Team Plasma) (100 Full Art)";
+    assert.equal(catalogPrintedName(label, "Plasma Blast", "100/101"), printed);
+    assert.equal(catalogPrintedName(label, "Plasma Blast", "66/101"), label);
+    assert.equal(catalogPrintedName(label, "Plasma Storm", "100/135"), label);
+    for (const name of [printed + " (Team Plasma)", label + " (World Championships)", printed + " (Team Plasma) (Jumbo)"]) {
+        assert.equal(catalogPrintedName(name, "Plasma Blast", "100/101"), name);
+    }
+    assert.equal(catalogPrintedName("Dark " + label, "Plasma Blast", "100/101"), "Dark Palkia EX");
 });

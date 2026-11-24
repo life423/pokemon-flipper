@@ -1,3 +1,5 @@
+import { researchAuctionSellers } from "./auction-seller-research.ts";
+import { freshListingTime } from "../../shared/grading-watch.ts";
 import { addBinMarketComparisons } from "../../shared/bin-market-comparison.ts";
 import { searchListings } from "../ebay/listings.ts";
 import { readSearchWithAi } from "../search/query-assistance.ts";
@@ -6,12 +8,15 @@ import { readTitleByRules, readTitleWithoutAi } from "../ai/title-reader.ts";
 import type { ListingSummary, SearchIntent, Targets } from "../../shared/types.ts";
 import { criteriaMismatch, marketplaceQuery, rawBuyItNowQuery, searchAttributes } from "../../shared/search-criteria.ts";
 import { screenListingWithoutAi } from "./screen-listing.ts";
-import { AUTOMATIC_AUCTION_WINDOW_HOURS, screeningBlock, type ListingFilters, type MarketplaceOrder } from "../../shared/listing-filters.ts";
+import { screeningBlock, type DiscoveryOrder, type ListingFilters, type MarketplaceOrder } from "../../shared/listing-filters.ts";
 import { cardLanguageStatus, EnglishOnlyError } from "../../shared/card-language.ts";
 import { sameCardNumber } from "../identity/card-identity.ts";
 import { DEVELOPMENT_SEARCH_LIMIT, SEARCH_SOURCE_PAGE_LIMIT } from "../../shared/research-policy.ts";
 import { createPriceFirstSession, type SoldScreeningFactory } from "./price-first.ts";
 import { analysisPriority, compareAnalysisPriority } from "../../shared/analysis-priority.ts";
+import { buyerReviewBlock } from "../../shared/wait-skip-review.ts";
+import { FIRST_REVIEW_COUNT, type SearchReviewSelection } from "../../shared/search-review-selection.ts";
+import { chooseReviewSelection, ruleSelection } from "./search-review-selection.ts";
 import { prioritizeListingText } from "./listing-text-priority.ts";
 import { createScreeningPriceSource } from "../pricing/pkmnprices.ts";
 import { autoAnalysisBlockReason } from "../../shared/analysis.ts";
@@ -21,6 +26,7 @@ import { EbayError } from "../ebay/api.ts";
 import { ProviderError } from "../lib/http.ts";
 import { cents, MAX_OFFER_DISCOUNT_PERCENT } from "../../shared/money/cents.ts";
 import { findBinCompetition } from "./bin-competition.ts";
+import type { CollectorStrategyEvidence } from "../analysis/collector-strategy-evidence.ts";
 
 const MIN_NEWEST_CANDIDATES = 3;
 const REFILL_BATCH_SIZE = 4;
@@ -40,11 +46,14 @@ interface FindSteps {
     soldScreening?: SoldScreeningFactory;
     priceSource?: typeof createScreeningPriceSource;
     prioritizeText?: typeof prioritizeListingText;
+    selectReviews?: typeof chooseReviewSelection;
+    researchAuctionSellers?: typeof researchAuctionSellers;
     competition?: typeof findBinCompetition;
 }
 
 export interface SearchSummary {
     mode: "development";
+    reviewSelection?: SearchReviewSelection;
     deferred: number;
     previouslySeen?: number;
     total: number;
@@ -57,7 +66,7 @@ export interface SearchSummary {
     unresolvedOverflow?: number;
     sourceCoverage?: "COMPLETE" | "PARTIAL";
     soldPurchaseCeiling?: number;
-    marketplaceOrder?: MarketplaceOrder;
+    marketplaceOrder?: DiscoveryOrder;
     pricePass?: { status: "COMPLETE" | "UNAVAILABLE"; newListings: number; candidates: number };
 }
 
@@ -70,13 +79,14 @@ export interface SearchOptions {
     onScreenedOverflow?: (row: ScreenedOverflowRow) => void;
     onSourceDisposition?: (row: SourceDispositionRow) => void;
     onCompetition?: (reference: SearchCompetition) => void;
+    onCollectorEvidence?: (evidence: CollectorStrategyEvidence) => Promise<void>;
     minPrice?: number;
     signal?: AbortSignal;
     targets?: Targets;
     includeOffers?: boolean;
     automaticPhotos?: boolean;
     marketplaceOrder?: MarketplaceOrder;
-    newOnly?: { excludeIds: readonly string[] };
+    newOnly?: { excludeIds: readonly string[]; gradingWatch?: boolean };
     filters?: ListingFilters;
     asOf?: number;
 }
@@ -84,11 +94,11 @@ export interface SearchOptions {
 // Screen one page in the requested marketplace order. When the newest BIN page
 // yields few candidates, a second pass can check cheaper inventory.
 export async function findDeals(search: string, {
-    onStart = () => {}, onListing = () => {}, onPriceExcluded = () => {}, onScreenedOverflow = () => {}, onSourceDisposition = () => {}, onCompetition, minPrice = 0, signal, targets,
+    onStart = () => {}, onListing = () => {}, onPriceExcluded = () => {}, onScreenedOverflow = () => {}, onSourceDisposition = () => {}, onCompetition, onCollectorEvidence, minPrice = 0, signal, targets,
     includeOffers = false, automaticPhotos = false, marketplaceOrder, newOnly, filters, asOf = Date.now(),
 }: SearchOptions = {}, dependencies: FindSteps = {
     readIntent: readSearchWithAi, search: searchListings, readTitle: readTitleWithoutAi,
-    priceSource: createScreeningPriceSource, prioritizeText: prioritizeListingText, competition: findBinCompetition,
+    priceSource: createScreeningPriceSource, prioritizeText: prioritizeListingText, researchAuctionSellers, selectReviews: chooseReviewSelection, competition: findBinCompetition,
 }): Promise<ListingSummary[]> {
     if (signal?.aborted) return [];
     if (cardLanguageStatus(search) === "OTHER") throw new EnglishOnlyError();
@@ -122,13 +132,15 @@ export async function findDeals(search: string, {
     const query = marketCeiling !== null ? [intent.cardName, typedCollectorNumber ?? intent.sets[0], intent.grader, intent.minGrade].join(" ")
         : exactRawBin ? rawBuyItNowQuery(keywords, intent) : keywords;
     const sourceOptions = {
-        maxResults: SEARCH_SOURCE_PAGE_LIMIT, signal, filters: firstFilters, asOf, auctionEndsWithinHours: AUTOMATIC_AUCTION_WINDOW_HOURS,
+        maxResults: SEARCH_SOURCE_PAGE_LIMIT, signal, filters: firstFilters,
     };
-    const sourceOrder = newOnly ? "newest" : filters?.typeFilter === "AUCTION" ? undefined : marketplaceOrder ?? "newest";
-    const sourceSort = sourceOrder === "lowest" ? "price" : sourceOrder === "newest" ? "newlyListed" : undefined;
+    // Browse can ignore itemEndDate ranges. Bring soon-ending auctions into
+    // the bounded page, then validate their actual end dates against the search start.
+    const sourceOrder = newOnly ? "newest" : filters?.typeFilter === "AUCTION" ? "ending" : marketplaceOrder ?? "newest";
+    const sourceSort = { lowest: "price", newest: "newlyListed", ending: "endingSoonest" } as const;
     const firstPage: Awaited<ReturnType<typeof searchListings>> = marketCeiling === 0 || firstFilters.maxPrice !== undefined && firstFilters.minPrice > firstFilters.maxPrice
         ? { listings: [], total: 0, skipped: 0, rejections: [] } : await dependencies.search(query, {
-        ...sourceOptions, sort: sourceSort,
+        ...sourceOptions, sort: sourceSort[sourceOrder],
         ...(newOnly ? { keepReserve: true } : {}),
     });
     if (signal?.aborted) return [];
@@ -148,7 +160,7 @@ export async function findDeals(search: string, {
         ...(unresolvedOverflow ? { unresolvedOverflow } : {}),
         ...(newOnly ? { previouslySeen } : {}), ...(pricePass ? { pricePass } : {}),
         ...(soldPurchaseCeiling === undefined ? {} : { soldPurchaseCeiling }),
-        ...(sourceOrder ? { marketplaceOrder: sourceOrder } : {}),
+        marketplaceOrder: sourceOrder,
     });
 
     const canAssess = (listing: ListingSummary) => autoAnalysisBlockReason(listing, asOf) === null;
@@ -156,6 +168,7 @@ export async function findDeals(search: string, {
         : analysisPriority(listing, targets, asOf).band > 0 ? 2 : 1;
 
     function preliminaryBlock(listing: ListingSummary, pageFilters: ListingFilters): SourceRejectionReason | null {
+        if (newOnly?.gradingWatch && freshListingTime(listing, asOf) === null) return "OUTSIDE_GRADING_WATCH";
         if (marketCeiling !== null && !listing.bestOffer && listing.currentPrice !== null && listing.currentPrice > marketCeiling) return "ABOVE_SOLD_CEILING";
         const filtered = screeningBlock(listing, pageFilters, asOf);
         if (filtered) return filtered;
@@ -294,11 +307,8 @@ export async function findDeals(search: string, {
         }
     } catch (error) { if (signal?.aborted) return []; throw error; }
     if (signal?.aborted) return [];
-    onStart(summary(matching.length));
-    let ordered = matching.sort((a, b) => compareAnalysisPriority(a, b, targets, asOf));
-    if (automaticPhotos && dependencies.prioritizeText) ordered = await dependencies.prioritizeText(ordered, targets, signal);
-    const results: ListingSummary[] = [];
-    for (const listing of ordered) {
+    let results: ListingSummary[] = [];
+    for (const listing of matching) {
         if (signal?.aborted) return [];
         const reason = screeningBlock(listing, listingFilters, asOf);
         if (reason) {
@@ -306,21 +316,71 @@ export async function findDeals(search: string, {
             continue;
         }
         const mismatch = listing.match ?? cardMismatch(listing.screen, intent);
-        const result = mismatch ? { ...listing, match: mismatch } : listing;
-        onListing(result);
-        results.push(result);
+        results.push(mismatch ? { ...listing, match: mismatch } : listing);
+    }
+    results.sort((a, b) => compareAnalysisPriority(a, b, targets, asOf));
+    let reviewSelection: SearchReviewSelection | undefined;
+    if (automaticPhotos) {
+        const eligibleForReview = (listing: ListingSummary) => buyerReviewBlock(listing, asOf) === null;
+        if (dependencies.researchAuctionSellers) results = await dependencies.researchAuctionSellers(results, asOf, signal);
+        let eligible = results.filter(eligibleForReview);
+        if (eligible.length <= FIRST_REVIEW_COUNT && dependencies.prioritizeText) {
+            results = await dependencies.prioritizeText(results, targets, signal);
+            eligible = results.filter(eligibleForReview);
+        }
+        if (signal?.aborted) return [];
+        try {
+            reviewSelection = eligible.length > FIRST_REVIEW_COUNT && dependencies.selectReviews
+                ? await dependencies.selectReviews(eligible, targets, signal, asOf) : ruleSelection(eligible, asOf);
+        } catch (error) {
+            if (signal?.aborted) return [];
+            throw error;
+        }
+        if (signal?.aborted) return [];
+        // Auctions may close while the buyer's ranking request is in flight.
+        results = results.filter(listing => {
+            if (listing.buyingOption !== "AUCTION" || Date.parse(listing.endTime ?? "") > Date.now()) return true;
+            rejections.set(listing.id, "OUTSIDE_AUCTION_WINDOW");
+            return false;
+        });
+        const retained = new Set(results.map(listing => listing.id));
+        if (reviewSelection.listingIds.some(id => !retained.has(id))) {
+            reviewSelection = ruleSelection(eligible.filter(listing => retained.has(listing.id)), asOf);
+        }
+        const positions = new Map(reviewSelection.listingIds.map((id, index) => [id, index]));
+        results.sort((a, b) => (positions.get(a.id) ?? FIRST_REVIEW_COUNT) - (positions.get(b.id) ?? FIRST_REVIEW_COUNT));
+    }
+    onStart({ ...summary(results.length), ...(reviewSelection && { reviewSelection }) });
+    for (const listing of results) {
+        if (signal?.aborted) return [];
+        onListing(listing);
     }
     for (const [id, reason] of rejections) onSourceDisposition({ id, outcome: "REJECTED", reason });
     for (const id of deferred) onSourceDisposition({ id, outcome: "NOT_REACHED", reason: "ENOUGH_CANDIDATES" });
-    if (onCompetition && dependencies.competition && !newOnly && !results.length && market &&
-        soldPurchaseCeiling !== undefined && soldPurchaseCeiling > 0 && listingFilters.minPrice <= soldPurchaseCeiling) {
-        // Optional context under the same request account. Never alter the
-        // completed discovery or treat a competing asking price as sold evidence.
+    if (onCompetition && dependencies.competition && !newOnly && market) {
+        // A useful buying comparison can exist even when the retained rows
+        // need research or every current ask exceeds the profitable ceiling.
+        // This bounded lookup shares the search account and uses the user's
+        // price bounds. It never enters the paid queue or sets resale value.
         const timeout = AbortSignal.timeout(15_000);
         const competitionSignal = signal ? AbortSignal.any([signal, timeout]) : timeout;
         const reference = await dependencies.competition(query, market.reference, market.expectedNet, targets,
-            listingFilters.maxPrice, competitionSignal).catch(() => undefined);
-        if (reference && !competitionSignal.aborted) onCompetition(reference);
+            listingFilters.maxPrice, competitionSignal, { minPrice: listingFilters.minPrice }).catch(error => {
+                if (competitionSignal.aborted && error === competitionSignal.reason ||
+                    error instanceof EbayBudgetError && error.reason === "QUOTA" || error instanceof EbayError || error instanceof ProviderError) return undefined;
+                throw error;
+            });
+        if (reference && !competitionSignal.aborted) {
+            onCompetition(reference);
+            const { checkedAt, pricing } = reference;
+            const { grader, grade } = market.reference;
+            if (onCollectorEvidence && checkedAt && pricing && grader && grade) {
+                await onCollectorEvidence({ query: search, asOf: checkedAt, listing: { ...reference, checkedAt, pricing },
+                    reference: market.reference, ...(reference.identity !== "LISTING" && {
+                        label: { grader, grade, source: "Matched slab label in the seller's photo" },
+                    }) });
+            }
+        }
     }
     return results;
 }

@@ -89,7 +89,7 @@ Read docs/architecture.md for the source map and reading order.
   raw/graded category. Keep query and control constraints consistent in results,
   counts and queued work; unknown holders stay unresolved. Direct links remain
   independent of search filters, including queued explicit link work.
-  Automatic auctions must end within the search window's next 12 hours.
+  Automatic auction searches and opportunities require more than zero and strictly less than 10 hours remaining.
   Minimum Buy It Now price does not exclude low auction starts. Widening a
   server-side filter requires an explicit rerun, never paid work while typing.
 - Sold screening shares catalog/market work across rows: four workers, 128

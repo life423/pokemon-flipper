@@ -6,7 +6,7 @@ import { createLimiter } from "../lib/concurrency.ts";
 import { DATA_DIR } from "../lib/paths.ts";
 import { writeJsonAtomic } from "../lib/atomic-json.ts";
 import { withFileLease } from "../lib/file-lease.ts";
-import { getAiUsageContext } from "../ai/usage-context.ts";
+import { getBudgetContext } from "../ai/usage-context.ts";
 import { EbayBudgetError } from "./daily-budget.ts";
 
 export const EBAY_SEARCH_BROWSE_LIMIT = 100;
@@ -15,7 +15,7 @@ const VALID_ID = /^[a-zA-Z0-9_-]{1,80}$/;
 interface Ledger { version: 1; searchId: string; limit: number; used: number }
 export class EbaySearchBudgetError extends EbayBudgetError {}
 
-export function requireBrowseSearchId(searchId = getAiUsageContext().searchId): string {
+export function requireBrowseSearchId(searchId = getBudgetContext().searchId): string {
     if (!searchId || !VALID_ID.test(searchId)) throw new EbaySearchBudgetError(
         "A valid search ID is required before eBay Browse requests can start. Start a search in the app; follow-up work must keep that search ID so its stored request cap is shared.");
     return searchId;
@@ -56,7 +56,7 @@ export function createSearchBrowseBudget({ directory }: { directory: string }) {
                         const ledger = await read(id);
                         signal?.throwIfAborted();
                         if (ledger.used >= ledger.limit) throw new EbaySearchBudgetError(
-                            `This search has reached its ${ledger.limit}-request eBay Browse cap. Cached listings and saved analysis remain available; a new search has a separate cap and still shares eBay's daily allowance.`);
+                            `This search has reached its ${ledger.limit}-request eBay Browse cap. Cached listings and saved analysis remain available; a new search has a separate cap and still shares eBay's daily allowance.`, "QUOTA");
                         // A rejected search cannot spend the daily quota, and a
                         // rejected daily reservation cannot spend this search.
                         await reserveDaily();
@@ -85,7 +85,7 @@ function currentBudget() {
     }
     return budget;
 }
-export function browseSearchAllowance() { return currentBudget().status(getAiUsageContext().searchId); }
+export function browseSearchAllowance() { return currentBudget().status(getBudgetContext().searchId); }
 export function reserveSearchBrowseRequest(reserveDaily: () => Promise<void>, signal?: AbortSignal) {
-    return currentBudget().reserve(getAiUsageContext().searchId, reserveDaily, signal);
+    return currentBudget().reserve(getBudgetContext().searchId, reserveDaily, signal);
 }

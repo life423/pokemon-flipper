@@ -2,6 +2,7 @@ import { test } from "../fixtures/search-context.ts";
 import assert from "node:assert/strict";
 import { searchListings } from "../../server/ebay/listings.ts";
 import { offlineEbayCredentials } from "../fixtures/ebay-credentials.ts";
+import { offlineSearchSteps } from "../fixtures/search-steps.ts";
 import { EnglishOnlyError } from "../../shared/card-language.ts";
 import { findDeals } from "../../server/deals/find-deals.ts";
 import { readSearchLocally } from "../../server/search/intent.ts";
@@ -107,6 +108,37 @@ test("a bounded Buy It Now search reaches affordable inventory beyond 200 out-of
     assert.equal(requests.length, 9, "lowest-first reuses the existing cheaper-page cache and skips a duplicate source pass");
 });
 
+test("ordinary auction discovery reaches a soon-ending copy while new-listings discovery checks the newest page", async t => {
+    offlineEbayCredentials(t);
+    const now = Date.now();
+    const query = "Venusaur Base Set";
+    const makeAuction = (id: string, hours: number) => ({
+        itemId: `v1|${id}|0`, title: "Venusaur Base Set Holo", buyingOptions: ["AUCTION"],
+        currentBidPrice: { value: "10", currency: "USD" }, itemEndDate: new Date(now + hours * 3_600_000).toISOString(),
+    });
+    const inventory = [...Array.from({ length: 200 }, (_, index) => makeAuction(String(index), 48)), makeAuction("ends-today", 1)];
+    const sorts: (string | null)[] = [];
+    t.mock.method(globalThis, "fetch", async input => {
+        const url = new URL(String(input));
+        if (url.pathname.includes("oauth2/token")) return Response.json({ access_token: "offline", expires_in: 3600 });
+        if (url.pathname.includes("rate_limit")) return Response.json({ rateLimits: [] });
+        assert.match(url.pathname, /item_summary\/search$/);
+        assert.doesNotMatch(url.searchParams.get("filter")!, /itemEndDate/);
+        const sort = url.searchParams.get("sort");
+        sorts.push(sort);
+        const rows = sort === "endingSoonest" ? inventory.toSorted((a, b) => a.itemEndDate.localeCompare(b.itemEndDate)) : inventory;
+        return Response.json({ total: rows.length, itemSummaries: rows.slice(0, Number(url.searchParams.get("limit"))) });
+    });
+    const steps = offlineSearchSteps([], { search: searchListings });
+    const options = { filters: { typeFilter: "AUCTION" as const }, asOf: now };
+    const run = (newOnly?: { excludeIds: string[] }) => findDeals(query, { ...options, newOnly,
+        onStart: summary => assert.equal(summary.marketplaceOrder, newOnly ? "newest" : "ending"),
+    }, steps);
+    assert.deepEqual((await run()).map(row => row.id), ["v1|ends-today|0"]);
+    assert.deepEqual(await run({ excludeIds: [] }), []);
+    assert.deepEqual(sorts, ["endingSoonest", "newlyListed"]);
+});
+
 test("BIN price bounds never become auction or mixed-search source filters", async t => {
     offlineEbayCredentials(t);
     let requests = 0;
@@ -126,7 +158,7 @@ test("BIN price bounds never become auction or mixed-search source filters", asy
     assert.equal(requests, 2);
 });
 
-test("source searches apply selected format, grading kind and12hour auction range without mixing cache scopes", async t => {
+test("source searches apply format and grading kind without sending the ignored end-date filter or mixing cache scopes", async t => {
     offlineEbayCredentials(t);
     const now = Date.now(); const query = `offline-source-format-${now}`; const filters: string[] = [];
     t.mock.method(globalThis, "fetch", async (url: unknown) => {
@@ -137,14 +169,12 @@ test("source searches apply selected format, grading kind and12hour auction rang
         filters.push(new URL(address).searchParams.get("filter")!);
         return Response.json({ total: 0, itemSummaries: [] });
     });
-    await searchListings(query, { filters: { typeFilter: "AUCTION", kindFilter: "raw" }, auctionEndsWithinHours: 12, asOf: now });
-    await searchListings(query, { filters: { typeFilter: "AUCTION", kindFilter: "raw" }, auctionEndsWithinHours: 12 });
-    await searchListings(query, { filters: { typeFilter: "FIXED_PRICE", kindFilter: "graded" }, auctionEndsWithinHours: 12 });
+    await searchListings(query, { filters: { typeFilter: "AUCTION", kindFilter: "raw" } });
+    await searchListings(query, { filters: { typeFilter: "AUCTION", kindFilter: "raw" } });
+    await searchListings(query, { filters: { typeFilter: "FIXED_PRICE", kindFilter: "graded" } });
     await searchListings(query);
     assert.equal(filters.length, 3, "identical format requests reuse their own cache");
-    assert.match(filters[0], /^buyingOptions:\{AUCTION\},conditionIds:\{4000\},itemEndDate:\[/);
-    const [start, end] = filters[0].match(/itemEndDate:\[(.*?)\.\.(.*?)\]/)!.slice(1).map(Date.parse);
-    assert.equal(start, now); assert.equal(end - start, 12 * 3600000);
+    assert.equal(filters[0], "buyingOptions:{AUCTION},conditionIds:{4000}");
     assert.equal(filters[1], "buyingOptions:{FIXED_PRICE},conditionIds:{2750}");
     assert.equal(filters[2], "buyingOptions:{AUCTION|FIXED_PRICE},conditionIds:{4000|2750}");
 });

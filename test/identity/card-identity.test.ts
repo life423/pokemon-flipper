@@ -11,6 +11,7 @@ import {
     photoPrinting,
     resolvePrinting,
     identifyCard,
+    structuredPhotoIdentityConflict,
     readyForPricing,
     mapVariantPrintings,
     printingLabel,
@@ -118,6 +119,63 @@ function charizardListing(title) {
         },
     };
 }
+
+test("the printed English full-art Palkia-EX #100/101 resolves a misread Team Plasma emblem by the exact Plasma Blast checklist", async () => {
+    const listing = {
+        title: "Palkia EX 100/101 Plasma Storm Secret Rare Full Art Holo Pokemon Card 2013",
+        aspects: { Set: "Plasma Storm", "Card Name": "Palkia EX", "Card Number": "100/101", Finish: "Holo", Language: "English" },
+    };
+    const photos = photoCheck({ reprintMark: "NONE_SEEN" }, {
+        printedName: "Palkia-EX", printedNumber: "100/101", cardCount: "ONE", holder: "TOPLOADER",
+        images: [{ view: "BACK", usable: true, isStockImage: false }, { view: "FRONT", usable: true, isStockImage: false }],
+        cardMatch: { verdict: "MATCH", problems: [] },
+        cardIdentity: { name: "Palkia-EX", set: "Plasma Storm", cardNumber: "100/101", language: "English", finish: "HOLO", confidence: "HIGH",
+            evidence: ["Photo 1 visibly reads Palkia-EX, Plasma Storm branding, and 100/101.", "The card has a reflective full-art holo treatment."] },
+    });
+    const record = toCardRecord({ id: 14616, name: "Palkia EX (Team Plasma) (100 Full Art)", set: { id: 482, name: "Plasma Blast" },
+        number: "100", total_set_number: "101", prices: [usd("Holofoil")] });
+    const queries = [];
+    const run = (item = listing, check = photos, catalog = [record]) => identifyCard(item, check, {
+        lookupCards: async query => { queries.push(query); return catalog; }, readTitle: readTitleByRules,
+    });
+    const recovered = await run();
+    assert.deepEqual(queries, [{ set: "Plasma Blast", name: "Palkia EX", cardNumber: "100/101" }]);
+    assert.equal(recovered.identity.status, "IDENTIFIED");
+    assert.equal(recovered.identity.recordId, 14616);
+    assert.equal(recovered.sellerClaimsCorrected, true);
+    assert.match(recovered.identity.reasons.join(" "), /Plasma Blast checklist/);
+    assert.equal(structuredPhotoIdentityConflict(photos, recovered.identity), null);
+    assert.equal(photos.cardIdentity.set, "Plasma Storm");
+    assert.equal(listing.aspects.Set, "Plasma Storm");
+
+    // The $225 seller's title used #100 for an actual #66. Neither regular art
+    // nor an incomplete, conflicting or foreign-language reading can recover it.
+    for (const check of [
+        { ...photos, printedNumber: "66/101", cardIdentity: { ...photos.cardIdentity, cardNumber: "66/101" } },
+        { ...photos, printedNumber: "100" },
+        { ...photos, images: [{ view: "FRONT", usable: true, isStockImage: true }] },
+        { ...photos, cardIdentity: { ...photos.cardIdentity, language: "Japanese" } },
+        { ...photos, cardIdentity: { ...photos.cardIdentity, evidence: ["Cannot confirm full art."] } },
+        { ...photos, cardIdentity: { ...photos.cardIdentity, set: "Plasma Freeze" } },
+        { ...photos, printingMarks: { ...photos.printingMarks, reprintMark: "WORLD_CHAMPIONSHIPS" } },
+        { ...photos, cardMatch: { verdict: "MISMATCH", problems: ["Different card number"] } },
+    ]) {
+        queries.length = 0;
+        const result = await run(listing, check);
+        assert.notEqual(result.identity.status, "IDENTIFIED");
+        assert.ok(!queries.some(query => query.set === "Plasma Blast"));
+    }
+    for (const item of [
+        { ...listing, aspects: { ...listing.aspects, Set: "Plasma Freeze" } },
+        { ...listing, title: listing.title + " 66/101" },
+        { ...listing, title: listing.title.replace("100/101", "66/101") },
+    ]) assert.notEqual((await run(item)).identity.status, "IDENTIFIED");
+    for (const catalog of [[], [{ ...record, cardNumber: "66/101" }], [{ ...record, cardNumber: "100" }],
+        [{ ...record, setName: "Plasma Storm" }], [{ ...record, name: "Origin Forme Palkia" }],
+        [{ ...record, variants: [{ name: "Normal", printing: "UNLIMITED", finish: "NON_HOLO" }] }]]) {
+        assert.notEqual((await run(listing, photos, catalog)).identity.status, "IDENTIFIED");
+    }
+});
 
 const charizardPhotos = (marks) =>
     photoCheck(marks, { printedName: "Charizard", printedNumber: "4/102" });
@@ -241,6 +299,27 @@ test("printing labels are read set by set", () => {
         Holofoil: "UNLIMITED",
         "Reverse Holofoil": "UNLIMITED",
     });
+});
+
+test("Neo Destiny editions follow the stamp even when the artwork shadow is unreadable or the catalog contains a stray Shadowless variant", async () => {
+    const variants = ["1st Edition Holofoil", "Unlimited Holofoil", "Shadowless Holofoil"];
+    assert.equal(mapVariantPrintings(variants, "Neo Destiny")["Shadowless Holofoil"], "UNKNOWN");
+    const gengar = toCardRecord({ id: 24221, name: "Dark Gengar", number: "006", total_set_number: "105",
+        set: { id: 1, name: "Neo Destiny" }, prices: variants.map(usd) });
+    // Older saved records can still carry the invalid decoded variant.
+    gengar.variants.push({ name: "Old Shadowless Holofoil", printing: "SHADOWLESS", finish: "HOLO" });
+    const seller = { title: "Dark Gengar Neo Destiny Unlimited Holo 6/105", aspects: {
+        "Card Name": "Dark Gengar", "Card Number": "6/105", Set: "Neo Destiny", Language: "English", Features: "Unlimited" } };
+    const checked = firstEditionStamp => photoCheck({ firstEditionStamp, artBoxShadow: "ABSENT", conflicts: ["artBoxShadow"] },
+        { printedName: "Dark Gengar", printedNumber: "6/105" });
+    const ordinary = await identifyCard(seller, checked("NOT_PRESENT"), { lookupCards: lookup(gengar) });
+    assert.equal(ordinary.identity.printing, "UNLIMITED");
+    assert.equal(variantFor(ordinary.card, ordinary.identity).variant?.name, "Unlimited Holofoil");
+    for (const stamp of ["CANT_TELL", "VISIBLE"]) {
+        const { identity } = await identifyCard(seller, checked(stamp), { lookupCards: lookup(gengar) });
+        assert.equal(readyForPricing(identity), false, stamp);
+        assert.equal(identity.printing, "UNKNOWN", stamp);
+    }
 });
 
 // Matching the database record
@@ -395,6 +474,40 @@ test("catalog-backed physical number and finish correct conflicting seller field
     assert.equal(result.identity.notThisCard, undefined); assert.match(result.identity.reasons.join(" "), /corrected card number, finish/i);
     assert.doesNotMatch(result.identity.reasons.join(" "), /independent.*readings/i);
     assert.deepEqual({ listing, photos }, before);
+});
+
+test("a generic seller finish can be corrected when the title identifies the card and the exact printing has only the photographed finish", async () => {
+    const { listing, photos, record } = sellerFieldCorrectionCase();
+    listing.title = "Pokémon TCG Dark Blastoise 3/82 Team Rocket Rare 2000 Wizards of the Coast Eng HP 70";
+    listing.aspects["Card Number"] = "3/82";
+    photos.cardMatch = { verdict: "MATCH", problems: [] };
+    const identify = () => identifyCard(listing, photos, { lookupCards: lookup(record) });
+    const fixed = await identify();
+    assert.equal(fixed.identity.status, "IDENTIFIED");
+    assert.equal(fixed.identity.finish, "HOLO");
+    assert.equal(fixed.sellerClaimsCorrected, true);
+    assert.match(fixed.identity.reasons.join(" "), /Regular.*front photo.*holo.*catalog/i);
+    assert.equal(listing.aspects.Finish, "Regular");
+
+    for (const change of [
+        () => { listing.title += " Non Holo"; },
+        () => { listing.aspects.Finish = "Non-Holo"; },
+        () => { listing.aspects.Features = "Reverse Holo"; },
+        () => { photos.cardIdentity.confidence = "MEDIUM"; },
+    ]) {
+        const restored = structuredClone({ listing, photos });
+        change();
+        const result = await identify();
+        assert.equal(result.sellerClaimsCorrected, undefined);
+        if (photos.cardIdentity.confidence === "HIGH") assert.equal(result.identity.status, "NEEDS_REVIEW");
+        Object.assign(listing, restored.listing);
+        Object.assign(photos, restored.photos);
+    }
+    record.variants.push({ name: "Unlimited", printing: "UNLIMITED", finish: "NON_HOLO" });
+    const mixed = await identify();
+    assert.equal(mixed.identity.status, "NEEDS_REVIEW");
+    assert.equal(mixed.identity.finish, "CONFLICTING");
+    assert.equal(mixed.sellerClaimsCorrected, undefined);
 });
 
 test("seller-field correction requires complete strong photos and an explicit agreeing title before any corrected lookup", async () => {
@@ -832,6 +945,15 @@ test("in a set with no Shadowless printing, a label that names no printing says 
     assert.equal(identity.printing, "UNLIMITED");
     assert.equal(identity.evidence.label, "UNLIMITED");
     assert.equal(identity.evidence.photoSource, "photos");
+});
+
+test("a partial slab label cannot contradict a readable First Edition stamp", async () => {
+    const { listing, photos } = lugiaSlab("PSA 6 Lugia 1st Edition Neo Genesis 9/111 Holo",
+        "Visible label area shows PSA and certification number. The description is cropped.", { firstEditionStamp: "VISIBLE" });
+    const { identity } = await identifyCard(listing, photos, { lookupCards: lookup(LUGIA) });
+    assert.equal(identity.printing, "FIRST_EDITION");
+    assert.equal(identity.evidence.label, "NOT_STATED");
+    assert.equal(identity.status, "IDENTIFIED");
 });
 
 test("a 1st Edition title and stamp go to review when the label doesn't say 1st Edition", async () => {

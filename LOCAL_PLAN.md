@@ -1676,7 +1676,7 @@ The master work areas and their current status are:
    fetch and assessment timestamps internally without resetting on reuse; retain
    actual listing and transaction dates as trading information.
 9. **Auction research and actionable snipes.** Keep the current search-start
-   12-hour window. Later predict a closing range using comparable sold auctions,
+   under-10-hour window. Later predict a closing range using comparable sold auctions,
    available bid/watch signals and trends, separate from the after-cost safe
    item-bid ceiling. Missing watchers stay unknown; an early $10 bid with seven
    days left is no deal evidence. Cap an exact graded slab's snipe at the cheaper
@@ -1914,7 +1914,7 @@ performed. This private plan was excluded from the commit. The pre-existing
 - Search-format, card-type and min/max price filters before paid screening;
   one page of up to 200 source rows admits at most three development candidates.
   Broad automatic discovery/recovery is suspended in this development slice.
-- Automatic auctions must end within 12 hours of the fixed search-start time;
+- Automatic auctions must end in strictly less than 10 hours from the fixed search-start time;
   ended, missing-date and invalid-date auctions are excluded before paid work.
 - Ordinary raw cards use a $60 supported resale floor. Cheap potential
   First Edition Base Set copies retain focused verification. Verified low-value
@@ -2000,7 +2000,7 @@ performed. This private plan was excluded from the commit. The pre-existing
 
 ## Auction and market research requirements
 
-- Initially search only auctions ending in the next 12 hours, anchored to the
+- Initially search only auctions ending in strictly less than 10 hours, anchored to the
   time the search starts. A $10 opening bid with seven days left is not evidence
   that the auction is a deal. A configurable window can come later.
 - Estimate a closing-price range from relevant sold auctions, available bids,
@@ -2012,7 +2012,7 @@ performed. This private plan was excluded from the commit. The pre-existing
 - For an existing slab, the snipe ceiling must not exceed the cheapest verified
   available Buy It Now alternative for the same card, printing, finish,
   language, grader, grade and qualifier, compared on equivalent delivered cost.
-  This ceiling is pending, not implemented by the 12-hour search filter.
+  This ceiling is pending, not implemented by the under-10-hour search filter.
 - Price slabs from recent exact certified-grade sales after verifying label
   and identity. Do not repeatedly estimate a raw grade for a verified slab.
 - Use PKMNPrices' actual recent eBay raw and graded sales. Preserve sold date,
@@ -2394,7 +2394,7 @@ spending or no other-account activity from the visible cached browser alone.
   user said most targets will be worth $80–100+. Preserve the few-dollar
   First Edition Base Set exception for focused verification, not a guaranteed
   Deal. Manual research remains possible. Automatic auctions must end within
-  the next 12 hours; exclude late/missing/invalid end times before paid work.
+  strictly less than 10 hours; exclude late/missing/invalid end times before paid work.
 - Market information should narrow paid work first. Existing slabs use recent
   exact-card/language/printing/finish/grader/grade sales and their actual label,
   not speculative raw grading. Raw cards use appropriately matched sold data
@@ -3255,3 +3255,19 @@ changedbid is not reason to rebuy photos. Research a bounded relevant soldsample
 and cheapest activealternatives first. Existing2centAI/25Browse/dailyguards stay.
 
 Verification of No Symbol saved compatibility: strict Jolteon replay /Users/andrewclark/programming/pokemon-flipper/data/search-benchmarks/2026-11-04T18-03-36-611Z-replay-46af169c-114f-47df-8718-b92ef7727ef7/report.json reused both accepted answers, returned CANT_PRICE/Sorting, preserved labels, and added zero generation/preflight/CDN/Browse/Analytics/OAuth/PKMN calls or cost.
+
+### Let AI choose what the app does next
+
+In an opt-in deal hunt, the buyer gives a goal such as “find me a raw card worth grading.” The AI chooses a strategy from the available ideas and calls the relevant app functions. After each result, it can choose another function, switch strategies or finish. The three checks in the saved slab guide are one early example. Give the planner access to more of the app as its research tools become available.
+
+For someone flipping cards, the Pokémon and set are optional. The question is whether a specific available copy can be bought, graded if appropriate and resold at a profit, and whether enough comparable copies actually sell. **Find a flip** starts from the search screen with the buyer’s price, profit and ROI settings. The planner uses saved sales to select markets, checks live listings in the requested format and opens the evidence behind its decision. After a named search, buyers can keep the hunt on their results or allow another card from the same set. Resellers can also allow any set.
+
+For an auction hunt, try `Find vintage holos from 1999–2003 I can flip for at least $25.` The planner carries the release years, finish and profit target across candidate markets. It can move to another liquid card after misses, sample a promising seller’s other listings, or inspect a raw copy for grading upside. The app verifies the current bid, destination shipping and recent sales before calculating the next-bid profit and maximum item bid.
+
+An opportunity must still be open with strictly less than 10 hours left and a current auction price below its supported market value. Results retain the original ceiling for each actionable alert. Closing checks match the eBay item to a completed USD auction sale. In a retrospective check, a 2000 First Edition Dark Machamp PSA 8 was at $127.50 against a $136.90 ceiling and closed at $274. The next live trial should measure how often alerted auctions close within their original limit and whether prioritizing general-merchandise sellers improves the results.
+
+A resale hunt currently requires at least three distinct matching completed sales in the previous 30 days for its proposed exit. Match the printing and finish, then the assessed raw condition or the actual resale grader and grade. Show the count and window alongside the projected profit after costs. Evaluate this starting threshold against observed sales and time to sell during the buyer pilot.
+
+Let the AI also choose the existing page or panel that best explains its finding. For a newly listed raw Alakazam, it could use the original photos, look up sales at the likely grade and one grade lower, then show the grading costs and profit scenarios beside the search results. For a CGC 8.5 Dark Gengar, it could read the holder, reuse exact-grade sales and open the price comparison for that copy. Neither path requires the buyer to navigate through the intermediate checks.
+
+Expose each supported function and view by name, with the inputs it accepts. The app executes the selected function, supplies the result and opens the selected view for the same listing. Reuse paid evidence, enforce the search budget and calculate money in code. Record the steps and why the AI chose them so the buyer can see what led to the decision. Purchases, bids and seller contact remain buyer actions.

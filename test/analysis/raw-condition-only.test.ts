@@ -85,6 +85,16 @@ test("a supported valuable raw resale does not require or inherit a grading esti
     assert.match(photoEvidence(evaluation, 7).target, /photos do not establish whether/);
 });
 
+test("a tentative numeric grade is visible without pricing it as a certified outcome", () => {
+    const value = rawOnly("DAMAGED", 75, 50);
+    value.provisionalGradeRange = { low: 2, likely: 3, high: 4 };
+    value.underwriting = underwrite(value, MONEY_CONFIG);
+    for (const route of gradingRoutes(value)) {
+        assert.equal(route.priced, null);
+        assert.match(route.reason, /Grade 3 is tentative/);
+    }
+});
+
 test("known damaged raw condition keeps visibility concerns as notes while unknown condition and real conflicts need review", () => {
     const damaged = rawOnly("DAMAGED", 75.46, 15);
     damaged.photoCheck!.images = damaged.photoCheck!.images.filter(photo => photo.view !== "BACK");

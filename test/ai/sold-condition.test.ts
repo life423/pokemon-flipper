@@ -82,6 +82,23 @@ test("a saved negative sold reading is terminal and never purchases a compact re
     }
 });
 
+test("a sold gallery saved before choosing a shipping ZIP preserves a credible seller-condition conflict", async t => {
+    const before = process.env.EBAY_SHIP_TO_ZIP;
+    process.env.EBAY_SHIP_TO_ZIP = "76133";
+    t.after(() => { if (before === undefined) delete process.env.EBAY_SHIP_TO_ZIP; else process.env.EBAY_SHIP_TO_ZIP = before; });
+    const listing = soldListing(), h = acquisitionHarness([listing]), sale = { ...soldSale(listing), title: listing.title + " LP" };
+    h.cache.set(listingCacheKey(listing.id, ""), listing);
+    h.cache.set(legacyKey(listing), { primary: { ...reading(), confidence: "MEDIUM", condition: "MODERATELY_PLAYED" } });
+    assert.equal(await h.worker.read(sale, identity), null);
+    assert.equal(h.worker.status(sale, identity), "SELLER_CONFLICT");
+    assert.equal(await h.worker.acquire(sale, identity), null);
+    assert.deepEqual([h.loaded.length, h.assessed.length], [0, 0]);
+    const foreign = reading(); foreign.card.language = "Spanish";
+    h.cache.set(legacyKey(listing), { primary: foreign });
+    assert.equal(await h.worker.read(sale, identity), null);
+    assert.equal(h.worker.status(sale, identity), "OTHER_CARD");
+});
+
 test("explicit wrong sold-title identities stop cold acquisition before historical details or photo review", async () => {
     for (const title of ["Charizard Base Set 15/102 Unlimited Holo LP", "Venusaur Base Set 16/102 Unlimited Holo LP",
         "Venusaur Jungle 15/102 Unlimited Holo LP", "Dark Venusaur Base Set 15/102 Unlimited Holo LP",
@@ -253,4 +270,43 @@ test("a sold-copy access-marker storage failure propagates and never authorizes 
     const h = acquisitionHarness([listing], { loadDetails: async () => { throw new EbayError("Historical listing missing", 404); }, save: async () => { throw failure; } });
     await assert.rejects(h.worker.acquire(soldSale(listing), identity), error => error === failure);
     assert.equal(h.cache.size, 0); assert.equal(h.assessed.length, 0); assert.deepEqual(h.worker.usage, []);
+});
+
+test("a requested blind sold-photo verification reuses the primary and saves agreement or disagreement for every buyer", async () => {
+    for (const agrees of [true, false]) {
+        const listing = soldListing("123456789098"), sale = soldSale(listing);
+        const primary: SoldConditionReading = { ...reading(), confidence: "MEDIUM" };
+        let calls = 0;
+        const h = acquisitionHarness([listing], { assess: async input => {
+            calls++;
+            assert.equal(Boolean(input.corroborate), calls === 2);
+            return { result: input.corroborate && !agrees ? { ...primary, condition: "MODERATELY_PLAYED" } : primary,
+                usage: { inputTokens: 120, outputTokens: 80 } };
+        } });
+        assert.equal(await h.worker.acquire(sale, identity), null);
+        const a = createSoldConditionAcquirer(h.deps), b = createSoldConditionAcquirer(h.deps);
+        assert.equal(await a.read(sale, identity), null);
+        assert.equal(a.status(sale, identity), "CORROBORATABLE");
+        const results = await Promise.all([a.acquire(sale, identity, undefined, true), b.acquire(sale, identity, undefined, true)]);
+        assert.ok(results.every(result => agrees ? result?.condition === "LIGHTLY_PLAYED" && result.listingUrl === sale.listing_url : result === null));
+        assert.equal(a.usage.length + b.usage.length, 1);
+        const replay = createSoldConditionAcquirer(h.deps);
+        assert.equal((await replay.read(sale, identity))?.condition, agrees ? "LIGHTLY_PLAYED" : undefined);
+        assert.equal((await replay.acquire(sale, identity, undefined, true))?.condition, agrees ? "LIGHTLY_PLAYED" : undefined);
+        assert.equal(calls, 2);
+        assert.equal(h.loaded.length, 1);
+    }
+});
+
+test("an identical gallery on a second sold listing cannot reuse or corroborate the first transaction", async () => {
+    const original = soldListing("123456789097");
+    const relisted = { ...soldListing("123456789096"), images: [...original.images] };
+    const h = acquisitionHarness([original, relisted]);
+    assert.ok(await h.worker.acquire(soldSale(original), identity));
+    h.cache.set(listingCacheKey(relisted.id), relisted);
+    const second = createSoldConditionAcquirer(h.deps);
+    assert.equal(await second.read(soldSale(relisted), identity), null);
+    assert.equal(second.status(soldSale(relisted), identity), "UNUSABLE");
+    assert.equal(await second.acquire(soldSale(relisted), identity, undefined, true), null);
+    assert.equal(h.assessed.length, 1);
 });

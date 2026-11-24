@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { dollars, percent } from "./format";
 import { prefersReducedMotion, transitionName, withViewTransition } from "./motion";
 import type { EbayUsage, Evaluation, ListingSummary, Targets } from "./types";
@@ -6,28 +6,37 @@ import { currentPriceEvidence } from "../../shared/pricing-freshness.ts";
 import type { AiUsageDay } from "../../shared/ai-usage.ts";
 import { fetchAiUsage, ApiRequestError } from "./api";
 import { analysisConcurrency } from "../../shared/analysis.ts";
-import { matchesListingFilters } from "../../shared/listing-filters.ts";
+import { matchesListingFilters, withinAutomaticAuctionWindow } from "../../shared/listing-filters.ts";
 import { englishListingEligible } from "../../shared/card-language.ts";
 import type { ListingFilters, MarketplaceOrder } from "../../shared/listing-filters.ts";
 import { compareAnalysisPriority } from "../../shared/analysis-priority.ts";
 import { BOUNDED_AUTO_CONCURRENCY, DEVELOPMENT_SEARCH_LIMIT } from "../../shared/research-policy.ts";
 import { withFreshListing } from "../../shared/fresh-listing.ts";
 import { looksLikeListingLink, parseListingLink } from "../../shared/listing-link.ts";
-import { withResolvedCriteria } from "../../shared/search-criteria.ts";
+import { evaluatedIdentityMismatch, withResolvedCriteria } from "../../shared/search-criteria.ts";
 import { applyPricingRetry, PRICING_RETRY_LIMIT } from "../../shared/pricing-retries.ts";
-import { cents, MAX_OFFER_DISCOUNT_PERCENT } from "../../shared/money/cents.ts";
+import { MAX_OFFER_DISCOUNT_PERCENT } from "../../shared/money/cents.ts";
 import { priceEvidenceGap } from "../../shared/money/price-evidence.ts";
 import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.ts";
-import { evaluateListing, fetchEbayUsage, fetchSetYears, reviewListingPhotos, streamDeals, streamNewDeals, fetchShortlist, saveListing, removeSavedListing, updateSavedListing, refreshSavedListings, resolveListingLink, retryPricingBatch, saveSearchDiagnostic, type DealsMessage } from "./api";
+import { evaluateListing, fetchEbayUsage, fetchSetYears, reviewListingPhotos, streamDeals, streamNewDeals, newWatchScanId, fetchShortlist, saveListing, removeSavedListing, updateSavedListing, refreshSavedListings, resolveListingLink, retryPricingBatch, saveSearchDiagnostic, type DealsMessage } from "./api";
 import type { ShortlistEntry } from "../../shared/shortlist.ts";
-import type { SearchCompetition } from "../../shared/search-diagnostic.ts";
-import { CameraGrade } from "./components/CameraGrade";
+import { BEST_BUY_TERMS_MAX_AGE_MS } from "../../shared/search-diagnostic.ts";
 import { ShortlistView } from "./components/ShortlistView";
+import { CameraGrade } from "./components/CameraGrade";
 import { AiBudgetStatus } from "./components/AiBudgetStatus";
 import { PriceResearchStatus } from "./components/PriceResearchStatus";
 import { ProviderUsageNotice } from "./components/ProviderUsageNotice";
 import type { DeeperReviewState } from "./components/PhotoReview";
 import { DealCard } from "./components/DealCard";
+import { BestCurrentBuy, RawCopyComparison } from "./components/BestCurrentBuy";
+import { AuctionTracking } from "./components/AuctionTracking";
+import { AuctionOpportunities } from "./components/AuctionOpportunities";
+import { auctionHuntPrompt, type AuctionHuntPrompt } from "./search/auction-goal";
+import { auctionOpportunity } from "../../shared/auction-opportunity.ts";
+import { GradingWatch } from "./components/GradingWatch";
+import { DealHunt } from "./components/DealHunt";
+import type { DealHuntReport, DealHuntResponse, DealHuntScope } from "../../shared/deal-hunt.ts";
+import { CompetingAuctions } from "./components/CompetingAuctions";
 import { PricingRetries } from "./components/PricingRetries";
 import { EmptyState } from "./components/EmptyState";
 import { SearchProgress, type SearchPhase } from "./components/SearchProgress";
@@ -40,11 +49,13 @@ import {
 } from "./components/Icons";
 import { DetailPanel } from "./components/DetailPanel";
 import { useNow } from "./useNow";
-import { listingEvidenceKey } from "../../shared/listing-evidence.ts";
-import { SearchControls } from "./search/SearchControls";
+import { useMediaQuery } from "./useMediaQuery";
+import { useBuyerReviews } from "./search/useBuyerReviews";
+import { listingEvidenceKey, searchPhotosFitDetails } from "../../shared/listing-evidence.ts";
+import { SearchControls, SearchOptions } from "./search/SearchControls";
 import { SearchCoverage } from "./search/SearchCoverage";
 import { displayAnalysis, type AnalysisState, type PriceRefreshState } from "./analysis-state";
-import { filterSearchResults, groupSearchResults, sortSearchResults, countSearchResults, selectDealAlternatives, evaluationOf, type View, type SortKey, type TypeFilter, type KindFilter, type SearchPage } from "./search/results";
+import { evaluationOf, filterSearchResults, groupSearchResults, sortSearchResults, countSearchResults, selectDealAlternatives, selectBestCurrentBuy, selectRawBuyingComparison, rawComparisonQuoteIds, type View, type SortKey, type TypeFilter, type KindFilter, type SearchPage } from "./search/results";
 import { ALL, AUTO_KEY, RECENT_KEY, RECENT_LIMIT, STARTER_SEARCHES, readRecentSearches, readTargets, readAutoSetting, targetText } from "./search/settings";
 import { analysisBlockPolicy, describeIntent, describeUsage, type AnalysisBlockCode } from "./search/presentation";
 import { automaticListingBlock, describeListingBlock } from "./search/analysis-admission";
@@ -52,7 +63,7 @@ import { searchDiagnosticRows } from "./search/diagnostic";
 import styles from "./App.module.css";
 
 // The views, in order, and what each is called everywhere it appears.
-const VIEWS: View[] = ["all", "deals", "offers", "candidates", "review", "losses"];
+const VIEWS: View[] = ["all", "deals", "bids", "offers", "candidates", "review", "losses"];
 
 // The search shortcut, as this keyboard writes it.
 const SHORTCUT = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘ K" : "Ctrl K";
@@ -71,25 +82,13 @@ export function EnglishOnlyNotice() {
     return <p className={styles.warning} role="status">English cards only. This listing is identified as non-English and is excluded. No additional AI analysis will start for it.</p>;
 }
 
-function BuyItNowComparison({ reference }: { reference: SearchCompetition }) {
-    const { price, shipping, ceiling, title, url, identity } = reference;
-    const link = parseListingLink(url);
-    const gap = cents(price) - cents(ceiling);
-    const comparison = gap === 0 ? "matches" : `is ${dollars(Math.abs(gap) / 100)} ${gap > 0 ? "above" : "below"}`;
-    return <div className={styles.searchUpdate} role="status">
-        <div className={styles.competitionDetails}>
-            <p><strong>Buy It Now comparison</strong></p>
-            <p>{title} · {identity === "PHOTO" ? "Photo-confirmed match" : "Matching eBay listing details"}</p>
-            <p>{dollars(price)} item + {dollars(shipping)} shipping = <strong>{dollars(price + shipping)} before tax</strong></p>
-            <p>The item price {comparison} your {dollars(ceiling)} limit with this shipping quote.</p>
-        </div>
-        {link && <a className={`${styles.secondary} ${styles.competitionLink}`} href={link.url} target="_blank" rel="noopener noreferrer">Open on eBay ↗</a>}
-    </div>;
-}
-
 export function App({ initialPage = "search" }: { initialPage?: "search" | "camera" } = {}) {
     const now = useNow(30_000);
+    const dockedAnalysis = useMediaQuery("(min-width: 80rem)");
     const [page, setPage] = useState<SearchPage>(initialPage);
+    const toolPage = page === "camera";
+    const discoveryRunByItem = useRef(new Map<string, string>());
+    const directListingRun = useRef<string | undefined>(undefined);
     const [directListing, setDirectListing] = useState<ListingSummary | null>(null);
     const [linkStatus, setLinkStatus] = useState<"idle" | "loading" | "error">("idle");
     const [linkError, setLinkError] = useState("");
@@ -134,6 +133,22 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
         setQuery(text);
     };
     const [rawListings, setListings] = useState<ListingSummary[]>([]);
+    const [standaloneHuntId, setStandaloneHuntId] = useState<string>(() => crypto.randomUUID());
+    const [auctionPrompt, setAuctionPrompt] = useState<AuctionHuntPrompt | null>(null);
+    const pendingHuntPrompt = useRef<string | null>(null);
+    const [panelHunt, setPanelHunt] = useState<{ scope: string; report: DealHuntReport; alternative?: DealHuntResponse["alternative"] } | null>(null);
+    const [auctionUpdates, setAuctionUpdates] = useState(new Map<string, number>());
+    useEffect(() => {
+        function invalidate(event: Event) {
+            const detail = (event as CustomEvent<{ listingId: string; checkedAt: string }>).detail;
+            const stamp = Date.parse(detail?.checkedAt);
+            if (!detail?.listingId || !Number.isFinite(stamp)) return;
+            setAuctionUpdates(previous => (previous.get(detail.listingId) ?? 0) >= stamp ? previous :
+                new Map(previous).set(detail.listingId, stamp));
+        }
+        window.addEventListener("pokemon-auction-terms-changed", invalidate);
+        return () => window.removeEventListener("pokemon-auction-terms-changed", invalidate);
+    }, []);
     const [pricingBusy, setPricingBusy] = useState(false);
     const [pricingNote, setPricingNote] = useState("");
     const pricingAbort = useRef<AbortController | null>(null);
@@ -143,11 +158,15 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
     latestListings.current = new Map((page === "search" ? [...(directListing ? [directListing] : []), ...shortlist.map((entry) => entry.listing), ...rawListings]
         : page === "listing" ? [...rawListings, ...shortlist.map((entry) => entry.listing), ...(directListing ? [directListing] : [])]
             : [...rawListings, ...(directListing ? [directListing] : []), ...shortlist.map((entry) => entry.listing)]).map((listing) => [listing.id, listing]));
+    if (page === "search" && panelHunt?.alternative) {
+        latestListings.current.set(panelHunt.alternative.listing.id, panelHunt.alternative.listing);
+    }
     const [total, setTotal] = useState<number | null>(null);
     const [summary, setSummary] = useState<SearchSummary | null>(null);
     const [coverage, setCoverage] = useState<(Extract<DealsMessage, { type: "done" }> & { searchTargets: Targets }) | null>(null);
 
     const lastQuery = useRef("");
+    const watchSearch = useRef(0);
     const [searchStatus, setSearchStatus] = useState<"idle" | "checking" | "done" | "error">("idle");
     const [completedSearchRunId, setCompletedSearchRunId] = useState<string | null>(null);
     const [searchError, setSearchError] = useState("");
@@ -241,7 +260,8 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
     const [includeOffers, setIncludeOffers] = useState(() => {
         try { return localStorage.getItem("includeOffers") !== "0"; } catch { return true; }
     });
-    const availableViews: View[] = [...(newMode ? ["new" as const] : []), ...VIEWS.filter((key) => key !== "offers" || includeOffers)];
+    const availableViews: View[] = [...(newMode ? ["new" as const] : []), ...VIEWS.filter((key) => (key !== "offers" || includeOffers) &&
+        (key !== "bids" || typeFilter !== "FIXED_PRICE" || view === "bids"))];
     function changeIncludeOffers(enabled: boolean) {
         setIncludeOffers(enabled);
         if (!enabled && view === "offers") setView("deals");
@@ -256,6 +276,16 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
     }
 
     const [targets, setTargets] = useState<Targets>(readTargets);
+    const standaloneHunt = page === "search" && searchStatus === "idle" && !linkInput;
+    const promptProfit = standaloneHunt && typeFilter === "AUCTION" ? auctionPrompt?.minProfit : undefined;
+    const huntTargets = useMemo(() => promptProfit === undefined ? targets : { ...targets, minProfit: promptProfit }, [targets, promptProfit]);
+    const [researchTargets, setResearchTargets] = useState(targets);
+    useEffect(() => {
+        if (targets.minProfit === researchTargets.minProfit && targets.minRoi === researchTargets.minRoi) return;
+        const timer = window.setTimeout(() => setResearchTargets(targets), 500);
+        return () => window.clearTimeout(timer);
+    }, [targets, researchTargets]);
+    const researchTargetsReady = targets.minProfit === researchTargets.minProfit && targets.minRoi === researchTargets.minRoi;
     const [targetInputs, setTargetInputs] = useState(() => targetText(readTargets()));
 
     // Everything re-priced for your targets, from numbers already fetched.
@@ -277,7 +307,8 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
         for (const [id, analysis] of Object.entries(rawAnalyses)) {
             const current = currentListings.get(id);
             if (current && analysis.evidenceKey !== listingEvidenceKey(current)) continue;
-            repriced[id] = displayAnalysis(analysis, targets, now, current);
+            const listingTargets = panelHunt?.alternative?.listing.id === id ? huntTargets : targets;
+            repriced[id] = displayAnalysis(analysis, listingTargets, now, current);
         }
         for (const entry of shortlist) {
             if (!entry.evaluation || repriced[entry.id]) continue;
@@ -296,7 +327,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
         }
 
         return repriced;
-    }, [rawAnalyses, targets, rawListings, shortlist, directListing, page, now]);
+    }, [rawAnalyses, targets, huntTargets, rawListings, shortlist, directListing, page, panelHunt, now]);
 
     // Language evidence remains useful when saved prices have expired.
     const languageEvaluations = useRef(new Map<string, Evaluation>());
@@ -328,7 +359,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
         try { const entry = await updateSavedListing(id, notes, ceiling); setShortlist((previous) => previous.map((saved) => saved.id === id ? { ...saved, notes: entry.notes, ceiling: entry.ceiling } : saved)); }
         finally { shortlistRevision.current += 1; }
     };
-    const refreshSaved = async (ids: string[]) => {
+    const refreshSaved = async (ids: string[], reviewNewBack = false) => {
         if (refreshingRef.current) return;
         const original = new Map(shortlist.map((entry) => [entry.id, entry]));
         refreshingRef.current = true; setRefreshingSaved(true); shortlistRevision.current += 1;
@@ -349,7 +380,14 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
             setAnalyses((previous) => { const next = { ...previous }; for (const id of ids) { const entry = byId.get(id); if (result.errors.some((error) => error.id === id)) continue;
                 if (entry?.evaluation && currentPriceEvidence(entry.evaluation)) next[id] = { status: "done", evidenceKey: listingEvidenceKey(entry.listing), evaluation: entry.evaluation }; else delete next[id]; } return next; });
             setRefreshErrors((previous) => { const next = { ...previous }; for (const id of ids) delete next[id]; for (const error of result.errors) next[error.id] = error.message; return next; });
-            setSaveNotice({ text: result.errors.length ? `${result.errors.length} refresh ${result.errors.length === 1 ? "failed" : "checks failed"}. Previous snapshots kept for those listings.` : "Selected listings refreshed. No AI analysis was started.", error: Boolean(result.errors.length) });
+            const entry = ids.length === 1 ? byId.get(ids[0]) : undefined;
+            if (reviewNewBack && !result.errors.length && entry?.needsAnalysis && entry.photoChange?.neededBack &&
+                entry.listing.availability !== "UNAVAILABLE" && withinAutomaticAuctionWindow(entry.listing, Date.now()) &&
+                englishListingEligible(entry.listing, original.get(entry.id)?.evaluation)) {
+                latestListings.current.set(entry.id, entry.listing);
+                setSaveNotice({ text: "New seller photos found. Checking whether they resolve the missing back." });
+                await runAnalysis(entry.listing, { scope: "shortlist", addedPhotosOnly: true });
+            } else setSaveNotice({ text: result.errors.length ? `${result.errors.length} refresh ${result.errors.length === 1 ? "failed" : "checks failed"}. Previous snapshots kept for those listings.` : "Selected listings refreshed. No AI analysis was started.", error: Boolean(result.errors.length) });
             refreshUsage();
         } catch (error) { setSaveNotice({ text: (error as Error).message, error: true }); }
         finally { shortlistRevision.current += 1; refreshingRef.current = false; setRefreshingSaved(false); }
@@ -381,7 +419,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
     const analysisControllers = useRef(new Map<string, AbortController>());
     useEffect(() => () => { for (const controller of analysisControllers.current.values()) controller.abort(); }, []);
     const activePhotoReviews = useRef(new Set<string>());
-    const pendingAnalyses = useRef(new Map<string, { listing: ListingSummary; fresh: boolean; automatic: boolean; scope: SearchPage }>());
+    const pendingAnalyses = useRef(new Map<string, { listing: ListingSummary; fresh: boolean; automatic: boolean; addedPhotosOnly?: boolean; scope: SearchPage }>());
     const [photoReviews, setPhotoReviews] = useState<Record<string, DeeperReviewState>>({});
     const [priceRefreshes, setPriceRefreshes] = useState<Record<string, PriceRefreshState>>({});
 
@@ -401,8 +439,8 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
     }, [listings, analyses, page, currentFilters, summary]);
 
     const runAnalysis = useCallback(async (listing: ListingSummary, {
-        fresh = false, automatic = false, scope = analysisSelection.current.page, refreshOf,
-    }: { fresh?: boolean; automatic?: boolean; scope?: SearchPage; refreshOf?: Extract<AnalysisState, { status: "done" }> } = {}): Promise<void> => {
+        fresh = false, automatic = false, addedPhotosOnly = false, scope = analysisSelection.current.page, refreshOf,
+    }: { fresh?: boolean; automatic?: boolean; addedPhotosOnly?: boolean; scope?: SearchPage; refreshOf?: Extract<AnalysisState, { status: "done" }> } = {}): Promise<void> => {
         const current = latestListings.current.get(listing.id) ?? listing;
         if (!englishListingEligible(current, languageEvaluations.current.get(listing.id))) {
             pendingAnalyses.current.delete(listing.id);
@@ -419,7 +457,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
         const evidenceKey = listingEvidenceKey(listing);
         if (activeAnalyses.current.has(listing.id) || activePhotoReviews.current.has(listing.id)) {
             if (refreshOf) return;
-            pendingAnalyses.current.set(listing.id, { listing, fresh, automatic, scope });
+            pendingAnalyses.current.set(listing.id, { listing, fresh, automatic, addedPhotosOnly, scope });
             setAnalyses((previous) => ({ ...previous, [listing.id]: { status: "loading", startedAt: Date.now(), evidenceKey } }));
             return;
         }
@@ -443,7 +481,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
         };
 
         try {
-            let evaluation = await evaluateListing(listing, { fresh, automatic, includeOffers, targets, signal: controller.signal,
+            let evaluation = await evaluateListing(listing, { fresh, automatic, addedPhotosOnly, includeOffers, targets, signal: controller.signal,
                 typeFilter: scope === "search" ? analysisSelection.current.filters.typeFilter : undefined,
                 searchRunId: account, priceOnly: Boolean(refreshOf) });
             controller.signal.throwIfAborted();
@@ -458,6 +496,8 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                 const updated = withFreshListing(current, evaluation);
                 if (updated !== current) {
                     latestListings.current.set(listing.id, updated);
+                    setPanelHunt(previous => previous?.alternative?.listing.id === listing.id
+                        ? { ...previous, alternative: { ...previous.alternative, listing: updated } } : previous);
                     setDirectListing((previous) => previous?.id === listing.id ? withFreshListing(previous, evaluation) : previous);
                     setListings((previous) => previous.map((item) => item.id === listing.id ? withFreshListing(item, evaluation) : item));
                     setShortlist((previous) => previous.map((entry) => entry.id === listing.id ? { ...entry, listing: withFreshListing(entry.listing, evaluation) } : entry));
@@ -520,6 +560,13 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                 setAnalysisBlockCode(error.code as AnalysisBlockCode);
                 setBudget(0);
                 if (stillCurrent()) setAnalyses(previous => { const next = { ...previous }; delete next[listing.id]; return next; });
+                return;
+            }
+            if (error instanceof ApiRequestError && (error.code === "PHOTO_ASSESSMENT_REJECTED" || error.code === "AI_EVIDENCE_HELD")) {
+                const status = error.code === "AI_EVIDENCE_HELD" ? "held" : "inconclusive";
+                const pending = pendingAnalyses.current.get(listing.id);
+                if (pending && listingEvidenceKey(pending.listing) === evidenceKey) pendingAnalyses.current.delete(listing.id);
+                if (stillCurrent()) setAnalyses(previous => ({ ...previous, [listing.id]: { status, message, evidenceKey } }));
                 return;
             }
             if (stillCurrent()) setAnalyses((previous) => ({ ...previous, [listing.id]: { status: "error", message, evidenceKey } }));
@@ -585,6 +632,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
             if (controller.signal.aborted || linkRevision.current !== revision) return;
             setQuery((previous) => previous.trim() === input.trim() ? listing.url : previous);
             setDirectListing(listing); latestListings.current.set(listing.id, listing);
+            directListingRun.current = linkSearchId;
             setListings((previous) => previous.map((item) => item.id === listing.id ? listing : item));
             setLinkStatus("idle");
             // The explicit submit authorizes this one analysis, independent of
@@ -660,10 +708,11 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
     }
 
     // From the search box, or a quick pick with its own text.
-    async function search(event?: FormEvent, text = query, onlyNew = false) {
+    async function search(event?: FormEvent, text = query, onlyNew = false, watched?: { id: string; messages: DealsMessage[] }) {
         event?.preventDefault();
 
         if (!text.trim()) return;
+        if (!onlyNew) watchSearch.current++;
         analysisPaused.current = true;
         pendingAnalyses.current.clear();
         for (const controller of analysisControllers.current.values()) controller.abort();
@@ -674,7 +723,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
 
 
         const id = ++searchId.current;
-        const runId = crypto.randomUUID();
+        const runId = watched?.id ?? crypto.randomUUID();
         searchRunId.current = runId;
         setCompletedSearchRunId(null);
         setAiUsage(null);
@@ -688,7 +737,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
 
         autoQueued.current = new Set();
         pendingAnalyses.current.clear();
-        if (!onlyNew) setListings([]);
+        if (!onlyNew) { setListings([]); discoveryRunByItem.current.clear(); }
         // A new explicit search refreshes stale prices without discarding paid
         // photo work on the server or adding an idle background refresh loop.
         if (!onlyNew) setAnalyses(previous => Object.fromEntries(Object.entries(previous).filter(([itemId, analysis]) =>
@@ -707,6 +756,18 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
         analysisPaused.current = false;
         setSubmittedFilters(currentFilters);
 
+        const prompt = onlyNew ? null : auctionHuntPrompt(text);
+        setAuctionPrompt(prompt);
+        pendingHuntPrompt.current = null;
+        if (prompt) {
+            pendingHuntPrompt.current = runId;
+            setStandaloneHuntId(runId);
+            setTypeFilter("AUCTION");
+            setSubmittedFilters(null);
+            setSearchStatus("idle");
+            return;
+        }
+
         try {
             const receive = (message: DealsMessage) => {
                 if (searchId.current !== id) return;
@@ -715,6 +776,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                     setSummary(message);
                 }
                 if (message.type === "listing") {
+                    discoveryRunByItem.current.set(message.listing.id, runId);
                     setListings((previous) => previous.some((listing) => listing.id === message.listing.id)
                         ? previous.map((listing) => listing.id === message.listing.id ? message.listing : listing) : [...previous, message.listing]);
                     if (onlyNew) { setNewIds((previous) => new Set([...previous, message.listing.id])); setNewChecked((previous) => previous + 1); }
@@ -722,7 +784,8 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                 if (message.type === "done") setCoverage({ ...message, searchTargets: targets });
             };
             const filters = { typeFilter, kindFilter, maxPrice: maxPrice === "" ? undefined : Number(maxPrice) };
-            if (onlyNew) await streamNewDeals(text, { minPrice: Math.max(0, Number(minPrice) || 0), signal: controller.signal, targets, includeOffers, automaticPhotos: autoSetting !== 0, filters, searchRunId: runId, knownIds: rawListings.map((listing) => listing.id) }, receive);
+            if (watched) watched.messages.forEach(receive);
+            else if (onlyNew) await streamNewDeals(text, { minPrice: Math.max(0, Number(minPrice) || 0), signal: controller.signal, targets, includeOffers, automaticPhotos: autoSetting !== 0, filters, searchRunId: runId, knownIds: rawListings.map((listing) => listing.id) }, receive);
             else await streamDeals(text, { minPrice: Number(minPrice) || 0, signal: controller.signal, targets, includeOffers, automaticPhotos: autoSetting !== 0, filters, searchRunId: runId, marketplaceOrder }, receive);
 
             if (searchId.current === id) {
@@ -737,6 +800,21 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
             setSearchError(error instanceof Error ? error.message : "Search failed");
             setSearchStatus("error");
         }
+    }
+
+    async function scanGradingWatch(signal: AbortSignal) {
+        const owner = completedSearchRunId, query = lastQuery.current;
+        if (!owner) return 0;
+        const id = newWatchScanId(owner), messages: DealsMessage[] = [];
+        const filters: ListingFilters = { ...currentFilters, typeFilter: "FIXED_PRICE", kindFilter: "raw" };
+        try {
+            await streamNewDeals(query, { searchRunId: id, gradingWatch: true, knownIds: rawListings.map(row => row.id),
+                filters, minPrice: filters.minPrice ?? 0, targets, includeOffers, automaticPhotos: true, signal }, message => messages.push(message));
+            signal.throwIfAborted();
+            const found = messages.filter(message => message.type === "listing").length;
+            if (found && owner === searchRunId.current) await search(undefined, query, true, { id, messages });
+            return found;
+        } finally { refreshUsage(); }
     }
 
     // Already accepted answers can be saved on the server. Cancelling the
@@ -763,7 +841,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
     // Promising candidates go first, up to the shared concurrency ceiling and
     // the user's selected full-analysis setting.
     useEffect(() => {
-        if (page !== "search" || searchStatus === "error" || analysisPaused.current) return;
+        if (summary?.reviewSelection || completedSearchRunId || page !== "search" || searchStatus === "error" || analysisPaused.current) return;
         const running = Object.values(analyses).filter((analysis) => analysis.status === "loading").length;
         let remaining = budget - autoQueued.current.size;
         if (remaining <= 0) return;
@@ -782,7 +860,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
             remaining -= 1;
             void runAnalysis(listing, { automatic: true });
         }
-    }, [listings, analyses, budget, runAnalysis, analysisOutcomes, targets, photoReviews, page, listingBlock, searchStatus]);
+    }, [listings, analyses, budget, runAnalysis, analysisOutcomes, targets, photoReviews, page, listingBlock, searchStatus, summary?.reviewSelection, completedSearchRunId]);
 
     function changeAutoSetting(value: number) {
         setAutoSetting(value);
@@ -805,16 +883,73 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
         [listings, analyses, typeFilter, kindFilter, maxPrice, minPrice, minGrade, now, page, summary]
     );
 
-    const groups = useMemo(() => groupSearchResults(filtered, analyses, includeOffers, newIds), [filtered, analyses, includeOffers, newIds]);
-    const alternatives = useMemo(() => groups.deals.length ? [] : selectDealAlternatives(filtered, analyses, targets, now, includeOffers),
-        [groups.deals.length, filtered, analyses, targets, now, includeOffers]);
+    const reviewSelection = summary?.reviewSelection;
+    const automaticReviews = autoSetting !== 0 && (!!reviewSelection || !!completedSearchRunId);
+    const priorityIds = reviewSelection?.listingIds ?? [];
+    // Search streams emit the selected IDs before the rest. Keep that priority
+    // while finishing every retained listing, including earlier Wait or skip rows.
+    const reviewQueue = useMemo(() => {
+        const priority = new Map(reviewSelection?.listingIds.map((id, index) => [id, index]));
+        return listings.filter(row => discoveryRunByItem.current.has(row.id))
+            .sort((a, b) => (priority.get(a.id) ?? Infinity) - (priority.get(b.id) ?? Infinity));
+    }, [listings, reviewSelection]);
+    // Use the underlying receipt timestamps, before display-only repricing.
+    // A manual photo or price refresh must supersede an older buyer decision.
+    const reviewEvaluations = new Map<string, Evaluation>();
+    for (const row of reviewQueue) {
+        const saved = rawAnalyses[row.id];
+        if (saved?.status === "done" && saved.evidenceKey === listingEvidenceKey(row)) reviewEvaluations.set(row.id, saved.evaluation);
+    }
+    for (const entry of shortlist) if (entry.evaluation && !reviewEvaluations.has(entry.id) &&
+        reviewQueue.some(row => row.id === entry.id && listingEvidenceKey(row) === listingEvidenceKey(entry.listing))) {
+        reviewEvaluations.set(entry.id, entry.evaluation);
+    }
+    const buyerReviews = useBuyerReviews({
+        auctionUpdates,
+        searchId: completedSearchRunId, owners: discoveryRunByItem.current, enabled: automaticReviews && !stopped && !needsWiderSearch,
+        ready: researchTargetsReady && searchStatus === "done" && !pricingBusy, allowResearch: !analysisBlocked && !analysisPaused.current,
+        targets, offers: includeOffers, listings, queue: reviewQueue, evaluations: reviewEvaluations, now,
+        busy: new Set([...activeAnalyses.current, ...activePhotoReviews.current]),
+        onResult(listing, result, owner) {
+            const value = result.evaluation;
+            const previousEvidence = { listing, evaluation: reviewEvaluations.get(listing.id) };
+            if (!value) return previousEvidence;
+            if (value.listing.title.trim() !== listing.title.trim() ||
+                (value.listing.photos?.length && !searchPhotosFitDetails(listing.images, value.listing.photos))) {
+                if (result.decision === "BUY" || result.offer) throw new Error("Listing photos changed");
+                return previousEvidence;
+            }
+            const updated = withFreshListing(listing, value);
+            if ((result.decision === "BUY" || result.offer) && (updated.currentPrice !== value.listing.price || updated.shipping !== value.listing.shipping ||
+                updated.availability !== "ACTIVE")) throw new Error("Listing terms changed");
+            if (updated !== listing) {
+                setListings(previous => previous.map(row => row.id === listing.id ? withFreshListing(row, value) : row));
+            }
+            setAnalyses(previous => ({ ...previous, [listing.id]: { status: "done", evaluation: value,
+                evidenceKey: listingEvidenceKey(updated), searchRunId: owner } }));
+            return { listing: updated, evaluation: value };
+        },
+    });
+    const buyerDecisions = buyerReviews.decisions;
+    const checkingIds = automaticReviews && !stopped && !needsWiderSearch ? new Set(reviewQueue.map(row => row.id)) : undefined;
+    const groups = groupSearchResults(filtered, analyses, includeOffers, newIds, buyerDecisions, checkingIds, now);
+    const purchasable = filtered.filter(row => buyerDecisions[row.id]?.decision === "BUY" ||
+        !buyerDecisions[row.id] && !checkingIds?.has(row.id));
+    const alternatives = groups.deals.length ? [] : selectDealAlternatives(purchasable, analyses, targets, now, includeOffers);
+    const batchReviewed = automaticReviews && !!completedSearchRunId && reviewQueue.length > 0 && buyerReviews.remaining === 0;
+    useEffect(() => { if (batchReviewed) refreshUsage(); }, [batchReviewed, completedSearchRunId, refreshUsage]);
 
     const visible = useMemo(() => sortSearchResults(groups[view], analyses, sort, targets, now), [groups, view, sort, analyses, targets, now]);
 
     const counts = useMemo(() => countSearchResults({ listings, analyses, newMode, newIds, page, intent: summary?.intent,
         filters: { typeFilter, kindFilter, maxPrice, minPrice, minGrade } }), [listings, analyses, newMode, newIds, page, summary, typeFilter, kindFilter, maxPrice, minPrice, minGrade]);
 
-    const selectedCandidate = (page === "shortlist" ? shortlist.map((entry) => entry.listing) : page === "listing" ? directListing ? [directListing] : [] : listings).find((listing) => listing.id === selectedId) ?? null;
+    const huntId = standaloneHunt ? standaloneHuntId : completedSearchRunId;
+    const huntScope = JSON.stringify([page, huntId, linkInput, typeFilter, kindFilter, minPrice, maxPrice, minGrade, huntTargets, includeOffers]);
+    const selectedAlternative = page === "search" && panelHunt?.scope === huntScope && panelHunt.alternative?.listing.id === selectedId
+        ? panelHunt.alternative.listing : null;
+    const selectedCandidate = selectedAlternative ?? (page === "shortlist" ? shortlist.map((entry) => entry.listing) : page === "listing" ? directListing ? [directListing] : [] : listings).find((listing) => listing.id === selectedId) ?? null;
+    const selectedEval = selectedId ? evaluationOf(analyses[selectedId]) : null;
     const selected = selectedCandidate && englishListingEligible(selectedCandidate, languageEvaluations.current.get(selectedCandidate.id)) ? selectedCandidate : null;
     const directLanguageEligible = !directListing || englishListingEligible(directListing, languageEvaluations.current.get(directListing.id));
 
@@ -824,8 +959,23 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
     ).length;
     // The panel slides away before it goes; with reduced motion, it just goes.
     const [panelClosing, setPanelClosing] = useState(false);
+    const analysisOpener = useRef<HTMLElement | null>(null);
+    const resultAnchor = useRef<{ element: HTMLElement; top: number } | null>(null);
+    const anchorResults = useCallback(() => {
+        const element = analysisOpener.current;
+        resultAnchor.current = element?.isConnected ? { element, top: element.getBoundingClientRect().top } : null;
+    }, []);
+    useLayoutEffect(() => {
+        const anchor = resultAnchor.current;
+        resultAnchor.current = null;
+        if (dockedAnalysis && anchor?.element.isConnected) {
+            window.scrollBy(0, anchor.element.getBoundingClientRect().top - anchor.top);
+        }
+    }, [selectedId, dockedAnalysis]);
     const closeTimer = useRef(0);
     const close = useCallback(() => {
+        window.clearTimeout(closeTimer.current);
+        anchorResults();
         if (prefersReducedMotion()) {
             setSelectedId(null);
             return;
@@ -836,25 +986,28 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
             setSelectedId(null);
             setPanelClosing(false);
         }, 200);
-    }, []);
-    const openPanel = (id: string) => {
+    }, [anchorResults]);
+    const openPanel = (id: string, opener?: HTMLElement) => {
         window.clearTimeout(closeTimer.current);
         setPanelClosing(false);
+        analysisOpener.current = opener ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+        anchorResults();
+        setPanelHunt(null);
         setSelectedId(id);
     };
     const budgetLeft = budget - autoQueued.current.size;
     const analysisHold = needsWiderSearch ? "Search filters changed. Run a new search to continue."
         : stopped ? "Search stopped"
         : searchStatus === "error" ? "Search failed before assessment finished"
-        : analysisBlocked ? analysisBlockPolicy(analysisBlockCode).title
+        : analysisBlocked ? analysisBlocked
         : budgetLeft <= 0 ? autoSetting === 0 ? "Automatic assessment is off" : "Automatic assessment count limit reached"
         : null;
     const skipped = new Map<string, { label: string; detail?: string | null }>();
     if (page === "search") for (const listing of listings) {
-        if (newMode && !newIds.has(listing.id)) continue;
+        if ((newMode && !newIds.has(listing.id)) || buyerDecisions[listing.id] || automaticReviews && !stopped) continue;
         const state = analyses[listing.id];
-        if (state?.status === "error") {
-            skipped.set(listing.id, { label: "Assessment failed", detail: state.message });
+        if (state?.status === "error" || state?.status === "held") {
+            skipped.set(listing.id, { label: state.status === "held" ? "Previous AI check unresolved" : "Assessment failed", detail: state.message });
             continue;
         }
         if (state || activeAnalyses.current.has(listing.id) || activePhotoReviews.current.has(listing.id)) continue;
@@ -864,16 +1017,17 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
     }
 
     const emptyText: Record<View, string> = {
+        bids: "No current auction has a checked next bid within your resale limit and enough recent matching sales.",
         new: "No unseen listings in this newest-listing window match the current filters. Your earlier results remain in the other views.",
         deals:
             searchStatus === "checking" || counts.analyzing > 0
                 ? "No deals yet. Still checking."
-                : counts.waiting > 0
+                : !automaticReviews && counts.waiting > 0
                   ? `No deals yet. ${counts.waiting} ${counts.waiting === 1 ? "candidate hasn't" : "candidates haven't"} been analyzed: see Sorting.`
                   : "No deals in this search at the current prices.",
         candidates: "No cards are waiting to be sorted or assessed.",
         offers: `No offer opportunities within ${MAX_OFFER_DISCOUNT_PERCENT}% of asking. Seller acceptance is unknown.`,
-        review: "Nothing needs review.",
+        review: "No listings have a Wait or Skip decision.",
         losses: "No completed assessments show a supported loss at the asking price or current bid.",
         all: "No listings match the filters.",
     };
@@ -887,32 +1041,79 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
         const onKey = (event: KeyboardEvent) => {
             if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
                 event.preventDefault();
-                if (drawerOpen || selectedId !== null) return;
-                if (page === "camera") setPage("search");
+                if (drawerOpen || selectedId !== null && !dockedAnalysis) return;
+                if (toolPage) setPage("search");
                 window.requestAnimationFrame(() => { searchInput.current?.focus(); searchInput.current?.select(); });
             }
         };
 
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
-    }, [drawerOpen, selectedId, page]);
+    }, [drawerOpen, selectedId, dockedAnalysis, toolPage]);
 
     // Where the search is, for the progress panel: the free check, then the
     // AI on the best candidates, up to this search's budget.
     const startedAnalyses = listings.filter((listing) => !newMode || newIds.has(listing.id)).map((listing) => analyses[listing.id]).filter(Boolean);
     const aiTarget = Math.max(Math.min(counts.candidates, budget), startedAnalyses.length);
     const aiDone = startedAnalyses.filter((analysis) => analysis.status !== "loading").length;
-    const aiBusy = counts.analyzing > 0 || (!analysisPaused.current && counts.waiting > 0 && budgetLeft > 0);
+    const aiBusy = counts.analyzing > 0 || (automaticReviews ? !needsWiderSearch && buyerReviews.remaining > 0 : !analysisPaused.current && counts.waiting > 0 && budgetLeft > 0);
     const scopedListings = newMode ? listings.filter(listing => newIds.has(listing.id)) : listings;
-    const waitingForReview = !analysisPaused.current && budgetLeft > 0 &&
+    const waitingForReview = automaticReviews ? buyerReviews.remaining > 0 : !analysisPaused.current && budgetLeft > 0 &&
         scopedListings.some(listing => !analyses[listing.id] && !listingBlock(listing));
     const reviewReady = searchStatus === "done" && !stopped && !waitingForReview && !pricingBusy &&
         scopedListings.every(({ id }) => rawAnalyses[id]?.status !== "loading" &&
             !activeAnalyses.current.has(id) && !activePhotoReviews.current.has(id));
+    const huntListings = reviewReady && completedSearchRunId && page === "search" && !needsWiderSearch
+        ? filtered.filter(listing => (typeFilter === "all" || listing.buyingOption === typeFilter) && discoveryRunByItem.current.get(listing.id) === completedSearchRunId).slice(0, DEVELOPMENT_SEARCH_LIMIT)
+        : [];
+    const currentHunt = useRef({ scope: huntScope, listings: huntListings });
+    currentHunt.current = { scope: huntScope, listings: huntListings };
+    useEffect(() => { setPanelHunt(null); }, [huntScope]);
+    function openHuntEvidence(report: DealHuntReport, original: ListingSummary, evaluation: Evaluation, opener: HTMLElement, scope: DealHuntScope, alternative?: DealHuntResponse["alternative"]) {
+        const id = report.destination?.listingId;
+        if (!id || report.searchId !== huntId || currentHunt.current.scope !== huntScope || searchRunId.current !== huntId) return false;
+        const retained = currentHunt.current.listings.find(listing => listing.id === id);
+        // Only broaden the original card identity. The selected goal, other buyer filters,
+        // and the server's listing-specific evidence still apply to a discovered copy.
+        if (alternative && (retained || discoveryRunByItem.current.get(id) === huntId || scope === "search" ||
+            scope === "any_card" && report.goal !== "resell" ||
+            scope === "same_set" && summary && evaluatedIdentityMismatch(evaluation, { ...summary.intent, titleWords: [], cardNumber: null }) === "OTHER_SET")) return false;
+        const known = latestListings.current.get(id);
+        const current = retained ?? (alternative && known && Date.parse(known.termsCheckedAt ?? "") > Date.parse(original.termsCheckedAt ?? "")
+            ? known : alternative?.listing);
+        if (!current || current.id !== id ||
+            evaluation.listing.id !== id || !englishListingEligible(current, evaluation) ||
+            activeAnalyses.current.has(id) || activePhotoReviews.current.has(id)) return false;
+        // A returned gallery may contain more original photos than the search thumbnail.
+        // Accept that checked update, or the captured request. Reject later changes to the listing.
+        const updated = withFreshListing(original, evaluation);
+        const sameTerms = (snapshot: ListingSummary) => listingEvidenceKey(snapshot) === listingEvidenceKey(current) &&
+            snapshot.currentPrice === current.currentPrice && snapshot.shipping === current.shipping;
+        if (!sameTerms(original) && !sameTerms(updated)) return false;
+        const previous = pricingAnalyses.current[id];
+        if (previous?.status === "done" && (["answeredAt", "pricesCheckedAt"] as const).some(key =>
+            (Date.parse(previous.evaluation[key] ?? "") || 0) > (Date.parse(evaluation[key] ?? "") || 0))) return false;
+        const listing = withFreshListing(current, evaluation);
+        const state: AnalysisState = { status: "done", evaluation, evidenceKey: listingEvidenceKey(listing), searchRunId: report.searchId };
+        if (report.decision === "BUY" || report.decision === "BID") {
+            if (report.decision === "BID" && (auctionOpportunity(evaluation, huntTargets, Date.now(), currentFilters.maxPrice)?.status !== "BID" ||
+                (auctionUpdates.get(id) ?? 0) > Date.parse(evaluation.listing.termsCheckedAt ?? ""))) return false;
+            const now = Date.now();
+            const age = now - Date.parse(evaluation.listing.termsCheckedAt ?? "");
+            if (evaluation.listing.availability !== "ACTIVE" || !(age >= 0 && age <= BEST_BUY_TERMS_MAX_AGE_MS) ||
+                !filterSearchResults({ listings: [listing], analyses: { [id]: state }, page: "search", intent: alternative ? null : summary?.intent,
+                    now, filters: { typeFilter, kindFilter, maxPrice, minPrice, minGrade } }).length) return false;
+        }
+        if (!alternative && listing !== current) setListings(rows => rows.map(row => row.id === id ? listing : row));
+        setAnalyses(rows => ({ ...rows, [id]: state }));
+        openPanel(id, opener);
+        setPanelHunt({ scope: huntScope, report, alternative: alternative && { ...alternative, listing } });
+        return true;
+    }
     function reviewSearch(runId: string, signal: AbortSignal) {
         const waitingReason = needsWiderSearch ? "FILTERS_CHANGED" : analysisBlocked ? analysisBlockCode ?? "ANALYSIS_PAUSED"
             : autoSetting === 0 ? "AUTO_OFF" : budgetLeft <= 0 ? "AUTO_LIMIT" : "NOT_ASSESSED";
-        return saveSearchDiagnostic(runId, searchDiagnosticRows(scopedListings, analyses, groups, listingBlock, waitingReason), signal);
+        return saveSearchDiagnostic(runId, searchDiagnosticRows(scopedListings, analyses, groups, listingBlock, waitingReason, buyerDecisions), signal);
     }
     const phase: SearchPhase =
         searchStatus === "error"
@@ -926,13 +1127,51 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                 : aiBusy
                   ? "ai"
                   : "done";
-    const buyItNowComparison = phase === "done" && !needsWiderSearch && groups.deals.length === 0 &&
-        coverage?.searchTargets.minProfit === targets.minProfit && coverage.searchTargets.minRoi === targets.minRoi
-        ? coverage.competition : null;
+    const competitionId = parseListingLink(coverage?.competition?.url)?.itemId;
+    const competitionListing = competitionId && listings.find(row => parseListingLink(row.id)?.itemId === competitionId);
+    const comparisonAllowed = !competitionListing || purchasable.some(row => row.id === competitionListing.id);
+    const bestCurrentBuy = useMemo(() => page === "search" && searchStatus === "done" && !stopped && !needsWiderSearch
+        ? selectBestCurrentBuy(purchasable, analyses, summary?.intent, now,
+            comparisonAllowed && coverage?.searchTargets.minProfit === targets.minProfit && coverage.searchTargets.minRoi === targets.minRoi &&
+                (minGrade === 0 || summary?.intent.minGrade != null && summary.intent.minGrade >= minGrade)
+                ? coverage.competition : undefined)
+        : null, [page, searchStatus, stopped, needsWiderSearch, purchasable, analyses, summary, now, coverage, comparisonAllowed, targets, minGrade]);
+    const quotedSearch = useRef<string | null>(null);
+    useEffect(() => {
+        if (!reviewReady || !completedSearchRunId || phase !== "done" || page !== "search" || needsWiderSearch ||
+            quotedSearch.current === completedSearchRunId) return;
+        quotedSearch.current = completedSearchRunId;
+        const signal = searchAbort.current?.signal;
+        const ids = rawComparisonQuoteIds(filtered, analyses, summary?.intent, Date.now());
+        if (!signal || signal.aborted || !ids.length) return;
+        void (async () => {
+            for (const id of ids) {
+                if (signal.aborted) return;
+                try {
+                    const quote = await resolveListingLink(id, signal, completedSearchRunId, true);
+                    if (signal.aborted || searchRunId.current !== completedSearchRunId) return;
+                    setListings(rows => rows.map(row => row.id === quote.id &&
+                        listingEvidenceKey(row) === listingEvidenceKey(quote) &&
+                        !(Date.parse(row.termsCheckedAt ?? "") > Date.parse(quote.termsCheckedAt ?? ""))
+                        ? { ...row, ...quote } : row));
+                } catch (error) {
+                    if (signal.aborted || error instanceof ApiRequestError && error.code === "EBAY_BUDGET") break;
+                }
+            }
+            if (!signal.aborted) refreshUsage();
+        })();
+    }, [reviewReady, completedSearchRunId, page, phase, needsWiderSearch, filtered, analyses, summary, refreshUsage]);
+    const rawComparison = useMemo(() => page === "search" && searchStatus === "done" && !stopped && !needsWiderSearch
+        ? selectRawBuyingComparison(purchasable, analyses, summary?.intent, now) : null,
+        [page, searchStatus, stopped, needsWiderSearch, purchasable, analyses, summary, now]);
+    const rawComparisonValue = rawComparison && evaluationOf(analyses[rawComparison.listing.id]);
+    const bestBuyListing = bestCurrentBuy ? filtered.find(listing => listing.id === bestCurrentBuy.listingId) : undefined;
+    const comparisonExpired = page === "search" && searchStatus === "done" && !bestCurrentBuy && !stopped && !needsWiderSearch &&
+        coverage?.competition?.checkedAt && now - Date.parse(coverage.competition.checkedAt) >= BEST_BUY_TERMS_MAX_AGE_MS;
 
     // Additional work stays within the loaded development batch and is never
     // offered as a way around a server spending pause or a stopped search.
-    const showMoreAi = !analysisBlocked && !stopped && counts.waiting > 0 && budgetLeft <= 0;
+    const showMoreAi = !reviewSelection && !analysisBlocked && !stopped && counts.waiting > 0 && budgetLeft <= 0;
     const progressActions = showMoreAi && (
         <div className={styles.progressActions}>
             <div className={styles.progressButtons}>
@@ -950,10 +1189,10 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                 eBay reports {summary.total.toLocaleString()} results. Loaded {summary.found.toLocaleString()} listings and retained {summary.count.toLocaleString()} after preliminary screening. This limited window does not cover all eBay inventory.
             </p>}
             {summary.soldPurchaseCeiling !== undefined && <p>Searched Buy It Now listings up to {dollars(summary.soldPurchaseCeiling)} before shipping and tax, using recent sales for this exact slab market and your targets.</p>}
-            {!newMode && summary.marketplaceOrder && <p>eBay search order was {summary.marketplaceOrder === "lowest" ? "lowest price first" : "newest first"}.</p>}
+            {!newMode && summary.marketplaceOrder && <p>eBay search order was {({ lowest: "lowest price first", newest: "newest first", ending: "ending soonest" })[summary.marketplaceOrder]}.</p>}
             {summary.pricePass?.status === "COMPLETE" && <p>The extra price search found {summary.pricePass.newListings} additional listings and {summary.pricePass.candidates} candidates for assessment.</p>}
             {summary.pricePass?.status === "UNAVAILABLE" && <p>The extra price search was unavailable. Results from the first pass are shown.</p>}
-            {summary.screened !== undefined && <p>Checked sold-price evidence for {summary.screened} listings; {summary.priceExcluded ?? 0} were above the supported buying limit and excluded before photo analysis. Missing price evidence remains in Sorting.</p>}
+            {summary.screened !== undefined && <p>Checked sold-price evidence for {summary.screened} listings; {summary.priceExcluded ?? 0} were above the supported buying limit and excluded before photo analysis. The app checks retained listings for matching sales and a buying decision.</p>}
             {!!summary.unresolvedOverflow && <p>{summary.unresolvedOverflow} more listings lacked enough evidence for assessment and fell outside the display limit.</p>}
             {((summary.priceExcluded ?? 0) > 0 || summary.soldPurchaseCeiling !== undefined) && <p>Run a new search to find additional listings after changing profit, ROI or offer settings.</p>}
             <p>
@@ -963,21 +1202,39 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
         </>
     );
 
+    const controlProps = {
+        searchPage: page === "search",
+        hidden: page !== "search" || searchStatus === "idle",
+        idle: searchStatus === "idle",
+        views: { view, availableViews, groups, allTab, setView },
+        filters: { typeFilter, kindFilter, sort, marketplaceOrder, minPrice, maxPrice, minGrade, setTypeFilter, setKindFilter, setSort, setMarketplaceOrder, changeMinPrice, setMaxPrice, changeMinGrade },
+        target: { targets, targetInputs, changeTarget },
+        settings: { includeOffers, autoSetting, changeIncludeOffers, changeAutoSetting },
+        drawer: { drawerOpen, setDrawerOpen }, usage, aiUsage,
+    };
+
+    function openTool(tool: "camera") {
+        cancelLink();
+        cancelPricing();
+        setSelectedId(null);
+        setPage(tool);
+    }
+
     const incomingItemId = parseListingLink(query)?.itemId;
     const linkWorking = linkStatus === "loading" || Boolean(incomingItemId && directListing?.id === incomingItemId && analyses[incomingItemId]?.status === "loading");
     return (
         <div className={styles.shell}>
-            <div className={styles.layout}>
+            <div className={styles.layout} data-split={Boolean(selected && dockedAnalysis) || undefined}>
                 <main className={styles.main}>
                     <header className={styles.toolbar}>
-                        <div className={styles.topRow}>
+                        <div className={styles.brandBar}>
                             <div className={styles.brand}>
                                 <img className={styles.logo} src="/pokeball.png" alt="" width={44} height={44} />
                                 <div>
                                     <h1 className={styles.title}>
-                                        Pokemon <span>Flipper</span>
+                                        Pokemon Flipper
                                     </h1>
-                                    <p className={styles.tagline}>Find undervalued cards. Flip for profit.</p>
+                                    <p className={styles.tagline}>Know the card. Know the price.</p>
                                 </div>
                             </div>
 
@@ -986,16 +1243,27 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                                 type="button"
                                 className={styles.menuButton}
                                 aria-haspopup="dialog"
-                                aria-label={activeFilters > 0 ? `Menu, ${activeFilters} filters on` : "Menu"}
+                                aria-label={activeFilters > 0 ? `Filters and settings, ${activeFilters} filters on` : "Filters and settings"}
+                                aria-expanded={drawerOpen}
                                 onClick={() => setDrawerOpen(true)}
                             >
                                 <svg viewBox="0 0 24 24" aria-hidden="true">
                                     <path d="M4 7h16M4 12h16M4 17h16" />
                                 </svg>
+                                <span>Settings</span>
                                 {activeFilters > 0 && <span className={styles.menuBadge}>{activeFilters}</span>}
                             </button>
 
-                            {page !== "camera" && <form className={styles.searchRow} role="search" onSubmit={submitSearch}>
+                        <nav className={styles.workspaceNav} aria-label="Workspace">
+                            <button type="button" aria-label="Search results" aria-pressed={page === "search"} onClick={() => { cancelLink(); setSelectedId(null); setPage("search"); }}>Results</button>
+                            <button type="button" aria-pressed={page === "shortlist"} onClick={() => { cancelLink(); cancelPricing(); setSelectedId(null); setPage("shortlist"); void loadShortlist(); }}>Shortlist ({shortlist.length})</button>
+                            <button type="button" aria-pressed={page === "camera"} onClick={() => openTool("camera")}>Grade a card</button>
+                            {(directListing || linkStatus !== "idle") && <button type="button" aria-pressed={page === "listing"} onClick={() => { setSelectedId(null); setPage("listing"); }}>Listing evaluation</button>}
+                            {page === "search" && searchStatus !== "idle" && <button type="button" className={styles.findNew} disabled={searchStatus === "checking" || phase === "ai"} onClick={() => void search(undefined, lastQuery.current, true)}>Find new listings</button>}
+                        </nav>
+                        </div>
+                        {!toolPage && <div className={styles.topRow}>
+                            <form className={styles.searchRow} role="search" onSubmit={submitSearch}>
                                 <div className={styles.entryModes} role="group" aria-label="Search cards or evaluate a listing">
                                     <button type="button" aria-pressed={!linkInput} onClick={() => chooseEntry(false)}>Search cards</button>
                                     <button type="button" aria-pressed={linkInput} onClick={() => chooseEntry(true)}>Evaluate eBay link</button>
@@ -1007,7 +1275,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                                         type="search"
                                         value={query}
                                         onChange={(event) => changeQuery(event.target.value)}
-                                        placeholder={linkInput ? "Paste eBay link" : "Card, set or grade"}
+                                        placeholder={linkInput ? "Paste eBay link" : "Card, set, grade or auction goal"}
                                         aria-label={linkInput ? "eBay listing link" : "Search cards"}
                                         aria-describedby="listing-input-hint"
                                         onDragOver={(event) => { if (event.dataTransfer.types.some((type) => type === "text/uri-list" || type === "text/plain")) event.preventDefault(); }}
@@ -1051,36 +1319,14 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                                     )}
                                     {linkInput ? linkWorking ? "Evaluating…" : "Evaluate listing · paid" : "Find deals"}
                                 </button>
-                                <p className={styles.inputHint} id="listing-input-hint">{linkInput ? "Paste or drop a link. Uses paid AI." : "Try “Aquapolis PSA 7 or better holo”, or evaluate an eBay link."}</p>
-                            </form>}
-                        </div>
-
-                        {/* Before the first search there's nothing to count, so phones skip the tabs. */}
-                        <nav className={styles.workspaceNav} aria-label="Workspace">
-                            <button type="button" aria-label="Search results" aria-pressed={page === "search"} onClick={() => { cancelLink(); setSelectedId(null); setPage("search"); }}>Results</button>
-                            <button type="button" aria-pressed={page === "shortlist"} onClick={() => { cancelLink(); cancelPricing(); setSelectedId(null); setPage("shortlist"); void loadShortlist(); }}>Shortlist ({shortlist.length})</button>
-                            <button type="button" aria-pressed={page === "camera"} onClick={() => { cancelLink(); cancelPricing(); setSelectedId(null); setPage("camera"); }}>Grade a card</button>
-                            {(directListing || linkStatus !== "idle") && <button type="button" aria-pressed={page === "listing"} onClick={() => { setSelectedId(null); setPage("listing"); }}>Listing evaluation</button>}
-                            {page === "search" && searchStatus !== "idle" && <button type="button" className={styles.findNew} disabled={searchStatus === "checking" || phase === "ai"} onClick={() => void search(undefined, lastQuery.current, true)}>Find new listings</button>}
-                        </nav>
+                                <p className={styles.inputHint} id="listing-input-hint">{linkInput ? "Paste or drop a link. Uses paid AI." : "Include a set, card number or grade to narrow the match."}</p>
+                            </form>
+                        </div>}
                         {saveNotice && <p className={saveNotice.error ? styles.warning : styles.saveNotice} role={saveNotice.error ? "alert" : "status"}>{saveNotice.text}</p>}
-                        <SearchControls
-                            showSearchOptions={page === "search"}
-                            hidden={page !== "search" || searchStatus === "idle"}
-                            idle={searchStatus === "idle"}
-                            views={{ view, availableViews, groups, allTab, setView }}
-                            filters={{ typeFilter, kindFilter, sort, marketplaceOrder, minPrice, maxPrice, minGrade, setTypeFilter, setKindFilter, setSort, setMarketplaceOrder, changeMinPrice, setMaxPrice, changeMinGrade }}
-                            target={{ targets, targetInputs, changeTarget }}
-                            settings={{ includeOffers, autoSetting, changeIncludeOffers, changeAutoSetting }}
-                            drawer={{ drawerOpen, setDrawerOpen }}
-                            usage={usage} aiUsage={aiUsage}
-                        />
+                        {page === "search" && <SearchOptions filters={controlProps.filters} target={controlProps.target} />}
                     </header>
-
                     <ProviderUsageNotice usage={aiUsage?.providers} now={now} />
-                    {page !== "camera" && <AiBudgetStatus budget={aiUsage?.budget} calls={aiUsage?.calls ?? 0} />}
-                    {page !== "camera" && <PriceResearchStatus usage={aiUsage?.pricing} />}
-                    {page !== "camera" && analysisBlocked && <AnalysisBlockedNotice message={analysisBlocked} code={analysisBlockCode} onRetry={() => {
+                    {!toolPage && analysisBlocked && <AnalysisBlockedNotice message={analysisBlocked} code={analysisBlockCode} onRetry={() => {
                         if (!analysisBlockPolicy(analysisBlockCode).retryLabel) return;
                         // Reuse this search and its existing server allowance.
                         // Completed cards keep their slot; interrupted ones may retry.
@@ -1089,10 +1335,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                         setAnalysisBlocked(""); setAnalysisBlockCode(null); setBudget(autoSetting);
                         if (page === "listing" && directListing) void runAnalysis(directListing);
                     }} />}
-                    {completedSearchRunId && !stopped && <div hidden={page !== "search"}>
-                        <SearchReview key={completedSearchRunId} ready={page === "search" && reviewReady}
-                            onReview={(signal) => reviewSearch(completedSearchRunId, signal)} />
-                    </div>}
+                    {page !== "search" && <SearchControls {...controlProps} />}
                     {page === "camera" ? <CameraGrade /> : page === "shortlist" ? <ShortlistView entries={shortlistForDisplay} loading={shortlistLoading} error={shortlistError} refreshing={refreshingSaved} refreshErrors={refreshErrors}
                         onRetry={() => void loadShortlist()} onRefresh={refreshSaved} onRemove={removeSaved} onUpdate={updateSaved} now={now}
                         renderCard={(entry) => <DealCard listing={entry.listing} analysis={analyses[entry.id]} selected={entry.id === selectedId} now={now} years={setYearsByKey} targets={targets} includeOffers={includeOffers} minGrade={minGrade} photoReviewState={photoReviews[entry.id]}
@@ -1107,7 +1350,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                             onOpen={() => openPanel(directListing.id)} /></div>}
                         {!directListing && linkStatus === "idle" && <p>Paste an eBay listing link above, then choose Evaluate listing.</p>}
                     </section> : <>
-                    {searchStatus !== "idle" && summary && <p className={styles.searchMeaning} role="status">Search criteria: {describeIntent(summary.intent)}.{(summary.intent.grader || summary.intent.minGrade != null || summary.intent.finish) ? " Requested grader, slab grade and finish must match; unconfirmed listings are set aside." : ""}</p>}
+                    {searchStatus !== "idle" && summary && <p className={styles.searchMeaning} role="status">Search criteria: {describeIntent(summary.intent)}.</p>}
                     {searchStatus !== "idle" && (
                         <SearchProgress
                             phase={phase}
@@ -1116,7 +1359,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                             ebayTotal={summary?.total ?? null}
                             checked={newMode ? newChecked : listings.length}
                             total={total}
-                            ai={{ done: aiDone, target: aiTarget, analyzing: counts.analyzing, waiting: counts.waiting, failed: startedAnalyses.filter((analysis) => analysis.status === "error").length, paused: Boolean(analysisBlocked) || stopped }}
+                            ai={{ done: aiDone, target: aiTarget, analyzing: counts.analyzing, waiting: counts.waiting, failed: startedAnalyses.filter((analysis) => analysis.status === "error").length, inconclusive: startedAnalyses.filter(analysis => analysis.status === "inconclusive").length, held: startedAnalyses.filter(analysis => analysis.status === "held").length, paused: Boolean(analysisBlocked) || stopped }}
                             stats={{
                                 junk: (summary?.skipped ?? 0) + counts.junk,
                                 dropped: (summary?.priceExcluded ?? 0) + counts.dropped,
@@ -1131,22 +1374,46 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                                 }
                             }
                             onStop={stopSearch}
-                            canStopAssessment={Array.from(analysisControllers.current.values()).some(({ signal }) => !signal.aborted)}
+                            buyerProgress={automaticReviews && completedSearchRunId ? {
+                                finished: buyerReviews.reviewed, total: reviewQueue.length, unavailable: buyerReviews.unavailable,
+                                priorityTotal: priorityIds.length, priorityDone: priorityIds.filter(id => buyerDecisions[id] && !buyerDecisions[id].unavailable).length,
+                                priorityUnavailable: priorityIds.filter(id => buyerDecisions[id]?.unavailable).length,
+                                priorityPhotos: priorityIds.filter(id => !!evaluationOf(analyses[id])?.photoCheck).length,
+                                active: buyerReviews.active,
+                            } : undefined}
+                            canStopAssessment={buyerReviews.active > 0 || Array.from(analysisControllers.current.values()).some(({ signal }) => !signal.aborted)}
                             actions={progressActions}
                             details={progressDetails}
                         />
                     )}
-                    {buyItNowComparison && <BuyItNowComparison reference={buyItNowComparison} />}
-                    {searchStatus !== "idle" && <SearchCoverage report={coverage} finished={searchStatus === "done" || searchStatus === "error"} />}
-                    {skipped.size > 0 && <details className={styles.skippedListings}>
-                        <summary>Why listings weren’t assessed ({skipped.size})</summary>
-                        <p>Reasons for listings retained by this search. See Listing coverage for listings outside the results.</p>
-                        <ul>{listings.map(listing => {
-                            const reason = skipped.get(listing.id);
-                            return reason && <li key={listing.id}><strong>{listing.title}</strong><span>{reason.label}{reason.detail ? ` · ${reason.detail}` : ""}</span></li>;
-                        })}</ul>
-                    </details>}
-                    {searchStatus !== "idle" && <PricingRetries listings={filtered} reviewCount={groups.review.length} searching={searchStatus === "checking"} analyzed={new Set(Object.entries(analyses).filter(([, analysis]) => analysis.status === "done" || analysis.status === "loading").map(([id]) => id))}
+                    {page === "search" && searchStatus !== "idle" && searchStatus !== "error" && !stopped && !analysisBlocked &&
+                        !needsWiderSearch && autoSetting !== 0 && typeFilter !== "AUCTION" && kindFilter !== "graded" && !summary?.intent.graded &&
+                        <GradingWatch key={JSON.stringify([watchSearch.current, currentFilters, targets, includeOffers, minGrade])}
+                            listings={filtered} decisions={buyerDecisions} now={now}
+                            canScan={reviewReady && selectedId === null && !drawerOpen}
+                            onScan={scanGradingWatch} onOpen={openPanel} onRecheck={buyerReviews.recheckQuote} />}
+                    {huntId && (standaloneHunt || reviewReady && page === "search" && !needsWiderSearch) &&
+                        <DealHunt key={huntScope} searchId={huntId} standalone={standaloneHunt} now={now} updatedTerms={auctionUpdates} filters={currentFilters}
+                            marketPreferences={standaloneHunt && typeFilter === "AUCTION" ? auctionPrompt?.marketPreferences : undefined}
+                            takePrompt={() => { if (pendingHuntPrompt.current !== huntId) return false; pendingHuntPrompt.current = null; return true; }} minPotentialGrade={minGrade}
+                            listings={huntListings} targets={huntTargets} onOpen={openHuntEvidence}
+                            onStart={() => { if (standaloneHunt) searchRunId.current = standaloneHuntId; }}
+                            onClear={() => { if (selectedAlternative) setSelectedId(null); setPanelHunt(null); }} onUsage={refreshUsage} />}
+                    {page === "search" && !needsWiderSearch && typeFilter !== "FIXED_PRICE" && <>
+                        <AuctionOpportunities listings={filtered} decisions={buyerDecisions} now={now} onOpen={openPanel} />
+                        <AuctionTracking />
+                    </>}
+                    {page === "search" && searchStatus === "done" && !stopped && !needsWiderSearch && typeFilter !== "FIXED_PRICE" &&
+                        <CompetingAuctions listings={filtered} analyses={analyses} intent={summary?.intent} targets={targets} now={now} onOpen={openPanel} />}
+                    {bestCurrentBuy && <BestCurrentBuy reference={bestCurrentBuy} evaluation={evaluationOf(analyses[bestCurrentBuy.listingId])}
+                        onOpen={bestBuyListing ? () => openPanel(bestBuyListing.id) : undefined} />}
+                    {rawComparison && rawComparisonValue && rawComparison.listing.id !== bestCurrentBuy?.listingId &&
+                        <RawCopyComparison comparison={rawComparison} evaluation={rawComparisonValue} onOpen={openPanel} />}
+                    {comparisonExpired ? <p className={styles.discoveryNote}>The buying comparison’s price and shipping check has expired. Run the search again to refresh it.</p> :
+                        !bestCurrentBuy && page === "search" && phase === "done" && !needsWiderSearch && coverage && typeFilter !== "AUCTION" &&
+                        <p className={styles.discoveryNote}>No verified Buy It Now below its matched sold estimate among the listings checked.</p>}
+                    <SearchControls {...controlProps} />
+                    {!automaticReviews && searchStatus !== "idle" && <PricingRetries listings={filtered} reviewCount={groups.review.length} searching={searchStatus === "checking"} analyzed={new Set(Object.entries(analyses).filter(([, analysis]) => analysis.status === "done" || analysis.status === "loading").map(([id]) => id))}
                         busy={pricingBusy} note={pricingNote} onRetry={(tickets) => void retryPrices(tickets)} onCancel={cancelPricing} />}
                     {newMode && <p className={styles.discoveryNote}>Loaded one window of up to 200 newest listings and admitted at most {DEVELOPMENT_SEARCH_LIMIT} unseen candidates for screening. Earlier results stay in All matching; this is a limited development batch.</p>}
 
@@ -1159,8 +1426,8 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                     </div>}
 
                     {searchStatus === "idle" && (
-                        <EmptyState title={linkInput ? "Check a listing" : "Find your next flip"}
-                            text={linkInput ? "Paste its eBay link above for a photo assessment, resale estimates and a price limit." : "Search for cards across eBay, or evaluate a listing you’ve already found."}>
+                        <EmptyState title={linkInput ? "Check a listing" : "Find the best buy for your card"}
+                            text={linkInput ? "Paste its eBay link above for a photo assessment, resale estimates and a price limit." : "Compare matching listings, recent sales and the cost of buying. Try a search to get started."}>
                             {/* One tap to a search: recent ones, or a few to start with. */}
                             {!linkInput && <div className={styles.quickPicks}>
                                 <p>{recentSearches.length > 0 ? "Recent searches" : "Try a search"}</p>
@@ -1181,6 +1448,11 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                                     ))}
                                 </div>
                             </div>}
+                            {!linkInput && <div className={styles.resultLegend} aria-label="Result color meanings">
+                                <span data-tone="profit"><i aria-hidden="true" />Profit after costs</span>
+                                <span data-tone="review"><i aria-hidden="true" />Wait or skip</span>
+                                <span><i aria-hidden="true" />Selected listing</span>
+                            </div>}
                         </EmptyState>
                     )}
 
@@ -1191,12 +1463,10 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                         (view === "deals" && summary ? (
                             <div className={styles.searchUpdate} role="status">
                                 <div>
-                                    <p><strong>No verified deals in this development batch.</strong></p>
-                                    <p>Looked for {describeIntent(summary.intent)}. Admitted {summary.count} candidates from {summary.found} returned; {newMode ? newChecked : listings.length} screening results are saved. This limited batch does not cover all eBay inventory.</p>
-                                    <p>{counts.dropped + (summary.priceExcluded ?? 0)} below your research/value or profit targets · {counts.mismatched} other cards, sets or criteria · {groups.review.length} need specific evidence.</p>
-                                    {(summary.priceExcluded ?? 0) > 0 && <p>{summary.priceExcluded} were excluded before photo analysis. Run a new search after lowering targets or enabling offers to reconsider those listings.</p>}
-                                    {counts.waiting > 0 && <p>{counts.waiting} still await assessment{analysisBlocked ? " because paid AI is paused or budget-limited" : " in Sorting"}. An unassessed card is not a confirmed deal.</p>}
-                                    {alternatives.length > 0 && <div className={styles.alternatives}>
+                                    <p><strong>No verified profitable buys in this search.</strong></p>
+                                    <p>{bestCurrentBuy ? "The lowest checked purchase is shown above, with its resale numbers." : "You can review matching listings, adjust your targets, or check a different card."} Search details below account for exclusions and unfinished checks.</p>
+                                    {!automaticReviews && counts.waiting > 0 && <p>{counts.waiting} still await assessment{analysisBlocked ? " while automatic assessments are paused" : " in Sorting"}. An unassessed card is not a confirmed deal.</p>}
+                                    {!bestCurrentBuy && alternatives.length > 0 && <div className={styles.alternatives}>
                                         <p><strong>Best available options</strong></p>
                                         <ul>{alternatives.map(({ listing, label, profit, roi, offerPrice }) => <li key={listing.id}>
                                             <button type="button" className={`${styles.secondary} ${styles.alternative}`} onClick={() => openPanel(listing.id)}>
@@ -1208,7 +1478,8 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                                     </div>}
                                 </div>
                                 <div className={styles.progressButtons}>
-                                    <button type="button" className={styles.secondary} onClick={() => withViewTransition(() => setView("candidates"))}>Open Sorting</button>
+                                    {groups.candidates.length > 0 ? <button type="button" className={styles.secondary} onClick={() => withViewTransition(() => setView("candidates"))}>Open Sorting</button> :
+                                        groups.review.length > 0 && <button type="button" className={styles.secondary} onClick={() => withViewTransition(() => setView("review"))}>See Wait or skip decisions</button>}
                                     {groups.losses.length > 0 && <button type="button" className={styles.secondary} onClick={() => withViewTransition(() => setView("losses"))}>
                                         View projected losses ({groups.losses.length})
                                     </button>}
@@ -1225,7 +1496,7 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                         ))}
 
                     {view === "all" && visible.length > 0 && <p className={styles.discoveryNote}>
-                        {visible.length} matching {visible.length === 1 ? "listing" : "listings"} in the loaded results, including passes and unfinished assessments. Known wrong cards and junk are excluded. {filtered.filter((listing) => evaluationOf(analyses[listing.id])?.photoCheck).length} AI photo reviews complete. Other cards remain preliminary. Each development scan admits at most {DEVELOPMENT_SEARCH_LIMIT} matching listings.
+                        Showing {visible.length} matching {visible.length === 1 ? "listing" : "listings"}.
                     </p>}
                     {view === "losses" && visible.length > 0 && <p className={styles.discoveryNote}>
                         Completed assessments with an estimated net loss at the asking price or current bid.
@@ -1245,11 +1516,14 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                                 // The first screenfuls glide when you sort or filter.
                                 transitionName={index < 24 ? transitionName(listing.id) : undefined}
                                 analysis={analyses[listing.id]}
-                                assessmentNote={skipped.get(listing.id)?.label}
+                                automaticDecision={buyerDecisions[listing.id]}
+                                reviewPending={automaticReviews && !stopped && !needsWiderSearch && !buyerDecisions[listing.id]}
+                                assessmentNote={analyses[listing.id]?.status === "held" ? undefined : skipped.get(listing.id)?.label}
                                 photoReviewState={photoReviews[listing.id]}
                                 saved={shortlist.some((entry) => entry.id === listing.id)}
                                 saving={savingIds.has(listing.id)}
                                 onSave={() => void toggleSaved(listing)}
+
                                 years={setYearsByKey}
                                 minGrade={minGrade}
                                 targets={targets}
@@ -1261,18 +1535,47 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
                         ))}
                     </div>
                     </>}
+                    {!toolPage && (searchStatus !== "idle" || page !== "search") && <details className={styles.searchDiagnostics}>
+                        <summary>Search details &amp; usage<span>Coverage, skipped listings and research costs</span></summary>
+                        <div className={styles.diagnosticsBody}>
+                    <AiBudgetStatus budget={aiUsage?.budget} calls={aiUsage?.calls ?? 0} />
+                    <PriceResearchStatus usage={aiUsage?.pricing} />
+                    {completedSearchRunId && !stopped && <div hidden={page !== "search"}>
+                        <SearchReview key={completedSearchRunId} ready={page === "search" && reviewReady}
+                            onReview={(signal) => reviewSearch(completedSearchRunId, signal)} />
+                    </div>}
+                    {searchStatus !== "idle" && <SearchCoverage report={coverage} finished={searchStatus === "done" || searchStatus === "error"} />}
+                    {skipped.size > 0 && <details className={styles.skippedListings}>
+                        <summary>Why listings weren’t assessed ({skipped.size})</summary>
+                        <p>Reasons for listings retained by this search. See Listing coverage for listings outside the results.</p>
+                        <ul>{listings.map(listing => {
+                            const reason = skipped.get(listing.id);
+                            return reason && <li key={listing.id}><strong>{listing.title}</strong><span>{reason.label}{reason.detail ? ` · ${reason.detail}` : ""}</span></li>;
+                        })}</ul>
+                    </details>}
+                        </div>
+                    </details>}
                 </main>
 
                 {selected && (
                     <DetailPanel
+                        docked={dockedAnalysis}
+                        automaticDecision={page === "search" && !selectedAlternative ? buyerDecisions[selected.id] : undefined}
+                        reviewPending={page === "search" && !selectedAlternative && !!checkingIds?.has(selected.id) && !buyerDecisions[selected.id]}
+                        huntFocus={page === "search" && !needsWiderSearch && panelHunt?.scope === huntScope &&
+                            (panelHunt.report.decision !== "BID" || selectedEval && auctionOpportunity(selectedEval, huntTargets, now, currentFilters.maxPrice)?.status === "BID" &&
+                                (auctionUpdates.get(selected.id) ?? 0) <= Date.parse(selectedEval.listing.termsCheckedAt ?? "")) &&
+                            panelHunt.report.destination?.listingId === selected.id ? panelHunt : null}
+                        returnFocus={analysisOpener}
                         listing={selected}
                         closing={panelClosing}
                         minGrade={page === "listing" ? 0 : minGrade}
-                        targets={targets}
+                        targets={selectedAlternative ? huntTargets : targets}
                         includeOffers={includeOffers}
                         analysis={analyses[selected.id]}
                         now={now}
                         onClose={close}
+
                         onAnalyze={(fresh) => runAnalysis(selected, { fresh })}
                         onRefreshPrices={() => {
                             const refreshOf = analyses[selected.id];

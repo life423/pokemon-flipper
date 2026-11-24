@@ -37,7 +37,12 @@ test("diagnostics freeze one snapshot per completed search across store instance
     for (const sourceDispositions of [[rejected, rejected], [{ ...rejected, id: first }], [{ ...notReached, id: unresolved.id }]]) {
         await assert.rejects(store.saveDiscovery(id, { ...covered, sourceDispositions }), SearchDiagnosticInputError);
     }
-    await store.saveDiscovery(id, { ...covered, sourceDispositions: [rejected, notReached] });
+    for (const listingIds of [[first, first], [notReached.id]]) {
+        await assert.rejects(store.saveDiscovery(id, { ...discovery, reviewSelection: { source: "ai", listingIds } }), SearchDiagnosticInputError);
+    }
+    const reviewSelection = { source: "ai" as const, listingIds: [second, first] };
+    await store.saveDiscovery(id, { ...covered, reviewSelection, sourceDispositions: [rejected, notReached] });
+    assert.deepEqual((await sameStore.loadDiscovery(id))?.discovery.reviewSelection, reviewSelection);
     for (const invalid of [[rows[0]], [rows[0], rows[0]], [rows[0], { ...rows[1], id: "other" }],
         [rows[0], { ...rows[1], reason: "untrusted text" }], [{ ...rows[0], profit: Infinity }, rows[1]]]) {
         await assert.rejects(store.saveSnapshot(id, invalid, { attempts: 0 }), SearchDiagnosticInputError);

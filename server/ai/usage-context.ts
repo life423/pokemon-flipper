@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-export interface AiUsageContext { searchId?: string; listingId?: string }
+export interface AiUsageContext { searchId?: string; listingId?: string; watchBudgetId?: string }
 const context = new AsyncLocalStorage<AiUsageContext>();
 
 // Nested listing work inherits its search without changing concurrent requests.
@@ -12,6 +12,13 @@ export function getAiUsageContext(): AiUsageContext {
     return context.getStore() ?? {};
 }
 
+
+// Watched searches keep separate discovery IDs but share the initiating
+// search's provider allowances, including nested per-listing work.
+export function getBudgetContext(): AiUsageContext {
+    const { searchId, listingId, watchBudgetId } = getAiUsageContext();
+    return { searchId: watchBudgetId ?? searchId, listingId };
+}
 
 // Dispatch-only cancellation is separate from usage attribution: AbortSignals
 // must never enter persisted telemetry or cancel an accepted paid response.

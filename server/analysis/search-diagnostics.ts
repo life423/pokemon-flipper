@@ -1,3 +1,4 @@
+import { getAiUsageContext } from "../ai/usage-context.ts";
 import { createHash } from "node:crypto";
 import type { AiSearchBudget, AiUsageStage } from "../../shared/ai-usage.ts";
 import type { PricingResearchUsage } from "../../shared/pricing-usage.ts";
@@ -7,7 +8,7 @@ import { aiUsageToday } from "../ai/usage.ts";
 import { browseSearchAllowance } from "../ebay/search-budget.ts";
 import { createSharedWork } from "../lib/shared-work.ts";
 import { priceResearchSummary } from "../pricing/research-budget.ts";
-import { runSearchDiagnosticReview } from "./search-diagnostic-review.ts";
+import { APP_REVIEW_OUTPUT_TOKENS, runSearchDiagnosticReview } from "./search-diagnostic-review.ts";
 import { createSearchDiagnosticStore } from "./search-diagnostic-store.ts";
 
 // One stable allowance per completed scan. The normal generation guard applies
@@ -18,6 +19,8 @@ function reviewAccount(searchId: string): string {
 }
 
 interface SearchUsage {
+    // Pin the request to its snapshot so reopening an older search reuses the same dispatch key.
+    reviewOutputTokens?: number;
     budget: AiSearchBudget | null;
     stages: Pick<AiUsageStage, "step" | "calls" | "failed">[];
     ebayBrowseRequests: number | null;
@@ -29,6 +32,7 @@ async function usageFor(searchId: string): Promise<SearchUsage> {
         aiSpending.summary(searchId), aiUsageToday(searchId), browseSearchAllowance(), priceResearchSummary(searchId),
     ]);
     return {
+        reviewOutputTokens: APP_REVIEW_OUTPUT_TOKENS,
         budget: budget.status === "fulfilled" ? budget.value : null,
         stages: ai.status === "fulfilled" ? ai.value.stages.map(({ step, calls, failed }) => ({ step, calls, failed })) : [],
         ebayBrowseRequests: browse.status === "fulfilled" ? browse.value?.used ?? null : null,
@@ -67,6 +71,12 @@ function evidenceFor(discovery: SearchDiagnosticDiscovery, rows: readonly Search
             assessment: {
                 photoChecked: rows.filter(row => row.photoChecked).length,
                 priced: rows.filter(row => row.priced).length,
+                buyerDecisions: {
+                    buy: rows.filter(row => row.reason === "BUYER_BUY").length,
+                    wait: rows.filter(row => row.reason === "BUYER_WAIT").length,
+                    skip: rows.filter(row => row.reason === "BUYER_SKIP").length,
+                    unavailable: rows.filter(row => row.reason === "BUYER_CHECK_UNAVAILABLE").length,
+                },
                 deals: rows.filter(row => row.outcome === "DEAL").length,
                 losses: rows.filter(row => row.outcome === "LOSS").length,
             },
@@ -96,24 +106,27 @@ export function completeSearchDiagnostic(searchId: string, rows: unknown, signal
     return share(searchId, async workSignal => {
         const previous = await store.loadResult(searchId);
         if (previous) return previous;
-        const snapshot = await store.loadSnapshot(searchId) ?? await store.saveSnapshot(searchId, rows, await usageFor(searchId));
+        const snapshot = await store.loadSnapshot(searchId) ?? await store.saveSnapshot(searchId, rows, await usageFor(getAiUsageContext().watchBudgetId ?? searchId));
         if (!snapshot) return null;
         const { savedAt } = snapshot;
         const save = async (result: SearchDiagnosticResult) => await store.saveResult(searchId, result) ?? result;
         if (!snapshot.rows.length) return save({ searchId, savedAt, status: "skipped", message: "This search retained no listings to review." });
 
         workSignal.throwIfAborted();
-        const budgetSearchId = reviewAccount(searchId);
+        const budgetSearchId = getAiUsageContext().watchBudgetId ?? reviewAccount(searchId);
         const { evidence, examples } = evidenceFor(snapshot.discovery, snapshot.rows, snapshot.data);
         try {
-            const { review } = await runSearchDiagnosticReview({ searchId, budgetSearchId, evidence, exampleCount: Object.keys(examples).length, signal: workSignal });
+            const { review } = await runSearchDiagnosticReview({ searchId, budgetSearchId, evidence,
+                exampleCount: Object.keys(examples).length, outputTokens: snapshot.data.reviewOutputTokens, signal: workSignal });
             const reviewBudget = await aiSpending.summary(budgetSearchId).catch(() => undefined);
             return save({ searchId, savedAt, status: "complete", review, examples, reviewBudget });
         } catch (error) {
             workSignal.throwIfAborted();
             const reviewBudget = await aiSpending.summary(budgetSearchId).catch(() => undefined);
             const message = reviewBudget?.paused ? "AI reviews are paused. The search decisions were saved."
-                : "The automatic review could not finish. The search decisions were saved.";
+                : error instanceof Error && error.message === "Search diagnostic review: response was cut off (max_output_tokens)"
+                    ? "The review reached its response length limit. Your listing decisions are saved."
+                    : "The automatic review could not finish. The search decisions were saved.";
             return save({ searchId, savedAt, status: "unavailable", message, reviewBudget });
         }
     }, signal);

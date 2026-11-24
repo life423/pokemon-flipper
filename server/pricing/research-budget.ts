@@ -6,7 +6,7 @@ import { DATA_DIR } from "../lib/paths.ts";
 import { writeJsonAtomic } from "../lib/atomic-json.ts";
 import { withFileLease } from "../lib/file-lease.ts";
 import { createKeyedLock } from "../lib/keyed-lock.ts";
-import { getAiUsageContext, type AiUsageContext } from "../ai/usage-context.ts";
+import { getBudgetContext, type AiUsageContext } from "../ai/usage-context.ts";
 import { recordProviderUsage } from "../lib/provider-usage.ts";
 import { requireLiveProvider } from "../lib/saved-provider-evidence.ts";
 import type { PricingResearchUsage } from "../../shared/pricing-usage.ts";
@@ -207,15 +207,15 @@ function currentBudget() {
     if (!budget) { budget = createPriceResearchBudget({ directory: path.join(DATA_DIR, "price-research-budgets", account), providerKey: key }); budgets.set(account, budget); }
     return budget;
 }
-export function priceResearchSummary(searchId = getAiUsageContext().searchId) {
+export function priceResearchSummary(searchId = getBudgetContext().searchId) {
     if (searchId === undefined) return Promise.resolve(null);
     scope(searchId); return currentBudget().summary(searchId);
 }
 export function assertPriceResearchAvailable(signal = getPriceResearchSignal()) {
-    signal?.throwIfAborted(); scope(getAiUsageContext().searchId);
-    return currentBudget().assertAvailable(getAiUsageContext().searchId, signal);
+    signal?.throwIfAborted(); scope(getBudgetContext().searchId);
+    return currentBudget().assertAvailable(getBudgetContext().searchId, signal);
 }
 export function reservePriceRequest(path: string, signal = getPriceResearchSignal()) {
-    signal?.throwIfAborted(); requireLiveProvider("PKMNPRICES"); scope(getAiUsageContext().searchId);
-    return currentBudget().reserve(path, getAiUsageContext(), signal);
+    signal?.throwIfAborted(); requireLiveProvider("PKMNPRICES"); scope(getBudgetContext().searchId);
+    return currentBudget().reserve(path, getBudgetContext(), signal);
 }

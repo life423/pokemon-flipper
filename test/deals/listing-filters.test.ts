@@ -35,9 +35,9 @@ test("server listing filters accept valid numeric bounds and ignore malformed qu
     assert.equal(readListingFilters({ max: "100", ceiling: "0" }).maxPrice, 0);
 });
 
-test("automatic auctions require a known future end within12hours before local or provider work", async () => {
+test("automatic auctions require a known future end in less than 10 hours before local or provider work", async () => {
     const now = Date.now();
-    for (const [hours, expected] of [[-1, false], [0, false], [1, true], [12, true], [12.001, false], [24, false]] as const) {
+    for (const [hours, expected] of [[-1, false], [0, false], [1, true], [9.999, true], [10, false], [10.001, false], [12, false], [24, false]] as const) {
         const auction = listing(String(hours), { buyingOption: "AUCTION", endTime: new Date(now + hours * 3600000).toISOString() });
         assert.equal(withinAutomaticAuctionWindow(auction, now), expected); assert.equal(worthScreening(auction, {}, now), expected);
     }

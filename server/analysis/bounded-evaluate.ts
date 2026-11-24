@@ -1,9 +1,10 @@
-import { invalidReading, validateBoundedReading } from "./bounded-reading.ts";
+import { InvalidBoundedReading, invalidReading, invalidReadingMessage, validateBoundedReading } from "./bounded-reading.ts";
 export { validateBoundedReading } from "./bounded-reading.ts";
-import { getListingDetails } from "../ebay/listings.ts";
+import { couldBeFrontBackComposite, checkFrontBackComposite } from "./front-back-composite.ts";
+import { getListingDetails, type ListingDetails } from "../ebay/listings.ts";
 import { ANALYSIS_VERSION, CONDITION_VERSION } from "./legacy-evidence.ts";
 import { assessBoundedListing, type BoundedReading, type BoundedPhotoStage } from "../ai/bounded-assessment.ts";
-import { compatibleBoundedPlans, stagedPhotoPlan, type BoundedAssessmentPlan } from "./bounded-plan.ts";
+import { BOUNDED_PHOTO_LIMIT, compatibleBoundedPlans, galleryReviewPlan, stagedPhotoPlan, unseenGalleryPhotos, type BoundedAssessmentPlan } from "./bounded-plan.ts";
 export { assessBoundedListing, BOUNDED_ASSESSMENT_SCHEMA, type BoundedReading } from "../ai/bounded-assessment.ts";
 export { BOUNDED_VISION_MODEL, BOUNDED_ASSESSMENT_VERSION, BOUNDED_CONDITION_VERSION, BOUNDED_SLAB_ASSESSMENT_VERSION, BOUNDED_PHOTO_LIMIT, selectBoundedPhotos, boundedAssessmentKey, boundedAssessmentPlan } from "./bounded-plan.ts";
 import { cachedCompChecks } from "../ai/comp-checker.ts";
@@ -13,11 +14,12 @@ import { readCache, writeCache } from "../lib/cache.ts";
 import { createSharedWork } from "../lib/shared-work.ts";
 import { storageFailure } from "../lib/storage-failure.ts";
 import { StorageUnavailableError } from "../storage/index.ts";
-import { AiSearchAllowanceError, aiSpendingFailure } from "../ai/spending.ts";
-import { corroboratedSlabName, frontShowsDifferentNumber, identifyCard, normalizeWords, photoReprintIssue, readyForPricing, printingClaimFromAspects, sameCardNumber, sameSetFamily, structuredPhotoIdentityConflict, type IdentityListing } from "../identity/card-identity.ts";
+import { AiSearchAllowanceError, AiSpendingError, aiSpendingFailure } from "../ai/spending.ts";
+import { corroboratedSlabName, frontShowsDifferentNumber, identifyCard, mergeFamily, normalizeWords, photoReprintIssue, readyForPricing, printingClaimFromAspects, sameCardNumber, sameSetFamily, structuredPhotoIdentityConflict, type IdentityListing } from "../identity/card-identity.ts";
 import { checkSlab, normalizeSlabReading } from "../identity/slab-check.ts";
 import { readTitleByRules } from "../ai/title-reader.ts";
-import { lookupCards, fetchComps, fetchRawComps } from "../pricing/pkmnprices.ts";
+import { lookupCards, cachedPricingRecord, fetchComps, fetchCachedComps, fetchRawComps } from "../pricing/pkmnprices.ts";
+import { sameCatalogName } from "../identity/catalog-name.ts";
 import { gradedPricesFor, compsForGrade } from "../pricing/graded-comps.ts";
 import { rawPricesWithSales, compCondition } from "../pricing/raw-comps.ts";
 import { matchesSoldTarget } from "../pricing/sold-comps.ts";
@@ -28,38 +30,92 @@ import { underwrite, frontRawResaleLoss, frontSlabLoss, frontWearGradeLoses, mat
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { rateDeal } from "../../shared/money/rating.ts";
 import { cardLanguageStatus, EnglishOnlyError } from "../../shared/card-language.ts";
-import { listingEvidenceKey } from "../../shared/listing-evidence.ts";
-import { BOUNDED_REVIEW_REVISION, currentPriceEvidence, PREVIOUS_BOUNDED_REVIEW_REVISION, PREVIOUS_PRICING_VERSION, PRICING_VERSION } from "../../shared/pricing-freshness.ts";
+import { listingEvidenceKey, normalizedPhoto } from "../../shared/listing-evidence.ts";
+import { BOUNDED_REVIEW_REVISION, currentPriceEvidence, PREVIOUS_PRICING_VERSION, PRICING_VERSION, provisionalComparisonRange } from "../../shared/pricing-freshness.ts";
 import { unsupportedVariantReason, withoutUnsupportedRawPrices, withoutUnsupportedVariantPrices } from "../../shared/money/price-evidence.ts";
 import { minimumOfferPrice } from "../../shared/money/cents.ts";
-import { isRawCondition, RAW_CONDITIONS, sellerCreaseOverridesCondition } from "../../shared/conditions.ts";
+import { CONDITION_AREAS, CONDITION_NAMES, isRawCondition, RAW_CONDITIONS, sellerCreaseOverridesCondition } from "../../shared/conditions.ts";
 import { withinAutomaticAuctionWindow, type ListingFilters } from "../../shared/listing-filters.ts";
-import { obscuredDisclosedWear, withoutRawSlabAssessment } from "../../shared/photo-evidence.ts";
-import type { Evaluation, Targets } from "../../shared/types.ts";
+import { displayedRawGrade, needsAddedBackPhoto, needsWholeBack, missingGalleryViews, obscuredDisclosedWear, withoutRawSlabAssessment } from "../../shared/photo-evidence.ts";
+import type { Evaluation, GradeRange, Targets } from "../../shared/types.ts";
 import type { Usage } from "./types.ts";
-import { createPrivateEvaluationStore, evaluationContextKey } from "./private-evaluation.ts";
-import { photoReviewKey, restoreBoundedPhotoReview } from "./deeper-review.ts";
+import { createPrivateEvaluationStore, evaluationContextKey, type PrivateEvaluationSnapshot } from "./private-evaluation.ts";
+import { photoReviewKey, restoreBoundedPhotoReview, reviewListingPhotos } from "./deeper-review.ts";
 import { isSearchDiagnosticId } from "./search-diagnostic-store.ts";
-import { findStampDecision, hasFreshStampTerms, stampCandidate, STAMP_TERMS_MAX_AGE_MS } from "./stamp-decision.ts";
+import { findStampDecision, hasFreshStampTerms, ordinaryNeoDestinyStamp, stampCandidate, STAMP_TERMS_MAX_AGE_MS } from "./stamp-decision.ts";
+import { applyFrameReading, needsBaseSetFrame, readBaseSetFrame, storedFrameReading } from "./base-set-frame.ts";
 import { readStampCrop } from "./stamp-reading.ts";
 import { printingMarkConflicts, reconcileIdentityReadings, visibleReprintReading } from "./resolve-evidence.ts";
 import { assertPriceResearchAvailable, PriceResearchBudgetError, withPriceResearchSignal } from "../pricing/research-budget.ts";
 import { getAiUsageContext, withAiUsageContext, type AiUsageContext } from "../ai/usage-context.ts";
+import { RejectedPhotoAssessmentError } from "./failure.ts";
+import { supplementalResearch } from "../pricing/supplemental-research.ts";
+import { hasUnlocatedConcern } from "./authenticity.ts";
 
 const CACHE_HOURS = 24 * 365 * 10;
 interface SavedBoundedReading extends BoundedReading { version: string; answeredAt: string; usage: Usage }
-export interface BoundedOptions { automatic?: boolean; typeFilter?: ListingFilters["typeFilter"]; includeOffers?: boolean; targets?: Targets; signal?: AbortSignal; current?: import("./types.ts").CurrentState | null; priceOnly?: boolean }
+export interface BoundedOptions { automatic?: boolean; typeFilter?: ListingFilters["typeFilter"]; includeOffers?: boolean; targets?: Targets; signal?: AbortSignal; current?: import("./types.ts").CurrentState | null; priceOnly?: boolean; verifySoldCondition?: boolean; addedPhotosOnly?: boolean }
 export class PriceOnlyEvidenceError extends Error {}
 
+// A wider estimate can describe a photographed card, but it cannot support grading economics.
+const isWideGradeRange = (range: GradeRange | null | undefined) => Boolean(range && range.high - range.low > 2);
+function recoverSavedRejection(saved: Record<string, unknown>, plan: BoundedAssessmentPlan, now: number) {
+    const numbers = saved?.photoNumbers;
+    const timestamp = typeof saved?.answeredAt === "string" ? Date.parse(saved.answeredAt) : NaN;
+    const usage = saved?.usage as Partial<Usage> | null;
+    if (typeof saved?.answeredAt !== "string" || saved.version !== plan.version || saved.reason !== invalidReadingMessage || !Object.hasOwn(saved, "result") ||
+        !Number.isFinite(timestamp) || timestamp > now || !Array.isArray(numbers) || numbers.length !== plan.photos.length ||
+        !plan.photos.every((photo, i) => numbers[i] === photo.number) || !usage ||
+        ![usage.inputTokens, usage.outputTokens].every(n => n === null || typeof n === "number" && Number.isSafeInteger(n) && n >= 0)) return invalidReading();
+    let reading: BoundedReading;
+    try { reading = validateBoundedReading(saved.result, plan.photos.length, plan.mode); }
+    catch (error) {
+        if (error instanceof InvalidBoundedReading) throw new RejectedPhotoAssessmentError(error.reason);
+        throw new StorageUnavailableError(invalidReadingMessage, { cause: error });
+    }
+    // Replay only previously rejected shapes we now explicitly support.
+    if (!isWideGradeRange(reading.condition?.gradeRange) && !hasUnlocatedConcern(reading.condition?.authenticity)) return invalidReading();
+    return { reading, answeredAt: saved.answeredAt, cached: true, plan };
+}
 interface Dependencies {
     details: typeof getListingDetails; saved: typeof loadSaved; cached: typeof readCache; save: typeof writeCache;
     assess: typeof assessBoundedListing; identify: typeof identifyCard; lookup: typeof lookupCards; fetchComps: typeof fetchComps; fetchRawComps: typeof fetchRawComps;
+    fetchCachedComps: typeof fetchCachedComps;
+    cachedPricingRecord: typeof cachedPricingRecord;
     compChecks: typeof cachedCompChecks; now: () => number; assertPriceAvailable: typeof assertPriceResearchAvailable;
     soldCondition: typeof createSoldConditionAcquirer;
-    stamp: typeof readStampCrop;
+    frame?: typeof readBaseSetFrame;
+    supplemental?: typeof supplementalResearch;
+    secondOpinion?: typeof reviewListingPhotos;
+    stamp: typeof readStampCrop; checkComposite: typeof checkFrontBackComposite;
 }
 function stopFailure(error: unknown) { return aiSpendingFailure(error) ?? storageFailure(error); }
 class CandidateOutsideWindow extends Error {}
+
+// Preserve photo-number references only while the original gallery remains in place.
+// A replacement, reordered gallery or changed card claim needs a fresh assessment.
+function previousGalleryReading(snapshot: PrivateEvaluationSnapshot | null, listing: ListingDetails, plans: BoundedAssessmentPlan[], now: number) {
+    const saved = snapshot?.evaluation, original = saved?.listing.photos;
+    if (!snapshot || !saved?.photoCheck || !saved.answeredAt || !original?.length || !saved.reusedSteps ||
+        plans[0].mode !== "RAW" || saved.frontPhotoStop || hasUnlocatedConcern(saved.condition?.authenticity)) return null;
+    const plan = plans.find(plan => plan.mode === "RAW" && plan.version === saved.assessmentVersion);
+    if (!plan || original.length > listing.images.length || !original.every((url, i) => normalizedPhoto(url) === normalizedPhoto(listing.images[i])) ||
+        evaluationContextKey({ ...listing, images: original }) !== snapshot.contextKey) return null;
+    const sameGallery = original.length === listing.images.length;
+    if (sameGallery ? !saved.reusedSteps.includes("previousGalleryPhotos") : !needsAddedBackPhoto(saved)) return null;
+    const photos = saved.photoCheck.images.map(image => ({ number: image.number, url: original[image.number - 1] }));
+    if (!photos.length || photos.some(photo => !photo.url) || !Number.isFinite(Date.parse(saved.answeredAt)) || Date.parse(saved.answeredAt) > now)
+        return invalidReading("Saved gallery coverage has invalid source photos or time.");
+    // Start with only the accepted visual findings. Never carry forward the old grade
+    // price or verdict. Incremental gallery calls use relative input numbering.
+    const reading: BoundedReading = { photoCheck: structuredClone(saved.photoCheck), condition: structuredClone(saved.condition) };
+    const relative = new Map(photos.map((photo, index) => [photo.number, index + 1]));
+    for (const image of reading.photoCheck.images) image.number = relative.get(image.number)!;
+    for (const observation of reading.condition?.authenticity.observations ?? [])
+        observation.photoNumber = relative.get(observation.photoNumber) ?? 0;
+    return { reading: validateBoundedReading(reading, photos.length, "RAW"), answeredAt: saved.answeredAt,
+        cached: true, plan: { ...plan, photos } };
+}
 
 function readableFrontSlab(check: BoundedReading["photoCheck"]) {
     const [front] = check.images;
@@ -68,17 +124,18 @@ function readableFrontSlab(check: BoundedReading["photoCheck"]) {
     return slab?.present && slab.grader && slab.grade ? slab : null;
 }
 
-function combinePhotoReadings(front: BoundedReading, rest: BoundedReading): BoundedReading {
+function combinePhotoReadings(front: BoundedReading, rest: BoundedReading, confirmedComposite = false): BoundedReading {
     const result = structuredClone(rest);
     const first = front.photoCheck, check = result.photoCheck;
-    check.images = [...first.images, ...check.images.map(photo => ({ ...photo, number: photo.number + 1 }))];
+    const priorCount = first.images.length;
+    check.images = [...first.images, ...check.images.map(photo => ({ ...photo, number: photo.number + priorCount }))];
     const primary = first.images[0];
     // A group shot may be categorized as OTHER. A later close-up still
     // cannot undo the evidence of multiple cards in that shot.
-    if (first.cardCount === "MULTIPLE" && primary.usable && !primary.isStockImage) check.cardCount = "MULTIPLE";
+    if (first.cardCount === "MULTIPLE" && primary.usable && !primary.isStockImage && !confirmedComposite) check.cardCount = "MULTIPLE";
     if (primary.view !== "FRONT" || !primary.usable || primary.isStockImage) {
         if (result.condition?.authenticity.observations) result.condition.authenticity.observations =
-            result.condition.authenticity.observations.map(item => ({ ...item, photoNumber: item.photoNumber + 1 }));
+            result.condition.authenticity.observations.map(item => ({ ...item, photoNumber: item.photoNumber + priorCount }));
         return result;
     }
     if (first.cardCount === "ONE" && check.cardCount === "UNKNOWN") check.cardCount = "ONE";
@@ -123,6 +180,14 @@ function combinePhotoReadings(front: BoundedReading, rest: BoundedReading): Boun
     }
     const reprint = visibleReprintReading(markReadings);
     if (marks && reprint) marks.reprintMark = reprint;
+    // A reverse can show wear or authenticity problems, but cannot contradict
+    // a visible face's name, collector number, or holo finish.
+    const usableNew = rest.photoCheck.images.filter(photo => photo.usable && !photo.isStockImage);
+    const onlyNewBacks = usableNew.length > 0 && usableNew.every(photo => photo.view === "BACK" || photo.view === "BACK_DETAIL");
+    if (onlyNewBacks && first.cardIdentity?.confidence === "HIGH" && check.cardMatch?.verdict !== "MISMATCH") {
+        check.cardIdentity = structuredClone(first.cardIdentity);
+        check.cardMatch = structuredClone(first.cardMatch);
+    }
     const prior = first.cardIdentity, card = check.cardIdentity;
     if (prior?.confidence === "HIGH" && check.cardMatch?.verdict !== "MISMATCH") {
         if (!card) check.cardIdentity = prior;
@@ -154,7 +219,7 @@ function combinePhotoReadings(front: BoundedReading, rest: BoundedReading): Boun
     if (result.condition?.authenticity.observations) {
         const authenticity = result.condition.authenticity;
         const firstAlerts = front.condition?.authenticity.observations?.filter(item => item.judgment === "SUSPICIOUS") ?? [];
-        authenticity.observations = [...firstAlerts, ...authenticity.observations!.map(item => ({ ...item, photoNumber: item.photoNumber + 1 }))];
+        authenticity.observations = [...firstAlerts, ...authenticity.observations!.map(item => ({ ...item, photoNumber: item.photoNumber + priorCount }))];
         if (firstAlerts.length && authenticity.concern === "NONE_SEEN") authenticity.concern = "POSSIBLE";
     }
     const priorCondition = front.condition;
@@ -165,14 +230,46 @@ function combinePhotoReadings(front: BoundedReading, rest: BoundedReading): Boun
             result.condition.gradeRange = null;
             result.condition.rawCondition = wear;
         }
+        if (result.condition.binderAppearance) {
+            result.condition.binderAppearance.front = "WORN";
+            result.condition.binderAppearance.frontEvidence = priorCondition.creases === "PRESENT"
+                ? "A crease is visible in the front photo." : priorCondition.surface.observations[0];
+        }
         if (priorCondition.creases === "PRESENT") result.condition.creases = "PRESENT";
         if (priorCondition.surface.severity === "SEVERE") result.condition.surface = structuredClone(priorCondition.surface);
     }
+    if (onlyNewBacks && check.holder !== "GRADED_SLAB" && result.condition?.rawCondition === "UNKNOWN" &&
+        check.cardMatch?.verdict !== "MISMATCH" && result.condition.creases === "NONE_SEEN" &&
+        ![result.condition.surface, result.condition.edges, result.condition.corners].some(area => ["MODERATE", "SEVERE"].includes(area.severity)) &&
+        priorCondition && isRawCondition(priorCondition.rawCondition)) {
+        // Preserve front wear when the follow-up describes only the reverse.
+        // Keep any worse back findings and the more cautious numeric estimate.
+        const condition = result.condition;
+        condition.rawCondition = priorCondition.rawCondition;
+        const severity = ["UNKNOWN", "NONE", "MINOR", "MODERATE", "SEVERE"];
+        for (const area of CONDITION_AREAS) {
+            if (severity.indexOf(priorCondition[area].severity) > severity.indexOf(condition[area].severity))
+                condition[area] = structuredClone(priorCondition[area]);
+        }
+        if (priorCondition.gradeRange && (!condition.gradeRange || priorCondition.gradeRange.high < condition.gradeRange.high))
+            condition.gradeRange = structuredClone(priorCondition.gradeRange);
+        condition.confidence = "LOW";
+        condition.summary = `The earlier photos support ${CONDITION_NAMES[condition.rawCondition]}. The additional back views do not independently establish an overall condition.`;
+        // Keep unresolved angles and visibility limits from either assessment.
+        // Availability of each face is determined from the merged gallery.
+        condition.limitations = [...new Set([...priorCondition.limitations, ...condition.limitations])].filter(note =>
+            !/\b(?:front|back|corners?|edges?)\b/i.test(note) ||
+            !/\b(?:no |only |missing|unavailab|not availab|unverified|not supplied|not shown)/i.test(note));
+        if (!condition.limitations.length && usableNew.some(photo => photo.obscuresCondition))
+            condition.limitations.push("Some back details are obscured in the additional photos.");
+    }
+    check.missingViews = missingGalleryViews(check);
     return result;
 }
 
 
 function stampNote(stamp: NonNullable<Evaluation["focusedStamp"]>): string {
+    if (stamp.observation) return `Photo ${stamp.photoNumber}: ${stamp.observation}`;
     return stamp.result === "CANT_TELL" ? `The focused check of photo ${stamp.photoNumber} could not read the First Edition stamp area.`
         : `Focused check of photo ${stamp.photoNumber}: First Edition stamp ${stamp.result === "VISIBLE" ? "visible" : "absent"}.`;
 }
@@ -206,14 +303,14 @@ function recheckSavedEvidence(evaluation: Evaluation, listing: IdentityListing):
 
 export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
     const deps: Dependencies = { details: getListingDetails, saved: loadSaved, cached: readCache, save: writeCache, assess: assessBoundedListing, identify: identifyCard,
-        lookup: lookupCards, fetchComps, fetchRawComps, compChecks: cachedCompChecks, now: Date.now, assertPriceAvailable: assertPriceResearchAvailable,
-        soldCondition: createSoldConditionAcquirer, stamp: readStampCrop, ...overrides };
+        lookup: lookupCards, fetchComps, fetchCachedComps, fetchRawComps, cachedPricingRecord, compChecks: cachedCompChecks, now: Date.now, assertPriceAvailable: assertPriceResearchAvailable,
+        soldCondition: createSoldConditionAcquirer, stamp: readStampCrop, checkComposite: checkFrontBackComposite, ...overrides };
     const share = createSharedWork();
     const shareReading = createSharedWork();
     type ReadingConsumer = { needed: () => boolean; context: AiUsageContext };
     const neededReadings = new Map<string, Set<ReadingConsumer>>();
     const privateEvaluations = createPrivateEvaluationStore({ cached: deps.cached, save: deps.save });
-    return (itemId: string, options: BoundedOptions = {}): Promise<Evaluation> => share(JSON.stringify([getAiUsageContext().searchId ?? null, itemId, options.current ?? null, options.automatic ?? false, options.typeFilter ?? "all", options.includeOffers !== false, options.targets ?? null, options.priceOnly === true]), signal => withPriceResearchSignal(signal, async () => {
+    return (itemId: string, options: BoundedOptions = {}): Promise<Evaluation> => share(JSON.stringify([getAiUsageContext().searchId ?? null, itemId, options.current ?? null, options.automatic ?? false, options.typeFilter ?? "all", options.includeOffers !== false, options.targets ?? null, options.priceOnly === true, options.verifySoldCondition === true, options.addedPhotosOnly === true]), signal => withPriceResearchSignal(signal, async () => {
         signal.throwIfAborted();
         const searchId = getAiUsageContext().searchId;
         const savedForRefresh = options.priceOnly ? await privateEvaluations.load(itemId) : null;
@@ -250,6 +347,8 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         const evaluation: Evaluation = { assessmentVersion: requestedPlan.version, conditionVersion: requestedPlan.conditionVersion, pricingVersion: PRICING_VERSION,
             listing: { id: listing.id, title: listing.title, url: listing.url, listedAt: listing.listedAt, createdAt: listing.createdAt,
                 availability: ended ? "UNAVAILABLE" : listing.availability, termsCheckedAt: listing.retrievedAt, bestOffer: listing.bestOffer,
+                ...(listing.buyingOption === "AUCTION" && details.auctionBids && details.retrievedAt &&
+                    { auctionQuote: { ...details.auctionBids, checkedAt: details.retrievedAt } }),
                 price: listing.price, shipping: listing.shipping, buyingOption: listing.buyingOption, bids: listing.bids, endTime: listing.endTime,
                 photos: listing.images, photosInListing: listing.images.length, photosAnalyzed: 0, cardCondition: listing.cardCondition, conditionNotes: listing.conditionNotes,
                 seller: listing.seller, sellerCondition: listing.condition, aspects: listing.aspects },
@@ -277,6 +376,22 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         let legacyReview: Pick<Evaluation, "answeredAt" | "photoReviewKey" | "deeperPhotoReview"> | undefined;
         let priorSnapshot = savedForRefresh;
         const publish = async (draft: Evaluation) => {
+            // A fresh saved valuation can already answer the purchase question.
+            // Fill optional nearby-grade context from the cache without repricing raw sales or rechecking photos.
+            const range = draft.reusedSteps.includes("savedEvaluation") && provisionalComparisonRange(draft);
+            const psa = draft.gradedPricing?.PSA, identity = draft.identity;
+            if (range && psa && !psa.referenceByGrade && identity?.recordId && readyForPricing(identity) && !unsupportedVariantReason(draft) &&
+                !sellerCreaseOverridesCondition(draft.condition!.rawCondition, draft.listing.conditionNotes)) {
+                const record = await deps.cachedPricingRecord(String(identity.recordId));
+                if (record && sameSetFamily(record.setName, identity.set) && sameCardNumber(record.cardNumber, identity.cardNumber) &&
+                    sameCatalogName(record.name, identity.name)) {
+                    const reference = await gradedPricesFor(mergeFamily([record]), identity, range, { grader: "PSA", now: deps.now(),
+                        fetchComps: deps.fetchCachedComps, cachedChecks: deps.compChecks });
+                    if (reference.byGrade) psa.referenceByGrade = reference.byGrade;
+                    const likely = reference.byGrade?.find(row => row.grade === range.likely && row.count > 0);
+                    if (likely) psa.referenceGradeComps = likely;
+                }
+            }
             if (!draft.deeperPhotoReview && legacyReview && draft.assessmentVersion === ANALYSIS_VERSION && draft.answeredAt === legacyReview.answeredAt) {
                 draft.photoReviewKey = legacyReview.photoReviewKey;
                 draft.deeperPhotoReview = legacyReview.deeperPhotoReview;
@@ -286,8 +401,36 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                 prior?.assessmentVersion === draft.assessmentVersion && prior?.answeredAt === draft.answeredAt;
             const scope = (options.priceOnly || sameAssessment) ? priorSnapshot?.searchId ?? privateContext.searchId : privateContext.searchId;
             const result = await restoreBoundedPhotoReview(draft, scope, deps.cached);
-            result.underwriting = underwrite(result); result.rating = rateDeal(result);
+            result.underwriting = underwrite(result, money); result.rating = rateDeal(result);
+            // Recompute optional references against this identity and the original purchase terms.
+            delete result.trackerRawReference;
+            delete result.trackerPriceReference;
+            delete result.webPriceResearch;
+            delete result.supplementalPriceNote;
+            if (deps.supplemental && scope && !ended && verifiedFixedPriceTerms() && !options.addedPhotosOnly) {
+                const supplement = deps.supplemental;
+                Object.assign(result, await withAiUsageContext({ searchId: scope, listingId: itemId }, () =>
+                    supplement(result, { cacheOnly: Boolean(options.priceOnly && !options.verifySoldCondition), now: deps.now(), signal })));
+            }
             if (result.photoCheck) await privateEvaluations.save(result, { ...privateContext, searchId: scope });
+            // A tentative grade can turn an otherwise profitable purchase into a loss.
+            // Save first: the reviewer checks the persisted gallery and owns its evidence cache.
+            if (deps.secondOpinion && scope && result.photoReviewKey && !result.deeperPhotoReview && !result.slab &&
+                !options.priceOnly && !options.addedPhotosOnly && verifiedFixedPriceTerms() &&
+                result.underwriting.verdict === "BUY_AND_GRADE" && result.condition?.confidence !== "HIGH" &&
+                result.underwriting.best?.downside != null && result.underwriting.best.downside <= 0) {
+                try {
+                    result.deeperPhotoReview = await deps.secondOpinion(itemId, result.photoReviewKey, signal);
+                    result.underwriting = underwrite(result, money);
+                    result.rating = rateDeal(result);
+                } catch (error) {
+                    signal.throwIfAborted();
+                    const storage = storageFailure(error), spending = aiSpendingFailure(error);
+                    if (storage) throw storage;
+                    if (spending && !(spending instanceof AiSearchAllowanceError) && spending.code !== "AI_PAUSED") throw spending;
+                    result.modeReasons.push("The second opinion was unavailable. The initial grade estimate remains uncertain.");
+                }
+            }
             return result;
         };
         const finish = () => publish(withoutUnsupportedVariantPrices(withoutRawSlabAssessment(evaluation)));
@@ -303,13 +446,19 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         if (options.automatic && textureError) { evaluation.modeReasons = [textureError]; return finish(); }
         const eligibleNow = () => !signal.aborted && (!listing.endTime || Date.parse(listing.endTime) > deps.now()) &&
             (!options.automatic || withinAutomaticAuctionWindow(listing, deps.now()));
-        const deferWindow = () => { evaluation.modeReasons = ["Automatic auction analysis is limited to live auctions ending within the next 12 hours."]; evaluation.gradeStatus = "DEFERRED_AUCTION_WINDOW"; return finish(); };
-        if (!eligibleNow()) return deferWindow();
+        const deferWindow = () => { evaluation.modeReasons = ["Automatic auction analysis is limited to live auctions ending in less than 10 hours."]; evaluation.gradeStatus = "DEFERRED_AUCTION_WINDOW"; return finish(); };
+        if (!eligibleNow() || options.addedPhotosOnly && !withinAutomaticAuctionWindow(listing, deps.now())) return deferWindow();
         const legacy = reusableRecord(await deps.saved(itemId), { version: ANALYSIS_VERSION, fingerprint: photoFingerprint(listing.images.slice(0, 24)), title: listing.title });
         if (legacy?.deeperPhotoReview && legacy.deeperPhotoReview.inputKey === photoReviewKey(legacy)) {
             legacyReview = { answeredAt: legacy.answeredAt, photoReviewKey: legacy.deeperPhotoReview.inputKey, deeperPhotoReview: legacy.deeperPhotoReview };
         }
-        const legacyCondition = legacy?.assessment?.version === CONDITION_VERSION ? legacy.assessment.result : null;
+        const latest = legacy?.latestEvaluation?.evaluation;
+        const currentGallery = listingEvidenceKey({ title: listing.title, images: listing.images });
+        // Some old records retained the complete assessment only in their last
+        // evaluation. Its condition is independent of whether its prices expired.
+        const savedCondition = latest?.assessmentVersion === ANALYSIS_VERSION && latest.conditionVersion === CONDITION_VERSION &&
+            legacy?.latestEvaluation?.evidenceKey === currentGallery ? latest.condition : null;
+        const legacyCondition = legacy?.assessment?.version === CONDITION_VERSION ? legacy.assessment.result : savedCondition;
         const canReuseLegacy = Boolean(legacy?.photoCheck && (legacy.photoCheck.result.holder === "GRADED_SLAB" || legacyCondition));
         const legacyPrintingConflicts = canReuseLegacy && legacy?.identityPasses?.length
             ? printingMarkConflicts([legacy.photoCheck?.result.printingMarks, ...legacy.identityPasses.map(pass => pass.result.printingMarks)]) : [];
@@ -353,12 +502,21 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             correctedShared = shared;
             return true;
         };
-        const retryableStamp = (saved: Evaluation) => !saved.focusedStamp && Boolean(stampCandidate(saved)) && verifiedFixedPriceTerms();
+        const retryStampWithContext = (saved: Evaluation) => {
+            if (options.automatic || options.priceOnly || options.addedPhotosOnly || saved.focusedStamp?.result !== "CANT_TELL" ||
+                saved.focusedStamp.method !== undefined || !(priorSnapshot?.searchId || privateContext.searchId) || !verifiedFixedPriceTerms()) return false;
+            const candidate = stampCandidate(saved);
+            return Boolean(candidate && ordinaryNeoDestinyStamp(saved, candidate));
+        };
+        const retryableStamp = (saved: Evaluation) => retryStampWithContext(saved) || !saved.focusedStamp && Boolean(stampCandidate(saved)) && verifiedFixedPriceTerms();
+        const retryableFrame = (saved: Evaluation) => deps.frame && !saved.focusedPrinting && !options.addedPhotosOnly &&
+            (privateContext.searchId || priorSnapshot?.searchId) && verifiedFixedPriceTerms() && needsBaseSetFrame(saved) && !stampCandidate(saved);
+        const hasUnseenBackCandidate = (saved: Evaluation) => saved.assessmentVersion !== ANALYSIS_VERSION && needsWholeBack(saved.photoCheck) &&
+            unseenGalleryPhotos(listing.images, saved.photoCheck!.images.map(photo => photo.number)).length > 0;
         const remembered = savedForRefresh ?? await privateEvaluations.load(itemId);
         priorSnapshot = remembered;
-        const latest = legacy?.latestEvaluation?.evaluation;
         const revisedLatest = latest ? recheckSavedEvidence(latest, listing) : null;
-        if (!options.priceOnly && latest && hasSavedPrintingConflicts(latest) && !latest.frontPhotoStop && !retryableStamp(latest) && matchesPrintingClaim(latest) && !latest.pricingDeferred && !revisedLatest!.needsPricing && canReuseRawResearch(revisedLatest!.evaluation) && legacy?.latestEvaluation?.evidenceKey === listingEvidenceKey({ title: listing.title, images: listing.images }) && currentPriceEvidence(revisedLatest!.evaluation, deps.now()) && !await hasNewerSharedReading(latest)) {
+        if (!options.priceOnly && latest && hasSavedPrintingConflicts(latest) && !latest.frontPhotoStop && !hasUnseenBackCandidate(latest) && !retryableStamp(latest) && !retryableFrame(latest) && matchesPrintingClaim(latest) && !latest.pricingDeferred && !revisedLatest!.needsPricing && canReuseRawResearch(revisedLatest!.evaluation) && legacy?.latestEvaluation?.evidenceKey === currentGallery && currentPriceEvidence(revisedLatest!.evaluation, deps.now()) && !await hasNewerSharedReading(latest)) {
             if (cardLanguageStatus(listing.title, [latest.identity?.language, latest.photoCheck?.cardIdentity?.language]) === "OTHER") throw new EnglishOnlyError();
             const reused = withoutUnsupportedRawPrices(withoutUnsupportedVariantPrices(revisedLatest!.evaluation));
             reused.listing = { ...reused.listing, ...evaluation.listing, photosAnalyzed: latest.listing.photosAnalyzed };
@@ -366,7 +524,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             return publish(reused);
         }
         const revisedRemembered = remembered ? recheckSavedEvidence(remembered.evaluation, listing) : null;
-        if (!options.priceOnly && remembered?.contextKey === privateContext.contextKey && hasSavedPrintingConflicts(remembered.evaluation) && !remembered.evaluation.frontPhotoStop && !retryableStamp(remembered.evaluation) &&
+        if (!options.priceOnly && remembered?.contextKey === privateContext.contextKey && hasSavedPrintingConflicts(remembered.evaluation) && !remembered.evaluation.frontPhotoStop && !hasUnseenBackCandidate(remembered.evaluation) && !retryableStamp(remembered.evaluation) && !retryableFrame(remembered.evaluation) &&
             matchesPrintingClaim(remembered.evaluation) && !remembered.evaluation.pricingDeferred && !revisedRemembered!.needsPricing && canReuseRawResearch(revisedRemembered!.evaluation) && (remembered.evaluation.assessmentVersion === ANALYSIS_VERSION || plans.some(plan => plan.version === remembered.evaluation.assessmentVersion)) && currentPriceEvidence(revisedRemembered!.evaluation, deps.now()) && !await hasNewerSharedReading(remembered.evaluation)) {
             const reused = withoutUnsupportedRawPrices(withoutUnsupportedVariantPrices(revisedRemembered!.evaluation));
             if (cardLanguageStatus(listing.title, [reused.identity?.language, reused.photoCheck?.cardIdentity?.language]) === "OTHER") throw new EnglishOnlyError();
@@ -410,15 +568,17 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             JSON.stringify([identity.name, identity.set, identity.cardNumber, identity.printing, identity.finish, evaluation.condition?.rawCondition]);
         let frontRawPrices: { key: string; prices: NonNullable<Evaluation["rawPricing"]> } | undefined;
         const priceRaw = async (identity: NonNullable<Evaluation["identity"]>, card: PricedCard | null,
-            { allowSoldPhoto, rawOnly = false }: { allowSoldPhoto: boolean; rawOnly?: boolean }) => {
+            { allowSoldPhoto, verifySoldCondition = false, rawOnly = false }: { allowSoldPhoto: boolean; verifySoldCondition?: boolean; rawOnly?: boolean }) => {
             const condition = evaluation.condition;
             const prices: Pick<Evaluation, "rawPricing" | "gradedPricing"> = { rawPricing: null, gradedPricing: null };
             if (!condition) return prices;
             const creaseDisclosed = sellerCreaseOverridesCondition(condition.rawCondition, listing.conditionNotes);
             const inspect = rawOnly ? peek : guarded;
-            if (frontRawPrices?.key === rawPriceKey(identity)) prices.rawPricing = frontRawPrices.prices;
-            else if (condition.rawCondition !== "UNKNOWN") {
-                const requestedCondition = creaseDisclosed ? "DAMAGED" : condition.rawCondition;
+            const requestedCondition = creaseDisclosed ? "DAMAGED" : condition.rawCondition;
+            if (frontRawPrices?.key === rawPriceKey(identity) &&
+                (!verifySoldCondition || frontRawPrices.prices.prices?.some(row => row.condition === requestedCondition))) {
+                prices.rawPricing = frontRawPrices.prices;
+            } else if (requestedCondition !== "UNKNOWN") {
                 const sold = deps.soldCondition({ condition: requestedCondition, loadDetails: (...args) => inspect(() => deps.details(...args)),
                     cached: deps.cached, save: deps.save, now: deps.now });
                 const beforeRaw = priceLimits;
@@ -428,13 +588,18 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                     fetchRawComps: (...args) => inspect(() => deps.fetchRawComps(...args)), signal, now: deps.now(), requestedCondition,
                     assessCondition: (sale, target) => inspect(() => sold.read(sale, target, signal)),
                     conditionStatus: sold.status,
-                    acquireCondition: allowSoldPhoto ? async sales => {
+                    acquireCondition: allowSoldPhoto || verifySoldCondition ? async sales => {
                         // Resolving another copy's resale price cannot settle
                         // this copy's suspected structural damage or authenticity.
                         if (condition.creases === "SUSPECTED" || condition.authenticity.concern !== "NONE_SEEN") return null;
                         const shipping = listing.shipping ?? MONEY_CONFIG.buying.assumedShippingWhenUnknown;
-                        const pending = sales.filter(sale => sold.status(sale, identity) === "UNREVIEWED" &&
-                            matchesSoldTarget(sale, { name: identity.name!, setName: identity.set, cardNumber: identity.cardNumber }));
+                        const matching = sales.filter(sale => matchesSoldTarget(sale, { name: identity.name!, setName: identity.set, cardNumber: identity.cardNumber }));
+                        // One blind reading of a previously inspected sold copy can settle the
+                        // exact-condition price for every listing in this market, including passes.
+                        const revisit = verifySoldCondition ? matching.filter(sale => sold.status(sale, identity) === "CORROBORATABLE")
+                            .sort((a, b) => Date.parse(b.sold_at) - Date.parse(a.sold_at))[0] : undefined;
+                        if (!allowSoldPhoto && !revisit) return null;
+                        const pending = matching.filter(sale => sold.status(sale, identity) === "UNREVIEWED");
                         const price = verifiedOfferPrice() ?? listing.price;
                         if (price === null) return null;
                         const meetsTargets = (sale: Comp) => {
@@ -450,13 +615,13 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                         // Prices gate research on a whole cohort. Always inspect its newest sale,
                         // even when an older sale was the one that cleared the targets.
                         const candidates = [...cohorts.values()].find(group => group.some(meetsTargets));
-                        const sale = candidates?.sort((a, b) => Date.parse(b.sold_at) - Date.parse(a.sold_at))[0];
+                        const sale = revisit ?? candidates?.sort((a, b) => Date.parse(b.sold_at) - Date.parse(a.sold_at))[0];
                         if (!sale) {
                             if ([...cohorts.values()].some(group => group.length)) soldPhotoDeferred = { price, shipping, targets: money.targets };
                             return null;
                         }
                         const evidence = await guarded(async () => {
-                            try { return await sold.acquire(sale, identity, signal); }
+                            try { return await sold.acquire(sale, identity, signal, Boolean(revisit)); }
                             catch (error) {
                                 if (!(error instanceof AiSearchAllowanceError)) throw error;
                                 soldPhotoAllowanceDenied = true;
@@ -486,6 +651,23 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                     prices.gradedPricing[grader] = await gradedPricesFor(card, identity, condition.gradeRange, { grader, now: deps.now(),
                         fetchComps: (...args) => guarded(() => deps.fetchComps(...args)), cachedChecks: (...args) => guarded(() => deps.compChecks(...args)) });
                 } catch (error) { prices.gradedPricing[grader] = unavailable(error); }
+                // An estimated grade can provide a cached slab comparison even
+                // when neither raw condition nor grading upside can be priced.
+                const referenceGrade = !condition.gradeRange && displayedRawGrade({ ...evaluation, identity })?.range.likely;
+                if (referenceGrade && prices.gradedPricing.PSA) {
+                    const comparisonRange = provisionalComparisonRange({ ...evaluation, rawPricing: prices.rawPricing });
+                    const reference = await gradedPricesFor(card, identity, comparisonRange ?? { low: referenceGrade, high: referenceGrade, likely: referenceGrade }, {
+                        grader: "PSA", now: deps.now(),
+                        fetchComps: (...args) => peek(() => deps.fetchCachedComps(...args)),
+                        cachedChecks: (...args) => peek(() => deps.compChecks(...args)) });
+                    const likelySales = reference.byGrade?.find(row => Number(row.grade) === referenceGrade && row.count > 0);
+                    if (comparisonRange || likelySales) prices.gradedPricing.PSA = {
+                        ...prices.gradedPricing.PSA, source: reference.source, printing: reference.printing, variant: reference.variant,
+                        printingLabel: reference.printingLabel, grader: "PSA", referenceGradeComps: likelySales,
+                        ...(comparisonRange && { referenceByGrade: reference.byGrade ?? [] }),
+                        reason: "The raw grade is tentative. Certified sales at that grade are shown for comparison.",
+                    };
+                }
             }
             return prices;
         };
@@ -584,14 +766,28 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             };
             const assess = async (plan: BoundedAssessmentPlan, read: () => Promise<SharedAnswer | null>,
                 step: string, stage?: BoundedPhotoStage): Promise<SharedAnswer> => {
-                if (options.priceOnly) {
+                const { photos, key } = plan;
+                const rejectedKey = `${key}:rejected`;
+                const prepareReading = (reading: BoundedReading) => {
+                    if (reading.photoCheck.holder === "GRADED_SLAB") reading.condition = null;
+                    else if (stage?.kind === "front" && reading.condition) reading.condition.gradeRange = null;
+                };
+                const readEvidence = async (): Promise<SharedAnswer | null> => {
                     const cached = await read();
+                    if (cached) return cached;
+                    const rejected = await deps.cached<Record<string, unknown>>(rejectedKey, CACHE_HOURS);
+                    if (rejected === null) return null;
+                    const recovered = recoverSavedRejection(rejected, plan, deps.now());
+                    prepareReading(recovered.reading);
+                    return recovered;
+                };
+                if (options.priceOnly) {
+                    const cached = await readEvidence();
                     signal.throwIfAborted();
                     if (!cached) throw new PriceOnlyEvidenceError("The current listing needs a new photo assessment before it can be repriced.");
                     evaluation.reusedSteps.push(step);
                     return cached;
                 }
-                const { photos, key } = plan;
                 const consumers = neededReadings.get(key) ?? new Set<ReadingConsumer>();
                 const consumer: ReadingConsumer = { needed: eligibleNow, context: { ...getAiUsageContext(), listingId: itemId } };
                 consumers.add(consumer); neededReadings.set(key, consumers);
@@ -599,10 +795,14 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                 try {
                     const answer = await shareReading(key, async readingSignal => {
                         startedHere = true;
-                        const cached = await read();
+                        const cached = await readEvidence();
                         if (cached) return cached;
-                        const rejectedKey = `${key}:rejected`;
-                        if (await deps.cached(rejectedKey, CACHE_HOURS) !== null) return invalidReading();
+                        if (options.addedPhotosOnly) {
+                            const original = remembered?.evaluation.listing.photos;
+                            const existing = new Set(original?.map(normalizedPhoto));
+                            if (stage?.kind !== "gallery" || !original || photos.some(photo => existing.has(normalizedPhoto(photo.url))))
+                                throw new PriceOnlyEvidenceError("This check can only inspect new seller photos against the saved assessment.");
+                        }
                         // Only a live consumer sponsors the dispatch. A stopped
                         // owner can hand the shared work to another search.
                         const denied = new Map<ReadingConsumer, PriceResearchBudgetError>();
@@ -624,15 +824,18 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                             let reading: BoundedReading;
                             try { reading = validateBoundedReading(accepted.result, photos.length, plan.mode); }
                             catch (error) {
-                                if (!(error instanceof StorageUnavailableError)) throw error;
+                                if (!(error instanceof InvalidBoundedReading)) throw error;
                                 // Keep the rejected paid answer separate from valid
                                 // evidence, including the accepted first stage.
-                                await deps.save(rejectedKey, { ...accepted, version: plan.version, answeredAt,
-                                    photoNumbers: photos.map(photo => photo.number), reason: error.message });
-                                throw error;
+                                try {
+                                    await deps.save(rejectedKey, { ...accepted, version: plan.version, answeredAt,
+                                        photoNumbers: photos.map(photo => photo.number), reason: error.message });
+                                } catch (cause) {
+                                    throw new StorageUnavailableError("The rejected photo assessment could not be saved. Analysis is paused.", { cause });
+                                }
+                                throw new RejectedPhotoAssessmentError(error.reason);
                             }
-                            if (reading.photoCheck.holder === "GRADED_SLAB") reading.condition = null;
-                            else if (stage?.kind === "front" && reading.condition) reading.condition.gradeRange = null;
+                            prepareReading(reading);
                             // Keep accepted evidence even if every browser stops.
                             await deps.save(key, { ...reading, version: plan.version, answeredAt, usage: accepted.usage });
                             return { reading, answeredAt, cached: false, usage: accepted.usage, plan };
@@ -663,14 +866,27 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                 evaluation.listing.photosAnalyzed = photos.length;
             };
             try {
+                let firstNewPhoto = 1;
                 let answer = correctedShared ?? await readShared();
                 if (answer) evaluation.reusedSteps.push("boundedPhotoAssessment");
-                else if (listing.buyingOption === "FIXED_PRICE" && typeof details.bestOffer === "boolean" && requestedPlan.photos.length > 1) {
+                if (!answer) {
+                    answer = previousGalleryReading(remembered, listing, plans, deps.now());
+                    if (answer) {
+                        evaluation.reusedSteps.push("previousGalleryPhotos");
+                        firstNewPhoto = (remembered?.evaluation.listing.photos?.length ?? 0) + 1;
+                    }
+                }
+                if (!answer && options.addedPhotosOnly)
+                    throw new PriceOnlyEvidenceError("The previous photos or card details cannot be matched to this gallery. Open analysis for a fresh review.");
+                if (!answer && listing.buyingOption === "FIXED_PRICE" && typeof details.bestOffer === "boolean" && requestedPlan.photos.length > 1) {
                     const frontPlan = stagedPhotoPlan(listing, requestedPlan, "front");
                     const first = await assess(frontPlan, () => readStage(frontPlan), "frontPhotoAssessment", { kind: "front" });
                     applyReading(first);
                     if (requestedPlan.mode === "RAW" && listing.images.length === 2 && frontShowsDifferentNumber(listing, first.reading.photoCheck)) {
                         evaluation.modeReasons.push("The first photo shows a different collector number from both the listing title and item specifics.");
+                        answer = first;
+                    } else if (hasUnlocatedConcern(first.reading.condition?.authenticity)) {
+                        // Another view cannot target a concern that names no feature or photo.
                         answer = first;
                     } else {
                         if ((!options.priceOnly || remembered?.evaluation.frontPhotoStop) && await finishAfterFront()) return finish();
@@ -681,32 +897,52 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                         const front = slab ? { ...originalFront, condition: null } : originalFront;
                         const nextPlan = slab && requestedPlan.mode === "RAW" ? plans.find(plan => plan.mode === "SLAB_LABEL")! : requestedPlan;
                         const remainder = stagedPhotoPlan(listing, nextPlan, "remainder", front);
-                        const previous = requestedPlan.mode === "RAW"
-                            ? plans.find(plan => plan.version === `${requestedPlan.model}/bounded-prompts-${PREVIOUS_BOUNDED_REVIEW_REVISION}`) : undefined;
-                        const earlierPlan = previous ?? requestedPlan;
+                        const priorPlans = plans.filter(plan => plan.mode === "RAW" && requestedPlan.mode === "RAW" &&
+                            plan.model === requestedPlan.model && plan.version !== nextPlan.version);
+                        const compatible = [nextPlan, ...priorPlans];
                         const rest = await assess(remainder, async () => {
-                            const current = await readStage(remainder);
-                            if (current) return current;
-                            if (nextPlan !== requestedPlan) {
-                                const saved = await readStage(stagedPhotoPlan(listing, requestedPlan, "remainder", originalFront));
+                            for (const plan of compatible) {
+                                const stage = stagedPhotoPlan(listing, plan, "remainder", plan === nextPlan ? front : originalFront);
+                                const saved = await readStage(stage);
                                 if (saved) return saved;
+                                if (first.cached) {
+                                    const historical = await readStage(stagedPhotoPlan(listing, plan, "remainder", first.reading));
+                                    if (historical) return historical;
+                                }
                             }
-                            if (previous) {
-                                const saved = await readStage(stagedPhotoPlan(listing, previous, "remainder", originalFront));
-                                if (saved) return saved;
-                            }
-                            return first.cached ? readStage(stagedPhotoPlan(listing, earlierPlan, "remainder", first.reading)) : null;
+                            return null;
                         }, "remainingPhotoAssessment", { kind: "remainder", front });
-                        const sourcePlan = rest.plan.version === remainder.version ? nextPlan :
-                            rest.plan.version === `${requestedPlan.version}/remainder-1` ? requestedPlan : earlierPlan;
-                        answer = { ...rest, plan: sourcePlan, reading: combinePhotoReadings(front, rest.reading) };
+                        const sourcePlan = compatible.find(plan => rest.plan.version === `${plan.version}/remainder-1`)!;
+                        let composite = false;
+                        if (couldBeFrontBackComposite(listing, front.photoCheck, rest.reading.photoCheck)) {
+                            const key = `${remainder.key}:front-back-composite-2`;
+                            const saved = await deps.cached<boolean>(key, CACHE_HOURS);
+                            if (saved !== null && typeof saved !== "boolean") throw new StorageUnavailableError("Saved composite photo evidence is invalid.");
+                            const match = saved ?? (options.priceOnly ? null : await deps.checkComposite(listing.images, signal));
+                            if (saved === null && match !== null) await deps.save(key, match);
+                            composite = match === true;
+                            if (composite) evaluation.modeReasons.push("The first photo repeats the separate front and back photos of the card.");
+                        }
+                        answer = { ...rest, plan: sourcePlan, reading: combinePhotoReadings(front, rest.reading, composite) };
                         evaluation.modeReasons.push("Checked the first photo before requesting the remaining selected views.");
                     }
-                } else answer = await assess(requestedPlan, readShared, "boundedPhotoAssessment");
+                } else if (!answer) answer = await assess(requestedPlan, readShared, "boundedPhotoAssessment");
 
+                while (answer.plan.mode === "RAW" && !hasUnlocatedConcern(answer.reading.condition?.authenticity) && needsWholeBack(answer.reading.photoCheck)) {
+                    const unseen = unseenGalleryPhotos(listing.images, answer.plan.photos.map(photo => photo.number))
+                        .filter(photo => photo.number >= firstNewPhoto).slice(0, BOUNDED_PHOTO_LIMIT);
+                    if (!unseen.length) break;
+                    // Cache reads include persistence metadata; only observations belong in the request and its key.
+                    const prior: BoundedReading = { photoCheck: answer.reading.photoCheck, condition: answer.reading.condition };
+                    const extraPlan = galleryReviewPlan(listing, requestedPlan, unseen, prior);
+                    if (options.priceOnly && !await readStage(extraPlan)) break;
+                    const extra = await assess(extraPlan, () => readStage(extraPlan), "remainingGalleryBackCheck", { kind: "gallery", prior });
+                    answer = { ...extra, reading: combinePhotoReadings(prior, extra.reading),
+                        plan: { ...requestedPlan, photos: [...answer.plan.photos, ...unseen] } };
+                }
                 applyReading(answer);
                 const sourcePhotos = answer.plan.photos;
-                evaluation.modeReasons.push(`Checked listing photos ${sourcePhotos.map(photo => photo.number).join(", ")} of ${listing.images.length}. Unselected photos were not assessed.`);
+                evaluation.modeReasons.push(`Checked listing photos ${sourcePhotos.map(photo => photo.number).join(", ")} of ${listing.images.length}.${sourcePhotos.length < listing.images.length ? " Unselected photos were not assessed." : ""}`);
                 if (answer.plan.mode === "SLAB_LABEL" && answer.reading.photoCheck.holder !== "GRADED_SLAB") evaluation.modeReasons.push("The seller's graded-card claim was not confirmed. This label check did not start a separate raw-condition assessment.");
             } catch (error) {
                 if (error instanceof CandidateOutsideWindow) return deferWindow();
@@ -725,7 +961,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         // Reuse the focused observation when purchase terms or pricing age
         // require a fresh valuation of the same accepted photo assessment.
         const previousStamp = remembered?.evaluation.focusedStamp;
-        if (previousStamp && remembered.contextKey === privateContext.contextKey &&
+        if (previousStamp && !retryStampWithContext(remembered.evaluation) && remembered.contextKey === privateContext.contextKey &&
             remembered.evaluation.assessmentVersion === evaluation.assessmentVersion && remembered.evaluation.answeredAt === evaluation.answeredAt &&
             check.printingMarks?.firstEditionStamp === "CANT_TELL" && !check.printingMarks.conflicts?.includes("firstEditionStamp") &&
             ["VISIBLE", "NOT_PRESENT", "CANT_TELL"].includes(previousStamp.result) &&
@@ -747,8 +983,8 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             // independent, and the original paid reading remains unchanged.
             const source = evaluation.condition;
             const condition = applyConditionRules(source, mode.mode, { closeUps: hasCloseUps(check), photoCount: listing.images.length });
-            const hasRequiredGrade = evaluation.assessmentVersion?.endsWith(`/bounded-prompts-${BOUNDED_REVIEW_REVISION}`);
-            if (condition && source.gradeRange && (mode.mode === "BLOCKED" || hasRequiredGrade && condition.confidence === "LOW")) {
+            const hasRequiredGrade = [3, BOUNDED_REVIEW_REVISION].some(revision => evaluation.assessmentVersion?.endsWith(`/bounded-prompts-${revision}`));
+            if (condition && source.gradeRange && (isWideGradeRange(source.gradeRange) || mode.mode === "BLOCKED" || hasRequiredGrade && condition.confidence === "LOW")) {
                 evaluation.provisionalGradeRange = source.gradeRange;
                 condition.gradeRange = null;
             }
@@ -765,7 +1001,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         if (obscuredDisclosedWear(evaluation)) return finish();
         const identify = (reading: typeof check) => deps.identify({ ...listing, aspects }, reading, { lookupCards: query => guarded(() => deps.lookup(query)), readTitle: readTitleByRules,
             ...(legacyResolution?.confirmation ? { photoIdentity: legacyResolution.confirmation } : {}) });
-        const identified = await identify(check);
+        let identified = await identify(check);
         if (hardFailure) throw hardFailure;
         evaluation.identity = identified.identity;
         if (priceLimits && identified.lookupFailed) evaluation.pricingDeferred!.identityLookupPending = true;
@@ -785,49 +1021,106 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             evaluation.identity.status = "NEEDS_REVIEW";
             evaluation.identity.reasons.push("The bounded photos do not establish the exact English card identity. Seller wording alone cannot confirm it.");
         }
-        // The optional crop can settle an unknown stamp only when two exact,
-        // independently priced alternatives lead to opposite buying decisions.
-        // Do not use unverified browser price/shipping overrides for this gate.
+        if (hasUnlocatedConcern(evaluation.condition?.authenticity)) return finish();
+        // Prefer the existing stamp-only decision when the original view already establishes a shadowless frame.
+        if (needsBaseSetFrame(evaluation) && !stampCandidate(evaluation) && !legacyResolution?.finishConflict) {
+            const sameAssessment = remembered?.contextKey === privateContext.contextKey &&
+                remembered.evaluation.assessmentVersion === evaluation.assessmentVersion && remembered.evaluation.answeredAt === evaluation.answeredAt;
+            let focus = sameAssessment ? storedFrameReading(remembered.evaluation.focusedPrinting, check) : undefined;
+            if (focus) evaluation.reusedSteps.push("focusedArtworkFrame");
+            const scope = sameAssessment ? remembered.searchId ?? privateContext.searchId : privateContext.searchId;
+            if (!focus && deps.frame && scope && !options.priceOnly && !options.addedPhotosOnly && verifiedFixedPriceTerms()) {
+                const read = deps.frame;
+                const deadline = Math.min(Date.parse(details.retrievedAt!) + STAMP_TERMS_MAX_AGE_MS,
+                    listing.endTime ? Date.parse(listing.endTime) : Infinity);
+                const dispatchSignal = AbortSignal.any([signal, AbortSignal.timeout(Math.max(0, deadline - deps.now()))]);
+                try {
+                    const answer = await withAiUsageContext({ searchId: scope, listingId: itemId }, async () => {
+                        await deps.assertPriceAvailable(dispatchSignal);
+                        return read(evaluation, dispatchSignal);
+                    });
+                    signal.throwIfAborted();
+                    if (answer) {
+                        focus = storedFrameReading(answer.focus, check);
+                        if (answer.reused) evaluation.reusedSteps.push("focusedArtworkFrame");
+                        else evaluation.usage.push({ step: "focusedArtworkFrame", ...answer.usage });
+                    }
+                } catch (error) {
+                    signal.throwIfAborted();
+                    const stop = stopFailure(error);
+                    if (stop && !(stop instanceof AiSearchAllowanceError) && !(stop instanceof AiSpendingError && stop.code === "AI_PAUSED")) throw stop;
+                    if (error instanceof PriceResearchBudgetError && error.reason !== "LIMIT") throw error;
+                    evaluation.modeReasons.push("A focused check of the artwork frame was unavailable. The printing is still uncertain.");
+                }
+            }
+            if (focus) {
+                evaluation.focusedPrinting = focus;
+                evaluation.modeReasons.push(`Focused check of photo ${focus.photoNumber}: ${focus.observation}`);
+                const revised = applyFrameReading(check, focus);
+                if (revised) {
+                    identified = await identify(revised);
+                    if (hardFailure) throw hardFailure;
+                    evaluation.photoCheck = revised;
+                    evaluation.identity = identified.identity;
+                    if (priceLimits && identified.lookupFailed) evaluation.pricingDeferred!.identityLookupPending = true;
+                }
+                if (!readyForPricing(evaluation.identity)) return finish();
+            }
+        }
         if (!readyForPricing(evaluation.identity)) {
-            if (options.priceOnly || evaluation.focusedStamp || !stampCandidate(evaluation) || !verifiedFixedPriceTerms()) return finish();
+            const candidate = stampCandidate(evaluation);
+            if (options.priceOnly || options.addedPhotosOnly || evaluation.focusedStamp || !candidate || !verifiedFixedPriceTerms()) return finish();
+            const sameAssessment = remembered?.contextKey === privateContext.contextKey &&
+                remembered.evaluation.assessmentVersion === evaluation.assessmentVersion && remembered.evaluation.answeredAt === evaluation.answeredAt;
+            const scope = (sameAssessment && remembered.searchId) || privateContext.searchId;
+            // An individual assessment may resolve this edition from the existing
+            // front. Automatic discovery pays only for an actionable price scenario.
+            const requestedRead = !options.automatic && scope && ordinaryNeoDestinyStamp(evaluation, candidate);
             try {
-                const decision = await findStampDecision(evaluation, {
+                const decision = requestedRead ? null : await findStampDecision(evaluation, {
                     targets: money.targets, now: deps.now(), identify, signal,
                     price: (identity, card) => priceRaw(identity, card, { allowSoldPhoto: false }),
                 });
                 if (hardFailure) throw hardFailure;
-                if (decision && !evaluation.pricingDeferred && verifiedFixedPriceTerms()) {
-                    const deadline = Math.min(Date.parse(details.retrievedAt!) + STAMP_TERMS_MAX_AGE_MS,
-                        evaluation.listing.endTime ? Date.parse(evaluation.listing.endTime) : Infinity);
-                    const answer = await deps.stamp(evaluation.listing, check,
-                        AbortSignal.any([signal, AbortSignal.timeout(Math.max(0, deadline - deps.now()))]));
-                    signal.throwIfAborted();
-                    if (answer) {
-                        if (answer.reused) evaluation.reusedSteps.push("focusedEditionStamp");
-                        else evaluation.usage.push({ step: "focusedEditionStamp", ...answer.usage });
-                        if (verifiedFixedPriceTerms()) {
-                            evaluation.focusedStamp = { result: answer.result, ...answer.source };
-                            const note = stampNote(evaluation.focusedStamp);
-                            evaluation.modeReasons.push(note);
-                            if (answer.result !== "CANT_TELL") {
-                                const selected = decision[answer.result];
-                                selected.check.printingMarks!.evidence = [...(selected.check.printingMarks!.evidence ?? []), note];
-                                selected.identity.evidence!.photoNotes = [...(selected.identity.evidence!.photoNotes ?? []), note];
-                                Object.assign(evaluation, { photoCheck: selected.check, identity: selected.identity,
-                                    rawPricing: selected.rawPricing, gradedPricing: selected.gradedPricing, pricesCheckedAt: new Date(deps.now()).toISOString() });
-                            }
-                        }
-                    }
+                if ((!requestedRead && !decision) || evaluation.pricingDeferred || !verifiedFixedPriceTerms()) return finish();
+                const deadline = Math.min(Date.parse(details.retrievedAt!) + STAMP_TERMS_MAX_AGE_MS,
+                    evaluation.listing.endTime ? Date.parse(evaluation.listing.endTime) : Infinity);
+                const dispatchSignal = AbortSignal.any([signal, AbortSignal.timeout(Math.max(0, deadline - deps.now()))]);
+                const read = () => deps.stamp(evaluation.listing, check, dispatchSignal);
+                const answer = scope ? await withAiUsageContext({ searchId: scope, listingId: itemId }, read) : await read();
+                signal.throwIfAborted();
+                if (!answer) return finish();
+                if (answer.reused) evaluation.reusedSteps.push("focusedEditionStamp");
+                else evaluation.usage.push({ step: "focusedEditionStamp", ...answer.usage });
+                evaluation.focusedStamp = { result: answer.result, ...answer.source };
+                const note = stampNote(evaluation.focusedStamp);
+                evaluation.modeReasons.push(note);
+                if (answer.result === "CANT_TELL") return finish();
+                const observed = { ...check, printingMarks: { ...candidate.marks, firstEditionStamp: answer.result,
+                    evidence: [...(candidate.marks.evidence ?? []), note] } };
+                evaluation.photoCheck = observed;
+                const selected = decision?.[answer.result];
+                if (selected && verifiedFixedPriceTerms()) {
+                    selected.identity.evidence!.photoNotes = observed.printingMarks.evidence;
+                    Object.assign(evaluation, { identity: selected.identity, rawPricing: selected.rawPricing,
+                        gradedPricing: selected.gradedPricing, pricesCheckedAt: new Date(deps.now()).toISOString() });
+                    return finish();
                 }
+                identified = await identify(observed);
+                evaluation.identity = identified.identity;
+                if (hardFailure) throw hardFailure;
+                if (!readyForPricing(evaluation.identity) || !verifiedFixedPriceTerms()) return finish();
             } catch (error) {
                 signal.throwIfAborted();
                 const failure = hardFailure ?? storageFailure(error);
                 if (failure) throw failure;
+                const spending = aiSpendingFailure(error);
+                if (spending?.code === "AI_EVIDENCE_HELD") throw spending;
                 if (error instanceof PriceResearchBudgetError && error.reason !== "LIMIT") throw error;
                 // A denied reservation, failed crop or unavailable comparison
                 // leaves the original unresolved assessment available.
+                return finish();
             }
-            return finish();
         }
         if (unsupportedVariantReason(evaluation)) return finish();
         const identity = evaluation.identity;
@@ -839,8 +1132,9 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                         fetchComps: (...args) => guarded(() => deps.fetchComps(...args)), cachedChecks: (...args) => guarded(() => deps.compChecks(...args)), now: deps.now() });
             } catch (error) { evaluation.slabPricing = unavailable(error); }
         } else {
-            if (!evaluation.condition || evaluation.condition.rawCondition === "UNKNOWN" && !evaluation.condition.gradeRange) return finish();
-            Object.assign(evaluation, await priceRaw(identity, identified.card, { allowSoldPhoto: !options.priceOnly }));
+            if (!evaluation.condition || evaluation.condition.rawCondition === "UNKNOWN" && !evaluation.condition.gradeRange &&
+                !evaluation.provisionalGradeRange?.likely) return finish();
+            Object.assign(evaluation, await priceRaw(identity, identified.card, { allowSoldPhoto: !options.priceOnly && !options.addedPhotosOnly, verifySoldCondition: isSearchDiagnosticId(searchId) && !options.addedPhotosOnly && (!options.priceOnly || options.verifySoldCondition === true) }));
             // A terms-only refresh cannot complete a legacy gap that still needs a sold photo.
             if (savedForRefresh?.evaluation.pricingVersion === PREVIOUS_PRICING_VERSION && evaluation.rawPricing?.status === "PRICE_UNAVAILABLE") {
                 evaluation.pricingVersion = PREVIOUS_PRICING_VERSION;
@@ -851,4 +1145,4 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         return finish();
     }), options.signal);
 }
-export const evaluateBoundedListing = createBoundedEvaluator();
+export const evaluateBoundedListing = createBoundedEvaluator({ frame: readBaseSetFrame, secondOpinion: reviewListingPhotos, supplemental: supplementalResearch });

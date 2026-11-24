@@ -12,10 +12,9 @@ const auction = (id: string, end: number): ListingSummary => ({ id, title: `Poke
 test("cached intent latency cannot widen the auction window beyond search start", async t => {
     const start = Date.now(); let clock = start; t.mock.method(Date, "now", () => clock);
     const titleReads: string[] = [];
-    const rows = [auction("late", start + 12 * 3600000 + 1000), auction("inside", start + 12 * 3600000 - 1000), auction("ended", start + 1000)];
+    const rows = [auction("late", start + 10 * 3600000 + 1000), auction("inside", start + 10 * 3600000 - 1000), auction("ended", start + 1000)];
     const steps = offlineSearchSteps(rows, {
         readIntent: async () => { await Promise.resolve(); clock += 5000; return intent; },
-        search: async (_query, options) => { assert.equal(options?.asOf, start); return { listings: rows, total: 3, skipped: 0 }; },
         readTitle: async title => { titleReads.push(title); return offlineSearchSteps([]).readTitle(title); },
     });
     assert.deepEqual((await findDeals("pokemon", {}, steps)).map(row => row.id), ["inside"]);

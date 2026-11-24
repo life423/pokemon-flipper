@@ -1,5 +1,6 @@
 import { isRawCondition, type RawCondition } from "./conditions.ts";
 import { cardSpecificNotes } from "./ebay-condition-notes.ts";
+import { legendaryCharizardLabelFinish, legendaryCharizardFinishNote } from "./psa-legendary-charizard.ts";
 import { finishClaim } from "./finish.ts";
 import { readyForPricing } from "./identity.ts";
 import { normalizedPhoto } from "./listing-evidence.ts";
@@ -9,6 +10,17 @@ const VIEW_NAMES: Record<string, string> = { FRONT: "front", BACK: "back", FRONT
 
 type CardPhotos = Partial<Pick<PhotoCheck, "cardIdentity" | "cardCount" | "images">>;
 
+export function needsWholeBack(check: PhotoCheck | null | undefined): boolean {
+    return Boolean(check?.cardCount === "ONE" && check.holder !== "GRADED_SLAB" &&
+        check.cardMatch?.verdict !== "MISMATCH" && check.images.some(photo => photo.view === "FRONT" && photo.usable && !photo.isStockImage) &&
+        !check.images.some(photo => photo.view === "BACK" && photo.usable && !photo.isStockImage));
+}
+
+export function needsAddedBackPhoto(evaluation?: Evaluation | null): boolean {
+    return Boolean(evaluation && !evaluation.frontPhotoStop && !evaluation.identity?.notThisCard &&
+        evaluation.condition?.authenticity?.concern !== "LIKELY_FAKE" && needsWholeBack(evaluation.photoCheck));
+}
+
 export function confirmedPhotoCard(check?: CardPhotos | null) {
     const card = check?.cardIdentity;
     return card?.confidence === "HIGH" && check?.cardCount === "ONE" &&
@@ -16,10 +28,36 @@ export function confirmedPhotoCard(check?: CardPhotos | null) {
 }
 
 export function conflictsWithPhotoFinish(check: CardPhotos | null | undefined, finish: string | null | undefined): boolean {
+    const fromLabel = legendaryCharizardLabelFinish(check);
+    if (fromLabel && finish) return fromLabel === "UNKNOWN" ? finish !== "CONFLICTING" : fromLabel !== finish;
     const card = confirmedPhotoCard(check);
     if (!card?.evidence?.length || card.finish === "UNKNOWN") return false;
     const claim = finish === "CONFLICTING" ? finish : finishClaim(finish);
     return claim !== "NOT_STATED" && claim !== card.finish;
+}
+
+// Report the field that disagrees. A raw card in a protective holder has no slab label.
+export function photoFinishConflictReason(check: (CardPhotos & Partial<Pick<PhotoCheck, "slab" | "holder">>) | null | undefined,
+    finish: string | null | undefined, listing: { title?: string; aspects?: Record<string, string> }): string | null {
+    if (!conflictsWithPhotoFinish(check, finish)) return null;
+    const fromLabel = legendaryCharizardLabelFinish(check);
+    if (fromLabel) return legendaryCharizardFinishNote(fromLabel);
+    const observed = check!.cardIdentity!.finish;
+    const display = (value: string) => value.toLowerCase().replaceAll("_", " ");
+    const claims = [
+        ["The slab label", check?.holder === "GRADED_SLAB" && check.slab?.present ? check.slab.labelText : null],
+        ["The listing title", listing.title],
+        ["The seller’s Finish field", listing.aspects?.Finish],
+        ["The seller’s Features field", listing.aspects?.Features],
+    ] as const;
+    for (const [source, text] of claims) {
+        const claim = finishClaim(text);
+        if (claim === "NOT_STATED" || claim === observed) continue;
+        if (claim === "CONFLICTING") return `The photo shows ${display(observed)}. ${source} gives conflicting finishes.`;
+        const label = /^(regular|normal)$/i.test(text?.trim() ?? "") ? text!.trim() : display(claim);
+        return `The photo shows ${display(observed)}. ${source} says ${label}.`;
+    }
+    return `The photo shows ${display(observed)}. The saved finish does not match that observation.`;
 }
 
 // Holder evidence is independent of readable grades, certificate checks and
@@ -77,11 +115,32 @@ export function withoutRawSlabAssessment(evaluation: Evaluation): Evaluation {
     return { ...slab, condition: null, gradingMode: "BLOCKED", gradeStatus, rawPricing: null, gradedPricing: null };
 }
 
+// Each stage sees only its inputs. Gallery coverage is determined from all
+// reviewed views. Keep actual defects and limits local to the individual photo.
+export function individualPhotoIssues(issues: string[]): string[] {
+    return issues.flatMap(issue => {
+        const clauses = issue.split(/;\s*/).map(clause => clause.trim()).filter(clause =>
+            !/^only (?:the )?(?:front|back)(?: photo| view)? (?:is )?(?:supplied|provided|shown|visible)[.!]?$/i.test(clause) &&
+            !/^(?:the )?(?:full )?(?:front|back)(?: photo| view)? (?:is |was )?(?:unavailable|missing|not (?:supplied|provided|shown|visible))[.!]?$/i.test(clause));
+        const note = clauses.map(clause => /^(?:back|front) and edge details are unavailable[.!]?$/i.test(clause)
+            ? "Edge detail is unavailable in this photo." : clause).join("; ");
+        return note ? [note] : [];
+    });
+}
+
+export function missingGalleryViews(check: PhotoCheck): string[] {
+    const { fronts, backs } = photoCoverage(check);
+    return check.missingViews.filter(view => {
+        const side = /^(?:full[ _-])?(front|back)(?:[ _-](?:photo|view))?(?: in the new input[.;].*)?$/i.exec(view)?.[1]?.toUpperCase();
+        return side === "FRONT" ? !fronts : side === "BACK" ? !backs : true;
+    });
+}
+
 export function photoIssueNotes(check: PhotoCheck | null) {
     return [...new Set((check?.images ?? []).flatMap((photo, index) => {
         const number = Number.isInteger(photo.number) && photo.number > 0 ? photo.number : index + 1;
         const view = VIEW_NAMES[photo.view] ?? photo.view.toLowerCase().replaceAll("_", " ");
-        return photo.issues.map(issue => `Photo ${number} (${view}): ${issue}`);
+        return individualPhotoIssues(photo.issues).map(issue => `Photo ${number} (${view}): ${issue}`);
     }))];
 }
 
@@ -125,12 +184,16 @@ export const gradesFromWear: Readonly<Record<RawCondition, GradeRange>> = {
 };
 
 export function displayedRawGrade(evaluation: Evaluation) {
-    const kind = observedCardKind(evaluation);
-    if (hasSlabEvidence(evaluation)) return null;
     const condition = evaluation.condition;
+    const check = evaluation.photoCheck;
+    if (hasSlabEvidence(evaluation) || check?.slab?.present || condition?.authenticity?.concern === "LIKELY_FAKE" ||
+        check?.cardCount === "MULTIPLE" || !check?.images?.some(photo => photo.usable && !photo.isStockImage && (photo.view === "FRONT" || photo.view === "FRONT_DETAIL"))) return null;
     if (condition?.gradeRange) return { range: condition.gradeRange, confidence: condition.confidence, source: "PHOTO" } as const;
-    if (kind !== "raw") return null;
-    if (evaluation.provisionalGradeRange) return { range: evaluation.provisionalGradeRange, confidence: "LOW", source: "PROVISIONAL" } as const;
+    const observedRaw = observedCardKind(evaluation) === "raw";
+    // A nonstandard holder can still show enough card wear for a saved raw assessment.
+    if (evaluation.provisionalGradeRange && (observedRaw || check.cardCount === "ONE" && check.holder === "OTHER" && condition))
+        return { range: evaluation.provisionalGradeRange, confidence: "LOW", source: "PROVISIONAL" } as const;
+    if (!observedRaw) return null;
     if (condition && isRawCondition(condition.rawCondition)) return { range: gradesFromWear[condition.rawCondition], confidence: "LOW", source: "WEAR" } as const;
     return { range: { low: 1, likely: null, high: 10 }, confidence: "UNKNOWN", source: "UNRESOLVED" } as const;
 }

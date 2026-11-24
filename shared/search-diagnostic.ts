@@ -1,16 +1,19 @@
 import type { AiSearchBudget } from "./ai-usage.ts";
 import type { AutoAnalysisBlockReason } from "./analysis.ts";
-import type { MarketplaceOrder } from "./listing-filters.ts";
+import type { SearchReviewSelection } from "./search-review-selection.ts";
+import type { DiscoveryOrder } from "./listing-filters.ts";
+import type { Seller } from "./types.ts";
 
-export const SEARCH_DIAGNOSTIC_OUTCOMES = ["DEAL", "LOSS", "REVIEW", "PRICED", "UNPRICED", "SKIPPED", "FAILED"] as const;
+export const SEARCH_DIAGNOSTIC_OUTCOMES = ["DEAL", "LOSS", "WAIT", "SKIP", "REVIEW", "PRICED", "UNPRICED", "SKIPPED", "FAILED"] as const;
 export const SEARCH_DIAGNOSTIC_REASONS = [
-    "OTHER_LANGUAGE", "LISTING_FORMAT", "CARD_TYPE", "ABOVE_MAX_PRICE", "BELOW_MIN_PRICE", "ALREADY_SEEN",
+    "OTHER_LANGUAGE", "LISTING_FORMAT", "CARD_TYPE", "ABOVE_MAX_PRICE", "BELOW_MIN_PRICE", "ALREADY_SEEN", "OUTSIDE_GRADING_WATCH",
     "OUTSIDE_AUCTION_WINDOW", "NO_IMAGES", "UNAVAILABLE", "JUNK", "UNSUPPORTED_TEXTURE", "INVALID_PRICE",
     "PRICE_ABOVE_CEILING", "PRICING_CONFIG", "PRICING_CREDITS", "SCREEN_DROPPED", "SOLD_EVIDENCE_MISSING",
     "SOLD_EVIDENCE_DEFERRED", "RAW_PRICE_PREMIUM", "CRITERIA_MISMATCH", "NO_ANALYSIS_CANDIDATE", "EXACT_MARKET_UNCONFIRMED",
+    "BUYER_BUY", "BUYER_WAIT", "BUYER_SKIP", "BUYER_CHECK_UNAVAILABLE",
     "DEAL_CONFIRMED", "NET_LOSS", "TARGETS_NOT_MET", "IDENTITY_UNRESOLVED", "SLAB_LABEL_UNRESOLVED",
-    "MATERIAL_REVIEW", "PRICE_EVIDENCE_UNAVAILABLE", "PRICING_DEFERRED", "SHIPPING_UNCONFIRMED", "ASSESSMENT_FAILED", "FILTERS_CHANGED",
-    "ANALYSIS_PAUSED", "AUTO_OFF", "AUTO_LIMIT", "NOT_ASSESSED", "AI_CREDITS", "AI_PAUSED", "AI_BUDGET",
+    "MATERIAL_REVIEW", "PRICE_EVIDENCE_UNAVAILABLE", "PRICING_DEFERRED", "SHIPPING_UNCONFIRMED", "PHOTO_EVIDENCE_INCONSISTENT", "ASSESSMENT_FAILED", "FILTERS_CHANGED",
+    "AI_EVIDENCE_HELD", "ANALYSIS_PAUSED", "AUTO_OFF", "AUTO_LIMIT", "NOT_ASSESSED", "AI_CREDITS", "AI_PAUSED", "AI_BUDGET",
     "STORAGE_UNAVAILABLE", "PRICE_RESEARCH_BUDGET", "PRICE_RESEARCH_UNAVAILABLE",
 ] as const;
 
@@ -36,7 +39,7 @@ export interface SearchDiagnosticOverflow {
 
 export const SOURCE_REJECTION_REASONS = [
     "VARIATION", "LOT", "DIGITAL", "PROXY_OR_REPLICA", "MYSTERY", "SEALED", "MERCHANDISE", "EMPTY_HOLDER",
-    "OTHER_LANGUAGE", "UNAVAILABLE", "ALREADY_SEEN", "ABOVE_SOLD_CEILING", "OUTSIDE_AUCTION_WINDOW", "PRICE_ABOVE_CEILING",
+    "OTHER_LANGUAGE", "UNAVAILABLE", "ALREADY_SEEN", "OUTSIDE_GRADING_WATCH", "ABOVE_SOLD_CEILING", "OUTSIDE_AUCTION_WINDOW", "PRICE_ABOVE_CEILING",
     "LISTING_FORMAT", "CARD_TYPE", "ABOVE_MAX_PRICE", "BELOW_MIN_PRICE", "OTHER_CARD", "OTHER_SET", "OTHER_PRINTING",
     "OTHER_GRADER", "OTHER_GRADE", "OTHER_FINISH", "JUNK", "SOLD_PRICE_EXCLUDED",
 ] as const;
@@ -54,7 +57,13 @@ export interface SearchCompetition {
     price: number;
     shipping: number;
     ceiling: number;
-    identity: "PHOTO" | "LISTING";
+    identity: "PHOTO" | "LABEL" | "LISTING";
+    pricing?: { resale: number; totalCost: number; profit: number; roi: number | null; sales: number };
+    image?: string;
+    seller?: Seller | null;
+    checkedAt?: string;
+    coverage?: { found: number; checked: number };
+    concerns?: string[];
 }
 
 export interface SearchSourceCoverage {
@@ -75,8 +84,9 @@ export interface SearchDiagnosticDiscovery extends SearchSourceCoverage {
     previouslySeen?: number;
     soldPurchaseCeiling?: number;
     pricePass?: { status: "COMPLETE" | "UNAVAILABLE"; newListings: number; candidates: number };
-    marketplaceOrder?: MarketplaceOrder;
+    marketplaceOrder?: DiscoveryOrder;
     retainedIds: string[];
+    reviewSelection?: SearchReviewSelection;
 }
 
 export const SEARCH_DIAGNOSTIC_EVIDENCE_GROUPS = ["discovery", "screening", "assessment", "providerUsage", "reviewHolds"] as const;

@@ -5,24 +5,27 @@ import { worthScreening } from "../../shared/listing-filters.ts";
 
 export function createNewListingDiscovery({ find = findDeals, history = searchHistory, usage = ebayUsage } = {}) {
     const running = new Set<string>();
-    return async (query: string, options: NonNullable<Parameters<typeof findDeals>[1]>, knownIds: readonly string[] = []) => {
+    return async (query: string, options: NonNullable<Parameters<typeof findDeals>[1]>, knownIds: readonly string[] = [], gradingWatch = false) => {
         options = { ...options, asOf: options.asOf ?? Date.now() };
         const minimum = options.filters?.minPrice ?? options.minPrice ?? 0;
-        const filters = { ...options.filters, minPrice: minimum };
+        const filters = { ...options.filters, minPrice: minimum, ...(gradingWatch && { typeFilter: "FIXED_PRICE" as const, kindFilter: "raw" as const }) };
         const key = searchHistoryKey(query, minimum, filters);
         if (running.has(key)) throw new Error("New-listing discovery for this search is already running. Wait for it to finish.");
         running.add(key);
         const seen = new Set<string>();
+        let complete = false;
         try {
             options.signal?.throwIfAborted();
-            if ((await usage())?.braking) throw new EbayBudgetError("New-listing discovery is paused to preserve the rest of today's eBay allowance.");
+            if ((await usage())?.braking) throw new EbayBudgetError("New-listing discovery is paused to preserve the rest of today's eBay allowance.", "QUOTA");
             const previous = await history.seen(query, minimum, filters);
-            await find(query, { ...options,
-                newOnly: { excludeIds: [...new Set([...previous, ...knownIds])] },
+            await find(query, { ...options, filters,
+                newOnly: { ...(gradingWatch && { gradingWatch }), excludeIds: [...new Set([...previous, ...knownIds])] },
                 onPriceExcluded: listing => { if (!worthScreening(listing, filters, options.asOf)) return; seen.add(listing.id); options.onPriceExcluded?.(listing); },
                 onListing: listing => { if (!worthScreening(listing, filters, options.asOf)) return; seen.add(listing.id); options.onListing?.(listing); } });
+            complete = true;
         } finally {
-            try { if (seen.size) await history.remember(query, minimum, [...seen], filters); }
+            // Watch scans publish only a completed batch. A partial stream can be retried.
+            try { if (seen.size && (!gradingWatch || complete)) await history.remember(query, minimum, [...seen], filters); }
             finally { running.delete(key); }
         }
     };

@@ -121,6 +121,26 @@ test("an inconclusive Base Set printing review distinguishes the recognized card
     assert.ok(status.reasons.includes(conflict));
     assert.ok(!status.reasons.includes(generic));
     assert.deepEqual(evaluation.identity!.reasons, [generic, conflict]);
+
+    for (const [catalogSet, photographedSet, language] of [
+        ["Neo Destiny", "Neo Destiny", "English"],
+        ["Base Set 2", "Base Set 2", "English"],
+        ["Base Set", "Neo Destiny", "English"],
+        ["Neo Destiny", "Base Set", "English"],
+        ["Base Set", "Base Set", "Japanese"],
+    ]) {
+        evaluation.identity!.set = catalogSet;
+        Object.assign(evaluation.photoCheck!.cardIdentity!, { set: photographedSet, language });
+        const reasons = photoReviewStatus(evaluation).reasons;
+        assert.ok(reasons.includes(generic));
+        assert.ok(reasons.includes(conflict));
+        assert.doesNotMatch(reasons.join(" "), /artwork border|First Edition stamp/i);
+    }
+    for (const cardNumber of ["8/102", "95/102", "10/130"]) {
+        evaluation.identity!.set = "Base Set";
+        Object.assign(evaluation.photoCheck!.cardIdentity!, { set: "Base Set", language: "English", cardNumber });
+        assert.ok(photoReviewStatus(evaluation).reasons.includes(generic));
+    }
 });
 
 test("a previously skipped photo set can be completed without asking for manual review", () => {
@@ -317,4 +337,20 @@ test("intentional low-value deferral is not a manual task, while real identity o
     const suspicious = mixedCoverageEvaluation(); suspicious.researchMode = "DEFERRED_LOW_RESALE";
     suspicious.condition!.authenticity.concern = "POSSIBLE"; suspicious.condition!.authenticity.reasons = ["The printed font differs."];
     assert.equal(resultGroup({} as never, suspicious), "review");
+});
+
+
+test("photo notes reconcile side availability across previously accepted stages", () => {
+    const e = cardEvaluation(any);
+    const check = e.photoCheck!;
+    check.images[0].issues = ["Only the front is supplied; back and edge details are unavailable.", "Vertical scratch on holo."];
+    check.images[1].view = "BACK";
+    check.images[1].issues = ["Fine back edge detail is limited."];
+    check.missingViews = ["FULL_BACK", "FRONT in the new input; prior front evidence is available", "Angled holo"];
+    const notes = photoReviewStatus(e).photoNotes.join(" ");
+    assert.doesNotMatch(notes, /Only the front|FULL_BACK|FRONT in the new input/);
+    assert.match(notes, /Edge detail is unavailable in this photo/);
+    assert.match(notes, /Vertical scratch on holo/);
+    assert.match(notes, /Fine back edge detail is limited/);
+    assert.match(notes, /Angled holo/);
 });

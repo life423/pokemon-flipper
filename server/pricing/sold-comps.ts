@@ -55,6 +55,7 @@ export function readSoldTitleClaims(title: string, knownSets: readonly string[] 
     const teamRocket = knownSets.some(set => normalizeSetName(set) === "team rocket");
     const returnsRelease = teamRocket ? title.match(/\b(?:EX[\s-]+)?(?:Team[\s-]+)?Rocket[\s-]+Returns\b/i)?.[0] : undefined;
     const normalized = title.replace(/\s*\[eBay\]\s*$/i, "")
+        .replace(/\b(NM|LP|MP|HP)[+-](?=\s*$)/i, "$1")
         .replace(/\bbase\s*\(\s*shadowless\s*\)/gi, "Base Set (Shadowless)")
         .replace(teamRocket ? /\bpok[eé]mon[\s-]+rocket\b(?![\s-]+returns\b)/gi : /$^/g, "Pokemon Team Rocket")
         .replace(/\b(?:no|not|without|non)[\s-]*(?:1st|first)[\s-]*ed(?:ition|it)?\b/gi, "Unlimited");
@@ -62,8 +63,9 @@ export function readSoldTitleClaims(title: string, knownSets: readonly string[] 
     // A longer observed release must not borrow the ordinary Rocket alias.
     return returnsRelease ? { ...reading, set: returnsRelease } : reading;
 }
-export function matchesSoldTarget(sale: Comp, target: { name: string; setName: string | null; cardNumber: string | null }, grader: string | null = null, grade: string | null = null): boolean {
+export function matchesSoldTarget(sale: Comp, target: { name: string; setName: string | null; cardNumber: string | null; requireTitleIdentity?: boolean }, grader: string | null = null, grade: string | null = null): boolean {
     const reading = readSoldTitleClaims(sale.title, target.setName ? [target.setName] : []);
+    if (target.requireTitleIdentity && (!reading.cardName || !reading.set && !reading.cardNumber)) return false;
     const name = resolveScreeningName({ title: sale.title, claims: [reading.cardName], candidate: target.name, set: target.setName });
     return !(reading.kind && reading.kind !== "SINGLE_CARD" || reading.language === "Other" ||
         reading.cardName && (!name || !sameCatalogName(name, target.name)) ||

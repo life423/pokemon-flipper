@@ -7,29 +7,47 @@ import { AuctionSummary } from "../AuctionSummary";
 import { RatingBadge, VerdictBadge } from "../VerdictBadge";
 import { Tween } from "../Tween";
 import { Notes, Pairs, Section } from "./primitives";
-import { isResearchDeferred } from "../../../../shared/photo-review.ts";
+import { isResearchDeferred, printingReviewReasons } from "../../../../shared/photo-review.ts";
 import styles from "../DetailPanel.module.css";
 import { isRawSoldPrice, priceEvidenceGap } from "../../../../shared/money/price-evidence.ts";
+import { readyForPricing } from "../../../../shared/identity.ts";
+import { unconfirmedResale } from "../../../../shared/wait-skip-review.ts";
+import { slabBuyGuidance } from "../../../../shared/money/slab-buy-guidance.ts";
+import { rawBuyGuidance } from "../../../../shared/money/raw-buy-guidance.ts";
 
 export function FinancialDecision({ evaluation, targets, now }: { evaluation: Evaluation; targets: Targets; now: number }) {
+    if (!readyForPricing(evaluation.identity) && evaluation.underwriting?.verdict === "NEEDS_REVIEW") {
+        const mismatch = evaluation.identity?.notThisCard;
+        const concern = evaluation.deeperPhotoReview?.findings.find(finding => finding.impact === "NEW_CONCERN")?.observation;
+        return <Section title={mismatch ? "Skip" : "Wait"}><p>{mismatch || concern || unconfirmedResale(evaluation, now)}</p></Section>;
+    }
+    const slabGuidance = slabBuyGuidance(evaluation, now);
+    if (slabGuidance) return <Section title={slabGuidance.headline}>
+        <p><strong>Estimated {slabGuidance.grade} market value · {dollars(slabGuidance.price)}</strong></p>
+        <p>{slabGuidance.evidence}</p>
+        <p>{slabGuidance.explanation}</p>
+        {slabGuidance.caseNote && <p>{slabGuidance.caseNote}</p>}
+        <p className={styles.small}>This is a resale estimate. Deals requires matched resale evidence and a verified margin.</p>
+    </Section>;
     const priceGap = priceEvidenceGap(evaluation);
-    if (priceGap) return <Section title="Resale price unconfirmed">
-        <p>{priceGap}</p>
+    const guidance = priceGap ? rawBuyGuidance(evaluation, now, targets) : null;
+    if (priceGap) return <Section title={guidance?.headline ?? "Wait for resale evidence"}>
+        <p>{guidance?.explanation ?? priceGap}</p>
         <Pairs rows={[
             [evaluation.listing.buyingOption === "AUCTION" ? "Current bid" : "Asking price", dollars(evaluation.listing.price)],
             ["Shipping", evaluation.listing.shipping === null ? "Not quoted" : dollars(evaluation.listing.shipping)],
             ...(evaluation.underwriting?.best && evaluation.underwriting.best.path !== "RAW" ? [["Reference resale estimate before costs", dollars(evaluation.underwriting.best.salePrice)]] as [string, ReactNode][] : []),
         ]} />
-        <p className={styles.small}>Saved photo findings remain available. A purchase or bid limit needs matched resale evidence.</p>
+        {guidance ? <Notes items={guidance.details} /> : <p className={styles.small}>Saved photo findings remain available. A purchase or bid limit needs matched resale evidence.</p>}
     </Section>;
-    if (isResearchDeferred(evaluation)) return <Section title="Automatic research deferred">
+    if (isResearchDeferred(evaluation)) return <Section title="Wait for resale evidence">
         <p>{evaluation.rawPricing?.evidenceNote}</p>
-        <p className={styles.small}>This is not a completed purchase recommendation. Run full research below to assess the resale routes; saved photo assessments will be reused.</p>
+        <p className={styles.small}>The preliminary check did not establish a resale margin at this price. The saved photos are available for further pricing.</p>
     </Section>;
     if (!evaluation.underwriting) return null;
     return evaluation.listing.buyingOption === "AUCTION" ? <Section title="Auction decision">
         <AuctionSummary evaluation={evaluation} targets={targets} now={now} />
-        <Notes items={evaluation.underwriting.reasons} />
+        <Notes items={printingReviewReasons(evaluation, evaluation.underwriting.reasons)} />
         <Notes items={evaluation.underwriting.assumptions} tone="muted" />
         <Notes items={evaluation.rating?.concerns ?? []} tone="bad" />
     </Section> : <VerdictSection underwriting={evaluation.underwriting} evaluation={evaluation} now={now} />;
@@ -88,7 +106,7 @@ function VerdictSection({
                 <VerdictBadge verdict={underwriting.verdict} large />
             </div>
 
-            {shippingPending && <Notes items={underwriting.reasons} />}
+            {shippingPending && <Notes items={printingReviewReasons(evaluation, underwriting.reasons)} />}
             {best?.maxBid !== undefined && (
                 <div className={styles.hero}>
                     <span className={styles.heroLabel}>{shippingPending ? "Provisional max price" : "Max price"} · {best.label}</span>
@@ -115,7 +133,7 @@ function VerdictSection({
                     <Notes items={evaluation.rating.notes} tone="muted" />
                 </>
             )}
-            {!shippingPending && <Notes items={underwriting.reasons} />}
+            {!shippingPending && <Notes items={printingReviewReasons(evaluation, underwriting.reasons)} />}
             <Notes items={underwriting.assumptions} tone="muted" />
         </section>
     );
@@ -126,7 +144,7 @@ export function PathCard({ path, auction, referenceReason, shippingPending }: { 
         return (
             <div className={styles.path}>
                 <h4>{path.label}</h4>
-                <p className={styles.muted}>Can't price: {path.reason}</p>
+                <p className={styles.muted}>{path.reason}</p>
             </div>
         );
     }

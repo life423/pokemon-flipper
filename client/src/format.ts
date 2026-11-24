@@ -54,7 +54,7 @@ export const VERDICTS: Record<Verdict, { label: string; tone: Tone }> = {
     BUY_RAW: { label: "Sell raw", tone: "buy" },
     BUY_AND_GRADE: { label: "Buy and grade", tone: "grade" },
     BUY_GRADED: { label: "Buy graded", tone: "buy" },
-    NEEDS_REVIEW: { label: "Needs review", tone: "review" },
+    NEEDS_REVIEW: { label: "Wait", tone: "review" },
     PASS: { label: "Pass", tone: "pass" },
-    CANT_PRICE: { label: "Can't price", tone: "neutral" },
+    CANT_PRICE: { label: "Wait", tone: "review" },
 };

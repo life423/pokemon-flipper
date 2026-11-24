@@ -3,7 +3,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { DATA_DIR } from "../lib/paths.ts";
 import { aiSpending } from "./spending.ts";
-import { getAiUsageContext, getAiDispatchSignal, type AiUsageContext } from "./usage-context.ts";
+import { getBudgetContext, getAiDispatchSignal, type AiUsageContext } from "./usage-context.ts";
 import type { AiUsageDay, AiUsageStage } from "../../shared/ai-usage.ts";
 import { sqlAiDispatch } from "./sql-dispatch.ts";
 import { requireLiveProvider } from "../lib/saved-provider-evidence.ts";
@@ -71,7 +71,7 @@ export const trackedAiFetch: typeof fetch = async (input, init) => {
     try { body = rawBody ? JSON.parse(rawBody) : {}; } catch { body = {}; }
     const images = Array.isArray(body?.input) ? body.input.flatMap((part: any) => Array.isArray(part?.content) ? part.content : []).filter((part: any) => part?.type === "input_image").length : 0;
     const base = {
-        ...getAiUsageContext(),
+        ...getBudgetContext(),
         at: new Date(started).toISOString(),
         step: text(body?.metadata?.app_step) ?? text(body?.text?.format?.name) ?? "unknown",
         model: text(body?.model) ?? "unknown",
@@ -85,7 +85,7 @@ export const trackedAiFetch: typeof fetch = async (input, init) => {
     dispatchSignal?.throwIfAborted();
     requireLiveProvider("OPENAI");
     return sqlAiDispatch(body, async beforeSend => {
-        const reservation = await aiSpending.reserve(body, getAiUsageContext());
+        const reservation = await aiSpending.reserve(body, getBudgetContext());
         // Stop may arrive while waiting for the spending lock/preflight/fsync.
         // Keep the conservative reservation, but never send a cancelled request.
         dispatchSignal?.throwIfAborted();

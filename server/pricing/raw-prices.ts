@@ -15,7 +15,12 @@ export function variantFor(
     let matches = (card?.variants ?? []).filter((variant) => variant.printing === identity.printing);
 
     if (FINISHES.includes(identity.finish)) {
-        matches = matches.filter((variant) => variant.finish === identity.finish);
+        const sameFinish = matches.filter((variant) => variant.finish === identity.finish);
+        if (matches.length && !sameFinish.length) {
+            const finish = identity.finish.toLowerCase().replaceAll("_", "-");
+            return { reason: `The price catalog lists this printing, but has no matching ${finish} price record.` };
+        }
+        matches = sameFinish;
     }
 
     if (matches.length === 0) {

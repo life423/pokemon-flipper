@@ -7,6 +7,9 @@ import { storageFailure } from "../lib/storage-failure.ts";
 import { EnglishOnlyError } from "../../shared/card-language.ts";
 import { PriceResearchBudgetError } from "../pricing/research-budget.ts";
 export { EnglishOnlyError } from "../../shared/card-language.ts";
+export class RejectedPhotoAssessmentError extends Error {
+    constructor(reason = "The photo observations do not establish a consistent assessment of this listing.") { super(reason); }
+}
 export function evaluationFailure(error: unknown) {
     if (error instanceof EnglishOnlyError) return { status: 422, code: "OTHER_LANGUAGE", error: error.message, retryable: false };
     if (error instanceof PriceResearchBudgetError) return { status: 503,
@@ -14,7 +17,8 @@ export function evaluationFailure(error: unknown) {
     const storage = storageFailure(error);
     if (storage) return { status: 503, code: storage.code, error: storage.message, retryable: false };
     const spending = aiSpendingFailure(error);
-    if (spending) return { status: 503, code: spending.code, error: spending.message, retryable: false };
+    if (spending) return { status: spending.code === "AI_EVIDENCE_HELD" ? 409 : 503, code: spending.code, error: spending.message, retryable: false };
+    if (error instanceof RejectedPhotoAssessmentError) return { status: 422, code: "PHOTO_ASSESSMENT_REJECTED", error: error.message, retryable: false };
     const value = error as { status?: number; name?: string; code?: string; message?: string };
     if (error instanceof EbayError && [404, 410].includes(error.status)) return { status: 404, error: "Listing not found or no longer available", retryable: false };
     if (error instanceof EbayAuthenticationError || error instanceof EbayBudgetError) return { status: 503, error: error.message, retryable: false };

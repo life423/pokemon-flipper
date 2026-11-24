@@ -1,5 +1,6 @@
 import { readCache, writeCache } from "../lib/cache.ts";
 import { sameCardNumber, sameSetFamily, setFamily, setSearchTerm } from "../identity/card-identity.ts";
+import { catalogPrintedName } from "../identity/catalog-name.ts";
 import { canonicalCatalogName, pricingSearchName, sameCatalogName } from "./search-name.ts";
 import { cardNumberOf, cardVariants } from "./records.ts";
 import { CONFIRMED_SALE_TYPES, uniqueSoldComps } from "./sold-comps.ts";
@@ -222,6 +223,9 @@ async function loadAttempt(path: string, maxAgeHours: number, signal: AbortSigna
 async function finish(path: string, response: Response, body: ApiBody): Promise<ApiBody> {
     if (!response.ok) {
         const message = `pkmnprices request failed (${response.status}): ${body.error?.message ?? "unknown error"}`;
+        if ([402, 403].includes(response.status) && path.includes("/listings/cardmarket?")) {
+            throw new PricingProviderError("PKMNPrices denied access to Cardmarket offers for this account.", "CONFIG");
+        }
         if (response.status >= 500 || [401, 403].includes(response.status)) {
             coolingKind = response.status >= 500 ? "TEMPORARY" : "CONFIG";
             coolingUntil = Math.max(coolingUntil, Date.now() + 30_000);
@@ -242,12 +246,17 @@ interface PkmnVariantEntry {
 
 interface PkmnCard {
     id: number;
+    tcg_player_id?: number | null;
     name: string;
     number: string;
     total_set_number?: string | null;
     set?: { id: number; name: string };
     // The card-detail response carries native variant labels in this array.
     prices?: PkmnVariantEntry[];
+}
+
+function nativeCardName(card: PkmnCard): string {
+    return catalogPrintedName(card.name, card.set?.name, card.number);
 }
 
 // A pkmnprices card in the shape identity and pricing expect.
@@ -257,7 +266,9 @@ export function toCardRecord(detail: PkmnCard): CardRecord {
     return {
         source: "pkmnprices",
         id: detail.id,
-        name: detail.name,
+        ...(typeof detail.tcg_player_id === "number" && Number.isSafeInteger(detail.tcg_player_id) && detail.tcg_player_id > 0
+            ? { tcgPlayerId: detail.tcg_player_id } : {}),
+        name: nativeCardName(detail),
         setName: detail.set?.name ?? null,
         cardNumber: cardNumberOf(detail),
         variants: cardVariants([...new Set(variants)], detail.set?.name),
@@ -300,7 +311,7 @@ async function lookupQueryCardsFrom({ set, name }: Parameters<LookupQueryCards>[
     for (const entry of family.values()) {
         const items = await pages("/cards", new URLSearchParams({ set_id: String(entry.id), name: nameTerm, per_page: "20" }), 20);
         if (!items) return incomplete;
-        for (const item of items.filter(item => sameCatalogName(item?.name, name))) {
+        for (const item of items.filter(item => item && sameCatalogName(nativeCardName(item), name))) {
             if (!Number.isSafeInteger(item.id) || item.id < 1 || item.set?.name && !sameSetFamily(item.set.name, set)) return incomplete;
             const previous = candidates.get(item.id);
             if (previous && !sameCardNumber(cardNumberOf(previous), cardNumberOf(item))) return incomplete;
@@ -311,11 +322,21 @@ async function lookupQueryCardsFrom({ set, name }: Parameters<LookupQueryCards>[
     const cards: CardRecord[] = [];
     for (const item of candidates.values()) {
         const detail = await get(`/cards/${item.id}?currency=usd`);
-        if (detail?.id !== item.id || !sameCatalogName(detail.name, name) || !sameSetFamily(detail.set?.name, set) ||
+        if (detail?.id !== item.id || !sameCatalogName(nativeCardName(detail), name) || !sameSetFamily(detail.set?.name, set) ||
             !sameCardNumber(cardNumberOf(detail), cardNumberOf(item))) return incomplete;
         cards.push(toCardRecord(detail));
     }
     return { cards, complete: true };
+}
+
+// Only a complete broad page can stand in for a number-filtered lookup.
+// A cached prefix may omit even the only matching card.
+function completeCatalogPage(page: ApiBody, size: number): boolean {
+    if (!Array.isArray(page?.data)) return false;
+    const pagination = page.pagination;
+    if (!pagination) return page.data.length < size;
+    return pagination.page === 1 && !pagination.next_cursor && pagination.total === page.data.length &&
+        pagination.total_pages <= 1;
 }
 
 // Candidate cards for a listing: every set in the listing's set family,
@@ -346,7 +367,10 @@ async function lookupCardsFrom({ set, name, cardNumber }: Parameters<LookupCards
         // lookup semantics rather than guessing a new API normalization rule.
         const numeric = /^#?(\d+)(?:\/\d+)?$/.exec(cardNumber.replace(/\s+/g, ""));
         let list = await cached(legacyPath, DAY);
-        if (numeric) params.set("number", numeric[1]!.replace(/^0+(?=\d)/, ""));
+        if (numeric) {
+            params.set("number", numeric[1]!.replace(/^0+(?=\d)/, ""));
+            if (!completeCatalogPage(list, 20)) list = null;
+        }
         // Earlier provider queries split owner apostrophes into spaces. Reuse
         // their positive exact matches from cache, but an empty malformed
         // query must never prevent the corrected spelling from being tried.
@@ -360,7 +384,7 @@ async function lookupCardsFrom({ set, name, cardNumber }: Parameters<LookupCards
             }
             for (const previousPath of previousPaths) {
                 const previous = await cached(previousPath, DAY);
-                if (previous?.data?.some((item: PkmnCard) => sameCatalogName(item.name, name) &&
+                if (completeCatalogPage(previous, 20) && previous.data.some((item: PkmnCard) => sameCatalogName(nativeCardName(item), name) &&
                     (!item.set?.name || sameSetFamily(item.set.name, set)) &&
                     (!cardNumber || sameCardNumber(cardNumberOf(item), cardNumber)))) {
                     list = previous;
@@ -372,10 +396,10 @@ async function lookupCardsFrom({ set, name, cardNumber }: Parameters<LookupCards
 
         for (const item of list.data ?? []) {
             if (cardNumber ? !sameCardNumber(cardNumberOf(item), cardNumber) : !screening) continue;
-            if (!sameCatalogName(item.name, name)) continue;
+            if (!sameCatalogName(nativeCardName(item), name)) continue;
 
             const detail = await get(`/cards/${item.id}?currency=usd`);
-            if (!sameCatalogName(detail.name, name) || !sameSetFamily(detail.set?.name, set) ||
+            if (detail.id !== item.id || !sameCatalogName(nativeCardName(detail), name) || !sameSetFamily(detail.set?.name, set) ||
                 cardNumber && !sameCardNumber(cardNumberOf(detail), cardNumber) ||
                 !sameCardNumber(cardNumberOf(detail), cardNumberOf(item))) continue;
             cards.push(toCardRecord(detail));
@@ -386,10 +410,28 @@ async function lookupCardsFrom({ set, name, cardNumber }: Parameters<LookupCards
     return cards;
 }
 
+// Reuse the same catalog detail and cache as sold pricing. Active offer pages
+// are scoped to a previously resolved record and a single bounded market.
+async function readPricingRecord(recordId: string, get: typeof cachedApiGet) {
+    const detail: PkmnCard | null = await get(`/cards/${recordId}?currency=usd`, DAY * 7);
+    if (!detail || String(detail.id) !== recordId || !detail.name || !detail.set?.name || !Array.isArray(detail.prices)) return null;
+    return toCardRecord(detail);
+}
+export const cardmarketRecord = (recordId: string) => readPricingRecord(recordId, apiGet);
+export const cachedPricingRecord = (recordId: string) => readPricingRecord(recordId, cachedApiGet);
+export async function cardmarketOfferPage(recordId: string, params: URLSearchParams): Promise<unknown[]> {
+    const body = await apiGet(`/cards/${recordId}/listings/cardmarket?${params}`, 1);
+    if (!Array.isArray(body?.data)) throw new PricingProviderError("PKMNPrices returned an unreadable Cardmarket offer page.", "TEMPORARY");
+    return body.data;
+}
+
 export const lookupCards: LookupCards = query => lookupCardsFrom(query, apiGet, cachedApiGet);
 
+// Currencies belong to individual rows. Keep all revisions until the result
+// pages have been reconciled so a corrected EUR row can retire an old USD row.
+const usdSales = (sales: readonly Comp[]) => uniqueSoldComps(sales).filter(sale => sale.currency === "USD");
 const soldPage = (body: ApiBody, stream: SoldStream): SoldPage => ({
-    sales: uniqueSoldComps((body.data ?? []).filter((sale: Comp) => sale.currency === "USD")),
+    sales: uniqueSoldComps(body.data ?? []),
     nextCursor: body.pagination?.has_more && typeof body.pagination.next_cursor === "string" && body.pagination.next_cursor
         ? body.pagination.next_cursor : null,
     stream,
@@ -425,8 +467,9 @@ async function readSoldPage(recordId: CardRecord["id"], params: URLSearchParams,
         const seen = new Set<string>();
         for (let count = 0; count < SOLD_MARKET_PAGE_LIMIT; count += 1) {
             sales.push(...page.sales);
-            const useful = stopWhen ? await stopWhen(uniqueSoldComps(sales))
-                : uniqueSoldComps(sales).some(sale => CONFIRMED_SALE_TYPES.includes(sale.sale_type ?? ""));
+            const usd = usdSales(sales);
+            const useful = stopWhen ? await stopWhen(usd)
+                : usd.some(sale => CONFIRMED_SALE_TYPES.includes(sale.sale_type ?? ""));
             // Check cancellation after an asynchronous eligibility callback too.
             signal?.throwIfAborted();
             if (useful || !sales.length && !page.nextCursor) return soldPage(first, "LEGACY");
@@ -442,7 +485,11 @@ async function readSoldPage(recordId: CardRecord["id"], params: URLSearchParams,
 
 // Screening and final pricing share native URLs, SQL cache and in-flight work.
 // The four-page bound still applies when a legacy cache gap restarts at root.
-async function collectSoldPages(recordId: CardRecord["id"], params: URLSearchParams, { stopWhen }: SoldPageSelection = {}, minimumPages = 1) {
+async function cachedSoldPage(path: string, maxAgeHours = 6) {
+    return await cachedApiGet(path, maxAgeHours) ?? { data: [] };
+}
+
+async function collectSoldPages(recordId: CardRecord["id"], params: URLSearchParams, { stopWhen }: SoldPageSelection = {}, minimumPages = 1, get = apiGet) {
     const sales: Comp[] = [];
     const seen = new Set<string>();
     let cursor: string | undefined, stream: SoldStream | undefined;
@@ -452,19 +499,25 @@ async function collectSoldPages(recordId: CardRecord["id"], params: URLSearchPar
         const key = JSON.stringify([stream, cursor]);
         if (seen.has(key)) break;
         seen.add(key);
-        const result = await readSoldPage(recordId, params, { cursor, stream, stopWhen });
+        const result = await readSoldPage(recordId, params, { cursor, stream, stopWhen }, get);
         sales.push(...result.sales);
-        const enough = stopWhen && page + 1 >= minimumPages && await stopWhen(uniqueSoldComps(sales));
+        const enough = stopWhen && page + 1 >= minimumPages && await stopWhen(usdSales(sales));
         getPriceResearchSignal()?.throwIfAborted();
-        if (enough) break;
+        if (enough) {
+            if (params.get("graded") !== "false") break;
+            // Later raw pages may already be saved from another listing's research.
+            // Complete the condition sample from those pages without another request.
+            get = cachedSoldPage;
+        }
         if (!result.nextCursor) break;
         cursor = result.nextCursor;
         stream = result.stream;
     }
-    return sales;
+    return usdSales(sales);
 }
 
-export const fetchComps: FetchComps = async (recordId, { grader, grade, variant, stopWhen }) => {
+export function soldMarketParams(variant: string | undefined, grader: string | null, grade: number | string | null) {
+    if (!grader) return new URLSearchParams({ graded: "false", period: "90d", sort: "date_desc", limit: "20", variant: variant ?? "" });
     const params = new URLSearchParams({
         graded: "true",
         grader,
@@ -476,15 +529,23 @@ export const fetchComps: FetchComps = async (recordId, { grader, grade, variant,
 
     if (variant) params.set("variant", variant);
 
-    return uniqueSoldComps(await collectSoldPages(recordId, params, { stopWhen }));
-};
+    return params;
+}
+async function gradedSoldPages(recordId: CardRecord["id"], { grader, grade, variant, stopWhen }: Parameters<FetchComps>[1], get: typeof apiGet) {
+    return collectSoldPages(recordId, soldMarketParams(variant, grader, grade), { stopWhen }, 1, get);
+}
+export const fetchComps: FetchComps = (recordId, target) => gradedSoldPages(recordId, target, apiGet);
+export const fetchCachedComps: FetchComps = (recordId, target) => gradedSoldPages(recordId, target, cachedSoldPage);
 
 // Retain the first two pages of raw research candidates. Sparse markets may
 // recover the same later pages admitted by screening, up to four total.
 export const fetchRawComps: FetchRawComps = async (recordId, variant, selection) => {
-    const params = new URLSearchParams({ graded: "false", period: "90d", sort: "date_desc", limit: "20", variant });
+    const params = soldMarketParams(variant, null, null);
     return collectSoldPages(recordId, params, selection, 2);
 };
+
+export const fetchCachedRawComps: FetchRawComps = (recordId, variant, selection) =>
+    collectSoldPages(recordId, soldMarketParams(variant, null, null), selection, 2, cachedSoldPage);
 
 export class ScreeningPriceBudgetError extends Error {
     constructor() { super("The search's price-screening request allowance is exhausted. Saved price evidence remains available."); }
@@ -542,12 +603,12 @@ export function createScreeningPriceSource({ signal: sourceSignal, maxRequests =
             return result;
         },
         fetchComps: async (recordId, { grader, grade, variant, stopWhen }) => {
-            if (variant) return (await fetchSoldPage(recordId, { grader, grade: String(grade), variant, stopWhen })).sales;
+            if (variant) return usdSales((await fetchSoldPage(recordId, { grader, grade: String(grade), variant, stopWhen })).sales);
             // Retain the optional variant's established URL for other callers.
             const params = new URLSearchParams({ graded: "true", grader, grade: String(grade), limit: "20", sort: "date_desc", period: "180d" });
-            return (await readSoldPage(recordId, params, { stopWhen }, get, cached, signal)).sales;
+            return usdSales((await readSoldPage(recordId, params, { stopWhen }, get, cached, signal)).sales);
         },
-        fetchRawComps: async (recordId, variant, selection) => (await fetchSoldPage(recordId, { grader: null, grade: null, variant, ...selection })).sales,
+        fetchRawComps: async (recordId, variant, selection) => usdSales((await fetchSoldPage(recordId, { grader: null, grade: null, variant, ...selection })).sales),
         fetchSoldPage,
         stats: () => ({ requests, limit: requestLimit }),
     };

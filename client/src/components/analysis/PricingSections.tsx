@@ -21,7 +21,18 @@ const SALE_TYPES: Record<NonNullable<CompSale["saleType"]>, string> = {
     best_offer_accepted: "Best Offer accepted",
 };
 
-export function CompsRow({ summary, screening = false }: { summary: CompSummary; screening?: boolean }) {
+export function saleFormatBreakdown(summary: CompSummary): string | null {
+    if (!summary.count || summary.sales.length !== summary.count || summary.sales.some(sale => !sale.saleType)) return null;
+    return Object.entries(SALE_TYPES).flatMap(([type, label]) => {
+        const count = summary.sales.filter(sale => sale.saleType === type).length;
+        if (!count) return [];
+        const format = type === "auction" ? (count === 1 ? "auction" : "auctions")
+            : type === "best_offer_accepted" ? (count === 1 ? "accepted offer" : "accepted offers") : label;
+        return [`${count} ${format}`];
+    }).join(" · ");
+}
+
+export function CompsRow({ summary, screening = false, expanded = false }: { summary: CompSummary; screening?: boolean; expanded?: boolean }) {
     const dropped = Object.entries(summary.dropped);
     const estimate = summary.marketEstimate;
     const priceLabel = estimate ? `estimate ${dollars(estimate.price)}` : `median ${dollars(summary.median)}`;
@@ -31,7 +42,7 @@ export function CompsRow({ summary, screening = false }: { summary: CompSummary;
         : `The newest two sales averaged ${Math.abs(change)}% ${change > 0 ? "above" : "below"} the prior two.`;
 
     return (
-        <details className={styles.details}>
+        <details className={styles.details} open={expanded || undefined}>
             <summary>
                 <span>
                     {summary.grader === "RAW" ? `Raw · ${name(String(summary.grade))}` : `${summary.grader} ${summary.grade}`}
@@ -104,6 +115,11 @@ export function PricesSection({
                     ) : (
                         <p className={styles.muted}>{raw.reason}</p>
                     )}
+                    {raw.sellerConditionComps && <>
+                        <h4 className={styles.subTitle}>Raw collector comparison</h4>
+                        <p className={styles.small}>These sellers described the sold copies in the same condition the photos suggest for this card.</p>
+                        <CompsRow summary={raw.sellerConditionComps} />
+                    </>}
                     {raw.evidenceNote && <p className={styles.small}>{raw.evidenceNote}</p>}
                     {raw.ebayComps?.filter(summary => summary.count > 0).map(summary => <CompsRow key={String(summary.grade)} summary={summary} />)}
                 </>
@@ -114,6 +130,10 @@ export function PricesSection({
                     <h4 className={styles.subTitle}>
                         {grader} sold comps{pricing.printingLabel ? `, ${pricing.printingLabel}` : ""}
                     </h4>
+                    {pricing.referenceGradeComps && <>
+                        <p className={styles.small}>Certified sales at the raw card’s estimated grade. Its grade and grading proceeds are uncertain.</p>
+                        <CompsRow summary={pricing.referenceGradeComps} />
+                    </>}
                     {pricing.byGrade?.map((summary) => (
                         <CompsRow key={String(summary.grade)} summary={summary} />
                     ))}

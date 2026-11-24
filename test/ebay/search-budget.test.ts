@@ -1,3 +1,4 @@
+import "../fixtures/isolated-data.ts";
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -154,4 +155,16 @@ test("actual mocked transport counts nested Browse calls by search, reuses cache
         cwd: ROOT, env: { ...process.env, POKEMON_FLIPPER_DATA_DIR: directory, POKEMON_FLIPPER_STORAGE: "file", EBAY_CLIENT_ID: `offline-search-${path.basename(directory)}`, EBAY_CLIENT_SECRET: "offline-test-secret" },
     });
     assert.deepEqual(JSON.parse(output.stdout.trim()), { browse: EBAY_SEARCH_BROWSE_LIMIT + 1, oauth: 1, analytics: 1 });
+});
+
+test("two automatic grading-watch scans consume the same persisted Browse allowance", async () => {
+    const { randomUUID } = await import("node:crypto");
+    const { withAiUsageContext } = await import("../../server/ai/usage-context.ts");
+    const { reserveSearchBrowseRequest, browseSearchAllowance } = await import("../../server/ebay/search-budget.ts");
+    const owner = randomUUID(), ids = [randomUUID(), randomUUID()];
+    for (const searchId of ids) await withAiUsageContext({ searchId, watchBudgetId: owner }, () =>
+        reserveSearchBrowseRequest(async () => {}));
+    const ownerBudget = await withAiUsageContext({ searchId: owner }, browseSearchAllowance);
+    assert.equal(ownerBudget?.used, 2);
+    for (const searchId of ids) assert.equal((await withAiUsageContext({ searchId }, browseSearchAllowance))?.used, 0);
 });

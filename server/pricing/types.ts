@@ -14,6 +14,7 @@ export interface CardVariant {
 export interface CardRecord {
     source: "pkmnprices";
     id: number | string;
+    tcgPlayerId?: number;
     name: string;
     setName: string | null;
     cardNumber: string;

@@ -46,3 +46,12 @@ test("direct links use the same assurance/holder exclusions as search without bu
         assert.equal(calls, 1, "only the injected canonical detail read runs");
     }
 });
+
+test("automatic comparison reuses recent destination details and preserves the daily reserve", async () => {
+    const resolve = createListingResolver({ details: async (_, options) => {
+        assert.equal(options?.keepReserve, true);
+        assert.equal(options?.maxAgeHours, 2 / 60);
+        return details();
+    } });
+    assert.equal((await resolve(id, undefined, true)).id, id);
+});

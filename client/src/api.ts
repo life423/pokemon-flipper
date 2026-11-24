@@ -1,10 +1,22 @@
 import type { DeeperPhotoReview, EbayUsage, Evaluation, ListingSummary, SearchIntent, Targets } from "./types";
+import type { CameraGradeResult } from "../../shared/camera-grade.ts";
 import type { ShortlistEntry, RefreshResult } from "../../shared/shortlist.ts";
 import type { PricingRetryResult } from "../../shared/pricing-retries.ts";
-import type { CameraGradeResult } from "../../shared/camera-grade.ts";
 import type { AiUsageDay } from "../../shared/ai-usage.ts";
-import type { ListingFilters, MarketplaceOrder } from "../../shared/listing-filters.ts";
+import type { DiscoveryOrder, ListingFilters, MarketplaceOrder } from "../../shared/listing-filters.ts";
 import type { SearchDiagnosticResult, SearchDiagnosticRow, SearchSourceCoverage } from "../../shared/search-diagnostic.ts";
+import type { DealHuntRequest, DealHuntResponse } from "../../shared/deal-hunt.ts";
+import type { BuyerListingReview } from "../../shared/wait-skip-review.ts";
+import type { SearchReviewSelection } from "../../shared/search-review-selection.ts";
+
+export function fetchAuctionTracking(signal?: AbortSignal) {
+    return request<import("../../shared/auction-tracking.ts").AuctionTrackingResults>("/api/auction-tracking", { signal });
+}
+
+export function recheckAuctionClose(listingId: string) {
+    return request<import("../../shared/auction-tracking.ts").AuctionTrackingResults>(
+        `/api/auction-tracking/${encodeURIComponent(listingId)}/recheck`, { method: "POST" });
+}
 
 function filterQuery(filters?: ListingFilters): string {
     const query = new URLSearchParams();
@@ -22,17 +34,42 @@ function retryDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
         signal?.addEventListener("abort", cancel, { once: true });
     });
 }
-export function fetchAiUsage(searchRunId?: string): Promise<AiUsageDay> { return request(`/api/ai-usage${searchRunId ? `?searchId=${encodeURIComponent(searchRunId)}` : ""}`); }
-
+export function fetchAiUsage(searchRunId?: string): Promise<AiUsageDay> { return request(`/api/ai-usage${searchRunId ? `?searchId=${encodeURIComponent(watchBudgets.get(searchRunId) ?? searchRunId)}` : ""}`); }
 export function gradeCameraCard(photos: { front: string; back: string; tilted?: string }, signal?: AbortSignal): Promise<CameraGradeResult> {
     return request("/api/camera/grade", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(photos), signal,
     });
 }
-
 // One explicit operation keeps one ID through retries and nested analysis.
 // Standalone link/shortlist actions receive their own bounded request group.
-const searchHeaders = (searchRunId: string = crypto.randomUUID()): Record<string, string> => ({ "X-Pokemon-Flipper-Search-Id": searchRunId });
+const watchBudgets = new Map<string, string>();
+export function newWatchScanId(parentSearchId: string): string {
+    const id = crypto.randomUUID();
+    watchBudgets.set(id, watchBudgets.get(parentSearchId) ?? parentSearchId);
+    return id;
+}
+const searchHeaders = (searchRunId: string = crypto.randomUUID()): Record<string, string> => {
+    const parent = watchBudgets.get(searchRunId);
+    return { "X-Pokemon-Flipper-Search-Id": searchRunId, ...(parent && { "X-Pokemon-Flipper-Watch-Budget": parent }) };
+};
+export async function reviewBuyerListing(id: string, searchId: string, targets: Targets, offers: boolean, allowResearch: boolean, signal: AbortSignal): Promise<BuyerListingReview> {
+    const path = `/api/listings/${encodeURIComponent(id)}/buyer-review?profit=${targets.minProfit}&roi=${targets.minRoi}&offers=${offers ? 1 : 0}`;
+    const read = () => request<BuyerListingReview>(path, { method: "POST", headers: { ...searchHeaders(searchId), "Content-Type": "application/json" },
+        body: JSON.stringify({ allowResearch }), signal });
+    try { return await read(); }
+    catch (error) {
+        if (!(error instanceof ApiRequestError && error.retryable) || signal.aborted) throw error;
+        await retryDelay(error.retryAfterMs, signal);
+        return read();
+    }
+}
+export function runDealHunt(searchId: string, hunt: DealHuntRequest, signal: AbortSignal): Promise<DealHuntResponse> {
+    return request("/api/deal-hunt", {
+        method: "POST", headers: { ...searchHeaders(searchId), "Content-Type": "application/json" },
+        body: JSON.stringify(hunt), signal,
+    });
+}
+
 export class ApiRequestError extends Error {
     constructor(message: string, readonly retryable = false, readonly retryAfterMs = 1500, readonly code?: string) { super(message); }
 }
@@ -75,7 +112,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export type DealsMessage =
-    | { type: "start"; total: number; found: number; count: number; skipped: number; intent: SearchIntent; mode?: "new" | "development"; deferred?: number; previouslySeen?: number; screened?: number; priceExcluded?: number; unresolvedOverflow?: number; soldPurchaseCeiling?: number; marketplaceOrder?: MarketplaceOrder; pricePass?: { status: "COMPLETE" | "UNAVAILABLE"; newListings: number; candidates: number } }
+    | { type: "start"; total: number; found: number; count: number; skipped: number; intent: SearchIntent; reviewSelection?: SearchReviewSelection; mode?: "new" | "development"; deferred?: number; previouslySeen?: number; screened?: number; priceExcluded?: number; unresolvedOverflow?: number; soldPurchaseCeiling?: number; marketplaceOrder?: DiscoveryOrder; pricePass?: { status: "COMPLETE" | "UNAVAILABLE"; newListings: number; candidates: number } }
     | { type: "listing"; listing: ListingSummary }
     | ({ type: "done" } & SearchSourceCoverage)
     | { type: "error"; error: string };
@@ -144,13 +181,13 @@ export function streamDeals(
         { headers: searchHeaders(searchRunId) });
 }
 
-export function streamNewDeals(query: string, options: { minPrice: number; signal?: AbortSignal; targets: Targets; includeOffers: boolean; automaticPhotos?: boolean; knownIds: string[]; filters?: ListingFilters; searchRunId?: string }, onMessage: (message: DealsMessage) => void): Promise<void> {
+export function streamNewDeals(query: string, options: { minPrice: number; signal?: AbortSignal; targets: Targets; includeOffers: boolean; automaticPhotos?: boolean; knownIds: string[]; gradingWatch?: boolean; filters?: ListingFilters; searchRunId?: string }, onMessage: (message: DealsMessage) => void): Promise<void> {
     return streamLines(`/api/deals/new?min=${options.minPrice}&profit=${options.targets.minProfit}&roi=${options.targets.minRoi}&offers=${options.includeOffers ? 1 : 0}&autoPhotos=${options.automaticPhotos === false ? 0 : 1}${filterQuery(options.filters)}`, onMessage, options.signal,
-        { method: "POST", headers: { "Content-Type": "application/json", ...searchHeaders(options.searchRunId) }, body: JSON.stringify({ query, knownIds: options.knownIds.slice(-500) }) });
+        { method: "POST", headers: { "Content-Type": "application/json", ...searchHeaders(options.searchRunId) }, body: JSON.stringify({ query, knownIds: options.knownIds.slice(-500), gradingWatch: options.gradingWatch }) });
 }
 
-export function resolveListingLink(input: string, signal?: AbortSignal, searchRunId?: string): Promise<ListingSummary> {
-    return request("/api/listings/resolve", { method: "POST", headers: { "Content-Type": "application/json", ...searchHeaders(searchRunId) }, body: JSON.stringify({ input }), signal });
+export function resolveListingLink(input: string, signal?: AbortSignal, searchRunId?: string, comparison = false): Promise<ListingSummary> {
+    return request("/api/listings/resolve", { method: "POST", headers: { "Content-Type": "application/json", ...searchHeaders(searchRunId) }, body: JSON.stringify({ input, comparison }), signal });
 }
 
 export async function fetchShortlist(): Promise<ShortlistEntry[]> { return (await request<{ entries: ShortlistEntry[] }>("/api/shortlist")).entries; }
@@ -174,12 +211,13 @@ export function fetchEbayUsage(searchRunId?: string): Promise<EbayUsage | null> 
 // after that. fresh refreshes listing terms while compatible photos are reused.
 // The search's terms and their observation time let the server use saved
 // listing details without replacing newer purchase terms.
-export async function evaluateListing(listing: ListingSummary, { fresh = false, signal, searchRunId, automatic = false, typeFilter, includeOffers = true, targets, priceOnly = false }: { targets?: Targets; fresh?: boolean; signal?: AbortSignal; searchRunId?: string; automatic?: boolean; typeFilter?: ListingFilters["typeFilter"]; includeOffers?: boolean; priceOnly?: boolean } = {}): Promise<Evaluation> {
+export async function evaluateListing(listing: ListingSummary, { fresh = false, signal, searchRunId, automatic = false, typeFilter, includeOffers = true, targets, addedPhotosOnly = false, priceOnly = false }: { targets?: Targets; fresh?: boolean; signal?: AbortSignal; searchRunId?: string; automatic?: boolean; typeFilter?: ListingFilters["typeFilter"]; includeOffers?: boolean; addedPhotosOnly?: boolean; priceOnly?: boolean } = {}): Promise<Evaluation> {
     const account = searchRunId ?? (priceOnly ? undefined : crypto.randomUUID());
     for (let attempt = 0; ; attempt++) {
         signal?.throwIfAborted();
         const refreshQuery = priceOnly ? "priceOnly=1" : fresh ? attempt === 0 ? "fresh=1" : "refreshTerms=1" : "";
         const query = new URLSearchParams(refreshQuery);
+        if (addedPhotosOnly) query.set("addedPhotosOnly", "1");
         if (automatic && !priceOnly) {
             query.set("auto", "1");
             if (typeFilter && typeFilter !== "all") query.set("type", typeFilter);
@@ -202,7 +240,7 @@ export async function evaluateListing(listing: ListingSummary, { fresh = false, 
             bestOffer: listing.bestOffer,
         }),
         }); } catch (error) {
-            if (priceOnly || signal?.aborted || attempt > 0 || !(error instanceof ApiRequestError) || !error.retryable) throw error;
+            if (priceOnly || signal?.aborted || attempt > 0 || !(error instanceof ApiRequestError) || !error.retryable || error.code === "AI_EVIDENCE_HELD") throw error;
             await retryDelay(error.retryAfterMs, signal);
         }
     }

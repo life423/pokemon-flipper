@@ -12,7 +12,7 @@ export function cardDetails(listing: ListingSummary, evaluation: Evaluation | nu
     const graded = observed ? observed === "graded" : listing.isGraded || Boolean(photographed?.present) || Boolean(slab);
     const finish = finishIn(evaluation.identity?.finish ?? "") ?? finishIn(evaluation.photoCheck?.cardIdentity?.finish ?? "");
     return {
-        source: graded ? slab?.status === "OK" ? "Label checked" : "Review needed" : "Photo assessed",
+        source: graded ? slab?.status === "OK" ? "Label checked" : "Slab label unverified" : "Photo assessed",
         grade: graded ? slab?.status === "OK" ? namedGrade(slab.grader, slab.grade) : photographed?.present ? `${namedGrade(photographed.grader, photographed.grade)}${photographed.gradeQualifier ? ` (${photographed.gradeQualifier})` : ""}` : "Grade unreadable" : "Raw",
         finish: finishName(finish),
     };

@@ -7,8 +7,11 @@ import type { CheckComps, Comp, FetchRawComps, PricedCard } from "./types.ts";
 import type { SoldConditionEvidence, SoldConditionReadStatus } from "../ai/sold-condition.ts";
 import { readyForPricing } from "../../shared/identity.ts";
 import { MIN_MATCHED_SALES, soldMarketPrice } from "../../shared/sold-evidence.ts";
+import { finishClaim } from "../../shared/finish.ts";
+import { sellerConditionClues } from "../../shared/raw-condition-claim.ts";
 
-// Seller text only bootstraps screening; final valuations inspect sold photos.
+// Seller condition supports screening and collector references. Resale decisions
+// use the separate prices established by inspecting the sold copies.
 export { rawConditionClaim as compCondition } from "../../shared/raw-condition-claim.ts";
 import { rawConditionClaim as compCondition } from "../../shared/raw-condition-claim.ts";
 
@@ -36,23 +39,53 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
         const eligibleSale = (sale: Comp) => sale.currency === "USD" && sale.sale_type && !sale.grader && !sale.grade &&
             !/\b(psa|cgc|bgs|sgc|tag|lot|bundle)\b/i.test(sale.title) && compProblem({ ...sale, grader: "RAW", grade: "ANY" },
                 { printing: identity.printing, setName: variant.setName, finish: variant.finish, grader: "RAW", grade: "ANY", now, windowDays: 90 }) === null;
-        const titleMatches = (sale: Comp) => matchesSoldTarget(sale, { name: identity.name!, setName: variant.setName, cardNumber: identity.cardNumber });
-        const fetched = await fetchRawComps(variant.recordId, variant.name, assessCondition ? { stopWhen: sales => sales.some(sale =>
-            eligibleSale(sale) && titleMatches(sale)) } : undefined);
+        const target = { name: identity.name!, setName: variant.setName, cardNumber: identity.cardNumber };
+        const titleMatches = (sale: Comp) => matchesSoldTarget(sale, target);
+        const claimedCondition = (sale: Comp) => {
+            if (/\b(?:set of|signed|autographed|altered|proxy|replica)\b|\b\d+\s*(?:cards|pcs)\b/i.test(sale.title)) return null;
+            const finish = finishClaim(sale.title);
+            return (finish === "NOT_STATED" || finish === variant.finish) &&
+                matchesSoldTarget(sale, { ...target, requireTitleIdentity: true }) ? sellerConditionClues({ title: sale.title }).claim : null;
+        };
+        const readings = new Map<string, Promise<SoldConditionEvidence | null>>();
+        let cacheReadFailed = false;
+        const readCondition = (sale: Comp) => {
+            const key = JSON.stringify([sale.id, sale.listing_url, sale.title]);
+            let reading = readings.get(key);
+            if (!reading) {
+                reading = assessCondition!(sale, identity, signal).catch(() => { signal?.throwIfAborted(); cacheReadFailed = true; return null; });
+                readings.set(key, reading);
+            }
+            return reading;
+        };
+        const fetched = await fetchRawComps(variant.recordId, variant.name, assessCondition ? { stopWhen: async sales => {
+            signal?.throwIfAborted();
+            const matching = sales.filter(sale => eligibleSale(sale) && titleMatches(sale));
+            if (!requestedCondition) return matching.length > 0;
+            const candidates = await Promise.all(matching.map(async sale => {
+                const observed = await readCondition(sale);
+                if (observed) return observed.condition === requestedCondition;
+                const status = conditionStatus?.(sale, identity);
+                return status !== "SELLER_CONFLICT" && status !== "OTHER_CARD" && claimedCondition(sale) === requestedCondition;
+            }));
+            if (cacheReadFailed) throw new Error("Saved sold-copy evidence could not be read during pagination.");
+            return candidates.some(Boolean);
+        } } : undefined);
         signal?.throwIfAborted();
         let sales = uniqueSoldComps(fetched);
         const sampledSoldCopies = sales.length;
+        let sellerConditionComps: CompSummary | undefined;
+        let cleanerSellerConditionComps: CompSummary | undefined;
         let titleMatchedSoldCopies = 0, uncertainPhotoReviews = 0, unusableSoldCopies = 0;
         if (assessCondition) {
             const eligible = sales.filter(eligibleSale);
             titleMatchedSoldCopies = eligible.filter(titleMatches).length;
             const accepted = new Map<Comp, SoldConditionEvidence>();
-            let cacheReadFailed = false;
             // This callback reads accepted evidence only. New photo work has
             // a separate, one-shot acquisition after every cache read finishes.
             await Promise.all(eligible.map(async sale => {
                 signal?.throwIfAborted();
-                const assessed = await assessCondition(sale, identity, signal).catch(() => { signal?.throwIfAborted(); cacheReadFailed = true; return null; });
+                const assessed = await readCondition(sale);
                 signal?.throwIfAborted();
                 if (assessed) accepted.set(sale, assessed);
             }));
@@ -71,11 +104,33 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
                     accepted.set(acquired.sale, acquired.evidence);
                 }
             }
+            if (requestedCondition && !cacheReadFailed) {
+                const claims = eligible.map(sale => ({ sale, condition: claimedCondition(sale) }));
+                const sellerSummary = (condition: RawCondition) => {
+                    const claimed = claims.filter(row => row.condition === condition);
+                    const comparable = claimed.filter(({ sale }) => {
+                        const observed = accepted.get(sale);
+                        const status = conditionStatus?.(sale, identity);
+                        return (!observed || observed.condition === condition) && status !== "SELLER_CONFLICT" && status !== "OTHER_CARD";
+                    }).map(({ sale }) => ({ ...sale, grader: "RAW", grade: condition, sellerCondition: condition }));
+                    const summary = summarizeComps(comparable, { printing: identity.printing, setName: variant.setName,
+                        finish: variant.finish, grader: "RAW", grade: condition, now, windowDays: 90 });
+                    if (claimed.length > comparable.length) summary.dropped["photos contradict the sold title"] = claimed.length - comparable.length;
+                    return summary.count ? summary : undefined;
+                };
+                sellerConditionComps = sellerSummary(requestedCondition);
+                if (![...accepted.values()].some(row => row.condition === requestedCondition)) {
+                    for (const cleaner of RAW_CONDITIONS.slice(0, RAW_CONDITIONS.indexOf(requestedCondition)).reverse()) {
+                        cleanerSellerConditionComps = sellerSummary(cleaner);
+                        if (cleanerSellerConditionComps) break;
+                    }
+                }
+            }
             sales = eligible.flatMap(sale => {
                 const assessed = accepted.get(sale);
                 if (!assessed) {
                     const status = conditionStatus?.(sale, identity);
-                    if (status === "REVIEWED") uncertainPhotoReviews++;
+                    if (status === "REVIEWED" || status === "CORROBORATABLE") uncertainPhotoReviews++;
                     if (status === "UNUSABLE") unusableSoldCopies++;
                 }
                 return assessed ? [{ ...sale, photoCondition: assessed.condition, conditionEvidence: assessed.evidence, sellerCondition: compCondition(sale.title) }] : [];
@@ -140,7 +195,8 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
         ].filter(Boolean).join(" ");
         return { ...market, ...(prices.length ? { status: "PRICED", prices } : {
             status: "PRICE_UNAVAILABLE", reason: "The available eBay sales don't establish a raw resale price for this printing and condition.",
-        }), ebayComps: summaries,
+        }), ebayComps: summaries, ...(assessCondition && requestedCondition && {
+            sellerConditionComps: sellerConditionComps ?? null, cleanerSellerConditionComps: cleanerSellerConditionComps ?? null }),
             conditionEvidence: assessCondition ? "AI_PHOTOS" : "SELLER_TEXT", reviewedSoldCopies: assessCondition ? sales.length : undefined, sampledSoldCopies,
             evidenceNote: assessCondition ? photoNote
                 : "Screening uses seller-stated raw conditions. Final evaluations assess sold-copy photos where available. Up to 40 returned records over 90 days are sampled." };

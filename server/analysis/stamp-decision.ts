@@ -2,7 +2,7 @@ import { cardLanguageStatus } from "../../shared/card-language.ts";
 import { withTargets } from "../../shared/money/targets.ts";
 import { underwrite } from "../../shared/money/underwriting.ts";
 import type { Evaluation, Identity, PhotoCheck, Printing, Targets, Underwriting } from "../../shared/types.ts";
-import { normalizeSetName, ordinaryBaseSetPokemonNumber, readyForPricing, reprintMarksRuledOut, sameCardNumber, sameSetFamily, type identifyCard } from "../identity/card-identity.ts";
+import { normalizeSetName, ordinaryBaseSetPokemonNumber, printingClaimFromAspects, printingClaimFromText, readyForPricing, reprintMarksRuledOut, sameCardNumber, sameSetFamily, type identifyCard } from "../identity/card-identity.ts";
 import { sameCatalogName } from "../identity/catalog-name.ts";
 import type { PricedCard } from "../pricing/types.ts";
 
@@ -42,14 +42,15 @@ export function stampCandidate(evaluation: Evaluation) {
     const card = photoCheck?.cardIdentity;
     const marks = photoCheck?.printingMarks;
     const set = normalizeSetName(card?.set);
-    const number = card?.cardNumber?.match(/^0*([1-9][0-9]?)\s*\/\s*(82|75)$/);
+    const number = card?.cardNumber?.match(/^0*([1-9][0-9]?)\s*\/\s*(82|75|105)$/);
     const collector = Number(number?.[1]);
     // The other sets are limited to their ordinary Pokémon holos, which
     // share the same artwork and stamp layout.
     const base = (set === "base set" || set === "base set shadowless") && ordinaryBaseSetPokemonNumber(card?.cardNumber) && marks?.artBoxShadow === "ABSENT";
     const rocket = set === "team rocket" && number?.[2] === "82" && collector <= 14 && card?.finish === "HOLO";
-    const neo = set === "neo discovery" && number?.[2] === "75" && collector <= 17 && card?.finish === "HOLO";
-    if ((!base && !rocket && !neo) || !photoCheck || photoCheck.cardCount !== "ONE" ||
+    const discovery = set === "neo discovery" && number?.[2] === "75" && collector <= 17 && card?.finish === "HOLO";
+    const destiny = set === "neo destiny" && number?.[2] === "105" && collector <= 15 && card?.finish === "HOLO";
+    if ((!base && !rocket && !discovery && !destiny) || !photoCheck || photoCheck.cardCount !== "ONE" ||
         !["NONE", "SLEEVE", "TOPLOADER"].includes(photoCheck.holder) || photoCheck.slab?.present || evaluation.slab ||
         photoCheck.cardMatch?.verdict === "MISMATCH" || marks?.firstEditionStamp !== "CANT_TELL" || marks.conflicts?.includes("firstEditionStamp") ||
         !reprintMarksRuledOut(marks.reprintMark, set) || card?.confidence !== "HIGH" || !card.name || !card.evidence.length ||
@@ -65,10 +66,19 @@ export function stampCandidate(evaluation: Evaluation) {
     return { photoCheck, marks, card, absentPrinting };
 }
 
-// Price both readings before spending on the crop. These are private
-// counterfactuals and only the observed stamp result can select one.
+// For an ordinary Neo Destiny listing, a clearly blank stamp area can confirm
+// Unlimited. A visible stamp still needs the normal independent corroboration.
+export function ordinaryNeoDestinyStamp(evaluation: Evaluation, candidate: NonNullable<ReturnType<typeof stampCandidate>>): boolean {
+    const ordinary = (claim: string) => claim === "NOT_STATED" || claim === "UNLIMITED";
+    return normalizeSetName(candidate.card.set) === "neo destiny" && candidate.photoCheck.cardMatch?.verdict === "MATCH" &&
+        !candidate.marks.conflicts?.includes("reprintMark") && ordinary(printingClaimFromText(evaluation.listing.title)) &&
+        ordinary(printingClaimFromAspects(evaluation.listing.aspects ?? {})) &&
+        candidate.photoCheck.images.some(image => image.view === "FRONT" && image.usable && !image.isStockImage);
+}
+
+// These are private counterfactuals. Only the observed stamp result can select one.
 export async function findStampDecision(evaluation: Evaluation, { targets, now, identify, price, signal }: DecisionOptions):
-    Promise<Record<"VISIBLE" | "NOT_PRESENT", StampScenario> | null> {
+    Promise<{ VISIBLE: StampScenario | null; NOT_PRESENT: StampScenario } | null> {
     signal.throwIfAborted();
     const candidate = stampCandidate(evaluation);
     if (!candidate || !hasFreshStampTerms(evaluation.listing, now)) return null;
@@ -90,6 +100,10 @@ export async function findStampDecision(evaluation: Evaluation, { targets, now, 
         const underwriting = underwrite({ ...evaluation, ...prices, identity: candidate, photoCheck: check }, config);
         return underwriting.best ? { ...prices, check, identity: candidate, underwriting } : null;
     };
+    if (ordinaryNeoDestinyStamp(evaluation, candidate)) {
+        const absent = await scenario("NOT_PRESENT", "UNLIMITED");
+        return absent?.underwriting.verdict.startsWith("BUY") ? { NOT_PRESENT: absent, VISIBLE: null } : null;
+    }
     const visible = await scenario("VISIBLE", "FIRST_EDITION");
     if (!visible || !["BUY_RAW", "BUY_AND_GRADE", "PASS"].includes(visible.underwriting.verdict)) return null;
     const absent = await scenario("NOT_PRESENT", absentPrinting);

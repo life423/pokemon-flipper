@@ -17,7 +17,7 @@ export function PricingRetries({ listings, analyzed, reviewCount, busy, note, on
     const seconds = Math.max(0, Math.ceil((waitingUntil - now) / 1000));
     if (!eligible.length && !reviewCount && !note && !busy) return null;
     return <section className={styles.panel} aria-label="Incomplete screening">
-        {(eligible.length > 0 || reviewCount > 0) && <p>{eligible.length > 0 ? `${eligible.length} temporary price ${eligible.length === 1 ? "lookup is" : "lookups are"} ${searching ? "waiting for this search to finish" : "still unresolved"}. ` : ""}{reviewCount > 0 ? `${reviewCount} ${reviewCount === 1 ? "listing needs" : "listings need"} attention.` : ""}</p>}
+        {(eligible.length > 0 || reviewCount > 0) && <p>{eligible.length > 0 ? `${eligible.length} temporary price ${eligible.length === 1 ? "lookup is" : "lookups are"} ${searching ? "waiting for this search to finish" : "still unresolved"}. ` : ""}{reviewCount > 0 ? `${reviewCount} ${reviewCount === 1 ? "listing in" : "listings in"} Wait or skip.` : ""}</p>}
         {((eligible.length > 0 && !searching) || busy) && <>
             <div className={styles.actions}>
                 <button type="button" onClick={() => onRetry(ready.map((listing) => listing.screen!.pricingRetry!.ticket))} disabled={busy || searching || !ready.length}>{busy ? "Retrying prices…" : searching ? "Retry pricing after search" : ready.length ? `Retry pricing (${ready.length})` : `Retry pricing in ${seconds}s`}</button>

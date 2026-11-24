@@ -15,6 +15,17 @@ export function photoEvidenceKey(images: readonly string[]): string {
     return JSON.stringify([...new Set(images.map(normalizedPhoto))]);
 }
 
+// Report unique new seller images by their current gallery positions.
+export function addedPhotoNumbers(previous: readonly string[], current: readonly string[]): number[] {
+    const seen = new Set(previous.map(normalizedPhoto));
+    return current.flatMap((url, index) => {
+        const key = normalizedPhoto(url);
+        if (!url || seen.has(key)) return [];
+        seen.add(key);
+        return [index + 1];
+    });
+}
+
 export function listingEvidenceKey(listing: { title: string; images: readonly string[] }): string {
     return JSON.stringify([listing.title.trim(), photoEvidenceKey(listing.images)]);
 }

@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
+import { cardSpecificNotes } from "../../../../shared/ebay-condition-notes.ts";
 import type { Condition, Evaluation, Identity, ListingSummary, PhotoCheck, Slab, SlabPricing } from "../../types";
 import { describeRange, dollars, name, percent } from "../../format";
 import { CONDITION_AREAS, RAW_CONDITIONS, CONDITION_NAMES, CONDITION_DEFINITIONS } from "../../../../shared/conditions.ts";
 import { ceilingLabel } from "../../../../shared/format.ts";
-import { displayedRawGrade } from "../../../../shared/photo-evidence.ts";
+import { displayedRawGrade, individualPhotoIssues, missingGalleryViews } from "../../../../shared/photo-evidence.ts";
 import { listingSignals } from "../../../../shared/signals.ts";
 import { CompsRow } from "./PricingSections";
 import { Notes, Pairs, Section } from "./primitives";
@@ -27,7 +28,7 @@ export function ListingEvidenceSection({ listing, evaluation }: { listing: Listi
 export function ListingSection({ listing, evaluation }: { listing: ListingSummary; evaluation: Evaluation }) {
     const seller = evaluation.listing.seller ?? listing.seller;
     const condition = evaluation.listing.cardCondition ?? listing.cardCondition ?? null;
-    const notes = evaluation.listing.conditionNotes ?? listing.conditionNotes ?? [];
+    const notes = cardSpecificNotes(condition, evaluation.listing.conditionNotes ?? listing.conditionNotes ?? []);
     const screen = listing.screen;
     const rows: [string, ReactNode][] = [];
 
@@ -60,14 +61,14 @@ export function ListingSection({ listing, evaluation }: { listing: ListingSummar
     );
 }
 
-export function IdentitySection({ identity, isSlab }: { identity: Identity; isSlab: boolean }) {
+export function IdentitySection({ identity, isSlab, reasons }: { identity: Identity; isSlab: boolean; reasons: string[] }) {
     const evidence = identity.evidence;
 
     return (
         <Section title="Card">
             <Pairs
                 rows={[
-                    ["Status", identity.status === "IDENTIFIED" ? "Identified" : "Needs review"],
+                    ["Status", identity.status === "IDENTIFIED" ? "Identified" : "Unconfirmed"],
                     ["Card", identity.name ?? "\u2014"],
                     ["Set", identity.set ?? "\u2014"],
                     ["Number", identity.cardNumber ?? "\u2014"],
@@ -92,12 +93,12 @@ export function IdentitySection({ identity, isSlab }: { identity: Identity; isSl
                 </>
             )}
 
-            <Notes items={identity.reasons} tone="bad" />
+            <Notes items={reasons} tone="bad" />
         </Section>
     );
 }
 
-export function SlabSection({ slab, pricing }: { slab: Slab; pricing: SlabPricing | null }) {
+export function SlabSection({ slab, pricing, showSales = false }: { slab: Slab; pricing: SlabPricing | null; showSales?: boolean }) {
     const grade = slab.grade ? `${slab.grade}${slab.gradeQualifier ? ` (${slab.gradeQualifier})` : ""}` : "Unreadable";
 
     return (
@@ -123,7 +124,7 @@ export function SlabSection({ slab, pricing }: { slab: Slab; pricing: SlabPricin
             />
             <Notes items={slab.reasons} tone="bad" />
             <Notes items={slab.concerns} tone="muted" />
-            {pricing?.summary && <CompsRow summary={pricing.summary} />}
+            {pricing?.summary && <CompsRow summary={pricing.summary} expanded={showSales} />}
             {pricing?.activeReference && <div>
                 <p><strong>Current Buy It Now competition</strong></p>
                 <p>Resale target {dollars(pricing.activeReference.resalePrice)} · {percent(pricing.activeReference.discountRate)} below the cheapest matching item plus shipping ({dollars(pricing.activeReference.lowestTotal)}).</p>
@@ -196,6 +197,7 @@ export function ConditionSection({ evaluation, condition }: { evaluation: Evalua
 }
 
 export function PhotosSection({ evaluation, photoCheck }: { evaluation: Evaluation; photoCheck: PhotoCheck }) {
+    const missing = missingGalleryViews(photoCheck);
     return (
         <Section title="Photos">
             <Pairs
@@ -210,19 +212,22 @@ export function PhotosSection({ evaluation, photoCheck }: { evaluation: Evaluati
             <Notes items={evaluation.modeReasons} tone="muted" />
 
             <ul className={styles.notes}>
-                {photoCheck.images.map((photo) => (
-                    <li key={photo.number}>
-                        Photo {photo.number}: {name(photo.view)}, {photo.usable ? "usable" : "not usable"}
-                        {photo.isStockImage ? ", stock image" : ""}
-                        {photo.issues.length > 0 && <span className={styles.muted}> ({photo.issues.join("; ")})</span>}
-                    </li>
-                ))}
+                {photoCheck.images.map(photo => {
+                    const issues = individualPhotoIssues(photo.issues);
+                    return (
+                        <li key={photo.number}>
+                            Photo {photo.number}: {name(photo.view)}, {photo.usable ? "usable" : "not usable"}
+                            {photo.isStockImage ? ", stock image" : ""}
+                            {issues.length > 0 && <span className={styles.muted}> ({issues.join("; ")})</span>}
+                        </li>
+                    );
+                })}
             </ul>
 
-            {photoCheck.missingViews.length > 0 && (
+            {missing.length > 0 && (
                 <>
                     <h4 className={styles.subTitle}>Additional photos requested by AI</h4>
-                    <Notes items={photoCheck.missingViews} tone="muted" />
+                    <Notes items={missing} tone="muted" />
                 </>
             )}
         </Section>

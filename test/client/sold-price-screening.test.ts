@@ -48,7 +48,7 @@ test("sold-price UI keeps preliminary evidence separate from assessed prices and
         for (const status of ["UNAVAILABLE", "DEFERRED"] as const) {
             const listing = applySoldPriceScreen(base, evidence([], { status, note: "Matching sold prices are not available yet." }));
             const card = renderCard(listing), detail = renderDetail(listing);
-            assert.match(card, /Price unconfirmed/);
+            assert.match(card, /Wait for resale evidence/);
             assert.match(card, /Sold-price evidence limited/);
             assert.match(detail, /Sold-price screening/);
             for (const html of [card, detail]) assert.doesNotMatch(html, /Your review needed|Est\. net profit|Estimated resale|Unverified screening ceiling|NaN|Infinity/);
@@ -76,7 +76,7 @@ test("sold-price UI keeps preliminary evidence separate from assessed prices and
         assert.equal(listing.screen.soldEvidence?.status, "AVAILABLE");
         const detail = renderDetail(listing), card = renderCard(listing);
         assert.match(detail, /1 sale, median \$120\.00, Low/);
-        assert.doesNotMatch(card, /Price unconfirmed/);
+        assert.doesNotMatch(card, /Wait for resale evidence/);
         assert.match(card, /Unverified screening ceiling/);
         for (const html of [card, detail]) assert.doesNotMatch(html, /Est\. net profit|Your review needed/);
     });

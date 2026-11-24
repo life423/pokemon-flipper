@@ -10,7 +10,7 @@ const FAKE = /\b(proxy|proxies|custom|replica|fan[\s-]?(made|art)|orica|novelty)
 const PICK_OR_MYSTERY = /\b(mystery|repack|grab bag|random|surprise|assorted|guaranteed|you pick|pick your|choose your|select your)\b|\(1\) card/i;
 const SEALED = /\b(booster (packs?|box(es)?)|elite trainer box(es)?|etb|sealed (packs?|box(es)?|product))\b/i;
 // Not "sleeve" or "toploader": real single-card listings ship in them.
-const MERCH = /\b(plush(ie)?|stickers?|decals?|figures?|figurines?|funko|keychains?|posters?|art prints?|binders?|playmats?|deck box(es)?|coins?|pins?|burger king|topps)\b/i;
+const MERCH = /\b(plush(ie)?|stickers?|decals?|figures?|figurines?|funko|keychains?|posters?|art prints?|binders?|playmats?|deck box(es)?|coins?|pins?|burger king|topps|bicycle(?: mini)? playing cards?)\b/i;
 const NOT_A_CARD = /\b(empty (slab|case|box)|(slab|case|label|flip) only|no card)\b/i;
 
 // These phrases describe a seller assurance or an accompanying holder. Remove

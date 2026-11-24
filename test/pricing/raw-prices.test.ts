@@ -23,7 +23,7 @@ const cardFrom = (setName, prices) => toCardRecord({
 test("native card details retain USD variant labels without importing market quotes", () => {
     const card = cardFrom("Crown Zenith", [providerEntry("Holofoil"), providerEntry("Holofoil"), providerEntry("Normal", "EUR")]);
 
-    assert.deepEqual(card, { source: "pkmnprices", id: 1, name: "Pikachu", cardNumber: "019/159", setName: "Crown Zenith",
+    assert.deepEqual(card, { source: "pkmnprices", id: 1, tcgPlayerId: 123, name: "Pikachu", cardNumber: "019/159", setName: "Crown Zenith",
         variants: [{ name: "Holofoil", printing: "UNLIMITED", finish: "HOLO" }] });
 });
 

@@ -191,8 +191,9 @@ export function createSoldScreening({ signal, targets, now = Date.now, source = 
             if (!market) return null;
             const { references: [reference], issue } = await marketReferences(market, grader, String(minGrade));
             const newestSale = Date.parse(reference?.summary.newestSale ?? "");
-            return !issue && reference && usableSoldReference(reference, true) && newestSale <= asOf && asOf - newestSale <= 30 * DAY_MS
-                ? reference : null;
+            if (issue || !reference || !usableSoldReference(reference, true) || !(newestSale <= asOf && asOf - newestSale <= 30 * DAY_MS)) return null;
+            return { ...reference, soleCatalogVariant: market.record.variants.every(variant =>
+                variant.printing === market.printing && variant.finish === market.finish) };
         } catch (error) {
             signal?.throwIfAborted();
             if (error instanceof StorageUnavailableError || error instanceof PriceResearchBudgetError && error.reason !== "LIMIT") throw error;

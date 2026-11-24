@@ -66,7 +66,7 @@ export function canAutoAnalyze(listing: ListingSummary): boolean {
 
 export type ResultGroup = "deals" | "offers" | "candidates" | "review";
 
-export function resultGroup(listing: ListingSummary, evaluation: Evaluation | null, includeOffers = false, analysisFailed = false): ResultGroup | null {
+export function resultGroup(listing: ListingSummary, evaluation: Evaluation | null, includeOffers = false, analysisIncomplete = false): ResultGroup | null {
     const verdict = evaluation?.underwriting?.verdict;
     const availability = evaluation?.listing?.availability ?? listing.availability;
     if (verdict === "PASS" && evaluation && obscuredDisclosedWear(evaluation)) return null;
@@ -111,7 +111,7 @@ export function resultGroup(listing: ListingSummary, evaluation: Evaluation | nu
     if (verdict === "NEEDS_REVIEW" || verdict === "CANT_PRICE") return "review";
     if (evaluation && !verdict) return "review";
     // An incomplete check is unresolved, never a priced rejection or a queued analysis.
-    if (!evaluation && analysisFailed) return "review";
+    if (!evaluation && analysisIncomplete) return "review";
     if (!evaluation && listing.screen?.soldEvidence) {
         if (listing.screen.status === "DROPPED") return null;
         // Missing market data is unfinished sorting work, not a request for

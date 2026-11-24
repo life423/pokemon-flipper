@@ -1,5 +1,5 @@
 // eBay Browse API: reads public listings with an application token
-// (client credentials). No eBay user ever signs in.
+// (client credentials), independently of the buyer account.
 import { createHash } from "node:crypto";
 import { fetchJson, ProviderError } from "../lib/http.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
@@ -14,14 +14,12 @@ export function configuredShippingZip(): string | null {
     return zip && /^\d{5}(?:-\d{4})?$/.test(zip) ? zip : null;
 }
 
-let cachedToken: string | null = null;
-let tokenExpiresAt = 0;
+type EbayEnvironment = "production" | "sandbox";
+const cachedTokens = new Map<EbayEnvironment, { token: string; expiresAt: number; fingerprint: string }>();
 const share = createSingleFlight();
-let rejectedCredentials: { fingerprint: string; until: number } | null = null;
+const rejectedCredentials = new Map<EbayEnvironment, { fingerprint: string; until: number }>();
 
 export class EbayAuthenticationError extends ProviderError {}
-
-const REJECTED_MESSAGE = "eBay rejected the configured credentials. Check that EBAY_CLIENT_ID and EBAY_CLIENT_SECRET are the matching Production key pair in .env, then restart the app.";
 
 export class EbayError extends Error {
     constructor(
@@ -32,32 +30,33 @@ export class EbayError extends Error {
     }
 }
 
-async function getAccessToken(): Promise<string> {
-    return share("token", requestAccessToken);
+export async function getApplicationToken(environment: EbayEnvironment): Promise<string> {
+    const prefix = environment === "sandbox" ? "EBAY_SANDBOX" : "EBAY";
+    const clientId = process.env[prefix + "_CLIENT_ID"]?.trim();
+    const clientSecret = process.env[prefix + "_CLIENT_SECRET"]?.trim();
+    if (!clientId || !clientSecret) {
+        throw new EbayAuthenticationError(`eBay credentials are missing. Add ${prefix}_CLIENT_ID and ${prefix}_CLIENT_SECRET to the app's .env file, then restart the app.`);
+    }
+    const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+    const fingerprint = createHash("sha256").update(credentials).digest("hex");
+    const cached = cachedTokens.get(environment);
+    if (cached?.fingerprint === fingerprint && Date.now() < cached.expiresAt) return cached.token;
+    const label = environment === "sandbox" ? "Sandbox" : "Production";
+    const rejectedMessage = `eBay rejected the configured credentials. Check that ${prefix}_CLIENT_ID and ${prefix}_CLIENT_SECRET are the matching ${label} key pair in .env, then restart the app.`;
+    return share(environment + fingerprint, () => requestApplicationToken(environment, credentials, fingerprint, rejectedMessage));
 }
 
-async function requestAccessToken(): Promise<string> {
-    if (cachedToken && Date.now() < tokenExpiresAt) {
-        return cachedToken;
-    }
-
-    const clientId = process.env.EBAY_CLIENT_ID?.trim();
-    const clientSecret = process.env.EBAY_CLIENT_SECRET?.trim();
-    if (!clientId || !clientSecret) {
-        throw new EbayAuthenticationError("eBay credentials are missing. Add EBAY_CLIENT_ID and EBAY_CLIENT_SECRET to the app's .env file, then restart the app.");
-    }
-    const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString(
-        "base64"
-    );
+async function requestApplicationToken(environment: EbayEnvironment, credentials: string, fingerprint: string, rejectedMessage: string): Promise<string> {
     // Share failed sign-ins too: loading usage and clicking Search must not
     // repeatedly send a rejected key pair. A corrected pair can retry immediately.
-    const fingerprint = createHash("sha256").update(credentials).digest("hex");
-    if (rejectedCredentials && rejectedCredentials.fingerprint === fingerprint && Date.now() < rejectedCredentials.until) {
-        throw new EbayAuthenticationError(REJECTED_MESSAGE);
+    const rejected = rejectedCredentials.get(environment);
+    if (rejected?.fingerprint === fingerprint && Date.now() < rejected.until) {
+        throw new EbayAuthenticationError(rejectedMessage);
     }
 
-    const { response, body: data } = await fetchJson(`${EBAY_API}/identity/v1/oauth2/token`, {
-        method: "POST",
+    const host = environment === "sandbox" ? "https://api.sandbox.ebay.com" : EBAY_API;
+    const { response, body: data } = await fetchJson(`${host}/identity/v1/oauth2/token`, {
+        method: "POST", redirect: "error",
         headers: {
             "Content-Type": "application/x-www-form-urlencoded",
             Authorization: `Basic ${credentials}`,
@@ -70,8 +69,8 @@ async function requestAccessToken(): Promise<string> {
 
     if (!response.ok) {
         if (response.status === 401 || response.status === 400 && data.error === "invalid_client") {
-            rejectedCredentials = { fingerprint, until: Date.now() + 60_000 };
-            throw new EbayAuthenticationError(REJECTED_MESSAGE);
+            rejectedCredentials.set(environment, { fingerprint, until: Date.now() + 60_000 });
+            throw new EbayAuthenticationError(rejectedMessage);
         }
         throw new ProviderError(`eBay sign-in failed (${response.status}). Please retry later.`);
     }
@@ -79,14 +78,13 @@ async function requestAccessToken(): Promise<string> {
     if (typeof data.access_token !== "string" || !data.access_token || typeof data.expires_in !== "number" || !Number.isFinite(data.expires_in) || data.expires_in <= 60) {
         throw new ProviderError("eBay sign-in returned an invalid token response. Please retry later.");
     }
-    rejectedCredentials = null;
+    rejectedCredentials.delete(environment);
 
     // Tokens last 2 hours. Refresh a minute early so one never expires
     // in the middle of a request.
-    cachedToken = data.access_token as string;
-    tokenExpiresAt = Date.now() + (data.expires_in - 60) * 1000;
-
-    return cachedToken;
+    const token: string = data.access_token;
+    cachedTokens.set(environment, { token, expiresAt: Date.now() + (data.expires_in - 60) * 1000, fingerprint });
+    return token;
 }
 
 export async function ebayGet<T>(path: string, { signal, keepReserve = false }: { signal?: AbortSignal; keepReserve?: boolean } = {}): Promise<T> {
@@ -96,7 +94,7 @@ export async function ebayGet<T>(path: string, { signal, keepReserve = false }: 
     const { assertSqlStorageReady } = await import("../storage/index.ts");
     await assertSqlStorageReady();
     signal?.throwIfAborted();
-    const token = await getAccessToken();
+    const token = await getApplicationToken("production");
     signal?.throwIfAborted();
     const headers: Record<string, string> = {
         Authorization: `Bearer ${token}`,

@@ -41,7 +41,7 @@ function savedResponse(value: unknown, hash: string): SavedResponse {
     return entry;
 }
 const replay = (entry: SavedResponse) => new Response(entry.body, { status: entry.status, headers: [...entry.headers, ["x-pokemon-flipper-reused", "true"]] });
-const unknownOutcome = () => new AiSpendingError("AI_PAUSED", "A previous AI request for this evidence has an unresolved outcome. Its claim and spending hold were kept; no duplicate request was sent.");
+const unknownOutcome = () => new AiSpendingError("AI_EVIDENCE_HELD", "A previous AI request for this evidence has an unresolved outcome. Its claim and spending hold were kept; no duplicate request was sent.");
 interface ProviderReply {
     status?: unknown;
     id?: unknown;
@@ -102,7 +102,7 @@ export function createSqlAiDispatch({ enabled = () => storageBackend() === "azur
             signal?.throwIfAborted();
             if (claim.state === "COMPLETED") return replay(savedResponse(claim.result, hash));
             if (["UNKNOWN", "FAILED", "CANCELLED"].includes(claim.state)) throw unknownOutcome();
-            if (Date.now() - started >= waitMs) throw new AiSpendingError("AI_PAUSED", "The same AI task is already running. No duplicate request was sent; its result will remain saved for reuse.");
+            if (Date.now() - started >= waitMs) throw new AiSpendingError("AI_EVIDENCE_HELD", "The same AI task is already running. No duplicate request was sent; its result will remain saved for reuse.");
             await delay(pollMs, undefined, { signal });
             const current = await repos.readTask(key);
             if (!current) throw new StorageUnavailableError("The shared AI task disappeared; no replacement request was authorized.");

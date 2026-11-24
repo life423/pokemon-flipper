@@ -7,7 +7,7 @@ import { cents, meetsMoneyTargets, minimumOfferPrice, money, sellingFeeCents, ta
 import { isRawSoldPrice, PRICE_PRINTING_MISMATCH, pricePrintingMismatch, referencePriceReason, unsupportedVariantReason } from "./price-evidence.ts";
 import { soldMarketPrice } from "../sold-evidence.ts";
 import { hasSavedConditionExamples } from "../ebay-condition-notes.ts";
-import { conflictsWithPhotoFinish, obscuredDisclosedWear } from "../photo-evidence.ts";
+import { photoFinishConflictReason, obscuredDisclosedWear } from "../photo-evidence.ts";
 import type {
     CompSummary,
     Condition,
@@ -42,9 +42,10 @@ export const GRADERS: Grader[] = ["PSA", "CGC"];
 export interface UnderwritingInput {
     pricingDeferred?: Evaluation["pricingDeferred"];
     frontPhotoStop?: Evaluation["frontPhotoStop"];
+    provisionalGradeRange?: GradeRange;
     pricesCheckedAt?: string;
     deeperPhotoReview?: DeeperPhotoReview;
-    listing: { price: number | null; shipping: number | null; availability?: string; title?: string;
+    listing: { price: number | null; shipping: number | null; availability?: string; title?: string; aspects?: Record<string, string>;
         buyingOption?: Evaluation["listing"]["buyingOption"]; bestOffer?: boolean; cardCondition?: string | null; conditionNotes?: string[]; photosInListing?: number };
     identity: Identity | null;
     condition: Pick<Condition, "rawCondition" | "gradeRange" | "authenticity"> & Partial<Pick<Condition, "creases" | "confidence" | "surface" | "corners" | "edges">> | null;
@@ -303,7 +304,11 @@ export function gradePath(
     const label = `Grade with ${grader}`;
     const graded = input.gradedPricing?.[grader];
     const gradeRange = input.condition?.gradeRange;
-    if (input.condition && !gradeRange) return unavailablePath("GRADE", label, "The photos support a raw-condition assessment, but not a numeric grade estimate.", grader);
+    if (input.condition && !gradeRange) {
+        const likely = input.provisionalGradeRange?.likely;
+        return unavailablePath("GRADE", label, likely ? `Grade ${likely} is tentative. The photos are too limited to price a grading submission.`
+            : "The photos support a raw-condition assessment, but not a numeric grade estimate.", grader);
+    }
 
     if (graded?.status !== "PRICED" || !gradeRange) {
         return unavailablePath("GRADE", label, graded?.reason ?? `There are no ${grader} sales to price with.`, grader);
@@ -557,9 +562,8 @@ function underwriteBase(input: UnderwritingInput, config: MoneyConfig): Underwri
     if (!readyForPricing(identity)) {
         return verdict("NEEDS_REVIEW", identity?.reasons?.length ? identity.reasons : ["The card isn't identified yet."]);
     }
-    if (conflictsWithPhotoFinish(input.photoCheck, identity?.finish)) {
-        return verdict("NEEDS_REVIEW", ["The photographed finish disagrees with the listing or slab label."]);
-    }
+    const finishConflict = photoFinishConflictReason(input.photoCheck, identity?.finish, input.listing);
+    if (finishConflict) return verdict("NEEDS_REVIEW", [finishConflict]);
 
     const unsupportedVariant = unsupportedVariantReason(input);
     if (unsupportedVariant && (input.slab ? input.slab.status === "OK" : condition?.authenticity.concern === "NONE_SEEN")) {
@@ -714,7 +718,7 @@ export function underwrite(input: UnderwritingInput, config: MoneyConfig = MONEY
     // Preserve the original grade and money scenarios, but pause actionable
     // purchase advice when the optional second opinion finds a new risk.
     if (concerns.length && result.best && result.verdict !== "NEEDS_REVIEW") return {
-        ...result, verdict: "NEEDS_REVIEW", reasons: [...concerns.map((concern) => `Your review needed: ${concern}`), ...result.reasons],
+        ...result, verdict: "NEEDS_REVIEW", reasons: [...concerns, ...result.reasons],
     };
     if (result.verdict.startsWith("BUY") && unquotedBuyItNowShipping(input.listing)) return {
         ...result, verdict: "CANT_PRICE", shippingUnconfirmed: true,

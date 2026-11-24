@@ -9,6 +9,16 @@ const DESCRIPTIVE_SUFFIX = /(?:^|\s)(?:(?:(?:reverse|rev|non)\s*)?(?:holo(?:grap
 // unknown wording may belong to the printed name and must stay distinct.
 const CATALOG_RARITY_SUFFIX = /\s+\((?:(?:(?:alternate|alt)(?:\s+full)?\s+art\s+)?secret|secret\s+shining)\)\s*$/i;
 
+// Some Plasma Blast catalog products append the faction and the full-art
+// collector number to the printed EX name. Bind that number to the record
+// before comparing names; the regular artwork has its own collector number.
+export function catalogPrintedName(name: string, set: string | null | undefined, number: string): string {
+    if (typeof name !== "string" || typeof set !== "string" || set.trim().toLowerCase() !== "plasma blast") return name;
+    const label = /^(.+?[- ]EX) \(Team Plasma\) \((\d{1,4}) Full Art\)$/i.exec(name.trim());
+    const collector = /^(\d{1,4})(?:\/\d{1,4})?$/.exec(String(number).trim());
+    return label && collector && Number(label[2]) === Number(collector[1]) ? label[1]! : name;
+}
+
 export function canonicalCatalogName(value: unknown): string {
     let name = normalizeText(String(value ?? "").replace(CATALOG_RARITY_SUFFIX, "").replace(/[‘’]/g, "'")
         .replace(/♀/g, " female ").replace(/♂/g, " male ")

@@ -5,6 +5,7 @@ import { createSoldScreening } from "../../server/pricing/screening-sales.ts";
 import { ScreeningPriceBudgetError } from "../../server/pricing/pkmnprices.ts";
 import { PriceResearchBudgetError } from "../../server/pricing/research-budget.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
+import { EbayBudgetError } from "../../server/ebay/daily-budget.ts";
 import type { CardRecord, Comp, FetchSoldPage } from "../../server/pricing/types.ts";
 import type { ListingSummary, SearchIntent } from "../../shared/types.ts";
 import type { SearchCompetition } from "../../shared/search-diagnostic.ts";
@@ -52,13 +53,19 @@ test("an exact slab BIN search prices the market before Browse and shares that e
     ] });
     const candidate = listing({ title: query, isGraded: true, currentPrice: 100, images: ["front"] });
     const overpriced = { ...candidate, id: "v1|overpriced|0", currentPrice: purchaseCeiling + 1 };
-    let browseCalls = 0;
+    let browseCalls = 0, comparisonCalls = 0;
+    const comparison: SearchCompetition = { title: query, url: "https://www.ebay.com/itm/123456789012", price: 100, shipping: 5, ceiling: purchaseCeiling - 5, identity: "LISTING" };
+    const observed: SearchCompetition[] = [];
     const rows = await findDeals(query, { targets, filters: { typeFilter: "FIXED_PRICE" },
-        onCompetition: () => assert.fail("a retained listing should not trigger competition") }, {
+        onCompetition: reference => observed.push(reference) }, {
         readIntent: async () => readSearchLocally(query),
         readTitle: async title => readTitleByRules(title),
         soldScreening: () => run,
-        competition: async () => assert.fail("no extra lookup for non-empty discovery"),
+        competition: async (_query, _reference, _net, _targets, _max, _signal, options) => {
+            comparisonCalls++;
+            assert.equal(options?.minPrice, 0);
+            return comparison;
+        },
         search: async (keywords, options) => {
             browseCalls++;
             assert.equal(keywords, "charizard 4 PSA 8");
@@ -70,6 +77,8 @@ test("an exact slab BIN search prices the market before Browse and shares that e
         },
     });
     assert.equal(browseCalls, 1);
+    assert.equal(comparisonCalls, 1);
+    assert.deepEqual(observed, [comparison]);
     assert.deepEqual(rows.map(row => row.id), [candidate.id]);
     assert.equal(rows[0].screen?.soldEvidence?.references[0].summary.count, 1, "First Edition never prices Unlimited");
     assert.equal(canAutoAnalyze(rows[0]), true);
@@ -110,6 +119,33 @@ test("empty exact slab discovery reports comparison evidence outside the deal qu
     assert.deepEqual(rows, []);
     assert.deepEqual(observed, [comparison]);
     assert.equal(calls.graded.length, 1);
+});
+
+test("best-buy comparison is still offered above the profitable ceiling and storage failures stop it", async () => {
+    const query = "Charizard Base Set 4/102 Unlimited Holo PSA 8";
+    const { run } = harness({ graded: async () => [sale({ title: query, price: 100, grader: "PSA", grade: "8" })] });
+    let comparisons = 0;
+    const steps = {
+        readIntent: async () => readSearchLocally(query),
+        readTitle: async (title: string) => readTitleByRules(title),
+        soldScreening: () => run,
+        search: async () => ({ listings: [], total: 0, skipped: 0 }),
+        competition: async (...args: Parameters<NonNullable<NonNullable<Parameters<typeof findDeals>[2]>["competition"]>>) => {
+            comparisons++;
+            assert.equal(args[6]?.minPrice, 200);
+            throw new StorageUnavailableError();
+        },
+    };
+    await assert.rejects(findDeals(query, { asOf: NOW, filters: { typeFilter: "FIXED_PRICE", minPrice: 200 }, onCompetition() {} }, steps), StorageUnavailableError);
+    assert.equal(comparisons, 1, "the profit ceiling must not suppress the current-buy comparison");
+    const accounting = new EbayBudgetError("Invalid usage ledger");
+    await assert.rejects(findDeals(query, { asOf: NOW, filters: { typeFilter: "FIXED_PRICE" }, onCompetition() {} },
+        { ...steps, competition: async () => { throw accounting; } }), error => error === accounting);
+    const stop = new AbortController();
+    await assert.rejects(findDeals(query, { asOf: NOW, signal: stop.signal, filters: { typeFilter: "FIXED_PRICE" }, onCompetition() {} },
+        { ...steps, competition: async () => { stop.abort(); throw new StorageUnavailableError(); } }), StorageUnavailableError);
+    assert.deepEqual(await findDeals(query, { asOf: NOW, filters: { typeFilter: "FIXED_PRICE" }, onCompetition() { assert.fail("exhausted quota supplies no comparison"); } },
+        { ...steps, competition: async () => { throw new EbayBudgetError("Reserve preserved", "QUOTA"); } }), []);
 });
 
 test("exact slab discovery accepts a short title number without weakening identity or the price ceiling", async () => {

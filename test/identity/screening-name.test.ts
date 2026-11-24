@@ -349,3 +349,18 @@ test("Sun and Moon era metadata requires a separate written release, full number
         assert.notEqual(resolveScreeningName({ title: source, set: "Shining Legends", claims: [`${word} Mewtwo GX`], candidate: "Mewtwo GX" }), "Mewtwo GX");
     }
 });
+
+test("numbered Plasma Blast Full Art EX listings distinguish the faction and rarity from the printed name", () => {
+    for (const [title, residue] of [
+        ["Pokémon Palkia EX 100/101 Plasma Blast Team Plasma Full Art Holo", "palkia ex team plasma"],
+        ["The Pokémon Company Palkia EX Plasma Blast 100/101 Full Art Holo UR ENG", "palkia ex ur"],
+    ] as const) {
+        const reading = readTitleByRules(title, ["Plasma Blast"]);
+        assert.equal(resolveScreeningName({ title, candidate: "Palkia EX", set: "Plasma Blast", claims: [reading.cardName, residue] }), "Palkia EX");
+    }
+    for (const title of ["Palkia EX Plasma Blast Team Plasma Full Art", "Palkia EX 100/101 Plasma Blast Team Plasma", "Palkia EX 100/101 Team Plasma Full Art"]) {
+        assert.notEqual(resolveScreeningName({ title, set: "Plasma Blast", candidate: "Palkia EX", claims: ["palkia ex team plasma"] }), "Palkia EX");
+    }
+    const title = "Dark Palkia EX 100/101 Plasma Blast Team Plasma Full Art Holo";
+    assert.notEqual(resolveScreeningName({ title, set: "Plasma Blast", candidate: "Palkia EX", claims: ["dark palkia ex team plasma"] }), "Palkia EX");
+});

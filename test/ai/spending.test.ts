@@ -45,24 +45,24 @@ test("concurrent reservations and restart cannot overcommit a single search cap"
     assert.equal((await book(directory)).searches[context.searchId].heldNanoUsd, 870000, "restart cannot refund pending/uncertain billed work");
 });
 
-test("raising the cap to twenty-five cents preserves existing search limits and reservations", async () => {
-    const { directory, guard, context } = await fixture(0.10);
-    const request = { ...body, model: "gpt-5.6-terra", max_output_tokens: 5000 };
-    await guard.reserve(request, context);
+test("a five-dollar cap supports larger new searches and preserves previously capped searches and reservations", async () => {
+    const { directory, guard, context } = await fixture(0.25);
+    await guard.reserve(body, context);
     const original = await book(directory);
-    await guard.configure({ paused: false, perSearchCapUsd: 0.25 });
+    await guard.configure({ paused: false, perSearchCapUsd: 5 });
     assert.deepEqual(await book(directory), original);
 
     const restarted = createAiSpendingGuard({ directory, preflight: proof });
-    assert.equal((await restarted.summary(context.searchId)).capUsd, 0.10);
+    assert.equal((await restarted.summary(context.searchId)).capUsd, 0.25);
+    const request = { ...body, model: "gpt-5.6-terra", max_output_tokens: 60_000 };
     await assert.rejects(restarted.reserve(request, context), denied("AI_BUDGET"));
 
     const fresh = { searchId: randomUUID() };
-    for (let i = 0; i < 4; i++) assert.ok(await restarted.reserve(request, fresh));
+    for (let i = 0; i < 6; i++) assert.ok(await restarted.reserve(request, fresh));
     await assert.rejects(restarted.reserve(request, fresh), denied("AI_BUDGET"));
     const budget = await restarted.summary(fresh.searchId);
-    assert.equal(budget.capUsd, 0.25);
-    assert.equal(budget.committedUsd, 0.241);
+    assert.equal(budget.capUsd, 5);
+    assert.equal(budget.committedUsd, 4.3215);
 });
 
 test("uncapped searches keep recording charges beyond the former ceiling and can be capped again", async () => {
@@ -266,7 +266,7 @@ test("a fresh data directory is paused and cannot make even one unconfigured pai
     const directory = await fs.mkdtemp(path.join(isolatedDataDir, "fresh-install-"));
     const guard = createAiSpendingGuard({ directory });
     const status = await guard.status();
-    assert.equal(status.enabled, true); assert.equal(status.paused, true); assert.equal(status.configured, false); assert.equal(status.perSearchCapUsd, 0.25);
+    assert.equal(status.enabled, true); assert.equal(status.paused, true); assert.equal(status.configured, false); assert.equal(status.perSearchCapUsd, 5);
     let dispatches = 0;
     t.mock.method(globalThis, "fetch", async () => { dispatches++; throw new Error("Fresh install must never dispatch"); });
     // Exercise the real default SDK transport against a directory whose entire
@@ -277,7 +277,7 @@ test("a fresh data directory is paused and cannot make even one unconfigured pai
     t.after(() => { if (previous === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = previous; });
     await assert.rejects(runStructured({ step: "Fresh install guard fixture", schemaName: "offline_text_fixture", prompt: "Offline", photos: [], schema: { type: "object", properties: {}, additionalProperties: false } }), denied("AI_PAUSED"));
     assert.equal(dispatches, 0);
-    await assert.rejects(guard.configure({ paused: false, perSearchCapUsd: 0.26 }), /between \$0 and \$0\.25/);
+    await assert.rejects(guard.configure({ paused: false, perSearchCapUsd: 5.01 }), /between \$0 and \$5\.00/);
 });
 
 test("remote preflight releases the file lock and a concurrent pause prevents reservation", async () => {
@@ -331,4 +331,33 @@ test("search summaries distinguish reported settled cost from conservative unres
     assert.deepEqual(await createAiSpendingGuard({ directory }).summary(context.searchId), latest, "restart does not reset reported costs or unresolved holds");
     assert.equal((await guard.summary()).remainingUsd, null, "independent search allowances are not one global allowance");
     assert.equal((await guard.summary(randomUUID())).committedUsd, 0);
+});
+
+test("one bounded web search reserves retrieved context and the tool fee, then settles tokens plus that fee", async () => {
+    const { priceSearchTools, PRICE_SEARCH_MODEL, PRICE_SEARCH_OUTPUT_TOKENS, WEB_SEARCH_CONTEXT_BOUND } = await import("../../server/ai/web-search-policy.ts");
+    const request = { ...body, model: PRICE_SEARCH_MODEL, max_output_tokens: PRICE_SEARCH_OUTPUT_TOKENS, metadata: { app_step: "Web price research" },
+        text: { format: { name: "web_price_research" } }, ...priceSearchTools() };
+    const { directory, guard, context } = await fixture(0.05);
+    const reservation = await guard.reserve(request, context);
+    const reserved = (await book(directory)).searches[context.searchId].heldNanoUsd;
+    assert.equal(reserved, 10_000_000 + 250 * (100 + WEB_SEARCH_CONTEXT_BOUND) + 1200 * PRICE_SEARCH_OUTPUT_TOKENS);
+    const restarted = createAiSpendingGuard({ directory, preflight: proof });
+    await assert.rejects(restarted.reserve(request, { searchId: randomUUID() }), denied("AI_EVIDENCE_HELD"));
+    const result = { model: request.model, service_tier: "default", output: [], usage: {
+        input_tokens: 545, output_tokens: 37, input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 },
+    } };
+    await guard.settle(reservation, result);
+    assert.equal((await guard.summary(context.searchId)).heldUsd, reserved / 1e9, "missing tool evidence retains the whole hold");
+    await guard.settle(reservation, { ...result, output: [{ type: "web_search_call", status: "completed" }] });
+    const summary = await guard.summary(context.searchId);
+    assert.equal(summary.settledUsd, (10_000_000 + 200 * 545 + 1200 * 37) / 1e9);
+    assert.equal(summary.heldUsd, 0);
+    assert.equal((await guard.status()).paused, false);
+    assert.equal((await restarted.summary(context.searchId)).settledUsd, summary.settledUsd);
+    await assert.rejects(restarted.reserve(request, context), denied("AI_EVIDENCE_HELD"));
+    const { guard: low, context: small } = await fixture(0.012);
+    await assert.rejects(low.reserve(request, small), denied("AI_BUDGET"));
+    for (const override of [{ max_tool_calls: 2 }, { tool_choice: "auto" }, { tools: [{ type: "web_search" }] }]) {
+        await assert.rejects(guard.reserve({ ...request, ...override }, context), denied("AI_BUDGET"));
+    }
 });

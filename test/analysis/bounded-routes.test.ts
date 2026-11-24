@@ -9,6 +9,7 @@ import { compatibleBoundedPlans } from "../../server/analysis/bounded-plan.ts";
 import { buildBoundedAssessmentRequest } from "../../server/ai/bounded-assessment.ts";
 import { BOUNDED_SLAB_MODEL, BOUNDED_VISION_MODEL } from "../../server/ai/policy.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
+import { RejectedPhotoAssessmentError } from "../../server/analysis/failure.ts";
 import { photoFingerprint } from "../../server/analysis/store.ts";
 import { currentPriceEvidence } from "../../shared/pricing-freshness.ts";
 import { cardEvaluation } from "../fixtures/card-evaluation.ts";
@@ -92,14 +93,14 @@ test("independent compact model selection changes cold transport while historica
     assert.notEqual(compactPlan("gpt-6-luna").key, compactPlan("gpt-5.6-luna").key);
 });
 
-for (const revision of [1, 2]) test(`accepted v${revision} raw photos and saved pricing survive a prompt change`, async () => {
+for (const revision of [1, 2, 3]) test(`accepted v${revision} raw photos and saved pricing survive a prompt change`, async () => {
     const subject = listing({ title: "Venusaur Base Set 15/102 Holo English", condition: "Ungraded",
         images: [photo(1), photo(1, 500), photo(2), photo(3)],
         aspects: { "Card Name": "Venusaur", Set: "Base Set", "Card Number": "15/102", Language: "English", Finish: "Holo" } });
     const [requested, ...compatible] = compatibleBoundedPlans(subject);
     const previous = compatible.find(plan => plan.version === `${requested.model}/bounded-prompts-${revision}`);
     assert.ok(previous);
-    assert.equal(requested.version, `${requested.model}/bounded-prompts-3`);
+    assert.equal(requested.version, `${requested.model}/bounded-prompts-4`);
     assert.deepEqual(requested.photos, previous.photos);
     const { evaluate, cache, calls } = harness(subject);
     const accepted = saved(rawReading(previous.photos.length), previous.version);
@@ -297,7 +298,8 @@ test("slab routing cannot accept an accidental numeric raw assessment as compact
     const { evaluate, calls, cache } = harness(listing(), { assess: async (_listing, photos, _signal, mode) => {
         calls.assessed.push({ mode, photos }); return { result: rawReading(photos.length), usage: { inputTokens: 500, outputTokens: 300 } };
     } });
-    await assert.rejects(evaluate(listing().id), StorageUnavailableError);
+    await assert.rejects(evaluate(listing().id), RejectedPhotoAssessmentError);
+    await assert.rejects(evaluate(listing().id), RejectedPhotoAssessmentError);
     assert.equal(calls.assessed.length, 1); assert.equal(calls.raw, 0); assert.equal(calls.comps.length, 0);
     assert.equal(cache.has(boundedAssessmentKey(listing())), false);
 });

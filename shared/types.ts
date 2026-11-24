@@ -43,6 +43,9 @@ export interface ScreeningSoldReference {
     grader: string | null;
     grade: string | null;
     condition: RawCondition | null;
+    // Set by exact-slab lookup only when all catalog variants of this record
+    // share its printing and finish, before any user-requested filters.
+    soleCatalogVariant?: boolean;
     summary: CompSummary;
 }
 export interface ScreeningSoldEvidence {
@@ -168,6 +171,7 @@ export interface ListingSummary {
     termsCheckedAt?: string;
     availability?: "ACTIVE" | "UNAVAILABLE" | "UNKNOWN";
     mistakes?: SellerMistake[];
+    auctionResearch?: { cardListings: number; otherListings: number; categories: string[]; sampledAt: string };
     id: string;
     title: string;
     currentPrice: number | null;
@@ -265,7 +269,16 @@ export interface Authenticity {
     reasons: string[];
 }
 
+export interface BinderAppearance {
+    front: "CLEAN" | "WORN" | "UNCLEAR";
+    back: "CLEAN" | "WORN" | "UNCLEAR";
+    frontEvidence: string;
+    backEvidence: string;
+}
+
 export interface Condition {
+    // Optional on older paid assessments and on first-photo previews.
+    binderAppearance?: BinderAppearance;
     centering: AreaFinding;
     corners: AreaFinding;
     edges: AreaFinding;
@@ -288,10 +301,13 @@ export interface SetAsideAnswer {
 // ---- Identity ----
 
 export interface Identity {
+    // Resolved PKMNPrices record for this exact printing, when the catalog has one holder.
+    recordId?: string | number | null;
     status: "IDENTIFIED" | "NEEDS_REVIEW";
     name: string | null;
     set: string | null;
     cardNumber: string | null;
+    hasEditions?: boolean | null;
     printing: Printing | "UNKNOWN";
     printingLabel: string | null;
     finish: string;
@@ -328,6 +344,10 @@ interface PriceSource {
 }
 
 export interface RawPricing extends PriceSource {
+    // Price context for a collector. The sold sellers described the condition.
+    sellerConditionComps?: CompSummary | null;
+    // Nearest cleaner seller-described condition, for context when this condition lacks a photo match.
+    cleanerSellerConditionComps?: CompSummary | null;
     conditionEvidence?: "AI_PHOTOS" | "SELLER_TEXT";
     reviewedSoldCopies?: number;
     sampledSoldCopies?: number;
@@ -392,6 +412,10 @@ export interface CompSummary {
 }
 
 export interface GradedPricing extends PriceSource {
+    // Same-grade slab sales for a tentative raw estimate, outside the grading route.
+    referenceGradeComps?: CompSummary;
+    // Actual sales at adjacent grades for a tentative estimate, outside underwriting.
+    referenceByGrade?: CompSummary[];
     status: PriceStatus;
     reason?: string;
     printingLabel?: string;
@@ -560,6 +584,10 @@ export interface DeeperPhotoReview {
 }
 
 export interface Evaluation {
+    trackerRawReference?: import("./tracker-price-reference.ts").TrackerRawReference;
+    trackerPriceReference?: import("./tracker-price-reference.ts").TrackerPriceReference;
+    webPriceResearch?: import("./web-price-research.ts").WebPriceResearch;
+    supplementalPriceNote?: string;
     pricingDeferred?: { provider: "PKMNPRICES"; note: string; identityLookupPending?: boolean };
     researchMode?: "FULL" | "FOCUSED_LOW_RESALE" | "DEFERRED_LOW_RESALE";
     frontPhotoStop?: "SLAB_PRICE" | "RAW_PRICE" | "AUTHENTICITY";
@@ -570,7 +598,17 @@ export interface Evaluation {
     marketActivity?: MarketActivity;
     photoReviewKey?: string;
     deeperPhotoReview?: DeeperPhotoReview;
+    focusedPrinting?: {
+        rightEdge: "PRESENT" | "ABSENT" | "UNCLEAR";
+        bottomEdge: "PRESENT" | "ABSENT" | "UNCLEAR";
+        stamp: "VISIBLE" | "NOT_PRESENT" | "CANT_TELL";
+        observation: string;
+        photoNumber: number;
+        sourceSha256: string;
+    };
     focusedStamp?: {
+        method?: "NEO_DESTINY_CONTEXT_V1";
+        observation?: string;
         result: "VISIBLE" | "NOT_PRESENT" | "CANT_TELL";
         photoNumber: number;
         box: { left: number; top: number; width: number; height: number };
@@ -587,6 +625,8 @@ export interface Evaluation {
         price: number | null;
         shipping: number | null;
         buyingOption: BuyingOption;
+        // Keep eBay's bid quote tied to the item details that supplied it.
+        auctionQuote?: { currentBid: number | null; minimumBid: number | null; checkedAt: string };
         bestOffer?: boolean;
         bids: number;
         endTime: string | null;

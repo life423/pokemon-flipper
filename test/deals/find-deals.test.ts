@@ -257,3 +257,61 @@ test("eBay reserve denial on the optional cheaper pass keeps newest BIN results"
     assert.deepEqual(result.map(row => row.id), [newest.id]);
     assert.equal(summary?.pricePass?.status, "UNAVAILABLE");
 });
+
+test("the final start event authorizes fifteen distinct retained copies, including researchable missing sales and auctions", async () => {
+    const rows = Array.from({ length: 50 }, (_, i) => listing(undefined, { id: String(i),
+        ...(i % 2 && { buyingOption: "AUCTION" as const, endTime: new Date(Date.now() + 3_600_000).toISOString() }),
+    }));
+    const selected = rows.slice(-15).reverse().map(row => row.id);
+    const starts: SearchSummary[] = [];
+    const emitted: string[] = [];
+    let rankings = 0;
+    const results = await findDeals("Charizard Base Set 4/102 Unlimited holo", {
+        automaticPhotos: true, onStart: value => { starts.push(value); }, onListing: row => {
+            assert.deepEqual(starts.at(-1)?.reviewSelection?.listingIds, selected);
+            emitted.push(row.id);
+        },
+    }, offlineSearchSteps(rows, {
+        prioritizeText: async () => assert.fail("only one batch selection per search"),
+        selectReviews: async eligible => {
+            rankings++;
+            assert.deepEqual(new Set(eligible.map(row => row.id)), new Set(rows.map(row => row.id)));
+            assert.ok(eligible.some(row => row.buyingOption === "AUCTION" && row.screen?.soldEvidence?.status === "UNAVAILABLE"));
+            return { source: "ai", listingIds: selected };
+        },
+    }));
+    assert.equal(rankings, 1);
+    assert.deepEqual(emitted.slice(0, 15), selected);
+    assert.deepEqual(results.map(row => row.id), emitted);
+    assert.equal(new Set(emitted).size, 50);
+    assert.deepEqual(starts.at(-1)?.reviewSelection, { source: "ai", listingIds: selected });
+    const off = await findDeals("Charizard Base Set 4/102 Unlimited holo", { automaticPhotos: false,
+        onStart: summary => assert.equal(summary.reviewSelection, undefined),
+    }, offlineSearchSteps(rows, { selectReviews: async () => assert.fail("manual search must never schedule ranking work") }));
+    assert.equal(off.length, 50);
+});
+
+test("an auction that closes during selection is excluded from the final search and replaced without a second ranking call", async t => {
+    let now = Date.now();
+    t.mock.method(Date, "now", () => now);
+    const rows = Array.from({ length: 17 }, (_, i) => listing(undefined, { id: String(i),
+        ...(i === 0 && { buyingOption: "AUCTION" as const, endTime: new Date(now + 2000).toISOString() }),
+    }));
+    let summary: SearchSummary | undefined;
+    let selections = 0;
+    const results = await findDeals("Charizard Base Set 4/102 Unlimited holo", {
+        automaticPhotos: true, onStart: value => { summary = value; },
+    }, offlineSearchSteps(rows, {
+        selectReviews: async eligible => {
+            selections++;
+            assert.ok(eligible.some(row => row.id === "0"));
+            now += 3000;
+            return { source: "ai", listingIds: rows.slice(0, 15).map(row => row.id) };
+        },
+    }));
+    assert.equal(selections, 1);
+    assert.equal(results.length, 16);
+    assert.ok(results.every(row => row.id !== "0"));
+    assert.equal(summary?.count, 16);
+    assert.deepEqual(summary?.reviewSelection, { source: "rules", listingIds: results.slice(0, 15).map(row => row.id) });
+});

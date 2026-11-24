@@ -60,6 +60,31 @@ test("legacy broader cached catalog lists are reused without buying the new narr
     assert.equal(cards.length, 1); assert.equal(cards[0]!.id, 202); assert.equal(calls, 0);
 });
 
+test("an incomplete cached name search cannot hide an exact numbered lookup or substitute a different record's product ID", async t => {
+    offline(t);
+    await writeCache(`pkmnprices:${setsPath("Base Set")}`, { data: [{ id: 501, name: "Base Set" }] });
+    await writeCache(`pkmnprices:${listPath(501, "pikachu")}`, {
+        data: Array.from({ length: 20 }, (_, n) => detail(600 + n, "Pikachu", String(n + 1), "102", "Base Set")),
+        pagination: { page: 1, per_page: 20, total: 22, total_pages: 2, next_cursor: "next" },
+    });
+    const exact = { ...detail(520, "Pikachu", "58", "102", "Base Set"), tcg_player_id: 12345 };
+    await writeCache("pkmnprices:/cards/520?currency=usd", exact);
+    await writeCache("pkmnprices:/cards/521?currency=usd", { ...exact, tcg_player_id: 54321 });
+    let requests = 0;
+    t.mock.method(globalThis, "fetch", async input => {
+        requests++;
+        const url = new URL(String(input));
+        assert.equal(url.pathname, "/v1/cards");
+        assert.equal(url.searchParams.get("number"), "58");
+        return Response.json({ data: [exact, { ...exact, id: 521 }] });
+    });
+    const query = { set: "Base Set", name: "Pikachu", cardNumber: "58/102" };
+    const cards = await lookupCards(query);
+    assert.deepEqual(cards.map(card => [card.id, card.tcgPlayerId]), [[520, 12345]]);
+    assert.deepEqual(await lookupCards(query), cards);
+    assert.equal(requests, 1);
+});
+
 test("broader cached empty searches retain their five-minute cooldown before a numeric lookup", async t => {
     offline(t);
     await writeCache(`pkmnprices:${setsPath("Neo Genesis")}`, { data: [{ id: 301, name: "Neo Genesis" }] });

@@ -3,13 +3,14 @@ import { listingExclusion, normalizeText } from "./filters.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { ebayUsage, EbayBudgetError } from "./usage.ts";
 import { createSharedWork } from "../lib/shared-work.ts";
-import { getAiUsageContext } from "../ai/usage-context.ts";
+import { getBudgetContext } from "../ai/usage-context.ts";
 import { EbaySearchBudgetError } from "./search-budget.ts";
 import { photoEvidenceKey, searchPhotosFitDetails } from "../../shared/listing-evidence.ts";
 import type { BuyingOption, ListingSummary, Seller } from "../../shared/types.ts";
 import type { ListingFilters } from "../../shared/listing-filters.ts";
 import { cardLanguageStatus, EnglishOnlyError } from "../../shared/card-language.ts";
 import type { SourceRejectionReason } from "../../shared/search-diagnostic.ts";
+import { money } from "../../shared/money/cents.ts";
 import { cardSpecificNotes, hasSavedConditionExamples } from "../../shared/ebay-condition-notes.ts";
 
 // Toys & Hobbies > Collectible Card Games > CCG Individual Cards
@@ -38,11 +39,12 @@ export function shippingCacheScope(): string {
     const zip = configuredShippingZip();
     return zip ? `:ship-to:${encodeURIComponent(zip)}` : "";
 }
-export const listingCacheKey = (itemId: string) => `ebay:item:${itemId}${shippingCacheScope()}`;
+export const listingCacheKey = (itemId: string, shippingScope = shippingCacheScope()) => `ebay:item:${itemId}${shippingScope}`;
 
 interface Amount {
     value: string;
     currency: string;
+    convertedFromCurrency?: string;
 }
 
 // The parts of an eBay item this app reads, from search or getItem.
@@ -55,6 +57,7 @@ interface EbayItem {
     buyingOptions?: string[];
     price?: Amount;
     currentBidPrice?: Amount;
+    minimumPriceToBid?: Amount;
     bidCount?: number;
     itemEndDate?: string;
     itemOriginDate?: string;
@@ -88,6 +91,7 @@ export interface ListingDetails {
     url: string;
     images: string[];
     price: number | null;
+    auctionBids?: { currentBid: number | null; minimumBid: number | null };
     // null when eBay does not supply a usable delivery quote.
     shipping: number | null;
     buyingOption: BuyingOption;
@@ -134,7 +138,7 @@ function listingDates(item: EbayItem) {
     return { ...(listedAt ? { listedAt } : {}), ...(createdAt ? { createdAt } : {}) };
 }
 
-function quotedShipping(item: EbayItem): number | null {
+export function quotedShipping(item: Pick<EbayItem, "shippingOptions">): number | null {
     const zip = configuredShippingZip();
     for (const option of item.shippingOptions ?? []) {
         if (option.shippingCostType === "CALCULATED" && !zip) continue;
@@ -147,6 +151,20 @@ function quotedShipping(item: EbayItem): number | null {
         if (amount !== null) return amount;
     }
     return null;
+}
+
+// eBay sets the opening minimum even before the first bid. On mixed-format
+// auctions the ordinary price can be the Buy It Now price.
+export function auctionBidTerms(item: Pick<EbayItem, "currentBidPrice" | "minimumPriceToBid" | "bidCount">) {
+    const nativeBid = (amount?: Amount) => {
+        if (amount?.convertedFromCurrency && amount.convertedFromCurrency !== "USD") return null;
+        const price = toAmount(amount);
+        return price !== null && price > 0 && money(price) === price ? price : null;
+    };
+    return {
+        currentBid: item.bidCount === 0 ? null : nativeBid(item.currentBidPrice),
+        minimumBid: nativeBid(item.minimumPriceToBid),
+    };
 }
 
 // What buying it costs right now: the current bid for an auction, the
@@ -241,21 +259,20 @@ export async function searchListings(
     {
         maxResults = PAGE_SIZE,
         anyCategory = false,
+        cacheMode,
         keepReserve = false,
         signal,
         sort,
         filters,
-        auctionEndsWithinHours,
-        asOf = Date.now(),
-    }: { maxResults?: number; anyCategory?: boolean; keepReserve?: boolean; signal?: AbortSignal; sort?: "newlyListed" | "price"; filters?: ListingFilters; auctionEndsWithinHours?: number; asOf?: number } = {}
+    }: { maxResults?: number; anyCategory?: boolean; cacheMode?: "refresh" | "resume"; keepReserve?: boolean; signal?: AbortSignal; sort?: "newlyListed" | "price" | "endingSoonest"; filters?: ListingFilters } = {}
 ): Promise<SearchResult> {
     if (cardLanguageStatus(search) === "OTHER") throw new EnglishOnlyError();
     const scope = anyCategory ? "any" : "cards";
     signal?.throwIfAborted();
     const buyingOption = filters?.typeFilter && filters.typeFilter !== "all" ? filters.typeFilter : undefined;
     const kind = filters?.kindFilter && filters.kindFilter !== "all" ? filters.kindFilter : undefined;
-    const endWindow = buyingOption === "AUCTION" && typeof auctionEndsWithinHours === "number" && Number.isFinite(auctionEndsWithinHours) && auctionEndsWithinHours > 0 ? auctionEndsWithinHours : undefined;
-    const filterScope = buyingOption || kind || endWindow ? `:filters:${JSON.stringify([buyingOption ?? null, kind ?? null, endWindow ?? null])}` : "";
+    // Preserve the cache keys for existing format/kind searches without an end-date filter.
+    const filterScope = buyingOption || kind ? `:filters:${JSON.stringify([buyingOption ?? null, kind ?? null, null])}` : "";
     // Filter BIN prices before eBay selects the bounded page, or out-of-range
     // inventory can hide every affordable listing. Auction current bids keep
     // their local checks; the BIN minimum must never exclude low opening bids.
@@ -267,17 +284,17 @@ export async function searchListings(
     const priceScope = priceRange === null ? "" : `:price:USD:${priceRange}`;
     const key = `ebay:search:${maxResults}:${scope}:language:en:${sort ? `${sort}:` : ""}${normalizeText(search).trim()}${shippingCacheScope()}${filterScope}${priceScope}`;
     const load = async (signal: AbortSignal): Promise<SearchResult> => {
-        const saved = await readCache<SearchResult>(key, sort ? 1 / 60 : SEARCH_MAX_AGE_HOURS);
+        const saved = await readCache<SearchResult>(key, sort && cacheMode !== "resume" ? 1 / 60 : SEARCH_MAX_AGE_HOURS);
         signal.throwIfAborted();
 
-        if (saved) return { ...saved, listings: saved.listings.map(listing =>
+        if (cacheMode !== "refresh" && saved) return { ...saved, listings: saved.listings.map(listing =>
             hasSavedConditionExamples(listing) ? { ...listing, conditionNotes: cardSpecificNotes(listing.cardCondition, listing.conditionNotes!) } : listing) };
 
         // The few search requests are refused only when the day's allowance is gone.
         const usage = await ebayUsage();
 
         if (usage && usage.remaining < Math.ceil(maxResults / PAGE_SIZE)) {
-            throw new EbayBudgetError("eBay's daily limit is used up. It resets at midnight Pacific.");
+            throw new EbayBudgetError("eBay's daily limit is used up. It resets at midnight Pacific.", "QUOTA");
         }
 
         const listings: ListingSummary[] = [];
@@ -291,10 +308,9 @@ export async function searchListings(
         for (let offset = 0; offset < maxResults; offset += PAGE_SIZE) {
             signal.throwIfAborted();
             if (keepReserve && (await ebayUsage())?.braking) {
-                throw new EbayBudgetError("Saving the rest of today's eBay allowance; extra searches paused.");
+                throw new EbayBudgetError("Saving the rest of today's eBay allowance; extra searches paused.", "QUOTA");
             }
             const filter = [`buyingOptions:{${buyingOption ?? "AUCTION|FIXED_PRICE"}}`, `conditionIds:{${kind === "raw" ? UNGRADED : kind === "graded" ? GRADED : `${UNGRADED}|${GRADED}`}}`];
-            if (endWindow) filter.push(`itemEndDate:[${new Date(asOf).toISOString()}..${new Date(asOf + endWindow * 3600000).toISOString()}]`);
             if (priceRange !== null) filter.push(`price:[${priceRange}]`, "priceCurrency:USD");
             const params = new URLSearchParams({
                 q: `pokemon ${search}${anyCategory ? " english" : ""}`.trim(),
@@ -350,10 +366,10 @@ export async function searchListings(
         return result;
     };
 
-    const { searchId } = getAiUsageContext();
+    const { searchId } = getBudgetContext();
     // A shared one-page response uses the initiating search's allowance.
     // Multi-page work stays with its search ID, and reserve policies stay separate.
-    const sharedKey = JSON.stringify([key, keepReserve, maxResults > PAGE_SIZE ? searchId : null]);
+    const sharedKey = JSON.stringify([key, keepReserve, cacheMode, maxResults > PAGE_SIZE ? searchId : null]);
     for (;;) {
         const outcome = await shareSearches(sharedKey, async workSignal => {
             try { return { result: await load(workSignal) }; }
@@ -404,7 +420,7 @@ export async function getListingDetails(
     return shareDetails(JSON.stringify([key, expectedTitle, evidence, keepReserve]), async workSignal => {
         const usage = keepReserve ? await ebayUsage() : null;
         workSignal.throwIfAborted();
-        if (usage?.braking) throw new EbayBudgetError("Saving the rest of today's eBay allowance.");
+        if (usage?.braking) throw new EbayBudgetError("Saving the rest of today's eBay allowance.", "QUOTA");
         let details: ListingDetails;
         try { details = await fetchListingDetails(itemId, keepReserve, workSignal); }
         catch (error) {
@@ -434,6 +450,7 @@ async function fetchListingDetails(itemId: string, keepReserve: boolean, signal:
         url: item.itemWebUrl,
         images: photosOf(item),
         ...priceDetails(item),
+        ...(item.buyingOptions?.includes("AUCTION") ? { auctionBids: auctionBidTerms(item) } : {}),
         ...listingDates(item),
         seller: toSeller(item.seller),
         condition: item.condition ?? null,

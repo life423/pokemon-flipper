@@ -3,7 +3,7 @@ import { test } from "../fixtures/search-context.ts";
 import type { TestContext } from "node:test";
 import { randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
-import { createScreeningPriceSource, fetchComps, fetchRawComps } from "../../server/pricing/pkmnprices.ts";
+import { createScreeningPriceSource, fetchCachedComps, fetchComps, fetchRawComps } from "../../server/pricing/pkmnprices.ts";
 import { createSoldScreening } from "../../server/pricing/screening-sales.ts";
 import { rawPricesWithSales } from "../../server/pricing/raw-comps.ts";
 import { compsForGrade } from "../../server/pricing/graded-comps.ts";
@@ -49,6 +49,35 @@ const target = (kind: "graded" | "raw") => ({ grader: kind === "graded" ? "PSA" 
 const scopedSale = (kind: "graded" | "raw", id: string, extra: Partial<Comp> = {}) => sale(id, {
     ...target(kind), title: `Venusaur Base Set 15/102 Unlimited Holo ${kind === "graded" ? "PSA 8" : "LP"}`, ...extra,
 });
+test("collector references reuse cached exact-grade sales and later raw pages without cold requests", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("collector cache reads must not make requests"));
+    const id = randomUUID();
+    const grade = { grader: "PSA", grade: 8, variant };
+    assert.deepEqual(await fetchCachedComps(id, grade), []);
+    await writeCache(`pkmnprices:${soldPath("graded", id, true)}`, { data: [scopedSale("graded", "psa8")] });
+    assert.equal((await fetchCachedComps(id, grade))[0].id, "psa8");
+    assert.deepEqual(await fetchCachedComps(id, { ...grade, grade: 7 }), []);
+    for (let page = 1; page <= 3; page++) await writeCache(`pkmnprices:${soldPath("raw", id, true, page === 1 ? undefined : String(page))}`, {
+        data: [scopedSale("raw", `raw-${page}`)], pagination: { has_more: true, next_cursor: String(page + 1) },
+    });
+    assert.deepEqual((await fetchRawComps(id, variant, { stopWhen: () => true })).map(row => row.id), ["raw-1", "raw-2", "raw-3"]);
+});
+test("an exact raw card with no matching seller condition keeps sparse-page recovery open", async t => {
+    offlineKey(t);
+    const id = randomUUID(), pages: number[] = [];
+    t.mock.method(globalThis, "fetch", async (value: string) => {
+        const page = Number(new URL(value).searchParams.get("cursor") ?? 1);
+        pages.push(page);
+        const title = "Venusaur Base Set 15/102 Unlimited Holo " + (page === 1 ? "" : page === 2 ? "NM/LP" : "LP+");
+        return Response.json({ data: [scopedSale("raw", String(page), { title })],
+            pagination: { has_more: true, next_cursor: String(page + 1) } });
+    });
+    const price = await rawPricesWithSales(pricedCard(id), identity, { fetchRawComps, now,
+        requestedCondition: "LIGHTLY_PLAYED", assessCondition: async () => null });
+    assert.deepEqual(pages, [1, 2, 3]);
+    assert.deepEqual(price.sellerConditionComps?.sales.map(row => row.price), [200]);
+    assert.equal(price.prices, undefined);
+});
 function screening(kind: "graded" | "raw", id: string, maxRequests = 0) {
     const source = createScreeningPriceSource({ maxRequests });
     const run = createSoldScreening({ now: () => now, source: { ...source, lookupCards: async () => [card(id)] } });
@@ -74,12 +103,29 @@ test("sold adapters bound pages, request recent sales and exclude non-USD rows b
         assert.equal(graded.length, 1, "duplicate rows across graded pages are counted once"); assert.equal(graded[0].currency, "USD");
         assert.equal(calls[0].searchParams.get("period"), "180d");
         const raw = await fetchRawComps(id, "Unlimited Holofoil");
-        assert.equal(raw.length, 2, "only two bounded pages even if the provider has more");
+        assert.equal(raw.length, 1, "duplicate USD transactions across raw pages count once");
         assert.equal(calls.length, 4);
         assert.equal(calls[1].searchParams.get("cursor"), "next-page");
         assert.equal(calls[2].searchParams.get("period"), "90d");
         assert.equal(calls[3].searchParams.get("cursor"), "next-page");
     } finally { if (original === undefined) delete process.env.PKMNPRICES_API_KEY; else process.env.PKMNPRICES_API_KEY = original; }
+});
+
+test("a provider currency correction across two saved pages retires the earlier USD price for raw and slab research", async t => {
+    offlineKey(t);
+    t.mock.method(globalThis, "fetch", () => assert.fail("saved corrections must be reused"));
+    for (const kind of ["raw", "graded"] as const) {
+        const id = randomUUID();
+        const old = scopedSale(kind, "corrected", { price: 500, currency: "USD" });
+        const valid = scopedSale(kind, "current", { price: 100, currency: "USD" });
+        await writeCache(`pkmnprices:${soldPath(kind, id, true)}`, {
+            data: [old], pagination: { has_more: true, next_cursor: "new-page" },
+        });
+        await writeCache(`pkmnprices:${soldPath(kind, id, true, "new-page")}`, {
+            data: [{ ...old, updated_at: "2026-11-04T00:00:00Z", currency: "EUR" }, valid],
+        });
+        assert.deepEqual(await adapted(kind, id, { stopWhen: () => false }), [valid]);
+    }
 });
 
 test("useful third-page legacy sales retain original cache chains for screening and final prices without new requests", async t => {

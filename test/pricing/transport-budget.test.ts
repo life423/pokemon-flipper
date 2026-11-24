@@ -3,7 +3,7 @@ import { test } from "../fixtures/search-context.ts";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
-import { createScreeningPriceSource, fetchComps, fetchRawComps, pricingCooldown } from "../../server/pricing/pkmnprices.ts";
+import { cardmarketRecord, cardmarketOfferPage, createScreeningPriceSource, fetchComps, fetchRawComps, pricingCooldown } from "../../server/pricing/pkmnprices.ts";
 import { priceResearchSummary, reservePriceRequest, withPriceResearchSignal, PriceResearchBudgetError, PRICE_RESEARCH_LIMIT } from "../../server/pricing/research-budget.ts";
 import { getAiUsageContext, withAiUsageContext } from "../../server/ai/usage-context.ts";
 import { readCache } from "../../server/lib/cache.ts";
@@ -319,4 +319,37 @@ test("cancellation at the durable reservation boundary sends no transport", asyn
     const fetch = t.mock.method(globalThis, "fetch", async () => assert.fail("a stopped reservation cannot dispatch"));
     await assert.rejects(withPriceResearchSignal(stopped.signal, () => fetchRawComps(99101, "Unlimited Holofoil")), { name: "AbortError" });
     assert.equal(fetch.mock.callCount(), 0);
+});
+
+test("Cardmarket reuses the sold catalog cache and repeats one bounded page without another transport or credit", async t => {
+    offline(t);
+    const params = new URLSearchParams({ variant: "Holofoil", limit: "5", condition: "Near Mint", graded: "false" });
+    let calls = 0;
+    t.mock.method(globalThis, "fetch", async (input: string) => {
+        calls++;
+        const url = new URL(input);
+        if (url.pathname.endsWith("/cards/99997")) return response({ id: 99997, name: "Venusaur", number: "15", total_set_number: "102",
+            set: { name: "Base Set" }, prices: [{ currency: "USD", variant: "Holofoil" }] }, 1);
+        assert.equal(url.pathname, "/v1/cards/99997/listings/cardmarket");
+        assert.equal(url.searchParams.get("limit"), "5");
+        return response({ data: [{ article_id: 1 }, { article_id: 2 }] }, 2);
+    });
+    assert.equal((await cardmarketRecord("99997"))?.id, 99997);
+    await Promise.all([cardmarketOfferPage("99997", params), cardmarketOfferPage("99997", params)]);
+    assert.equal((await cardmarketRecord("99997"))?.id, 99997);
+    assert.equal((await cardmarketOfferPage("99997", params)).length, 2);
+    assert.equal(calls, 2);
+    const usage = await priceResearchSummary();
+    assert.equal(usage?.used, 2);
+    assert.equal(usage?.reportedCredits, 3);
+});
+
+test("a Cardmarket plan denial leaves independent permitted pricing available", async t => {
+    offline(t);
+    t.mock.method(globalThis, "fetch", async (input: string) => new URL(input).pathname.endsWith("/listings/cardmarket")
+        ? Response.json({ error: { message: "Plan does not include the endpoint" } }, { status: 403 })
+        : response({ data: [sold(1)] }));
+    await assert.rejects(cardmarketOfferPage("99998", new URLSearchParams({ limit: "5" })), /denied access to Cardmarket/);
+    assert.equal(pricingCooldown(), null);
+    assert.ok((await fetchRawComps(99998, "Holofoil")).length);
 });
