@@ -14,7 +14,7 @@ import { createSharedWork } from "../lib/shared-work.ts";
 import { storageFailure } from "../lib/storage-failure.ts";
 import { StorageUnavailableError } from "../storage/index.ts";
 import { AiSearchAllowanceError, aiSpendingFailure } from "../ai/spending.ts";
-import { corroboratedSlabName, identifyCard, normalizeWords, photoReprintIssue, readyForPricing, printingClaimFromAspects, sameCardNumber, sameSetFamily, structuredPhotoIdentityConflict, type IdentityListing } from "../identity/card-identity.ts";
+import { corroboratedSlabName, frontShowsDifferentNumber, identifyCard, normalizeWords, photoReprintIssue, readyForPricing, printingClaimFromAspects, sameCardNumber, sameSetFamily, structuredPhotoIdentityConflict, type IdentityListing } from "../identity/card-identity.ts";
 import { checkSlab, normalizeSlabReading } from "../identity/slab-check.ts";
 import { readTitleByRules } from "../ai/title-reader.ts";
 import { lookupCards, fetchComps, fetchRawComps } from "../pricing/pkmnprices.ts";
@@ -29,11 +29,11 @@ import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { rateDeal } from "../../shared/money/rating.ts";
 import { cardLanguageStatus, EnglishOnlyError } from "../../shared/card-language.ts";
 import { listingEvidenceKey } from "../../shared/listing-evidence.ts";
-import { BOUNDED_REVIEW_REVISION, currentPriceEvidence, PREVIOUS_BOUNDED_REVIEW_REVISION, PRICING_VERSION } from "../../shared/pricing-freshness.ts";
+import { BOUNDED_REVIEW_REVISION, currentPriceEvidence, PREVIOUS_BOUNDED_REVIEW_REVISION, PREVIOUS_PRICING_VERSION, PRICING_VERSION } from "../../shared/pricing-freshness.ts";
 import { unsupportedVariantReason, withoutUnsupportedRawPrices, withoutUnsupportedVariantPrices } from "../../shared/money/price-evidence.ts";
 import { minimumOfferPrice } from "../../shared/money/cents.ts";
-import { isRawCondition, RAW_CONDITIONS } from "../../shared/conditions.ts";
-import { withinAutomaticAuctionWindow } from "../../shared/listing-filters.ts";
+import { isRawCondition, RAW_CONDITIONS, sellerCreaseOverridesCondition } from "../../shared/conditions.ts";
+import { withinAutomaticAuctionWindow, type ListingFilters } from "../../shared/listing-filters.ts";
 import { obscuredDisclosedWear, withoutRawSlabAssessment } from "../../shared/photo-evidence.ts";
 import type { Evaluation, Targets } from "../../shared/types.ts";
 import type { Usage } from "./types.ts";
@@ -48,7 +48,7 @@ import { getAiUsageContext, withAiUsageContext, type AiUsageContext } from "../a
 
 const CACHE_HOURS = 24 * 365 * 10;
 interface SavedBoundedReading extends BoundedReading { version: string; answeredAt: string; usage: Usage }
-export interface BoundedOptions { automatic?: boolean; includeOffers?: boolean; targets?: Targets; signal?: AbortSignal; current?: import("./types.ts").CurrentState | null; priceOnly?: boolean }
+export interface BoundedOptions { automatic?: boolean; typeFilter?: ListingFilters["typeFilter"]; includeOffers?: boolean; targets?: Targets; signal?: AbortSignal; current?: import("./types.ts").CurrentState | null; priceOnly?: boolean }
 export class PriceOnlyEvidenceError extends Error {}
 
 interface Dependencies {
@@ -213,7 +213,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
     type ReadingConsumer = { needed: () => boolean; context: AiUsageContext };
     const neededReadings = new Map<string, Set<ReadingConsumer>>();
     const privateEvaluations = createPrivateEvaluationStore({ cached: deps.cached, save: deps.save });
-    return (itemId: string, options: BoundedOptions = {}): Promise<Evaluation> => share(JSON.stringify([getAiUsageContext().searchId ?? null, itemId, options.current ?? null, options.automatic ?? false, options.includeOffers !== false, options.targets ?? null, options.priceOnly === true]), signal => withPriceResearchSignal(signal, async () => {
+    return (itemId: string, options: BoundedOptions = {}): Promise<Evaluation> => share(JSON.stringify([getAiUsageContext().searchId ?? null, itemId, options.current ?? null, options.automatic ?? false, options.typeFilter ?? "all", options.includeOffers !== false, options.targets ?? null, options.priceOnly === true]), signal => withPriceResearchSignal(signal, async () => {
         signal.throwIfAborted();
         const searchId = getAiUsageContext().searchId;
         const savedForRefresh = options.priceOnly ? await privateEvaluations.load(itemId) : null;
@@ -292,6 +292,13 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         };
         const finish = () => publish(withoutUnsupportedVariantPrices(withoutRawSlabAssessment(evaluation)));
         if (ended || !listing.images.length) { evaluation.modeReasons = [ended ? "This listing is no longer available." : "The listing has no photos."]; return finish(); }
+        if (options.automatic && options.typeFilter && options.typeFilter !== "all" && listing.buyingOption !== options.typeFilter) {
+            evaluation.modeReasons = [options.typeFilter === "FIXED_PRICE"
+                ? "eBay reports an auction for this listing. This search is limited to Buy It Now."
+                : "eBay reports a Buy It Now listing. This search is limited to auctions."];
+            evaluation.gradeStatus = "SKIPPED_LISTING_FORMAT";
+            return finish();
+        }
         const textureError = missingTextureReason(listing.title);
         if (options.automatic && textureError) { evaluation.modeReasons = [textureError]; return finish(); }
         const eligibleNow = () => !signal.aborted && (!listing.endTime || Date.parse(listing.endTime) > deps.now()) &&
@@ -406,17 +413,19 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             { allowSoldPhoto, rawOnly = false }: { allowSoldPhoto: boolean; rawOnly?: boolean }) => {
             const condition = evaluation.condition;
             const prices: Pick<Evaluation, "rawPricing" | "gradedPricing"> = { rawPricing: null, gradedPricing: null };
-            if (!condition || condition.rawCondition === "UNKNOWN" && !condition.gradeRange) return prices;
+            if (!condition) return prices;
+            const creaseDisclosed = sellerCreaseOverridesCondition(condition.rawCondition, listing.conditionNotes);
             const inspect = rawOnly ? peek : guarded;
             if (frontRawPrices?.key === rawPriceKey(identity)) prices.rawPricing = frontRawPrices.prices;
             else if (condition.rawCondition !== "UNKNOWN") {
-                const sold = deps.soldCondition({ condition: condition.rawCondition, loadDetails: (...args) => inspect(() => deps.details(...args)),
+                const requestedCondition = creaseDisclosed ? "DAMAGED" : condition.rawCondition;
+                const sold = deps.soldCondition({ condition: requestedCondition, loadDetails: (...args) => inspect(() => deps.details(...args)),
                     cached: deps.cached, save: deps.save, now: deps.now });
                 const beforeRaw = priceLimits;
                 let soldPhotoDeferred: NonNullable<Evaluation["rawPricing"]>["soldPhotoDeferred"];
                 let soldPhotoAllowanceDenied = false;
                 const raw = await rawPricesWithSales(card, identity, {
-                    fetchRawComps: (...args) => inspect(() => deps.fetchRawComps(...args)), signal, now: deps.now(), requestedCondition: condition.rawCondition,
+                    fetchRawComps: (...args) => inspect(() => deps.fetchRawComps(...args)), signal, now: deps.now(), requestedCondition,
                     assessCondition: (sale, target) => inspect(() => sold.read(sale, target, signal)),
                     conditionStatus: sold.status,
                     acquireCondition: allowSoldPhoto ? async sales => {
@@ -433,19 +442,17 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                             const net = netFromSale(sale.price, "raw", MONEY_CONFIG.selling);
                             return pathNumbers({ expectedNet: net, fixedCosts: 0, shipping, price }, money).clears;
                         };
-                        // Seller condition is a research clue, never the accepted
-                        // category. Avoid buying a review of a known different
-                        // category while an economically relevant like-for-like
-                        // comparison is available.
-                        const claimed = pending.filter(sale => compCondition(sale.title) === condition.rawCondition);
-                        const unspecified = pending.filter(sale => compCondition(sale.title) === null);
-                        // Prices gate useful work for a cohort, not which sale
-                        // gets reviewed. A newer losing sale must not be skipped
-                        // in favor of an older sale that supports a purchase.
-                        const candidates = claimed.some(meetsTargets) ? claimed : unspecified.some(meetsTargets) ? unspecified : [];
-                        const sale = candidates.sort((a, b) => Date.parse(b.sold_at) - Date.parse(a.sold_at))[0];
+                        // Prefer an exact or unstated title condition, then a worse copy whose
+                        // verified sale could establish a conservative floor at its actual price.
+                        const lower = RAW_CONDITIONS.slice(RAW_CONDITIONS.indexOf(requestedCondition) + 1);
+                        const cohorts = new Map([requestedCondition, null, ...lower].map(claim => [claim, [] as Comp[]] as const));
+                        for (const sale of pending) cohorts.get(compCondition(sale.title))?.push(sale);
+                        // Prices gate research on a whole cohort. Always inspect its newest sale,
+                        // even when an older sale was the one that cleared the targets.
+                        const candidates = [...cohorts.values()].find(group => group.some(meetsTargets));
+                        const sale = candidates?.sort((a, b) => Date.parse(b.sold_at) - Date.parse(a.sold_at))[0];
                         if (!sale) {
-                            if (claimed.length || unspecified.length) soldPhotoDeferred = { price, shipping, targets: money.targets };
+                            if ([...cohorts.values()].some(group => group.length)) soldPhotoDeferred = { price, shipping, targets: money.targets };
                             return null;
                         }
                         const evidence = await guarded(async () => {
@@ -472,7 +479,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                 prices.rawPricing = priceLimits > beforeRaw ? { status: "PRICE_UNAVAILABLE", reason: evaluation.pricingDeferred!.note } : raw;
             }
             if (hardFailure) throw hardFailure;
-            if (!rawOnly) {
+            if (!rawOnly && !creaseDisclosed) {
                 prices.gradedPricing = {};
 
                 for (const grader of GRADERS) try {
@@ -662,34 +669,39 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                     const frontPlan = stagedPhotoPlan(listing, requestedPlan, "front");
                     const first = await assess(frontPlan, () => readStage(frontPlan), "frontPhotoAssessment", { kind: "front" });
                     applyReading(first);
-                    if ((!options.priceOnly || remembered?.evaluation.frontPhotoStop) && await finishAfterFront()) return finish();
-                    // Cache metadata is not part of the first photo's findings.
-                    // Earlier keys could include it when that first stage was reused.
-                    const originalFront = { photoCheck: first.reading.photoCheck, condition: first.reading.condition };
-                    const slab = readableFrontSlab(originalFront.photoCheck);
-                    const front = slab ? { ...originalFront, condition: null } : originalFront;
-                    const nextPlan = slab && requestedPlan.mode === "RAW" ? plans.find(plan => plan.mode === "SLAB_LABEL")! : requestedPlan;
-                    const remainder = stagedPhotoPlan(listing, nextPlan, "remainder", front);
-                    const previous = requestedPlan.mode === "RAW"
-                        ? plans.find(plan => plan.version === `${requestedPlan.model}/bounded-prompts-${PREVIOUS_BOUNDED_REVIEW_REVISION}`) : undefined;
-                    const earlierPlan = previous ?? requestedPlan;
-                    const rest = await assess(remainder, async () => {
-                        const current = await readStage(remainder);
-                        if (current) return current;
-                        if (nextPlan !== requestedPlan) {
-                            const saved = await readStage(stagedPhotoPlan(listing, requestedPlan, "remainder", originalFront));
-                            if (saved) return saved;
-                        }
-                        if (previous) {
-                            const saved = await readStage(stagedPhotoPlan(listing, previous, "remainder", originalFront));
-                            if (saved) return saved;
-                        }
-                        return first.cached ? readStage(stagedPhotoPlan(listing, earlierPlan, "remainder", first.reading)) : null;
-                    }, "remainingPhotoAssessment", { kind: "remainder", front });
-                    const sourcePlan = rest.plan.version === remainder.version ? nextPlan :
-                        rest.plan.version === `${requestedPlan.version}/remainder-1` ? requestedPlan : earlierPlan;
-                    answer = { ...rest, plan: sourcePlan, reading: combinePhotoReadings(front, rest.reading) };
-                    evaluation.modeReasons.push("Checked the first photo before requesting the remaining selected views.");
+                    if (requestedPlan.mode === "RAW" && listing.images.length === 2 && frontShowsDifferentNumber(listing, first.reading.photoCheck)) {
+                        evaluation.modeReasons.push("The first photo shows a different collector number from both the listing title and item specifics.");
+                        answer = first;
+                    } else {
+                        if ((!options.priceOnly || remembered?.evaluation.frontPhotoStop) && await finishAfterFront()) return finish();
+                        // Cache metadata is not part of the first photo's findings.
+                        // Earlier keys could include it when that first stage was reused.
+                        const originalFront = { photoCheck: first.reading.photoCheck, condition: first.reading.condition };
+                        const slab = readableFrontSlab(originalFront.photoCheck);
+                        const front = slab ? { ...originalFront, condition: null } : originalFront;
+                        const nextPlan = slab && requestedPlan.mode === "RAW" ? plans.find(plan => plan.mode === "SLAB_LABEL")! : requestedPlan;
+                        const remainder = stagedPhotoPlan(listing, nextPlan, "remainder", front);
+                        const previous = requestedPlan.mode === "RAW"
+                            ? plans.find(plan => plan.version === `${requestedPlan.model}/bounded-prompts-${PREVIOUS_BOUNDED_REVIEW_REVISION}`) : undefined;
+                        const earlierPlan = previous ?? requestedPlan;
+                        const rest = await assess(remainder, async () => {
+                            const current = await readStage(remainder);
+                            if (current) return current;
+                            if (nextPlan !== requestedPlan) {
+                                const saved = await readStage(stagedPhotoPlan(listing, requestedPlan, "remainder", originalFront));
+                                if (saved) return saved;
+                            }
+                            if (previous) {
+                                const saved = await readStage(stagedPhotoPlan(listing, previous, "remainder", originalFront));
+                                if (saved) return saved;
+                            }
+                            return first.cached ? readStage(stagedPhotoPlan(listing, earlierPlan, "remainder", first.reading)) : null;
+                        }, "remainingPhotoAssessment", { kind: "remainder", front });
+                        const sourcePlan = rest.plan.version === remainder.version ? nextPlan :
+                            rest.plan.version === `${requestedPlan.version}/remainder-1` ? requestedPlan : earlierPlan;
+                        answer = { ...rest, plan: sourcePlan, reading: combinePhotoReadings(front, rest.reading) };
+                        evaluation.modeReasons.push("Checked the first photo before requesting the remaining selected views.");
+                    }
                 } else answer = await assess(requestedPlan, readShared, "boundedPhotoAssessment");
 
                 applyReading(answer);
@@ -829,6 +841,10 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         } else {
             if (!evaluation.condition || evaluation.condition.rawCondition === "UNKNOWN" && !evaluation.condition.gradeRange) return finish();
             Object.assign(evaluation, await priceRaw(identity, identified.card, { allowSoldPhoto: !options.priceOnly }));
+            // A terms-only refresh cannot complete a legacy gap that still needs a sold photo.
+            if (savedForRefresh?.evaluation.pricingVersion === PREVIOUS_PRICING_VERSION && evaluation.rawPricing?.status === "PRICE_UNAVAILABLE") {
+                evaluation.pricingVersion = PREVIOUS_PRICING_VERSION;
+            }
         }
         signal.throwIfAborted();
         evaluation.pricesCheckedAt = new Date(deps.now()).toISOString();

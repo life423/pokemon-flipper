@@ -4,12 +4,75 @@ import path from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer } from "vite";
+import { addBinMarketComparisons } from "../../shared/bin-market-comparison.ts";
 import { cardEvaluation, salesSummary } from "../fixtures/card-evaluation.ts";
 import { displayAnalysis } from "../../client/src/analysis-state.ts";
 import { groupSearchResults } from "../../client/src/search/results.ts";
 import type { ActiveReference, ListingSummary } from "../../shared/types.ts";
 import { underwrite } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
+
+test("the result card explains a two-market price lead while a verified loss stays in Projected losses", async t => {
+    const server = await createServer({ configFile: path.resolve("client/vite.config.js"), envFile: false, appType: "custom", logLevel: "silent",
+        server: { middlewareMode: true, hmr: false, watch: null } });
+    t.after(() => server.close());
+    const { DealCard } = await server.ssrLoadModule("/src/components/DealCard.tsx");
+    const value = cardEvaluation();
+    value.listing = { ...value.listing, buyingOption: "FIXED_PRICE", availability: "ACTIVE", price: 90, shipping: 0, termsCheckedAt: new Date().toISOString() };
+    value.condition!.gradeRange = null;
+    value.photoCheck!.cardCount = "ONE";
+    value.gradedPricing = null;
+    const summary = salesSummary("RAW", "LIGHTLY_PLAYED", [95, 100, 105]);
+    summary.windowDays = 90;
+    for (const sale of summary.sales) Object.assign(sale, { saleType: "fixed_price", photoCondition: "LIGHTLY_PLAYED", conditionEvidence: ["Visible edge wear."] });
+    value.rawPricing = { status: "PRICED", conditionEvidence: "AI_PHOTOS", prices: [{ condition: "LIGHTLY_PLAYED", basis: "EBAY_SOLD", price: 100, updatedAt: summary.newestSale, comps: summary }] };
+    const comparisonRows = [90, 100, 110, 125].map((price, i): ListingSummary => ({
+        ...value.listing, id: String(i), currentPrice: price, isGraded: false, images: [], cardCondition: "Lightly Played",
+        buyingOption: "FIXED_PRICE", screen: { status: "UNSCREENED", reason: null, card: null, bestCase: null, assumed: null,
+            soldEvidence: { status: "AVAILABLE", exactScope: true, note: "", references: [{ recordId: 1, name: "Venusaur", set: "Base Set",
+                cardNumber: "15/102", printing: "UNLIMITED", finish: "HOLO", condition: "LIGHTLY_PLAYED", grader: null, grade: null, summary }] } },
+    }));
+    const row = addBinMarketComparisons(comparisonRows, [], Date.now())[0];
+    value.underwriting = underwrite(value, MONEY_CONFIG);
+    assert.equal(value.underwriting.verdict, "PASS");
+    const render = () => renderToStaticMarkup(createElement(DealCard, {
+        listing: row, analysis: { status: "done", evaluation: value }, now: Date.now(), includeOffers: false, selected: false, onOpen() {}, years: {},
+    }));
+    assert.match(render(), /10% below both medians at search time/);
+    assert.match(render(), /\$110\.00 median across 3 other Buy It Now listings/);
+    const grouped = groupSearchResults([row], { [row.id]: { status: "done", evaluation: value } }, false, new Set());
+    assert.deepEqual(grouped.deals, []);
+    assert.deepEqual(grouped.losses.map(listing => listing.id), [row.id]);
+    value.listing.shipping = null;
+    assert.doesNotMatch(render(), /below both medians/);
+});
+
+test("a raw deal explains when sold photos support a lower-condition resale floor", async t => {
+    const server = await createServer({ configFile: path.resolve("client/vite.config.js"), envFile: false, appType: "custom", logLevel: "silent",
+        server: { middlewareMode: true, hmr: false, watch: null } });
+    t.after(() => server.close());
+    const { DealCard } = await server.ssrLoadModule("/src/components/DealCard.tsx");
+    const { CompsRow } = await server.ssrLoadModule("/src/components/analysis/PricingSections.tsx");
+    const targets = { minProfit: 0, minRoi: 0 }, value = cardEvaluation(targets);
+    value.listing = { ...value.listing, buyingOption: "FIXED_PRICE", price: 40, shipping: 5 };
+    value.photoCheck!.cardCount = "ONE";
+    value.condition!.rawCondition = "NEAR_MINT";
+    value.condition!.gradeRange = null;
+    value.gradedPricing = null;
+    const comps = salesSummary("RAW", "LIGHTLY_PLAYED", [95, 100, 105]);
+    for (const sale of comps.sales) Object.assign(sale, { photoCondition: "LIGHTLY_PLAYED", conditionEvidence: ["Whitening visible on the bottom edge."] });
+    value.rawPricing = { status: "PRICED", conditionEvidence: "AI_PHOTOS", prices: [{ condition: "LIGHTLY_PLAYED", basis: "EBAY_SOLD", price: 100, updatedAt: comps.newestSale, comps }] };
+    value.underwriting = underwrite(value, { ...MONEY_CONFIG, targets });
+    assert.equal(value.underwriting.verdict, "BUY_RAW");
+    const render = () => renderToStaticMarkup(createElement(DealCard, {
+        listing: { ...value.listing, currentPrice: 40, isGraded: false, images: [] }, analysis: { status: "done", evaluation: value },
+        targets, now: Date.now(), includeOffers: false, selected: false, onOpen() {}, years: {},
+    }));
+    assert.match(render(), /Photos support Near Mint\. The \$100\.00 resale estimate uses 3 photo-checked Lightly Played sales\./i);
+    assert.match(renderToStaticMarkup(createElement(CompsRow, { summary: comps })), /Whitening visible on the bottom edge/);
+    value.rawPricing.conditionEvidence = "SELLER_TEXT";
+    assert.doesNotMatch(render(), /photo-checked Lightly Played sales/i);
+});
 
 test("saved unsupported raw prices are hidden from the card and analysis", async t => {
     const server = await createServer({ configFile: path.resolve("client/vite.config.js"), envFile: false, appType: "custom", logLevel: "silent",

@@ -67,3 +67,32 @@ test("a suspected crease leaves priced rejections finished until changed targets
     const otherwiseEligible = retargetEvaluation(original, offerTerms);
     assert.equal(resultGroup(listingSummary(otherwiseEligible), otherwiseEligible, true), "offers");
 });
+
+test("structured seller creasing uses damaged sales for raw resale even when the photographs miss the crease", () => {
+    const copy = suspectedCopy();
+    copy.condition!.creases = "NONE_SEEN";
+    copy.listing.conditionNotes = ["Major creasing"];
+    const options = { minProfit: 0, minRoi: 0 };
+    const unpriced = retargetEvaluation(copy, options);
+    assert.equal(unpriced.underwriting?.verdict, "CANT_PRICE");
+    copy.rawPricing!.prices!.push({ condition: "DAMAGED", basis: "EBAY_SOLD", price: 10, updatedAt: copy.pricesCheckedAt ?? null });
+    const priced = retargetEvaluation(copy, options);
+    assert.equal(priced.underwriting?.best?.priceCondition, "DAMAGED");
+    assert.equal(priced.underwriting?.verdict, "PASS");
+    assert.equal(priced.condition, copy.condition);
+    copy.listing.conditionNotes = ["No major creasing", "Sleeve has major creasing"];
+    assert.equal(retargetEvaluation(copy, options).underwriting?.verdict, "BUY_RAW");
+    for (const note of ["No stains but this card has a crease", "The card is creased inside a sleeve", "Card has heavy scratches creases edge wear"]) {
+        copy.listing.conditionNotes = [`Seller description: ${note}`];
+        assert.equal(retargetEvaluation(copy, options).underwriting?.best?.priceCondition, "DAMAGED", note);
+    }
+    for (const note of ["The card has no scratches, creases or stains", "The card is clean but the sleeve has a crease", "There is a crease on the holder", "This card is crease-free"]) {
+        copy.listing.conditionNotes = [`Seller description: ${note}`];
+        assert.equal(retargetEvaluation(copy, options).underwriting?.verdict, "BUY_RAW", note);
+    }
+    copy.listing.cardCondition = "Moderately played (Very good)";
+    copy.listing.conditionNotes = ["Moderate creasing", "Moderate to heavy edge chipping", "Rounding and soft corner", "Moderate discoloration"];
+    const old = retargetEvaluation(copy, options);
+    assert.equal(old.underwriting?.verdict, "CANT_PRICE");
+    assert.match(old.underwriting?.reasons[0] ?? "", /Refresh the listing/);
+});

@@ -174,13 +174,16 @@ export function fetchEbayUsage(searchRunId?: string): Promise<EbayUsage | null> 
 // after that. fresh refreshes listing terms while compatible photos are reused.
 // The search's terms and their observation time let the server use saved
 // listing details without replacing newer purchase terms.
-export async function evaluateListing(listing: ListingSummary, { fresh = false, signal, searchRunId, automatic = false, includeOffers = true, targets, priceOnly = false }: { targets?: Targets; fresh?: boolean; signal?: AbortSignal; searchRunId?: string; automatic?: boolean; includeOffers?: boolean; priceOnly?: boolean } = {}): Promise<Evaluation> {
+export async function evaluateListing(listing: ListingSummary, { fresh = false, signal, searchRunId, automatic = false, typeFilter, includeOffers = true, targets, priceOnly = false }: { targets?: Targets; fresh?: boolean; signal?: AbortSignal; searchRunId?: string; automatic?: boolean; typeFilter?: ListingFilters["typeFilter"]; includeOffers?: boolean; priceOnly?: boolean } = {}): Promise<Evaluation> {
     const account = searchRunId ?? (priceOnly ? undefined : crypto.randomUUID());
     for (let attempt = 0; ; attempt++) {
         signal?.throwIfAborted();
         const refreshQuery = priceOnly ? "priceOnly=1" : fresh ? attempt === 0 ? "fresh=1" : "refreshTerms=1" : "";
         const query = new URLSearchParams(refreshQuery);
-        if (automatic && !priceOnly) query.set("auto", "1");
+        if (automatic && !priceOnly) {
+            query.set("auto", "1");
+            if (typeFilter && typeFilter !== "all") query.set("type", typeFilter);
+        }
         if (!includeOffers) query.set("offers", "0");
         if (targets) { query.set("profit", String(targets.minProfit)); query.set("roi", String(targets.minRoi)); }
         try { return await request(`/api/listings/${encodeURIComponent(listing.id)}/evaluate?${query}`, {

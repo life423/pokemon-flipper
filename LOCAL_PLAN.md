@@ -10,6 +10,21 @@ The active checklist lives in [LOCAL_TODO.md](LOCAL_TODO.md). The
 the user-supplied audit and coverage patch, the 50-row Blastoise reconstruction,
 and the live and saved Mew ex results. See Git for delivery history.
 
+## Buy It Now price comparisons
+
+- A fixed-price listing can be worth researching when its delivered ask is
+  below both the other matching asks and recent sold prices. Use the smaller
+  discount and show both sample sizes. Keep seller-described condition and
+  photo-assessed condition distinct. Verify the actual item, buyer's shipping,
+  tax, selling costs and, for a grading strategy, the downside grade before
+  making a resale recommendation.
+- The November 24 trace reproduced 19 below-market listings from a 25-listing
+  snapshot. Three available listings had a positive spread after estimated costs
+  at the original median. Photo and condition checks found one wrong card, one
+  projected loss and one unresolved resale value. A fresh search also surfaced
+  two grading candidates. Neither had sufficient evidence to recommend buying.
+  Keep the listing-level receipts in private validation storage.
+
 ## Live Buy It Now validation — November 8
 
 Named raw Buy It Now searches can now queue a grading lead when the ordinary

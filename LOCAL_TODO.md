@@ -11,6 +11,10 @@ provider payloads, photos and data/ stay excluded. No computer handoff is pendin
   supported resale value and positive net profit after all costs. Verify it
   reaches Deals through the normal workflow; never inflate values or relabel an
   unverified opportunity to meet a count.
+- [ ] Measure how often below-market Buy It Now leads survive the photo and
+  after-cost checks across different cards. Preserve the original listing IDs,
+  asks, comparison sales and observation time in private validation records so
+  a later rescan can explain every change in the count.
 - [x] Show a Buy It Now competition check when an exact slab search retains no
   candidates. Compare the lowest checked delivered ask with the ceiling at that
   shipping cost. Reuse compatible saved slab evidence and distinguish it from

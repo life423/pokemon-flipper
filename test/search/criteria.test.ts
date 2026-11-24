@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { criteriaMismatch, describeSearchCriteria, evaluatedCriteriaMismatch, explicitCriteria, finishIn, marketplaceQuery, searchAttributes } from "../../shared/search-criteria.ts";
+import { criteriaMismatch, describeSearchCriteria, evaluatedCriteriaMismatch, explicitCriteria, finishIn, marketplaceQuery, rawBuyItNowQuery, searchAttributes } from "../../shared/search-criteria.ts";
 import { cleanReading, readSearchByRules, readSearchLocally } from "../../server/search/intent.ts";
 import { canAutoAnalyze } from "../../shared/analysis.ts";
 import { photoFitsSearch } from "../../server/ai/photo-find.ts";
@@ -8,6 +8,20 @@ import { photoFitsSearch } from "../../server/ai/photo-find.ts";
 const query = "aquapolis cards psa 7 or better holo";
 const intent = () => readSearchByRules(query);
 const listing = (title = "Aquapolis Espeon Holo PSA 8", extra = {}) => ({ id: "one", title, isGraded: true, currentPrice: 200, shipping: 5, buyingOption: "FIXED_PRICE", bids: 0, endTime: null, images: [], seller: null, url: "", ...extra });
+
+test("an exact raw discovery query tolerates short seller titles while preserving distinct variants", () => {
+    const compact = (search: string) => {
+        const intent = readSearchLocally(search);
+        return rawBuyItNowQuery(marketplaceQuery(search, intent), intent);
+    };
+    assert.equal(compact("Raw 1999 Blastoise Base Set 2/102 unlimited holo"), "2 blastoise base set");
+    assert.equal(compact("Blastoise Base Set 2 2/130 holo"), "2 blastoise base set 2");
+    assert.match(compact("1999-2000 Blastoise Base Set 2/102 holo"), /1999-2000/);
+    assert.match(compact("Dark Blastoise Team Rocket 3/82 first edition reverse holo"), /first edition reverse holo/);
+    assert.match(compact("Giratina V Lost Origin 186/196 holo"), /186/);
+    assert.match(compact("Blastoise Base Set 2/102 signed"), /signed/);
+    assert.equal(compact("Blastoise holo"), "blastoise holo");
+});
 
 test("ordinary grade operators read inclusively without needing AI", () => {
     for (const phrase of ["psa 7 or better", "PSA 7+", "PSA7+", "at least PSA 7", "PSA at least 7", "PSA grade 7 or higher", "PSA 7 and up"]) {

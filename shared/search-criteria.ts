@@ -2,7 +2,7 @@ import type { Evaluation, ListingSummary, SearchIntent } from "./types.ts";
 import { finishClaim } from "./finish.ts";
 import { isPrinting } from "./identity.ts";
 import { setKey } from "./sets.ts";
-import { explicitReprintSet } from "./reprint-release.ts";
+import { explicitReprintSet, hasBaseSetFourthPrint } from "./reprint-release.ts";
 import { confirmedPhotoCard, observedCardKind } from "./photo-evidence.ts";
 import { compareCardNumbers } from "./card-number.ts";
 
@@ -60,6 +60,25 @@ export function marketplaceQuery(search: string, intent: SearchIntent): string {
     // Never turn a range into an exact-grade eBay keyword search.
     words = words.replace(new RegExp(`\\b${GRADER}\\b`, "gi"), " ").replace(/\s+/g, " ").trim();
     return [words, intent.grader || (intent.graded === true ? "graded" : null), intent.grader && intent.minGrade != null && intent.minGrade === intent.maxGrade ? intent.minGrade : null].filter((v) => v !== null && v !== undefined && v !== "").join(" ").slice(0, 300) || search;
+}
+
+// A seller may omit the release year, common finish, edition or collector
+// fraction. When the name and set still anchor an exact-card BIN search,
+// keep those details in the local checks instead of requiring every word on eBay.
+export function rawBuyItNowQuery(keywords: string, intent: SearchIntent): string {
+    const [set] = intent.sets;
+    if (!intent.cardName || intent.sets.length !== 1 || !set || !intent.cardNumber) return keywords;
+    const fraction = keywords.match(/#?\b[a-z]*\d+[a-z]*\s*\/\s*[a-z]*\d+[a-z]*\b/i)?.[0];
+    const numbered = !!fraction && compareCardNumbers(fraction, intent.cardNumber) === true;
+    // Put the numerator first so "Base Set 2/102" never becomes "Base Set 2".
+    let compact = numbered ? fraction.split("/")[0]!.replace("#", "").trim() + " " + keywords.replace(fraction, " ") : keywords;
+    if (intent.graded === false) compact = compact.replace(/\b(raw|ungraded)\b/gi, " ");
+    if (numbered && intent.finish === "HOLO" && finishClaim(compact) === "HOLO") compact = compact.replace(/\bholo(?:graphic|foil)?\b/gi, " ");
+    if (intent.printing === "UNLIMITED") compact = compact.replace(/\bunlimited\b/gi, " ");
+    if (setKey(set) === "base set" && !hasBaseSetFourthPrint(set, keywords)) compact = compact.replace(/\b1999\b/g, " ");
+    compact = compact.replace(/\s+/g, " ").trim();
+    const words = ` ${compact.toLowerCase()} `;
+    return [intent.cardName, set].every(anchor => words.includes(` ${anchor.toLowerCase()} `)) ? compact : keywords;
 }
 
 export interface SearchAttributes { grader: string | null; grade: number | null; finish: Finish | null }

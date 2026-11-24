@@ -58,3 +58,26 @@ export function claimedCondition(text: string | null | undefined): RawCondition 
 export function sellerCondition(text: string | null | undefined): RawCondition {
     return claimedCondition(text) ?? "NEAR_MINT";
 }
+
+// Separate actual card disclosures from denials, hypotheticals and damage
+// to the holder. The seller can describe both in the same sentence.
+export function sellerDisclosedCreasing(notes: readonly string[] | undefined): boolean {
+    return notes?.some(note => {
+        if (/^(?:minor|moderate|major) creasing$/i.test(note.trim())) return true;
+        if (!note.startsWith("Seller description: ")) return false;
+        const clauses = note.slice("Seller description: ".length).split(/\b(?:but|however|whereas)\b|[,;]?\s+and\s+(?=(?:the|this)\s+(?:card|copy|sleeve|holder|case))/i);
+        return clauses.some(clause => {
+            const match = /\bcreas(?:e|es|ed|ing)\b/i.exec(clause);
+            if (!match) return false;
+            const before = clause.slice(0, match.index), after = clause.slice(match.index + match[0].length);
+            if (/\b(?:no|not|without|none|never|nor|neither|free of|if|may|might|could|possibly|possible|check for|look for|inspect for)\b/i.test(before) ||
+                /^[- ]free\b|^\s+(?:(?:is|are|was|were)\s+)?(?:absent|not (?:present|visible|seen|on the card))\b/i.test(after)) return false;
+            if (/\b(?:sleeve|holder|case|top[ -]?loader|packaging)\s+(?:(?:has|had|is|was|shows?|with|a|the|visible|slight|minor|major)\s+)*$/i.test(before)) return false;
+            return !/^\s+(?:on|in|of)\s+(?:the |a |its )?(?:sleeve|holder|case|top[ -]?loader|packaging)\b/i.test(after);
+        });
+    }) ?? false;
+}
+
+export function sellerCreaseOverridesCondition(photoCondition: RawCondition | "UNKNOWN", notes: readonly string[] | undefined): boolean {
+    return photoCondition !== "DAMAGED" && sellerDisclosedCreasing(notes);
+}

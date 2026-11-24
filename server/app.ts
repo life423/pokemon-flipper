@@ -336,6 +336,7 @@ app.post("/api/listings/:id/evaluate", tracked(async (req, res) => {
         signal.throwIfAborted();
         const options = {
             automatic: req.query.auto === "1",
+            typeFilter: readListingFilters(req.query).typeFilter,
             includeOffers: req.query.offers !== "0",
             targets: searchTargets(req),
             current: priceOnly || req.query.refreshTerms === "1" || req.query.fresh === "1" ? null : current,

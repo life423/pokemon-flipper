@@ -46,6 +46,8 @@ export type SourceDispositionRow = { id: string } & (
     { outcome: "NOT_REACHED"; reason: "ENOUGH_CANDIDATES" }
 );
 
+export const BEST_BUY_TERMS_MAX_AGE_MS = 120_000;
+
 export interface SearchCompetition {
     title: string;
     url: string;

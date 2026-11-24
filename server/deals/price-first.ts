@@ -24,7 +24,7 @@ export function createPriceFirstSession(intent: SearchIntent, {
     const stopped = new AbortController();
     const workSignal = signal ? AbortSignal.any([signal, stopped.signal]) : stopped.signal;
     const source = sourceFactory?.({ signal: workSignal });
-    const screen = createScreening({ signal: workSignal, now: () => now, ...(source ? { source } : {}) });
+    const screen = createScreening({ signal: workSignal, targets, now: () => now, ...(source ? { source } : {}) });
     // Refill batches share the same source allowance, memoized catalog/markets
     // and cancellation signal. A new batch never renews a provider allowance.
     const screenBatch = async (listings: ListingSummary[]): Promise<ListingSummary[]> => {
@@ -52,7 +52,7 @@ export function createPriceFirstSession(intent: SearchIntent, {
         // Stable ties preserve newest-listing/source order. This ranks preliminary
         // evidence only; it never creates a final Deal or an estimated grade.
         return priced.sort((a, b) => Number(a.screen?.status === "DROPPED") - Number(b.screen?.status === "DROPPED") ||
-            comparePriority(analysisPriority(a, targets), analysisPriority(b, targets)));
+            comparePriority(analysisPriority(a, targets, now), analysisPriority(b, targets, now)));
     };
     return Object.assign(screenBatch, {
         resolveIntent: async () => {

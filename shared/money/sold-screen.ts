@@ -1,13 +1,14 @@
+import { listingDisclosesCardCrease } from "../ebay-condition-notes.ts";
 import { CONDITION_NAMES, isRawCondition } from "../conditions.ts";
 import type { ListingSummary, Screen, ScreeningSoldEvidence, ScreeningSoldReference, Targets } from "../types.ts";
 import { MONEY_CONFIG, type MoneyConfig } from "./config.ts";
 import { offerPlan, offerWorthMaking } from "./offer.ts";
 import { bestPath, gradingTier, netFromSale, pathNumbers } from "./underwriting.ts";
 import { cents, MAX_OFFER_DISCOUNT_PERCENT } from "./cents.ts";
-import { hasExactSoldScope, soldMarketPrice, usableSoldReference } from "../sold-evidence.ts";
+import { hasExactSoldScope, soldMarketPrice, soldReferenceScope, usableSoldReference } from "../sold-evidence.ts";
 import { usualPrice } from "./auction.ts";
 
-type SoldScreenListing = Pick<ListingSummary, "currentPrice" | "shipping" | "isGraded" | "buyingOption" | "bestOffer" | "screen">;
+type SoldScreenListing = Pick<ListingSummary, "currentPrice" | "shipping" | "isGraded" | "buyingOption" | "bestOffer" | "screen" | "cardCondition" | "conditionNotes">;
 interface SoldScreenOptions {
     targets?: Targets;
     includeOffers?: boolean;
@@ -27,9 +28,11 @@ function gradingLead(listing: SoldScreenListing, evidence: ScreeningSoldEvidence
     const price = listing.currentPrice, shipping = listing.shipping ?? config.buying.assumedShippingWhenUnknown;
     if (listing.isGraded || listing.buyingOption !== "FIXED_PRICE" || !evidence.exactScope || price === null ||
         !Number.isFinite(price) || price < 0 || !Number.isFinite(shipping) || shipping < 0) return undefined;
+    const rawMarket = evidence.references.length ? soldReferenceScope(evidence.references[0]) : null;
     const references = (evidence.gradingReferences ?? []).filter(reference =>
         (reference.grade === "8" || reference.grade === "9") && usableSoldReference(reference, true) &&
         reference.summary.windowDays === 90 &&
+        (!rawMarket || soldReferenceScope({ ...reference, grader: null, grade: null }) === rawMarket) &&
         (!listing.screen?.card?.printing || listing.screen.card.printing === "UNKNOWN" || reference.printing === listing.screen.card.printing));
     // A profitable sale at a scout grade buys research only. The actual card
     // still needs a supported grade range and downside pricing after review.
@@ -79,16 +82,18 @@ export function applySoldPriceScreen<T extends SoldScreenListing>(
     delete screen.gradingLead;
 
     const finish = () => ({ ...listing, screen });
-    if (evidence.status !== "AVAILABLE") {
-        if (evidence.status === "UNAVAILABLE") {
-            const lead = gradingLead(listing, evidence, moneyConfig);
-            if (lead) {
-                screen.gradingLead = lead;
-                screen.reason = `Recent ${lead.grader} ${lead.grade} sales leave room after costs if this copy earns that grade. Photos still need to support a grade range.`;
-            }
+    const disclosedCrease = !listing.isGraded && listingDisclosesCardCrease(listing);
+    function finishWithGradingCheck() {
+        if (disclosedCrease || !evidence.gradingReferences?.length) return finish();
+        const lead = gradingLead(listing, evidence, moneyConfig);
+        if (lead) {
+            screen.gradingLead = lead;
+            screen.reason = `Recent ${lead.grader} ${lead.grade} sales leave room after costs if this copy earns that grade. Photos still need to support a grade range.`;
         }
         return finish();
     }
+    if (evidence.status === "UNAVAILABLE") return finishWithGradingCheck();
+    if (evidence.status !== "AVAILABLE") return finish();
 
     const references = evidence.references.filter((reference) => usableSoldReference(reference, listing.isGraded));
     if (!references.length) {
@@ -109,10 +114,12 @@ export function applySoldPriceScreen<T extends SoldScreenListing>(
         return finish();
     }
 
-    const pricedReferences = references.filter((reference) => listing.isGraded || isRawCondition(reference.condition));
+    const pricedReferences = references.filter(reference => listing.isGraded ||
+        (disclosedCrease ? reference.condition === "DAMAGED" : isRawCondition(reference.condition)));
     if (!pricedReferences.length) {
-        screen.reason = "Recent matching raw sales are available as market context, but their condition is unspecified. The live card still needs photo assessment.";
-        return finish();
+        screen.reason = disclosedCrease ? "The seller disclosed a crease. A raw resale estimate needs matched Damaged sales."
+            : "Recent matching raw sales are available as market context, but their condition is unspecified. The live card still needs photo assessment.";
+        return finishWithGradingCheck();
     }
 
     const kind = listing.isGraded ? "graded" : "raw";
@@ -143,8 +150,9 @@ export function applySoldPriceScreen<T extends SoldScreenListing>(
         (listing.shipping === null ? " Purchase shipping is unknown; $0 is used only to avoid excluding a possible opportunity." : "");
 
     if (!listing.isGraded) {
-        screen.reason = "Matched raw sold-condition buckets inform priority only. Photos must establish this card's condition and any grading upside.";
-        return finish();
+        screen.reason = disclosedCrease ? "The seller disclosed a crease. Preliminary raw resale uses matched Damaged sales."
+            : "Matched raw sold-condition buckets inform priority only. Photos must establish this card's condition and any grading upside.";
+        return finishWithGradingCheck();
     }
 
     // A missing/older/ambiguous upper reference cannot justify rejecting a

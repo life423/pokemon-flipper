@@ -172,7 +172,7 @@ try {
             evaluate: (listing, signal) => scope("assessment", async () => {
                 const saved = restored.get(listing.id);
                 if (saved) return saved;
-                const work = () => evaluate(listing.id, { automatic: settings.automaticPhotos, includeOffers, targets, signal,
+                const work = () => evaluate(listing.id, { automatic: settings.automaticPhotos, typeFilter: filters.typeFilter, includeOffers, targets, signal,
                     current: { title: listing.title, images: listing.images, price: listing.currentPrice, shipping: listing.shipping, bids: listing.bids,
                         endTime: listing.endTime, buyingOption: listing.buyingOption, bestOffer: listing.bestOffer, termsCheckedAt: listing.termsCheckedAt } });
                 return live ? work() : withSavedProviderEvidence(provider => {

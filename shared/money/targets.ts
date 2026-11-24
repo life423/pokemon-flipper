@@ -59,7 +59,7 @@ export function retargetScreen(
     targets: Targets,
     config: MoneyConfig = MONEY_CONFIG,
     includeOffers = false,
-    current?: Pick<ListingSummary, "shipping" | "isGraded" | "buyingOption" | "bestOffer">
+    current?: Pick<ListingSummary, "shipping" | "isGraded" | "buyingOption" | "bestOffer" | "cardCondition" | "conditionNotes">
 ): Screen {
     if (screen.soldEvidence) {
         if (current && (screen.soldEvidence.status === "AVAILABLE" || screen.soldEvidence.gradingReferences?.length)) {

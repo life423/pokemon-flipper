@@ -673,6 +673,31 @@ export function titleContradiction(title: string, setName: string | null, cardNu
     return null;
 }
 
+const collectorFraction = /^#?[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?$/i;
+const fractionsInText = /\b[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?\b/gi;
+
+function literalCollectorNumbers(title: string): string[] {
+    return [
+        ...[...title.matchAll(fractionsInText)].map(match => match[0]),
+        ...[...title.matchAll(/#\s*([a-z]{0,5}\d{1,4}[a-z]?(?:\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?)?)(?![\w/])/gi)].map(match => match[1]),
+    ];
+}
+
+// A clear photo can identify a different card even when its condition is obscured.
+// Require agreement within both the visual reading and the seller's claims.
+export function frontShowsDifferentNumber(listing: IdentityListing, photos: PhotoCheck): boolean {
+    const number = listing.aspects?.["Card Number"]?.trim();
+    const card = confirmedPhotoCard(photos);
+    if (photos.cardMatch?.verdict !== "MISMATCH" || !photos.cardMatch.problems.length ||
+        photos.images.length !== 1 || photos.images[0].view !== "FRONT" || photos.slab?.present ||
+        !["NONE", "SLEEVE", "TOPLOADER"].includes(photos.holder) || !card?.set || !card.evidence.length ||
+        !sameCatalogName(card.name, photos.printedName) || !collectorFraction.test(card.cardNumber?.trim() ?? "") ||
+        !collectorFraction.test(photos.printedNumber?.trim() ?? "") || !sameCardNumber(card.cardNumber, photos.printedNumber) ||
+        !number || !collectorFraction.test(number) || sameCardNumber(card.cardNumber, number)) return false;
+    const claims = literalCollectorNumbers(listing.title);
+    return claims.some(claim => collectorFraction.test(claim)) && claims.every(claim => sameCardNumber(claim, number));
+}
+
 // Some seller spreadsheets turn a collector fraction into a month/year. Only
 // an agreeing explicit title number and a clear photographed fraction can
 // correct that local claim; the date-shaped text alone establishes nothing.
@@ -686,10 +711,8 @@ function corroboratedDateNumber(listing: IdentityListing, photos: IdentityPhotos
         !/^\s*#?\d{1,3}\s*\/\s*\d{1,4}\s*$/.test(photos.printedNumber ?? "") || !sameCardNumber(photos.printedNumber, card.cardNumber)) return null;
     const month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(date[1].toLowerCase()) + 1;
     if (Number(fraction[1]) !== month || Number(fraction[2]) !== Number(date[2]) || Number(fraction[2]) <= 10) return null;
-    const titleNumbers = [
-        ...[...listing.title.matchAll(/\b[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?\b/gi)].map(match => match[0]),
-        ...[...listing.title.matchAll(/#\s*([a-z]{0,5}\d{1,4}[a-z]?(?:\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?)?)(?![\w/])/gi)].map(match => match[1]),
-    ].filter(number => { const total = normalizeCardNumber(number)?.total; return total == null || total > 10; });
+    const titleNumbers = literalCollectorNumbers(listing.title)
+        .filter(number => { const total = normalizeCardNumber(number)?.total; return total == null || total > 10; });
     return titleNumbers.length && titleNumbers.every(number => sameCardNumber(number, card.cardNumber)) ? card.cardNumber! : null;
 }
 
@@ -705,13 +728,11 @@ type SellerFieldCorrections = Partial<Record<"Set" | "Card Number" | "Finish", s
 
 function corroboratedSellerClaims(listing: IdentityListing, photos: IdentityPhotos, readTitle?: typeof readTitleByRules): SellerFieldCorrections | null {
     const card = photos.cardIdentity, aspects = listing.aspects ?? {};
-    const fraction = /^#?[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?$/i;
-    const fractionsInText = /\b[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?\b/gi;
-    if (!card?.name || !card.set || !aspects.Set || !card.cardNumber || !fraction.test(card.cardNumber.trim()) || card.confidence !== "HIGH" || !card.evidence.length ||
+    if (!card?.name || !card.set || !aspects.Set || !card.cardNumber || !collectorFraction.test(card.cardNumber.trim()) || card.confidence !== "HIGH" || !card.evidence.length ||
         photos.cardCount !== "ONE" || !["NONE", "SLEEVE", "TOPLOADER"].includes(photos.holder ?? "") || photos.slab?.present ||
         !photos.images?.some(photo => photo.view === "FRONT" && photo.usable && !photo.isStockImage) ||
         !sameCatalogName(card.name, photos.printedName) || !sameCatalogName(card.name, aspects["Card Name"] ?? aspects.Character) ||
-        !fraction.test(photos.printedNumber?.trim() ?? "") || !sameCardNumber(card.cardNumber, photos.printedNumber) ||
+        !collectorFraction.test(photos.printedNumber?.trim() ?? "") || !sameCardNumber(card.cardNumber, photos.printedNumber) ||
         cardLanguageStatus("", [card.language]) !== "ENGLISH" || cardLanguageStatus(listing.title, [aspects.Language, card.language]) !== "ENGLISH" ||
         !["HOLO", "NON_HOLO", "REVERSE_HOLO"].includes(card.finish) || finishClaim(listing.title) !== card.finish ||
         titleContradiction(listing.title, card.set, card.cardNumber)) return null;

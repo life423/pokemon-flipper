@@ -10,6 +10,9 @@ import { readSearchLocally } from "../../server/search/intent.ts";
 import { readTitleByRules } from "../../server/ai/title-reader.ts";
 import { createBoundedEvaluator, type BoundedReading } from "../../server/analysis/bounded-evaluate.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
+import { BEST_BUY_TERMS_MAX_AGE_MS } from "../../shared/search-diagnostic.ts";
+import { addBinMarketComparisons, currentBinComparison } from "../../shared/bin-market-comparison.ts";
+import { analysisPriority } from "../../shared/analysis-priority.ts";
 import { autoAnalysisBlockReason, canAutoAnalyze, resultGroup } from "../../shared/analysis.ts";
 import { listingEvidenceKey } from "../../shared/listing-evidence.ts";
 import { filterSearchResults, groupSearchResults } from "../../client/src/search/results.ts";
@@ -43,6 +46,104 @@ function steps(rows: ListingSummary[], soldScreening: SoldScreeningFactory) {
         readIntent: async (query: string) => readSearchLocally(query), readTitle: async (title: string) => readTitleByRules(title),
     };
 }
+
+test("Buy It Now compares both discovery pages before choosing a price lead and retains its actual resale loss", async () => {
+    const reference = evidence(false, 100);
+    reference.references[0].summary.sales.forEach(sale => { sale.saleType = "fixed_price"; });
+    const nm = (id: string, ask: number, shipping: number | null = 0) =>
+        listing(id, { currentPrice: ask, shipping, cardCondition: "Near Mint", termsCheckedAt: new Date(NOW).toISOString() });
+    const target = nm("lead", 80, 10), peer1 = nm("peer1", 100), peer2 = nm("peer2", 100, 10), peer3 = nm("peer3", 125);
+    let pages = 0;
+    const dependencies = steps([], factory(async () => reference));
+    const results = await findDeals("Charizard Base Set 4/102 holo", {
+        filters: { typeFilter: "FIXED_PRICE", kindFilter: "raw" }, targets, asOf: NOW,
+    }, { ...dependencies, search: async () => ({
+        listings: ++pages === 1 ? [peer1, target, peer2] : [peer2, peer3, nm("unknown", 105, null)],
+        total: 201, skipped: 0,
+    }) });
+    assert.equal(pages, 2);
+    const top = results[0];
+    assert.equal(top.id, target.id);
+    const signal = currentBinComparison(top);
+    assert.ok(signal);
+    assert.deepEqual([signal.delivered, signal.otherAskMedian, signal.otherAskCount, signal.soldMedian, signal.soldCount, signal.discountPercent],
+        [90, 110, 3, 100, 3, 10], "use the smaller discount; free and paid shipping contribute to delivered asking");
+    assert.equal(signal.condition, "NEAR_MINT");
+    assert.ok(analysisPriority(top, targets).expectedProfit! < 0);
+    assert.equal(analysisPriority(top, targets).band, 0);
+    assert.notEqual(resultGroup(top, null), "deals");
+    assert.equal(currentBinComparison({ ...top, shipping: null }), null);
+    assert.equal(currentBinComparison(results.find(row => row.id === "unknown")!), null);
+});
+
+test("market comparison requires three other distinct exact BINs and three supported recent transactions", () => {
+    const evidenceWith = (change?: (ref: ScreeningSoldEvidence["references"][number]) => void) => {
+        const ev = evidence(false, 120);
+        ev.references[0].summary.sales.forEach(sale => { sale.saleType = "fixed_price"; });
+        change?.(ev.references[0]);
+        return ev;
+    };
+    const row = (id: string, price: number, ev = evidenceWith(), extra: Partial<ListingSummary> = {}): ListingSummary => listing(id, {
+        cardCondition: "Near Mint", currentPrice: price, shipping: 0, termsCheckedAt: new Date(NOW).toISOString(), screen: {
+            status: "UNSCREENED", soldEvidence: ev, reason: null, card: null, bestCase: null, assumed: null,
+        }, ...extra,
+    });
+    const subject = row("v1|123456789123|0", 68), one = row("1", 80), two = row("2", 85), three = row("3", 90);
+    const invalid = [
+        { ...subject, id: "v1|123456789123|1" }, { ...one }, row("undated", 83, undefined, { termsCheckedAt: undefined }), row("unknown", 82, undefined, { shipping: null }),
+        row("auction", 70, undefined, { buyingOption: "AUCTION" }), row("ended", 82, undefined, { availability: "UNAVAILABLE" }),
+        row("grade", 160, evidence(true), { isGraded: true }), row("lp", 82, undefined, { cardCondition: "Lightly Played" }),
+        row("printing", 84, evidenceWith(ref => { ref.printing = "FIRST_EDITION"; })),
+        row("finish", 84, evidenceWith(ref => { ref.finish = "REVERSE_HOLO"; })),
+        row("record", 84, evidenceWith(ref => { ref.recordId = 2; })),
+    ];
+    assert.equal(currentBinComparison(addBinMarketComparisons([subject, one, two, ...invalid], [], NOW)[0]), null);
+    const lead = addBinMarketComparisons([subject, one, two], [three, ...invalid], NOW)[0];
+    assert.equal(currentBinComparison(lead)?.discountPercent, 20, "the active median sets the smaller discount here");
+    assert.equal(currentBinComparison(lead)?.otherAskCount, 3);
+    const snapshot = (asOf: string) => ({ ...lead, screen: { ...lead.screen!, marketComparison: { ...lead.screen!.marketComparison!, asOf } } });
+    const asOf = NOW - 1_000;
+    assert.ok(currentBinComparison(snapshot(new Date(asOf).toISOString()), undefined, asOf + BEST_BUY_TERMS_MAX_AGE_MS - 1));
+    for (const checked of [new Date(NOW - BEST_BUY_TERMS_MAX_AGE_MS).toISOString(), new Date(NOW + 1).toISOString(), "invalid"]) {
+        const cached = snapshot(checked);
+        assert.equal(currentBinComparison(cached, undefined, NOW), null);
+        assert.equal(analysisPriority(cached, targets, NOW).marketDiscount, undefined, "old unevaluated rows lose queue priority too");
+    }
+    const nearExpiry = { ...three, termsCheckedAt: new Date(NOW - BEST_BUY_TERMS_MAX_AGE_MS + 1).toISOString() };
+    const mixedAge = addBinMarketComparisons([subject, one, two, nearExpiry], [], NOW)[0];
+    assert.ok(currentBinComparison(mixedAge, undefined, NOW));
+    assert.equal(currentBinComparison(mixedAge, undefined, NOW + 1), null, "assembling an old page cannot renew its prices");
+    const withoutSales = evidenceWith(ref => { ref.summary.sales = []; });
+    const oldSales = evidenceWith(ref => { ref.summary.sales[0].soldAt = new Date(NOW - 91 * DAY).toISOString(); });
+    const repeated = evidenceWith(ref => { ref.summary.sales.forEach(sale => { sale.url = "https://www.ebay.com/itm/123456789321"; }); });
+    for (const ev of [withoutSales, oldSales, repeated]) {
+        assert.equal(currentBinComparison(addBinMarketComparisons([row("new", 68, ev), one, two, three], [], NOW)[0]), null);
+    }
+    assert.equal(currentBinComparison(addBinMarketComparisons([lead, one, two], [], NOW)[0]), null, "clear a stale search comparison");
+    assert.equal(currentBinComparison({ ...lead, currentPrice: 100 }), null, "changed terms need a fresh comparison");
+    const broad = evidenceWith(ref => { ref.condition = null; ref.summary.grade = "UNSPECIFIED"; });
+    const unknownCondition = (id: string, ask: number) => row(id, ask, broad, { cardCondition: null });
+    const unspecified = addBinMarketComparisons([unknownCondition("unknown1", 68), unknownCondition("unknown2", 80),
+        unknownCondition("unknown3", 85), unknownCondition("unknown4", 90), one], [], NOW)[0];
+    assert.equal(currentBinComparison(unspecified)?.condition, null);
+    assert.equal(currentBinComparison(unspecified)?.otherAskCount, 3);
+});
+
+test("an exact-card BIN search compares a stronger raw copy late on the same page before filling the display", async () => {
+    const first = Array.from({ length: 50 }, (_, index) => listing(`early-${index}`));
+    const last = listing("better-buy", { currentPrice: 30 });
+    const screened: string[] = [], overflow: string[] = [];
+    let pages = 0;
+    const dependencies = steps([...first, last], factory(async row => { screened.push(row.id); return evidence(); }));
+    const result = await findDeals("Charizard Base Set 4/102 holo", {
+        filters: { typeFilter: "FIXED_PRICE", kindFilter: "raw" }, targets, onScreenedOverflow: row => overflow.push(row.id),
+    }, { ...dependencies, search: async () => { pages++; return dependencies.search(); } });
+    assert.equal(pages, 1);
+    assert.equal(screened.length, 51);
+    assert.equal(result.length, 50);
+    assert.equal(result[0]?.id, last.id);
+    assert.deepEqual(overflow, [first[49]!.id]);
+});
 
 test("no browser candidate is emitted until the batch's sold evidence is ready", async () => {
     let release!: () => void, started!: () => void;

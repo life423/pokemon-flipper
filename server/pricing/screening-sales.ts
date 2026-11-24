@@ -2,7 +2,7 @@ import { isPrinting, normalizeCardNumber, normalizeSetName, printingClaimFromTex
 import { finishClaim } from "../../shared/finish.ts";
 import { RAW_CONDITIONS } from "../../shared/conditions.ts";
 import { StorageUnavailableError } from "../storage/index.ts";
-import type { ListingSummary, ScreeningSoldEvidence, ScreeningSoldReference, SearchIntent } from "../../shared/types.ts";
+import type { ListingSummary, ScreeningSoldEvidence, ScreeningSoldReference, SearchIntent, Targets } from "../../shared/types.ts";
 import type { CardRecord, Comp, FetchComps, FetchRawComps, FetchSoldPage, LookupCards, SoldPage, SoldStream } from "./types.ts";
 import { compCondition } from "./raw-comps.ts";
 import { compProblem, summarizeComps, readSoldTitleClaims, matchesSoldTarget, uniqueSoldComps, type CompCriteria } from "./sold-comps.ts";
@@ -15,7 +15,9 @@ import { hasBaseSetFourthPrint } from "../../shared/reprint-release.ts";
 import { usableSoldReference } from "../../shared/sold-evidence.ts";
 import { SOLD_MARKET_PAGE_LIMIT } from "../../shared/research-policy.ts";
 import { hasSpecialSlabTitle, missingTextureReason } from "../../shared/grade-qualifier.ts";
-import { availablePhotoCount } from "../../shared/analysis-priority.ts";
+import { analysisPriority, availablePhotoCount } from "../../shared/analysis-priority.ts";
+import { applySoldPriceScreen } from "../../shared/money/sold-screen.ts";
+import { listingDisclosesCardCrease } from "../../shared/ebay-condition-notes.ts";
 import { sellerConditionClues } from "../../shared/raw-condition-claim.ts";
 
 type Source = { lookupCards: LookupCards; fetchComps: FetchComps; fetchRawComps: FetchRawComps; fetchSoldPage?: FetchSoldPage };
@@ -64,8 +66,8 @@ function incompleteEvidence(evidence: ScreeningSoldEvidence, budget: boolean): S
 
 // Public sold observations only. Listing claims choose research targets but
 // never become photo confirmation, condition assessments or deal verdicts.
-export function createSoldScreening({ signal, now = Date.now, source = createScreeningPriceSource({ signal }) }:
-    { signal?: AbortSignal; now?: () => number; source?: Source } = {}): SoldScreening {
+export function createSoldScreening({ signal, targets, now = Date.now, source = createScreeningPriceSource({ signal }) }:
+    { signal?: AbortSignal; targets?: Targets; now?: () => number; source?: Source } = {}): SoldScreening {
     const asOf = now();
     const catalogs = new Map<string, Promise<CardRecord[]>>();
     const pages = new Map<string, Promise<SoldPage>>();
@@ -135,12 +137,20 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
         });
     };
 
-    async function gradingReferences(listing: ListingSummary, intent: SearchIntent, market: Market) {
-        if (listing.isGraded || listing.buyingOption !== "FIXED_PRICE" || !intent.cardName || !intent.cardNumber || intent.sets.length !== 1 ||
-            !sameCatalogName(market.record.name, intent.cardName) || !sameCardNumber(market.record.cardNumber, intent.cardNumber) || market.labels.length !== 1 ||
-            availablePhotoCount(listing.images) < 2) return [];
+    async function gradingReferences(listing: ListingSummary, intent: SearchIntent, market: Market, rawEvidence: ScreeningSoldEvidence) {
+        if (listing.isGraded || listing.buyingOption !== "FIXED_PRICE" || !intent.cardName || intent.sets.length !== 1 ||
+            !sameCatalogName(market.record.name, intent.cardName) || !sameSetFamily(market.record.setName, intent.sets[0]) ||
+            (intent.cardNumber && !sameCardNumber(market.record.cardNumber, intent.cardNumber)) ||
+            market.labels.length !== 1 || availablePhotoCount(listing.images) < 2) return [];
         const condition = sellerConditionClues(listing);
-        if (condition.severe || condition.claim === "MODERATELY_PLAYED") return [];
+        if (condition.severe || condition.claim === "MODERATELY_PLAYED" || listingDisclosesCardCrease(listing)) return [];
+        if (rawEvidence.status === "AVAILABLE") {
+            // A clean seller claim warrants checking the grade spread. When
+            // raw sales already justify photos there is no extra work to buy.
+            if (condition.claim !== "MINT" && condition.claim !== "NEAR_MINT") return [];
+            const raw = applySoldPriceScreen(listing, rawEvidence, { targets });
+            if (analysisPriority(raw, targets).band >= 2) return [];
+        }
 
         // One named market per search session. Read at most four root pages,
         // shared across matching listings and with the final pricing cache.
@@ -255,9 +265,9 @@ export function createSoldScreening({ signal, now = Date.now, source = createScr
             }
             if (incomplete) return incompleteEvidence(evidence, incomplete === "BUDGET");
             evidence.status = hasMatchedSales(evidence.references) ? "AVAILABLE" : "UNAVAILABLE";
-            if (evidence.status === "UNAVAILABLE" && evidence.exactScope) {
+            if (!listing.isGraded && evidence.exactScope) {
                 const market = markets.values().next().value!;
-                const gradedSales = await gradingReferences(listing, intent, market);
+                const gradedSales = await gradingReferences(listing, intent, market, evidence);
                 if (gradedSales.length) evidence.gradingReferences = gradedSales;
             }
             evidence.note = evidence.status === "AVAILABLE"

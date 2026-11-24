@@ -1,6 +1,7 @@
 import { cardLanguageStatus } from "./card-language.ts";
+import { listingDisclosesCardCrease } from "./ebay-condition-notes.ts";
 import { sellerConditionClues } from "./raw-condition-claim.ts";
-import { hasExactSoldScope, usableSoldReference, soldReferenceScope } from "./sold-evidence.ts";
+import { hasExactSoldScope, usableGradingLead, usableSoldReference, soldReferenceScope } from "./sold-evidence.ts";
 import { cents } from "./money/cents.ts";
 import { setKey } from "./sets.ts";
 import { normalizedPhoto } from "./listing-evidence.ts";
@@ -21,7 +22,7 @@ export interface RawMarketContext {
 export function deferRawPremiumPhotos(listing: ListingSummary, now: number): boolean {
     const { screen, currentPrice, shipping } = listing;
     const evidence = screen?.soldEvidence;
-    if (listing.isGraded || listing.buyingOption !== "FIXED_PRICE" || listing.match || screen?.gradingLead || screen?.focusedReview ||
+    if (listing.isGraded || listing.buyingOption !== "FIXED_PRICE" || listing.match || usableGradingLead(listing) || screen?.focusedReview ||
         listing.mistakes?.some(mistake => mistake.kind !== "GENERIC_TITLE") ||
         !evidence || evidence.status !== "AVAILABLE" || !hasExactSoldScope(evidence, screen?.card?.printing) ||
         currentPrice === null || !Number.isFinite(currentPrice) || currentPrice <= 0 || shipping === null || !Number.isFinite(shipping) || shipping < 0) return false;
@@ -75,5 +76,5 @@ export function rawMarketContext(listing: ListingSummary, now = Date.now()): Raw
         // The same twenty-percent scale used by preliminary anomaly research:
         // an implausibly tiny ask remains inspectable but earns no ratio boost.
         caution: deliveredCents < medianCents * 0.2 ? "UNUSUALLY_LOW"
-            : condition.severe ? "SELLER_DAMAGE" : condition.conflict ? "SELLER_CONDITION_CONFLICT" : null };
+            : condition.severe || listingDisclosesCardCrease(listing) ? "SELLER_DAMAGE" : condition.conflict ? "SELLER_CONDITION_CONFLICT" : null };
 }

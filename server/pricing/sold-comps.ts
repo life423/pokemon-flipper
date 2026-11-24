@@ -1,3 +1,4 @@
+import { median } from "../../shared/sold-evidence.ts";
 import {
     mapVariantPrintings,
     printingClaimFromText,
@@ -174,13 +175,6 @@ export function compProblem(comp: Comp, { printing, setName, grader, grade, now,
     return null;
 }
 
-function median(values: number[]): number {
-    const sorted = [...values].sort((a, b) => a - b);
-    const middle = Math.floor(sorted.length / 2);
-
-    return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
-}
-
 function marketEstimate(sales: Comp[], now: number): CompSummary["marketEstimate"] {
     if (!sales.length) return undefined;
     const observations = sales.map(({ price, sold_at, sale_type }) => ({ price, age: now - Date.parse(sold_at), saleType: sale_type }))
@@ -280,7 +274,9 @@ export function summarizeComps(
         confidence: confidenceFor(kept.length),
         dropped,
         sales: kept.map((comp) => ({
-            ...(comp.photoCondition ? { photoCondition: comp.photoCondition, sellerCondition: comp.sellerCondition } : {}),
+            ...(comp.photoCondition && { photoCondition: comp.photoCondition }),
+            ...(comp.photoCondition && comp.conditionEvidence?.length && { conditionEvidence: comp.conditionEvidence }),
+            ...(comp.sellerCondition !== undefined && { sellerCondition: comp.sellerCondition }),
             ...(comp.sale_type ? { saleType: comp.sale_type } : {}),
             price: comp.price,
             soldAt: comp.sold_at,

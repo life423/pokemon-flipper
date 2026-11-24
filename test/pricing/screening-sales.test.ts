@@ -238,6 +238,93 @@ test("empty raw sales admit only affordable grading leads backed by recent exact
     assert.equal(canAutoAnalyze({ ...lead, screen: tighter }), false);
 });
 
+test("a raw listing can qualify for grade research from its own collector number", async () => {
+    const query = "1999 Base Set Charizard";
+    const wanted = readSearchLocally(query);
+    assert.equal(wanted.cardNumber, null);
+    const subject = listing({ title: "Charizard Base Set 4/102 Unlimited Holo NM English", images: ["front", "back"] });
+    const { run, calls } = harness({ raw: async () => [], graded: async (_id, { grader, grade }) => grader === "PSA" && grade === "8"
+        ? [sale({ title: "Charizard Base Set 4/102 Unlimited Holo PSA 8", price: 300, grader, grade })] : [] });
+    const rows = await findDeals(query, { filters: { typeFilter: "FIXED_PRICE", kindFilter: "raw" } }, {
+        readIntent: async () => wanted,
+        readTitle: async title => readTitleByRules(title),
+        soldScreening: () => run,
+        search: async () => ({ listings: [subject], total: 1, skipped: 0 }),
+    });
+    assert.equal(rows.length, 1);
+    assert.deepEqual(rows[0].screen?.gradingLead, { grader: "PSA", grade: 8 });
+    assert.equal(canAutoAnalyze(rows[0]), true);
+    assert.equal(resultGroup(rows[0], null), "candidates", "photos must still establish the grade before any deal verdict");
+    assert.equal(calls.graded.length, 4);
+    for (const other of [{ ...wanted, cardNumber: "4/130" }, { ...wanted, sets: ["Base Set 2"] }]) {
+        assert.equal((await run(subject, other)).gradingReferences, undefined);
+    }
+    assert.equal((await run({ ...subject, title: "Charizard Base Set Unlimited Holo NM English" }, wanted)).gradingReferences, undefined);
+});
+
+test("a raw resale loss can still enter the photo queue on exact grading economics", async () => {
+    const query = "1999 Base Set Charizard";
+    const subject = listing({ title: "Charizard Base Set 4/102 Unlimited Holo NM English", images: ["front", "back"] });
+    const rawBuy = { ...subject, id: "v1|raw-buy|0", currentPrice: 4 };
+    const overpriced = { ...subject, id: "v1|high-ask|0", currentPrice: 400 };
+    const singlePhoto = { ...subject, id: "v1|one-photo|0", images: ["front"] };
+    const { run, calls } = harness({
+        raw: async () => three({ price: 25 }),
+        graded: async (_id, { grader, grade }) => grader === "PSA" && grade === "8"
+            ? [sale({ title: "Charizard Base Set 4/102 Unlimited Holo PSA 8", price: 300, grader, grade })] : [],
+    });
+    const rows = await findDeals(query, { filters: { typeFilter: "FIXED_PRICE", kindFilter: "raw" } }, {
+        readIntent: async () => readSearchLocally(query), readTitle: async title => readTitleByRules(title),
+        soldScreening: () => run,
+        search: async () => ({ listings: [overpriced, singlePhoto, subject, rawBuy], total: 4, skipped: 0 }),
+    });
+    assert.deepEqual(rows.map(row => row.id).slice(0, 2), [rawBuy.id, subject.id]);
+    const gradedBuy = rows.find(row => row.id === subject.id)!;
+    assert.equal(gradedBuy.screen?.soldEvidence?.status, "AVAILABLE");
+    assert.equal(gradedBuy.screen?.money?.paths.length, 1, "retain raw resale economics");
+    assert.deepEqual(gradedBuy.screen?.gradingLead, { grader: "PSA", grade: 8 });
+    assert.equal(analysisPriority(gradedBuy).band, 1);
+    assert.equal(canAutoAnalyze(gradedBuy), true);
+    assert.equal(resultGroup(gradedBuy, null), "candidates", "profit at a hypothetical grade only authorizes photo inspection");
+    assert.equal(rows[0].screen?.soldEvidence?.gradingReferences, undefined, "the raw buy already clears costs");
+    for (const row of rows.filter(row => row !== gradedBuy)) assert.equal(row.screen?.gradingLead, undefined);
+    assert.equal(calls.raw.length, 1);
+    assert.equal(calls.graded.length, 4, "share the four exact grade pages across this search");
+    const evidence = gradedBuy.screen!.soldEvidence!;
+    const wrongPrinting = { ...evidence, gradingReferences: evidence.gradingReferences!.map(reference =>
+        ({ ...reference, printing: "FIRST_EDITION" as const })) };
+    assert.equal(applySoldPriceScreen(gradedBuy, wrongPrinting).screen.gradingLead, undefined);
+    const cheaper = { ...gradedBuy, currentPrice: rawBuy.currentPrice };
+    const repriced = applySoldPriceScreen(cheaper, evidence);
+    assert.ok(analysisPriority(repriced).band >= 2, "a retained grade lead must not hide a now-profitable raw sale");
+});
+
+test("a disclosed card crease blocks new and saved grade scouts while keeping a supported Damaged raw buy", async () => {
+    const subject = listing({ title: "Charizard Base Set 4/102 Unlimited Holo NM", images: ["front", "back"],
+        conditionNotes: ["Seller description: The card has a crease along the bottom edge."] });
+    const { run, calls } = harness({
+        raw: async () => [...three({ price: 25 }), ...three({ title: "Charizard Base Set 4/102 Unlimited Holo Damaged", price: 20 })],
+        graded: async (_id, { grader, grade }) => grader === "PSA" && grade === "8"
+            ? [sale({ title: "Charizard Base Set 4/102 Unlimited Holo PSA 8", price: 300, grader, grade })] : [],
+    });
+    const creased = await run(subject, intent);
+    assert.equal(calls.graded.length, 0);
+    assert.equal(creased.gradingReferences, undefined);
+    const affordable = applySoldPriceScreen({ ...subject, currentPrice: 3, shipping: 0 }, creased);
+    assert.deepEqual(affordable.screen.money?.paths.map(path => path.rawCondition), ["DAMAGED"]);
+    assert.ok(analysisPriority(affordable).band >= 2);
+    assert.equal(canAutoAnalyze(affordable), true);
+    const clear = { ...subject, conditionNotes: ["Seller description: The sleeve is creased; the card has no creases."] };
+    const retained = await run(clear, intent);
+    const earlier = applySoldPriceScreen(clear, retained);
+    assert.deepEqual(earlier.screen.gradingLead, { grader: "PSA", grade: 8 });
+    assert.equal(applySoldPriceScreen(subject, retained).screen.gradingLead, undefined);
+    assert.equal(analysisPriority({ ...subject, screen: earlier.screen }).band, 0, "fresh details outrank a saved grading lead");
+    const gradeOnly = { ...earlier.screen, soldEvidence: { ...retained, status: "UNAVAILABLE" as const, references: [] } };
+    assert.equal(canAutoAnalyze({ ...subject, screen: gradeOnly }), false);
+    assert.equal(calls.graded.length, 4);
+});
+
 test("explicit Jungle No Symbol claims retain unpriced visibility without borrowing ordinary raw or slab references", async () => {
     const { run, calls } = harness({ lookup: async () => assert.fail("unsupported No Symbol markets must not buy ordinary price research") });
     for (const [name, number, spelling] of [["Jolteon", "4/64", "No Symbol"], ["Vaporeon", "12/64", "NO-SYMBOL"], ["Snorlax", "11/64", "NoSymbol"]]) {

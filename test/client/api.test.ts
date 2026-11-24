@@ -20,6 +20,20 @@ test("known filters and a search identifier reach both search modes before paid 
     }
 });
 
+test("only automatic search assessments send the requested listing format", async t => {
+    const queries: URLSearchParams[] = [];
+    t.mock.method(globalThis, "fetch", async (url: string) => {
+        queries.push(new URL(url, "http://local").searchParams);
+        return Response.json({});
+    });
+    const listing = { id: "format-test", buyingOption: "FIXED_PRICE" } as never;
+    await evaluateListing(listing, { automatic: true, typeFilter: "FIXED_PRICE" });
+    await evaluateListing(listing, { automatic: true, typeFilter: "all" });
+    await evaluateListing(listing, { typeFilter: "FIXED_PRICE" });
+    assert.deepEqual(queries.map(query => [query.get("auto"), query.get("type")]),
+        [["1", "FIXED_PRICE"], ["1", null], [null, null]]);
+});
+
 test("a stopped evaluation never dispatches or retries a paid request", async t => {
     let calls = 0;
     t.mock.method(globalThis, "fetch", async (_url: unknown, init?: RequestInit) => {

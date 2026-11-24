@@ -1,5 +1,6 @@
 import type { CSSProperties } from "react";
 import type { AnalysisState } from "../analysis-state";
+import { currentBinComparison } from "../../../shared/bin-market-comparison.ts";
 import { canRetryPricing } from "../../../shared/pricing-retries.ts";
 import type { ListingSummary, Targets } from "../types";
 import { dollars, timeLeft, name } from "../format";
@@ -16,7 +17,7 @@ import { GradingComparison } from "./GradingComparison";
 import { PhotoReview, type DeeperReviewState } from "./PhotoReview";
 import styles from "./DealCard.module.css";
 import { cardDetails } from "../../../shared/card-details.ts";
-import { claimedCondition, CONDITION_NAMES } from "../../../shared/conditions.ts";
+import { claimedCondition, conditionGap, CONDITION_NAMES, isRawCondition } from "../../../shared/conditions.ts";
 import { isResearchDeferred, photoReviewStatus } from "../../../shared/photo-review.ts";
 import { SoldPriceScreening } from "./SoldPriceScreening";
 import { isRawSoldPrice, priceEvidenceGap } from "../../../shared/money/price-evidence.ts";
@@ -58,11 +59,15 @@ export function DealCard({ listing, analysis, assessmentNote, selected, now, onO
     const best = evaluation?.underwriting?.best;
     const rawPrice = best?.path === "RAW" ? evaluation?.rawPricing?.prices?.find(price =>
         price.condition === best.priceCondition && price.price === best.salePrice && isRawSoldPrice(price)) : undefined;
+    const assessedCondition = evaluation?.condition?.rawCondition;
+    const lowerConditionSales = evaluation?.rawPricing?.conditionEvidence === "AI_PHOTOS" && isRawCondition(assessedCondition) &&
+        rawPrice && isRawCondition(rawPrice.condition) && conditionGap(assessedCondition, rawPrice.condition) > 0 ? rawPrice.comps : undefined;
     const verdict = evaluation?.underwriting?.verdict;
     const deal = !priceGap && verdict?.startsWith("BUY");
     const auction = listing.buyingOption === "AUCTION";
     const decision = auction && evaluation ? auctionDecision(evaluation, targets, now) : null;
     const screen = listing.screen;
+    const comparison = !pricingExpired && currentBinComparison(listing, evaluation, now);
     const pricePending = !evaluation && screen?.priceAnomaly && !screen.priceAnomaly.photoChecked;
     const offer = includeOffers && resultGroup(listing, evaluation, true) === "offers" ? offerFor(listing, best?.maxBid) : null;
     const offerNumbers = offer && best ? numbersAtOffer(best, offer) : null;
@@ -130,6 +135,14 @@ export function DealCard({ listing, analysis, assessmentNote, selected, now, onO
                 ? "Shipping not quoted · preliminary screening excludes shipping; confirm before buying"
                 : `Shipping not quoted · ${dollars(MONEY_CONFIG.buying.assumedShippingWhenUnknown)} assumed in estimates` : shipping === 0 ? "Free shipping" : `${dollars(shipping)} shipping`}</p>
         </>}
+        {comparison && <p className={styles.note}>
+            <strong>Price lead · {comparison.discountPercent}% below both medians at search time</strong><br />
+            {dollars(comparison.delivered)} with shipping · {dollars(comparison.otherAskMedian)} median across {comparison.otherAskCount} other Buy It Now listings · {dollars(comparison.soldMedian)} median across {comparison.soldCount} recent sales.
+            {" "}{listing.isGraded ? "Same grader and grade." : comparison.condition ? `Seller-described ${CONDITION_NAMES[comparison.condition]} copies.` : "Raw copies with unspecified condition."}
+        </p>}
+        {!pricingExpired && !deferred && deal && !shippingPending && lowerConditionSales && rawPrice && <p className={styles.note}>
+            Photos support {name(assessedCondition)}. The {dollars(rawPrice.price)} resale estimate uses {lowerConditionSales.count} photo-checked {name(rawPrice.condition)} {lowerConditionSales.count === 1 ? "sale" : "sales"}.
+        </p>}
         {pricePending && <p className={styles.notice}>Unusually low price. Awaiting photo verification.</p>}
         {offer && offerNumbers && <p className={styles.notice}>Open at {dollars(offer.offer)} · walk away above {dollars(offer.walkAway)} · est. profit {signed(offerNumbers.profit)} if accepted.</p>}
         {offer && <div className={styles.offerDraft}><SellerOfferDraft key={offer.offer} cardName={card?.name} plan={offer} /></div>}

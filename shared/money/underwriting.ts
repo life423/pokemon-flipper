@@ -1,11 +1,12 @@
 import { readyForPricing } from "../identity.ts";
 import { sameCardNumber } from "../card-number.ts";
 import { MONEY_CONFIG, type BuyingConfig, type GradingConfig, type MoneyConfig, type SellingConfig } from "./config.ts";
-import { RAW_CONDITIONS, isRawCondition } from "../conditions.ts";
+import { RAW_CONDITIONS, isRawCondition, sellerCreaseOverridesCondition } from "../conditions.ts";
 import { dollars, round2 } from "../format.ts";
 import { cents, meetsMoneyTargets, minimumOfferPrice, money, sellingFeeCents, taxedCents } from "./cents.ts";
 import { isRawSoldPrice, PRICE_PRINTING_MISMATCH, pricePrintingMismatch, referencePriceReason, unsupportedVariantReason } from "./price-evidence.ts";
 import { soldMarketPrice } from "../sold-evidence.ts";
+import { hasSavedConditionExamples } from "../ebay-condition-notes.ts";
 import { conflictsWithPhotoFinish, obscuredDisclosedWear } from "../photo-evidence.ts";
 import type {
     CompSummary,
@@ -44,7 +45,7 @@ export interface UnderwritingInput {
     pricesCheckedAt?: string;
     deeperPhotoReview?: DeeperPhotoReview;
     listing: { price: number | null; shipping: number | null; availability?: string; title?: string;
-        buyingOption?: Evaluation["listing"]["buyingOption"]; bestOffer?: boolean; conditionNotes?: string[]; photosInListing?: number };
+        buyingOption?: Evaluation["listing"]["buyingOption"]; bestOffer?: boolean; cardCondition?: string | null; conditionNotes?: string[]; photosInListing?: number };
     identity: Identity | null;
     condition: Pick<Condition, "rawCondition" | "gradeRange" | "authenticity"> & Partial<Pick<Condition, "creases" | "confidence" | "surface" | "corners" | "edges">> | null;
     rawPricing?: RawPricing | null;
@@ -613,9 +614,15 @@ function underwriteBase(input: UnderwritingInput, config: MoneyConfig): Underwri
         return verdict("NEEDS_REVIEW", ["The photos raise an authenticity question.", ...condition.authenticity.reasons]);
     }
 
+    const creaseDisclosed = sellerCreaseOverridesCondition(condition.rawCondition, input.listing.conditionNotes);
+    const resaleCondition = creaseDisclosed ? "DAMAGED" : condition.rawCondition;
+    const rawInput = creaseDisclosed ? { ...input, condition: { ...condition, rawCondition: resaleCondition } } : input;
+    if (creaseDisclosed) assumptions.push("The seller disclosed creasing. Raw resale uses Damaged sales, and a grading return is unsupported.");
     const paths = [
-        rawPath(input, listing, shipping, config),
-        ...GRADERS.map((grader) => gradePath(input, grader, listing, shipping, config)),
+        rawPath(rawInput, listing, shipping, config),
+        ...GRADERS.map(grader => creaseDisclosed
+            ? unavailablePath("GRADE", `Grade with ${grader}`, "The photo grade does not account for the seller’s disclosed creasing.", grader)
+            : gradePath(input, grader, listing, shipping, config)),
     ];
     if (paths.some((path) => path.path === "GRADE" && isPriced(path))) {
         assumptions.push(`Grading shipping assumes ${dollars(config.grading.shippingPerCard)} per card shared across a submission batch; a single-card shipment may cost more. Grading-service taxes are not included.`);
@@ -640,7 +647,7 @@ function underwriteBase(input: UnderwritingInput, config: MoneyConfig): Underwri
     };
 
     const raw = paths[0];
-    if (isPriced(raw) && raw.priceCondition !== condition.rawCondition) {
+    if (isPriced(raw) && raw.priceCondition !== resaleCondition) {
         return { ...verdict("CANT_PRICE", ["The lower-condition resale estimate falls short of your targets. A matched sale at the assessed condition is still needed."], assumptions), paths };
     }
     if (best && !isPriced(raw) && input.rawPricing && isRawCondition(condition.rawCondition)) {
@@ -675,6 +682,9 @@ export function unquotedBuyItNowShipping(listing: Pick<UnderwritingInput["listin
 }
 
 export function underwrite(input: UnderwritingInput, config: MoneyConfig = MONEY_CONFIG): Underwriting {
+    if (!input.slab && input.listing.availability !== "UNAVAILABLE" && hasSavedConditionExamples(input.listing)) {
+        return verdict("CANT_PRICE", ["Refresh the listing to check the seller’s own condition notes. The saved details contain eBay’s general condition examples."]);
+    }
     const obscuredWear = input.listing.availability !== "UNAVAILABLE" && obscuredDisclosedWear(input);
     if (obscuredWear) return verdict("PASS", [obscuredWear]);
     const frontOnlySlab = input.frontPhotoStop === "SLAB_PRICE" && input.listing.availability !== "UNAVAILABLE";

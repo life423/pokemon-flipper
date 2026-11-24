@@ -18,8 +18,15 @@ import { createShortlistStore } from "../../server/shortlist/store.ts";
 import { createShortlistService } from "../../server/shortlist/service.ts";
 import { displayedRawGrade } from "../../shared/photo-evidence.ts";
 import { photoReviewStatus } from "../../shared/photo-review.ts";
-import { resultGroup } from "../../shared/analysis.ts";
-import { groupSearchResults } from "../../client/src/search/results.ts";
+import { canAutoAnalyze, resultGroup } from "../../shared/analysis.ts";
+import { filterSearchResults, groupSearchResults } from "../../client/src/search/results.ts";
+import { searchDiagnosticRows } from "../../client/src/search/diagnostic.ts";
+import type { AnalysisState } from "../../client/src/analysis-state.ts";
+import { findDeals } from "../../server/deals/find-deals.ts";
+import { readSearchLocally } from "../../server/search/intent.ts";
+import { readTitleByRules } from "../../server/ai/title-reader.ts";
+import { createSoldScreening } from "../../server/pricing/screening-sales.ts";
+import type { ListingSummary } from "../../shared/types.ts";
 import { retargetEvaluation } from "../../shared/money/targets.ts";
 import { seedRawSoldCopies } from "../fixtures/raw-sold-copies.ts";
 import { createSoldConditionAcquirer, type SoldConditionReading } from "../../server/ai/sold-condition.ts";
@@ -149,6 +156,86 @@ test("a missing-texture slab skips automatic review and an explicit review keeps
     assert.equal(assessments, 1, "the original photo assessment remains reusable");
 });
 
+test("raw BIN discovery reaches Blastoise titles missing the year and edition, then prices physical condition before showing a Deal", async t => {
+    const transport = t.mock.method(globalThis, "fetch", () => assert.fail("this replay uses fixture providers only"));
+    const query = "1999 Base Set Blastoise 2/102 Unlimited Holo";
+    const intent = readSearchLocally(query);
+    const targets = { minProfit: 0, minRoi: 0 };
+    const filters = { typeFilter: "FIXED_PRICE", kindFilter: "raw" } as const;
+    // The $75 title and terms reproduced the discovery gap. Condition and comparable
+    // sales here are controlled fixtures, so this does not appraise that actual card.
+    const titles = ["Blastoise Base Set Holo 2/102 Moderate Play Free Shipping",
+        "Blastoise Base Set 2/102 Holo", "Blastoise Base Set 2/102 Holo First Edition"];
+    const source: ListingSummary[] = titles.map((title, index) => ({
+        id: `offline-blastoise-${index}`, title, images: [photo(20 + index * 2), photo(21 + index * 2)],
+        currentPrice: index === 0 ? 75 : 50, shipping: index === 0 ? 0 : 5, seller: null,
+        buyingOption: "FIXED_PRICE", isGraded: false, bids: 0, endTime: null, url: "#",
+    }));
+    const catalog: CardRecord = { ...card, name: "Blastoise", cardNumber: "2/102" };
+    const sales: Comp[] = [["MP", 122], ["HP", 70]].map(([claim, price], index) => ({
+        id: String(index), title: `Blastoise Base Set 2/102 Unlimited Holo ${claim}`, price: Number(price),
+        variant: "Holofoil", grader: null, grade: null, currency: "USD", attribution: "exact",
+        sale_type: "fixed_price", sold_at: new Date(now - (index + 1) * 86400000).toISOString(),
+    }));
+    const market = { lookupCards: async () => [catalog], fetchRawComps: async () => sales, fetchComps: async () => [] };
+    const checked: string[] = [];
+    const { evaluate } = harness({ lookup: market.lookupCards, fetchRawComps: market.fetchRawComps, fetchComps: market.fetchComps,
+        details: async id => {
+            const row = source.find(value => value.id === id)!;
+            return details({ id, title: row.title, price: row.currentPrice, shipping: row.shipping, images: row.images,
+                aspects: { "Card Name": "Blastoise", Set: "Base Set", "Card Number": "2/102", Language: "English", Finish: "Holo" } });
+        },
+        assess: async (item, photos) => {
+            checked.push(item.id);
+            const answer = reading(photos.length);
+            answer.photoCheck.printedName = "Blastoise"; answer.photoCheck.printedNumber = "2/102";
+            Object.assign(answer.photoCheck.cardIdentity!, { name: "Blastoise", cardNumber: "2/102" });
+            answer.condition!.rawCondition = item.id === source[0].id ? "HEAVILY_PLAYED" : "LIGHTLY_PLAYED";
+            answer.condition!.gradeRange = null;
+            return { result: answer, usage: { inputTokens: 500, outputTokens: 250 } };
+        },
+        soldCondition: () => ({ usage: [], status: () => "REVIEWED", acquire: async () => assert.fail("saved sold photos are sufficient"),
+            read: async sale => ({ condition: sale.id === "0" ? "MODERATELY_PLAYED" : "HEAVILY_PLAYED",
+                evidence: ["Front and back show wear consistent with the saved physical assessment."], photoCount: 2 }),
+        }),
+    });
+    const run = async () => {
+        const rejected: string[] = [];
+        const rows = await findDeals(query, { filters, targets, asOf: now, automaticPhotos: true,
+            onSourceDisposition: row => rejected.push(row.reason) }, {
+            readIntent: async () => intent, readTitle: async title => readTitleByRules(title),
+            soldScreening: options => createSoldScreening({ ...options, source: market }),
+            search: async keywords => {
+                const words = keywords.toLowerCase().split(/\s+/);
+                const listings = source.filter(row => words.every(word => row.title.toLowerCase().includes(word)));
+                return { listings, total: listings.length, rejections: [], skipped: 0 };
+            },
+        });
+        assert.deepEqual(rejected, ["OTHER_PRINTING"]);
+        assert.deepEqual(new Set(rows.filter(canAutoAnalyze).map(row => row.id)), new Set(source.slice(0, 2).map(row => row.id)));
+        const analyses: Record<string, AnalysisState> = {};
+        for (const row of rows.filter(canAutoAnalyze)) {
+            const evaluation = await evaluate(row.id, { automatic: true, targets });
+            analyses[row.id] = { status: "done", evaluation, evidenceKey: listingEvidenceKey(row) };
+        }
+        const visible = filterSearchResults({ listings: rows, analyses, page: "search", intent, now,
+            filters: { ...filters, minPrice: "", maxPrice: "", minGrade: 0 } });
+        const grouped = groupSearchResults(visible, analyses, false, new Set());
+        assert.deepEqual(grouped.deals.map(row => row.id), [source[1].id]);
+        assert.deepEqual(grouped.losses.map(row => row.id), [source[0].id]);
+        const win = analyses[source[1].id].evaluation.underwriting!.best!;
+        assert.equal(win.priceCondition, "MODERATELY_PLAYED");
+        assert.equal(win.salePrice, 122);
+        assert.equal(win.profit, 38.14);
+        assert.equal(analyses[source[0].id].evaluation.underwriting!.best!.profit, -27.87);
+        return Object.values(analyses).flatMap(value => value.evaluation.usage);
+    };
+    assert.ok((await run()).length > 0);
+    assert.deepEqual(await run(), []);
+    assert.equal(checked.length, 2);
+    assert.equal(transport.mock.callCount(), 0);
+});
+
 test("bounded photo selection samples the entire gallery and deduplicates eBay image-size aliases", () => {
     const images = Array.from({ length: 24 }, (_, index) => photo(index));
     const selected = selectBoundedPhotos([images[0], photo(0, 500), ...images.slice(1)]);
@@ -191,6 +278,51 @@ test("one bounded raw assessment produces priced outcomes without historical pho
     assert.ok(result.underwriting?.paths.some(path => path.status === "PRICED"));
     assert.equal(result.usage.length, 1);
     assert.equal(result.photoReviewKey, undefined, "a bounded answer cannot authorize the legacy full-record deeper endpoint");
+});
+
+test("a corroborated wrong collector number stops after the first photographed front and keeps the search exclusion", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("this mismatch replay must be offline"));
+    const item = details({ title: "Pikachu ex 238/191 Surging Sparks Special Illustration Rare", bestOffer: false, images: [photo(1), photo(2)],
+        aspects: { "Card Name": "Pikachu ex", Set: "Surging Sparks", "Card Number": "238/191", Language: "English" } });
+    const first = reading(1);
+    const check = first.photoCheck;
+    check.cardIdentity = { name: "Pikachu ex", set: "Perfect Order", cardNumber: "150/128", language: "English",
+        confidence: "HIGH", finish: "HOLO", evidence: ["The printed number 150/128 is legible."] };
+    Object.assign(check, { printedName: "Pikachu ex", printedNumber: "150/128", holder: "SLEEVE",
+        cardMatch: { verdict: "MISMATCH", problems: ["The card shows 150/128 but the listing claims 238/191."] } });
+    check.images[0].obscuresCondition = true;
+    for (const label of ["corroborated", "low confidence", "partial printed number", "partial seller number", "ambiguous title", "unnumbered title",
+        "wrong seller field", "stock image", "multiple cards", "additional listing photos"]) {
+        const listing = structuredClone(item), front = structuredClone(first);
+        if (label === "low confidence") front.photoCheck.cardIdentity!.confidence = "LOW";
+        if (label === "partial printed number") front.photoCheck.printedNumber = "150";
+        if (label === "partial seller number") listing.aspects["Card Number"] = "238";
+        if (label === "ambiguous title") listing.title += " or #150/128";
+        if (label === "unnumbered title") listing.title = "Pikachu ex Surging Sparks";
+        if (label === "wrong seller field") listing.aspects["Card Number"] = "150/128";
+        if (label === "stock image") front.photoCheck.images[0].isStockImage = true;
+        if (label === "multiple cards") { front.photoCheck.cardCount = "MULTIPLE"; front.condition = null; }
+        if (label === "additional listing photos") listing.images.push(photo(3));
+        const stages: string[] = [];
+        const { evaluate } = harness({ details: async () => listing, assess: async (_listing, photos, _signal, _mode, stage) => {
+            stages.push(stage?.kind ?? "gallery");
+            const result = structuredClone(front);
+            if (stage?.kind !== "front") result.photoCheck.images = photos.map((_, index) => ({ ...front.photoCheck.images[0], number: index + 1, view: "BACK" }));
+            return { result, usage: { inputTokens: 500, outputTokens: 300 } };
+        } });
+        const result = await evaluate(listing.id, { automatic: true });
+        if (label !== "corroborated") { assert.deepEqual(stages, ["front", "remainder"], label); continue; }
+        assert.deepEqual(stages, ["front"]);
+        assert.equal(result.listing.photosAnalyzed, 1);
+        assert.ok(result.identity?.notThisCard?.includes("150/128"));
+        assert.equal(result.underwriting?.best, null);
+        const summary = { ...listing, currentPrice: listing.price, isGraded: false };
+        const analyses = { [listing.id]: { status: "done" as const, evaluation: result, evidenceKey: listingEvidenceKey(summary) } };
+        const groups = groupSearchResults([], analyses, false, new Set());
+        assert.equal(searchDiagnosticRows([summary], analyses, groups, () => null, "NOT_ASSESSED")[0].reason, "CRITERIA_MISMATCH");
+        await evaluate(listing.id, { automatic: true });
+        assert.deepEqual(stages, ["front"], "a replay reuses accepted first-photo evidence");
+    }
 });
 
 test("an exact overpriced slab stops after its front photo and reuses that reading after a price drop", async t => {
@@ -680,12 +812,12 @@ test("raw sold research gates condition cohorts but selects by recency independe
         sale_type: "fixed_price", listing_url: null, grader: null, grade: null, grade_qualifier: null,
     });
     const scenarios: { name: string; sales: Comp[]; expected: string | null; reviewed?: string[]; profitable?: boolean;
-        finding: "LIGHTLY_PLAYED" | "MODERATELY_PLAYED" | null }[] = [
-        { name: "an irrelevant LP price cannot block a profitable unspecified sale",
-            sales: [sale("cheap-lp", "LP", 70, 1), sale("unspecified", "", 200, 2)], expected: "unspecified", finding: "LIGHTLY_PLAYED" },
-        { name: "prefer the newest profitable LP clue over newer unspecified or wrong-card sales",
+        finding: "LIGHTLY_PLAYED" | "MODERATELY_PLAYED" | "NEAR_MINT" | null }[] = [
+        { name: "prefer an economically relevant unspecified sale over a lower-condition clue",
+            sales: [sale("cheap-lp", "LP", 70, 1), sale("unspecified", "", 200, 2), sale("mp", "MP", 250, 1)], expected: "unspecified", finding: "LIGHTLY_PLAYED" },
+        { name: "prefer the newest LP clue over newer unspecified, lower-condition or wrong-card sales",
             sales: [sale("older-lp", "LP", 180, 4), sale("newer-lp", "LP", 190, 3), sale("unspecified", "", 250, 2),
-                sale("wrong-card", "LP", 999, 1, "Charizard", "4/102")], expected: "newer-lp", finding: null },
+                sale("mp", "MP", 250, 1), sale("wrong-card", "LP", 999, 1, "Charizard", "4/102")], expected: "newer-lp", finding: null },
         { name: "an older profitable LP sale cannot displace a newer losing LP sale",
             sales: [sale("older-lp", "LP", 200, 4), sale("newer-lp", "LP", 70, 3), sale("unspecified", "", 250, 2)],
             expected: "newer-lp", finding: "LIGHTLY_PLAYED", profitable: false },
@@ -696,9 +828,16 @@ test("raw sold research gates condition cohorts but selects by recency independe
             sales: [sale("reviewed-lp", "LP", 250, 1), sale("older-unspecified", "", 220, 3), sale("newer-unspecified", "", 200, 2)],
             reviewed: ["reviewed-lp"], expected: "newer-unspecified", finding: "LIGHTLY_PLAYED" },
         { name: "shipping and fees leave no economically relevant candidate",
-            sales: [sale("lp", "LP", 70, 1), sale("unspecified", "", 120, 2)], expected: null, finding: null },
-        { name: "a profitable different seller condition does not become a like-for-like candidate",
-            sales: [sale("cheap-lp", "LP", 70, 1), sale("mp", "MP", 200, 2)], expected: null, finding: null },
+            sales: [sale("lp", "LP", 70, 1), sale("unspecified", "", 120, 2), sale("mp", "MP", 115, 3)], expected: null, finding: null },
+        { name: "a worse sold copy can establish a profitable floor after its photos confirm the condition",
+            sales: [sale("mp", "MP", 200, 2), sale("hp", "HP", 250, 1)], expected: "mp", finding: "MODERATELY_PLAYED" },
+        { name: "the closest relevant lower condition retains its newest sale even if it loses money",
+            sales: [sale("older-mp", "MP", 200, 4), sale("newer-mp", "MP", 70, 3), sale("hp", "HP", 250, 1)],
+            expected: "newer-mp", finding: "MODERATELY_PLAYED", profitable: false },
+        { name: "a seller condition above the live copy cannot trigger a paid floor comparison",
+            sales: [sale("nm", "NM", 300, 1)], expected: null, finding: null },
+        { name: "a lower seller claim cannot establish a floor if photos show a better copy than the listing",
+            sales: [sale("overstated-wear", "MP", 200, 1)], expected: "overstated-wear", finding: "NEAR_MINT" },
         { name: "physical MP evidence overrides the selected LP clue without trying the next copy",
             sales: [sale("seller-lp", "LP", 200, 1), sale("unspecified", "", 220, 2)], expected: "seller-lp", finding: "MODERATELY_PLAYED" },
     ];
@@ -735,9 +874,58 @@ test("raw sold research gates condition cohorts but selects by recency independe
             }
         }
         else if (scenario.finding === "MODERATELY_PLAYED") {
-            assert.equal(result.underwriting?.best?.priceCondition, "MODERATELY_PLAYED", "a lower verified condition can support a conservative raw price");
+            const raw = result.underwriting?.paths.find(path => path.path === "RAW");
+            assert.equal(raw?.priceCondition, "MODERATELY_PLAYED");
+            assert.equal(raw?.salePrice, scenario.sales.find(source => source.id === scenario.expected)!.price);
+            assert.equal(result.underwriting?.verdict, scenario.profitable === false ? "CANT_PRICE" : "BUY_RAW");
+            assert.equal(resultGroup({ ...details(), currentPrice: 100, isGraded: false }, result) === "deals", scenario.profitable ?? true);
         } else assert.equal(result.underwriting?.verdict, "CANT_PRICE");
     });
+});
+
+for (const conclusive of [true, false]) test(`a fresh legacy raw price gap reopens once when the new sold-photo check is ${conclusive ? "conclusive" : "inconclusive"}`, async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("saved-price migration must remain offline"));
+    const item = details(), answer = reading();
+    answer.condition!.rawCondition = "LIGHTLY_PLAYED";
+    answer.condition!.gradeRange = null;
+    const sale: Comp = { id: "lower-copy", title: "Venusaur Base Set 15/102 Unlimited Holo MP", price: 150,
+        sold_at: new Date(now - 86400000).toISOString(), variant: "Holofoil", currency: "USD", attribution: "exact",
+        sale_type: "fixed_price", listing_url: null, grader: null, grade: null, grade_qualifier: null };
+    let candidateAvailable = false, soldReviews = 0, saleLookups = 0;
+    const { evaluate, cache } = harness({
+        assess: async () => assert.fail("the original listing photos have already been assessed"),
+        fetchRawComps: async () => { saleLookups++; return [sale]; },
+        soldCondition: () => ({ usage: [], read: async () => null, status: () => candidateAvailable ? "UNREVIEWED" : "REVIEWED",
+            acquire: async () => { soldReviews++; return conclusive ? { condition: "MODERATELY_PLAYED", evidence: ["Visible edge wear."], photoCount: 2 } : null; } }),
+    });
+    const plan = boundedAssessmentPlan(item);
+    cache.set(plan.key, { ...answer, version: plan.version, answeredAt: new Date(now).toISOString() });
+    const gap = await evaluate(item.id);
+    gap.pricingVersion = "ebay-resale-17";
+    assert.equal(gap.underwriting?.verdict, "CANT_PRICE");
+    assert.equal(gap.rawPricing?.sampledSoldCopies, 1);
+    assert.equal(soldReviews, 0);
+    const store = createPrivateEvaluationStore({ cached: async key => cache.get(key) ?? null, save: async (key, value) => { cache.set(key, value); } });
+    await store.save(gap, { evidenceKey: listingEvidenceKey(item), contextKey: evaluationContextKey(item) });
+    assert.equal(currentPriceEvidence(gap, now), false, "the normal search also releases this old cached result");
+
+    candidateAvailable = true;
+    const termsOnly = await withAiUsageContext({ searchId: randomUUID() }, () => evaluate(item.id, { priceOnly: true }));
+    assert.equal(soldReviews, 0, "a price-only refresh cannot buy the sold photos");
+    assert.equal(currentPriceEvidence(termsOnly, now), false, "the next full assessment still needs the sold comparison");
+    const fresh = await evaluate(item.id);
+    assert.equal(fresh.underwriting?.verdict, conclusive ? "BUY_RAW" : "CANT_PRICE");
+    if (conclusive) {
+        assert.equal(fresh.underwriting?.best?.priceCondition, "MODERATELY_PLAYED");
+        assert.equal(currentPriceEvidence({ ...fresh, pricingVersion: "ebay-resale-17" }, now), true, "already priced raw copies keep their normal lifetime");
+    }
+    assert.equal(fresh.answeredAt, gap.answeredAt);
+    assert.equal(currentPriceEvidence(fresh, now), true);
+    const replay = await evaluate(item.id);
+    assert.deepEqual(replay.usage, []);
+    assert.ok(replay.reusedSteps.includes("savedEvaluation"));
+    assert.equal(soldReviews, 1);
+    assert.equal(saleLookups, 3, "replaying the full result needs no further sale lookups");
 });
 
 test("raw sold-photo work stops when no remaining comp can meet targets and resumes with looser terms", async t => {
@@ -769,6 +957,39 @@ test("raw sold-photo work stops when no remaining comp can meet targets and resu
     assert.equal(relaxed.rawPricing?.soldPhotoDeferred, undefined);
     assert.equal(soldReads, 1);
     assert.equal(liveReads, 1, "reconsidering the price evidence reuses the live copy's photo reading");
+});
+
+test("an explicit crease prices the damaged raw resale and skips grading research the verdict would discard", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("use only the saved listing and sold fixtures"));
+    const item = details({ price: 12, shipping: 3, conditionNotes: ["Seller description: Card is in played condition heavy scratches creases edge wear"] });
+    const soldChecks: string[] = [];
+    const sale: Comp = { id: "damaged", title: "Venusaur Base Set 15/102 Unlimited Holo Damaged", price: 125,
+        sold_at: new Date(now - 86400000).toISOString(), variant: "Holofoil", currency: "USD", attribution: "exact",
+        sale_type: "fixed_price", listing_url: null, grader: null, grade: null, grade_qualifier: null };
+    const { evaluate, calls } = harness({ details: async () => item,
+        fetchRawComps: async () => [{ ...sale, id: "clean", title: sale.title.replace("Damaged", "NM") }, sale],
+        soldCondition: ({ condition }) => {
+            assert.equal(condition, "DAMAGED");
+            return { usage: [], read: async () => null, status: () => "UNREVIEWED", acquire: async copy => {
+                soldChecks.push(copy.id);
+                return { condition: "DAMAGED", photoCount: 2, evidence: ["A crease crosses the artwork."] };
+            } };
+        },
+    });
+    const result = await evaluate(item.id, { automatic: true });
+    assert.notEqual(result.condition?.rawCondition, "DAMAGED", "preserve the independent photo observation");
+    assert.deepEqual(soldChecks, ["damaged"]);
+    assert.equal(calls.comps, 0);
+    assert.equal(result.gradedPricing, null);
+    assert.equal(result.underwriting?.verdict, "BUY_RAW");
+    assert.equal(result.underwriting?.best?.priceCondition, "DAMAGED");
+    const summary = { ...item, currentPrice: item.price, isGraded: false };
+    assert.equal(resultGroup(summary, result), "deals");
+    const replay = await evaluate(item.id, { automatic: true });
+    assert.ok(replay.reusedSteps.includes("savedEvaluation"));
+    assert.deepEqual(soldChecks, ["damaged"]);
+    assert.equal(calls.assessed, 1);
+    assert.equal(currentPriceEvidence({ ...result, gradedPricing: {}, rawPricing: { ...result.rawPricing!, prices: [] } }, now), false);
 });
 
 test("a newly verified Best Offer reopens an economically relevant raw sold-photo check", async t => {
@@ -1515,6 +1736,27 @@ test("stopping one equivalent listing leaves a second consumer's shared assessme
     release();
     assert.ok((await b).underwriting?.paths.some(path => path.status === "PRICED"));
     assert.equal(calls.assessed, 1); assert.equal([...cache.keys()].filter(key => key.startsWith("bounded-assessment:")).length, 1);
+});
+
+test("a fixed-price search skips a refreshed auction before paying, even when another search can assess the same item", async () => {
+    const auction = details({ buyingOption: "AUCTION", price: 32.4, endTime: new Date(now + 2 * 3600000).toISOString(),
+        retrievedAt: new Date(now).toISOString() });
+    const current = { buyingOption: "FIXED_PRICE" as const, price: 125, shipping: 8.4, bids: 0, endTime: null,
+        termsCheckedAt: new Date(now - 60000).toISOString() };
+    const { evaluate, calls } = harness({ details: async () => auction });
+    const skipped = await evaluate(auction.id, { automatic: true, typeFilter: "FIXED_PRICE", current });
+    assert.equal(skipped.gradeStatus, "SKIPPED_LISTING_FORMAT");
+    assert.match(skipped.modeReasons[0], /auction.*Buy It Now/);
+    assert.equal(skipped.listing.buyingOption, "AUCTION");
+    assert.equal(skipped.listing.price, 32.4);
+    assert.equal(calls.assessed + calls.raw + calls.comps, 0);
+    const [fixed, either] = await Promise.all([
+        evaluate(auction.id, { automatic: true, typeFilter: "FIXED_PRICE", current }),
+        evaluate(auction.id, { automatic: true, typeFilter: "all", current }),
+    ]);
+    assert.equal(fixed.gradeStatus, "SKIPPED_LISTING_FORMAT");
+    assert.ok(either.photoCheck);
+    assert.equal(calls.assessed, 1);
 });
 
 test("automatic auctions recheck the 12-hour window while explicit manual analysis remains available", async () => {

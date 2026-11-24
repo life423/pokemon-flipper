@@ -8,6 +8,7 @@ import { hasSlabEvidence, obscuredDisclosedWear, observedCardKind } from "./phot
 import { priceEvidenceGap } from "./money/price-evidence.ts";
 import { unquotedBuyItNowShipping } from "./money/underwriting.ts";
 import { missingTextureReason } from "./grade-qualifier.ts";
+import { usableGradingLead } from "./sold-evidence.ts";
 import { deferRawPremiumPhotos } from "./raw-market-context.ts";
 
 export type AutoAnalysisBlockReason =
@@ -44,7 +45,7 @@ export function autoAnalysisBlockReason(listing: ListingSummary, now = Date.now(
     if (screen?.soldEvidence) {
         // The bounded workflow requires sold screening or a supported exception.
         if (screen.status === "DROPPED") return "SCREEN_DROPPED";
-        if (screen.soldEvidence.status !== "AVAILABLE" && !screen.gradingLead && screen.focusedReview !== "CHEAP_FIRST_EDITION_BASE_SET") {
+        if (screen.soldEvidence.status !== "AVAILABLE" && !usableGradingLead(listing) && screen.focusedReview !== "CHEAP_FIRST_EDITION_BASE_SET") {
             return screen.soldEvidence.status === "DEFERRED" ? "SOLD_EVIDENCE_DEFERRED" : "SOLD_EVIDENCE_MISSING";
         }
         if (deferRawPremiumPhotos(listing, now)) return "RAW_PRICE_PREMIUM";

@@ -1,10 +1,23 @@
 import { isRawCondition } from "./conditions.ts";
 import { hasBaseSetFourthPrint } from "./reprint-release.ts";
-import type { CompSummary, Printing, ScreeningSoldEvidence, ScreeningSoldReference } from "./types.ts";
+import { listingDisclosesCardCrease } from "./ebay-condition-notes.ts";
+import type { CompSummary, ListingSummary, Printing, ScreeningSoldEvidence, ScreeningSoldReference } from "./types.ts";
 
 const positive = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value > 0;
 const normalize = (value: unknown) => String(value ?? "").trim().toUpperCase();
 export const MIN_MATCHED_SALES = 1;
+
+// Fresh seller details can rule out the grading route on a retained screen.
+export function usableGradingLead(listing: ListingSummary) {
+    return listing.screen?.gradingLead && !listingDisclosesCardCrease(listing) ? listing.screen.gradingLead : undefined;
+}
+
+export function median(values: number[]): number {
+    const sorted = [...values].sort((a, b) => a - b);
+    const middle = Math.floor(sorted.length / 2);
+
+    return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
 
 export function soldMarketPrice(summary: CompSummary): number | null {
     if (!summary.marketEstimate) return positive(summary.median) ? summary.median : null;

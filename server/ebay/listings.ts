@@ -10,6 +10,7 @@ import type { BuyingOption, ListingSummary, Seller } from "../../shared/types.ts
 import type { ListingFilters } from "../../shared/listing-filters.ts";
 import { cardLanguageStatus, EnglishOnlyError } from "../../shared/card-language.ts";
 import type { SourceRejectionReason } from "../../shared/search-diagnostic.ts";
+import { cardSpecificNotes, hasSavedConditionExamples } from "../../shared/ebay-condition-notes.ts";
 
 // Toys & Hobbies > Collectible Card Games > CCG Individual Cards
 export const CCG_INDIVIDUAL_CARDS = "183454";
@@ -60,6 +61,8 @@ interface EbayItem {
     itemCreationDate?: string;
     conditionId?: string;
     condition?: string;
+    conditionDescription?: string;
+    description?: string;
     image?: { imageUrl: string };
     additionalImages?: { imageUrl: string }[];
     shippingOptions?: { shippingCost?: Amount; shippingCostType?: string;
@@ -163,6 +166,30 @@ function priceDetails(item: EbayItem) {
     };
 }
 
+// Only retain short condition statements. Seller HTML also contains policies,
+// shipping instructions, templates and sometimes an entire grading guide.
+function sellerDescriptionNotes(item: EbayItem): string[] {
+    const notes = new Set<string>();
+    for (const [source, conditionField] of [[item.conditionDescription, true], [item.description, false]] as const) {
+        if (!source) continue;
+        const plain = source.slice(0, 200_000).replace(/<!--[\s\S]*?-->|<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
+            .replace(/<\/?(?:br|p|div|li)\b[^>]*>/gi, "\n").replace(/<[^>]*>/g, " ")
+            .replace(/&(?:nbsp|amp|quot|apos|#39|#160);/gi, " ");
+        const includesGuide = /\bflaws may include\b/i.test(plain);
+        for (const part of plain.split(/[.!?;\n]+/)) {
+            const note = part.replace(/\s+/g, " ").trim();
+            if (!note || note.length > 600 || /\b(?:refund|returns?|policy|during (?:shipping|transit)|in transit|shipping damage|prevent damage|protect(?:ed|ion)? (?:against|from))\b/i.test(note)) continue;
+            const hasCardSubject = /\b(?:card|copy)\b/i.test(note);
+            if (!conditionField && (!/\b(?:creas\w*|dent(?:ed|s)?|scratch\w*|whiten\w*|(?:corner|edge|surface) wear|chipping|scuff\w*|tear|torn|damag\w*)\b/i.test(note) ||
+                /\b(?:may|might|could|possible|possibly|if|guidelines?|some cards|all cards|cards (?:can|have))\b/i.test(note) ||
+                !hasCardSubject && (includesGuide || /\b(?:sleeve|holder|case|toploader|packaging)\b/i.test(note)))) continue;
+            notes.add(`Seller description: ${note}`);
+            if (notes.size === 8) return [...notes];
+        }
+    }
+    return [...notes];
+}
+
 function structuredCondition(item: EbayItem) {
     const fields: Record<string, string> = {};
     const conditionNotes: string[] = [];
@@ -170,11 +197,12 @@ function structuredCondition(item: EbayItem) {
         const content = descriptor.values?.[0]?.content;
         if (typeof content === "string" && content.trim()) fields[descriptor.name] = content;
         for (const value of descriptor.values ?? []) {
-            for (const note of value.additionalInfo ?? []) {
-                if (typeof note === "string" && note.trim()) conditionNotes.push(note);
-            }
+            const notes = (value.additionalInfo ?? []).filter(note => typeof note === "string" && note.trim());
+            if (descriptor.name === "Card Condition") conditionNotes.push(...cardSpecificNotes(value.content, notes));
+            else conditionNotes.push(...notes);
         }
     }
+    conditionNotes.push(...sellerDescriptionNotes(item));
     return { fields, cardCondition: fields["Card Condition"] ?? null, conditionNotes };
 }
 
@@ -242,7 +270,8 @@ export async function searchListings(
         const saved = await readCache<SearchResult>(key, sort ? 1 / 60 : SEARCH_MAX_AGE_HOURS);
         signal.throwIfAborted();
 
-        if (saved) return saved;
+        if (saved) return { ...saved, listings: saved.listings.map(listing =>
+            hasSavedConditionExamples(listing) ? { ...listing, conditionNotes: cardSpecificNotes(listing.cardCondition, listing.conditionNotes!) } : listing) };
 
         // The few search requests are refused only when the day's allowance is gone.
         const usage = await ebayUsage();
@@ -354,7 +383,9 @@ export async function getListingDetails(
 
     if (maxAgeHours > 0) {
         const saved = await readCache<ListingDetails>(key, maxAgeHours);
-        if (saved && (allowEndedCache || saved.availability !== "UNAVAILABLE" || await readCache(key, 1 / 60)) && (expectedTitle === undefined || expectedTitle.trim() === saved.title.trim()) &&
+        // Older details discarded seller descriptions and stored the category
+        // examples as disclosures. Verify active items before making a decision.
+        if (saved && (allowEndedCache || !hasSavedConditionExamples(saved)) && (allowEndedCache || saved.availability !== "UNAVAILABLE" || await readCache(key, 1 / 60)) && (expectedTitle === undefined || expectedTitle.trim() === saved.title.trim()) &&
             (expectedPhotos === undefined || (saved.searchPhotoKey !== undefined
                 ? saved.searchPhotoKey === photoEvidenceKey(expectedPhotos)
                 : searchPhotosFitDetails(expectedPhotos, saved.images)))) {
@@ -364,7 +395,7 @@ export async function getListingDetails(
                 await writeCache(key, saved);
             }
             signal?.throwIfAborted();
-            return saved;
+            return hasSavedConditionExamples(saved) ? { ...saved, conditionNotes: cardSpecificNotes(saved.cardCondition, saved.conditionNotes) } : saved;
         }
     }
 

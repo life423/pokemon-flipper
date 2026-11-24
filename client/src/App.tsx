@@ -443,7 +443,9 @@ export function App({ initialPage = "search" }: { initialPage?: "search" | "came
         };
 
         try {
-            let evaluation = await evaluateListing(listing, { fresh, automatic, includeOffers, targets, signal: controller.signal, searchRunId: account, priceOnly: Boolean(refreshOf) });
+            let evaluation = await evaluateListing(listing, { fresh, automatic, includeOffers, targets, signal: controller.signal,
+                typeFilter: scope === "search" ? analysisSelection.current.filters.typeFilter : undefined,
+                searchRunId: account, priceOnly: Boolean(refreshOf) });
             controller.signal.throwIfAborted();
             if (stillCurrent()) {
                 if (refreshOf && evaluation.listing.availability === "UNAVAILABLE") {

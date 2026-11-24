@@ -55,6 +55,10 @@ export interface ScreeningSoldEvidence {
     note: string;
 }
 export interface Screen {
+    marketComparison?: {
+        delivered: number; otherAskMedian: number; otherAskCount: number; soldMedian: number; soldCount: number;
+        discountPercent: number; scope: string; condition: RawCondition | null; asOf: string;
+    };
     soldEvidence?: ScreeningSoldEvidence;
     gradingLead?: { grader: Grader; grade: number };
     needsAnalysis?: "IDENTITY" | "FINISH" | "SLAB_LABEL" | "PRICE_EVIDENCE";
@@ -355,6 +359,7 @@ export type SoldSaleType = "auction" | "fixed_price" | "best_offer_accepted";
 
 export interface CompSale {
     photoCondition?: RawCondition;
+    conditionEvidence?: string[];
     sellerCondition?: RawCondition | null;
     saleType?: SoldSaleType;
     price: number;

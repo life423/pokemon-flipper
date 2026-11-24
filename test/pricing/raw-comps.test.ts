@@ -94,6 +94,7 @@ test("one or two physically condition-matched sold copies support a LOW-confiden
         assert.equal(raw.conditionEvidence, "AI_PHOTOS"); assert.equal(raw.reviewedSoldCopies, count);
         assert.equal(raw.prices!.some(price => price.condition === "NEAR_MINT"), false, "seller wording cannot supply a better-condition price");
         assert.ok(quote.comps!.sales.every(sale => sale.sellerCondition === "NEAR_MINT" && sale.photoCondition === "LIGHTLY_PLAYED"));
+        for (const sale of quote.comps!.sales) assert.deepEqual(sale.conditionEvidence, reading.evidence);
         assert.deepEqual(inspected, [...Array.from({ length: count }, (_, index) => index + 1), 13, 14], "unconfirmed amounts and incompatible printing/finish never reach photo assessment");
         const evaluation = cardEvaluation({ minProfit: 0, minRoi: 0 });
         evaluation.listing.buyingOption = "FIXED_PRICE"; evaluation.listing.shipping = 0; evaluation.gradedPricing = null;

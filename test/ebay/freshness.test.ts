@@ -5,6 +5,7 @@ import { evaluateBoundedListing as evaluateListing } from "../../server/analysis
 import { writeCache } from "../../server/lib/cache.ts";
 import { photoEvidenceKey } from "../../shared/listing-evidence.ts";
 import { offlineEbayCredentials } from "../fixtures/ebay-credentials.ts";
+import { sellerDisclosedCreasing } from "../../shared/conditions.ts";
 
 const photo = (id: string, size = 500) => `https://i.ebayimg.com/images/g/${id}/s-l${size}.jpg`;
 function details(id: string, images = [photo("front", 1600), photo("back", 1600)]): ListingDetails {
@@ -15,6 +16,39 @@ function item(value: ListingDetails) {
         image: value.images[0] ? { imageUrl: value.images[0] } : undefined, additionalImages: value.images.slice(1).map((imageUrl) => ({ imageUrl })),
         localizedAspects: Object.entries(value.aspects).map(([name, value]) => ({ name, value })) };
 }
+
+test("saved Blastoise condition examples refresh once and only a seller's specific crease counts", async t => {
+    offlineEbayCredentials(t);
+    const mp = ["Moderate creasing", "Moderate to heavy edge chipping", "Rounding and soft corner", "Moderate discoloration"];
+    const hp = ["Major creasing", "Moderate discoloration", "Major border wear", "Heavily worn and rounded corners"];
+    const records = [
+        ["960114945981", "Heavily played (Poor)", hp, "<p>Card is in played condition heavy scratches creases edge wear</p>", true],
+        ["168752273201", "Heavily played (Poor)", hp, "Card has significant wear, including visible creasing, edge/corner wear and surface wear.", true],
+        ["940109815522", "Moderately played (Very good)", mp, "Card is in MP condition and will ship in sleeve, top loader, and bubble mailer.", false],
+        ["mint", "Near mint or better", ["Minor corner and edge wear"], "Cards may have minor edge wear. The sleeve has a crease.", false],
+        ["light", "Lightly played (Excellent)", ["Moderate surface scuffing", "Fuzzy corners", "Moderate edge chipping"], "Flaws may include:<p>Major creasing</p>", false],
+    ] as const;
+    let lookups = 0;
+    t.mock.method(globalThis, "fetch", async url => {
+        if (String(url).includes("oauth2/token")) return Response.json({ access_token: "offline", expires_in: 3600 });
+        const id = decodeURIComponent(String(url)).match(/v1\|offline-rubric-([^|]+)\|0/)?.[1];
+        const row = records.find(([key]) => key === id)!;
+        lookups++;
+        return Response.json({ ...item(details(`v1|${id}|0`)), description: row[3],
+            conditionDescriptors: [{ name: "Card Condition", values: [{ content: row[1], additionalInfo: row[2] }] }] });
+    });
+    for (const [key, cardCondition, rubric, , crease] of records) {
+        const id = `v1|offline-rubric-${key}|0`;
+        const legacy = { ...details(id), cardCondition, conditionNotes: [...rubric] };
+        await writeCache(`ebay:item:${id}`, legacy);
+        const fresh = await getListingDetails(id);
+        assert.equal(fresh.cardCondition, cardCondition);
+        assert.equal(sellerDisclosedCreasing(fresh.conditionNotes), crease);
+        assert.ok(fresh.conditionNotes.every(note => note.startsWith("Seller description: ")));
+        assert.deepEqual((await getListingDetails(id)).conditionNotes, fresh.conditionNotes);
+    }
+    assert.equal(lookups, records.length);
+});
 
 test("historical sold photos reuse ended details while live availability still refreshes", async t => {
     offlineEbayCredentials(t);

@@ -1,9 +1,10 @@
+import { addBinMarketComparisons } from "../../shared/bin-market-comparison.ts";
 import { searchListings } from "../ebay/listings.ts";
 import { readSearchWithAi } from "../search/query-assistance.ts";
 import { cardMismatch, gradingMatches, titleMatches, setMatches } from "../search/relevance.ts";
 import { readTitleByRules, readTitleWithoutAi } from "../ai/title-reader.ts";
 import type { ListingSummary, SearchIntent, Targets } from "../../shared/types.ts";
-import { criteriaMismatch, marketplaceQuery, searchAttributes } from "../../shared/search-criteria.ts";
+import { criteriaMismatch, marketplaceQuery, rawBuyItNowQuery, searchAttributes } from "../../shared/search-criteria.ts";
 import { screenListingWithoutAi } from "./screen-listing.ts";
 import { AUTOMATIC_AUCTION_WINDOW_HOURS, screeningBlock, type ListingFilters, type MarketplaceOrder } from "../../shared/listing-filters.ts";
 import { cardLanguageStatus, EnglishOnlyError } from "../../shared/card-language.ts";
@@ -115,8 +116,11 @@ export async function findDeals(search: string, {
         : null;
     // Seller titles may use #194 in place of 194/203 or omit finish and edition.
     // Keep the full intent for verification and avoid requiring a catalog-inferred number.
-    const query = marketCeiling === null ? marketplaceQuery(search, intent)
-        : [intent.cardName, typedCollectorNumber ?? intent.sets[0], intent.grader, intent.minGrade].join(" ");
+    const keywords = marketplaceQuery(search, intent);
+    const exactRawBin = filters?.typeFilter === "FIXED_PRICE" && filters.kindFilter !== "graded" && intent.graded !== true &&
+        Boolean(intent.cardName && intent.cardNumber && intent.sets.length === 1);
+    const query = marketCeiling !== null ? [intent.cardName, typedCollectorNumber ?? intent.sets[0], intent.grader, intent.minGrade].join(" ")
+        : exactRawBin ? rawBuyItNowQuery(keywords, intent) : keywords;
     const sourceOptions = {
         maxResults: SEARCH_SOURCE_PAGE_LIMIT, signal, filters: firstFilters, asOf, auctionEndsWithinHours: AUTOMATIC_AUCTION_WINDOW_HOURS,
     };
@@ -134,6 +138,7 @@ export async function findDeals(search: string, {
     const deferred = new Set<string>();
     const excluded = new Set(newOnly?.excludeIds ?? []);
     const rejections = new Map<string, SourceRejectionReason>();
+    const excludedByPrice: ListingSummary[] = [];
     let completeCoverage = true;
     let previouslySeen = 0, screenedCount = 0, priceExcluded = 0, unresolvedOverflow = 0;
     let total = firstPage.total, skipped = firstPage.skipped, started = false;
@@ -148,7 +153,7 @@ export async function findDeals(search: string, {
 
     const canAssess = (listing: ListingSummary) => autoAnalysisBlockReason(listing, asOf) === null;
     const admissionPriority = (listing: ListingSummary) => !canAssess(listing) ? 0
-        : analysisPriority(listing, targets).band > 0 ? 2 : 1;
+        : analysisPriority(listing, targets, asOf).band > 0 ? 2 : 1;
 
     function preliminaryBlock(listing: ListingSummary, pageFilters: ListingFilters): SourceRejectionReason | null {
         if (marketCeiling !== null && !listing.bestOffer && listing.currentPrice !== null && listing.currentPrice > marketCeiling) return "ABOVE_SOLD_CEILING";
@@ -203,6 +208,7 @@ export async function findDeals(search: string, {
                 signal?.throwIfAborted();
                 if (listing.screen?.status === "DROPPED") {
                     priceExcluded++;
+                    excludedByPrice.push(listing);
                     rejections.set(listing.id, "SOLD_PRICE_EXCLUDED");
                     onPriceExcluded(listing);
                 } else {
@@ -213,7 +219,12 @@ export async function findDeals(search: string, {
             batch = [];
         }
         for (const listing of eligible.values()) {
-            if (matching.length >= DEVELOPMENT_SEARCH_LIMIT && promising >= minPromising) break;
+            if (matching.length >= DEVELOPMENT_SEARCH_LIMIT && promising >= minPromising) {
+                // Other raw copies of this exact card share the market lookup.
+                // Compare them before filling the display with the first 50.
+                if (!exactRawBin || newOnly) break;
+                if (listing.isGraded) continue;
+            }
             signal?.throwIfAborted();
             considered.add(listing.id);
             deferred.delete(listing.id);
@@ -264,11 +275,12 @@ export async function findDeals(search: string, {
                 matching = [...matching, ...cheaper.matching];
             }
         }
+        matching = addBinMarketComparisons(matching, excludedByPrice, asOf);
         if (matching.length > DEVELOPMENT_SEARCH_LIMIT) {
             // Prefer candidates with supported upside, then other assessment
             // candidates. Equal ranks preserve the first page's order.
             const ranked = matching.map(listing => ({ listing, priority: admissionPriority(listing) }));
-            ranked.sort((a, b) => b.priority - a.priority);
+            ranked.sort((a, b) => b.priority - a.priority || compareAnalysisPriority(a.listing, b.listing, targets, asOf));
             for (const { listing, priority } of ranked.slice(DEVELOPMENT_SEARCH_LIMIT)) {
                 if (priority === 0) unresolvedOverflow++;
                 onScreenedOverflow({ id: listing.id, reason: autoAnalysisBlockReason(listing, asOf) ?? "DISPLAY_LIMIT" });
@@ -283,7 +295,7 @@ export async function findDeals(search: string, {
     } catch (error) { if (signal?.aborted) return []; throw error; }
     if (signal?.aborted) return [];
     onStart(summary(matching.length));
-    let ordered = matching.sort((a, b) => compareAnalysisPriority(a, b, targets));
+    let ordered = matching.sort((a, b) => compareAnalysisPriority(a, b, targets, asOf));
     if (automaticPhotos && dependencies.prioritizeText) ordered = await dependencies.prioritizeText(ordered, targets, signal);
     const results: ListingSummary[] = [];
     for (const listing of ordered) {

@@ -1,4 +1,5 @@
 import { isRawCondition, type RawCondition } from "./conditions.ts";
+import { cardSpecificNotes } from "./ebay-condition-notes.ts";
 import { finishClaim } from "./finish.ts";
 import { readyForPricing } from "./identity.ts";
 import { normalizedPhoto } from "./listing-evidence.ts";
@@ -46,7 +47,7 @@ function reviewedGallery(listing: Partial<Pick<Evaluation["listing"], "photosInL
 }
 
 export function obscuredDisclosedWear({ listing, photoCheck, condition }: {
-    listing: Partial<Pick<Evaluation["listing"], "conditionNotes" | "photosInListing" | "photos">>;
+    listing: Partial<Pick<Evaluation["listing"], "cardCondition" | "conditionNotes" | "photosInListing" | "photos">>;
     photoCheck?: PhotoCheck | null;
     condition?: Partial<Pick<NonNullable<Evaluation["condition"]>, "corners" | "edges">> | null;
 }): string | null {
@@ -55,8 +56,8 @@ export function obscuredDisclosedWear({ listing, photoCheck, condition }: {
 
     const views = photoCheck.images.filter(photo => photo.usable && !photo.isStockImage && photo.view !== "OTHER");
     const allObscured = views.every(photo => photo.obscuresCondition === true);
-    const notes = (listing.conditionNotes ?? []).flatMap(note => note.toLowerCase().split(/[.;\n]+/))
-        .filter(note => !/\b(?:no|without|free of|none)\b/.test(note));
+    const notes = cardSpecificNotes(listing.cardCondition, listing.conditionNotes ?? []).flatMap(note => note.toLowerCase().split(/[.;\n]+/))
+        .filter(note => !/\b(?:no|without|free of|none|may|might|could|possible)\b/.test(note));
     const wear = /\b(corners?|edges?)(?:\s*(?:and|&|\/|or)\s*(corners?|edges?))?\s+(?:wear|whitening|chipping|damage)\b/g;
     const areas = notes.flatMap(note => [...note.matchAll(wear)].flatMap(match => [match[1], match[2]].filter(Boolean)));
     const obscured = (["corner", "edge"] as const).filter(area => areas.some(value => value.startsWith(area)) &&

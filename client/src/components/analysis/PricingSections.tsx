@@ -68,6 +68,7 @@ export function CompsRow({ summary, screening = false }: { summary: CompSummary;
                         <span className={styles.salePrice}>{dollars(sale.price)}</span>
                         <span className={styles.muted}>{sale.soldAt}{sale.saleType && ` · ${SALE_TYPES[sale.saleType]}`}</span>
                         {sale.photoCondition && <span className={styles.muted}>Seller says: {sale.sellerCondition ? CONDITION_NAMES[sale.sellerCondition] : "Not stated"} · AI assesses: {CONDITION_NAMES[sale.photoCondition]}</span>}
+                        {sale.photoCondition && sale.conditionEvidence?.map((note, i) => <span key={i} className={styles.muted}>{note}</span>)}
                         {sale.url ? (
                             <a href={sale.url} target="_blank" rel="noopener noreferrer">
                                 {sale.title}
