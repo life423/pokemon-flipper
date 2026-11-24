@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { streamDeals, streamNewDeals, evaluateListing } from "../../client/src/api.ts";
+import { disconnectBuyerAccount, evaluateListing, fetchAuctionReminders, fetchBuyerAccount, startBuyerConnection, streamDeals, streamNewDeals } from "../../client/src/api.ts";
 
 test("known filters and a search identifier reach both search modes before paid work", async t => {
     const requests: { url: string; searchId: string | null }[] = [];
@@ -18,6 +18,13 @@ test("known filters and a search identifier reach both search modes before paid 
         assert.equal(query.get("ceiling"), "300"); assert.equal(query.get("min"), "10");
         assert.equal(request.searchId, "offline-search");
     }
+});
+
+test("a pending evidence claim never retries the paid evaluation on a transient HTTP status", async t => {
+    const call = t.mock.method(globalThis, "fetch", async () =>
+        Response.json({ error: "An earlier photo check is unresolved.", code: "AI_EVIDENCE_HELD" }, { status: 503 }));
+    await assert.rejects(evaluateListing({ id: "held" } as never), { code: "AI_EVIDENCE_HELD" });
+    assert.equal(call.mock.callCount(), 1);
 });
 
 test("only automatic search assessments send the requested listing format", async t => {
@@ -240,4 +247,23 @@ test("an AI budget stop preserves all50 free metadata rows still arriving in the
     assert.equal(signal.signal.aborted, false);
     assert.equal(analysisBlockPolicy("AI_PAUSED").stopListingStream, false);
     assert.equal(analysisBlockPolicy("STORAGE_UNAVAILABLE").stopListingStream, true, "storage failures must still stop unsafe reads");
+});
+
+test("the buyer's sniper calls only its production account and live reminders", async t => {
+    const requests: { url: string; method: string; environment?: string }[] = [];
+    t.mock.method(globalThis, "fetch", async (url: string, init: RequestInit) => {
+        assert.equal(new Headers(init.headers).get("X-Pokemon-Flipper"), "1");
+        requests.push({ url, method: init.method ?? "GET", environment: init.body ? JSON.parse(String(init.body)).environment : undefined });
+        return Response.json({});
+    });
+    await fetchAuctionReminders();
+    await fetchBuyerAccount();
+    await startBuyerConnection("production");
+    await disconnectBuyerAccount();
+    assert.deepEqual(requests, [
+        { url: "/api/sniper?mode=reminder", method: "GET", environment: undefined },
+        { url: "/api/ebay/connection?environment=production", method: "GET", environment: undefined },
+        { url: "/api/ebay/connection/start", method: "POST", environment: "production" },
+        { url: "/api/ebay/connection/disconnect?environment=production", method: "POST", environment: "production" },
+    ]);
 });

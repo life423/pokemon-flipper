@@ -31,7 +31,8 @@ export function groupMarketSearches(leads: HuntMarket[], goal: DealHuntGoal, tar
             intent.graded && (intent.minGrade ?? 0) < minGrade) continue;
         const ceiling = Math.min(marketItemLimit(lead, goal, targets, 0), filters.maxPrice ?? Infinity);
         if (ceiling <= 0 || filters.typeFilter !== "AUCTION" && ceiling < (filters.minPrice ?? 0)) continue;
-        const key = JSON.stringify([intent.graded, marketBrowseQuery(intent).toLowerCase()]);
+        const fixedRawNumber = !intent.graded && filters.typeFilter !== "AUCTION" ? normalizeCardNumber(intent.cardNumber) : null;
+        const key = JSON.stringify([intent.graded, marketBrowseQuery(intent).toLowerCase(), fixedRawNumber]);
         let group = groups.get(key);
         if (!group) {
             group = { intents: [intent], leads: [], ceiling };

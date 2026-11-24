@@ -18,7 +18,7 @@ export function AuctionSummary({ evaluation, targets, now }: { evaluation: Evalu
             <div><span className={styles.label}>Max snipe bid</span><strong className={styles.limit}>{dollars(decision.ceiling)}</strong></div>
         </div>
         <p className={styles.status}>
-            {decision.status === "ENDED" ? "Auction ended" : decision.status === "OVER_LIMIT" ? "Already above your limit — pass at this price." : noProfitableBid ? "No bid price meets your targets." : decision.status === "UNPRICED" ? "No reliable bid limit yet. Finish the photo and pricing checks." : decision.provisional ? "Provisional limit — your review is needed because photo or grading uncertainty remains." : decision.anyTargets ? "Set a profit or ROI target to require a larger margin." : "Use the bid limit as your maximum snipe for the selected resale route."}
+            {decision.status === "ENDED" ? "Auction ended" : decision.status === "OVER_LIMIT" ? "Already above your limit — pass at this price." : noProfitableBid ? "No bid price meets your targets." : decision.status === "UNPRICED" ? "No reliable bid limit yet. Finish the photo and pricing checks." : decision.provisional ? "Wait to bid. The photos leave the grade or value uncertain." : decision.anyTargets ? "Set a profit or ROI target to require a larger margin." : "Use the bid limit as your maximum snipe for the selected resale route."}
         </p>
         {result && <div className={styles.scenario}>
             <p className={styles.label}>{showCurrent ? "At current bid" : "If won for"} {dollars(result.price)} · {evaluation.underwriting?.best?.label}</p>

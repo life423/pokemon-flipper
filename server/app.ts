@@ -37,12 +37,21 @@ import type { ScreenedOverflowRow, SearchCompetition, SearchSourceCoverage, Sour
 import { completeSearchDiagnostic, loadDiagnosticDiscovery, loadDiagnosticResult, saveDiagnosticDiscovery } from "./analysis/search-diagnostics.ts";
 import { isSearchDiagnosticId, SearchDiagnosticInputError } from "./analysis/search-diagnostic-store.ts";
 import { drainSharedWork, trackSharedWork } from "./lib/shared-work.ts";
+import { compareCardmarket } from "./pricing/cardmarket.ts";
+import { cardmarketComparisonKey } from "../shared/cardmarket.ts";
 import { loadPrivateEvaluation } from "./analysis/private-evaluation.ts";
+import { collectorGuideState, runCollectorGuide } from "./analysis/collector-guide.ts";
+import { latestLiveCollector, LiveCollectorInputError, runLiveCollector } from "./analysis/live-collector.ts";
 import { saveCollectorStrategyEvidence } from "./analysis/collector-strategy-evidence.ts";
 import { BuyerReviewInputError, reviewBuyerListing } from "./analysis/wait-skip-review.ts";
 import { DealHuntInputError, runSearchDealHunt, saveDealHuntInventory } from "./analysis/deal-hunt-service.ts";
 import type { ListingSummary } from "../shared/types.ts";
+import { readSniperQuote, sandboxBuyerId, sniperCapabilities, submitSandboxBid } from "./ebay/sniper.ts";
 import { auctionTracker } from "./auction-tracking/service.ts";
+import { createSniperScheduler } from "./sniper/scheduler.ts";
+import { sniperRoutes } from "./sniper/routes.ts";
+import { ebayConnectionRoutes } from "./ebay/connection-routes.ts";
+import { buyerConnection } from "./ebay/buyer-connection.ts";
 
 const app = express();
 
@@ -135,6 +144,11 @@ app.post("/api/camera/grade", (req, res, next) => {
     }
 }));
 app.use(express.json());
+const auctionSniper = createSniperScheduler({
+    sandboxBuyerId,
+    readQuote: readSniperQuote,
+    submitSandbox: submitSandboxBid,
+});
 app.get("/api/auction-tracking", tracked(async (_req, res) => {
     try { res.set("Cache-Control", "no-store").json(await auctionTracker.list()); }
     catch { res.status(503).json({ error: "Auction outcomes could not be read." }); }
@@ -145,6 +159,17 @@ app.post("/api/auction-tracking/:id/recheck", tracked(async (req, res) => {
         res.set("Cache-Control", "no-store").json(await auctionTracker.list());
     } catch { res.status(503).json({ error: "Auction outcomes could not be refreshed." }); }
 }));
+app.use("/api/sniper", sniperRoutes(auctionSniper, sniperCapabilities, readSniperQuote, requestSignal));
+const ebayConnection = ebayConnectionRoutes(buyerConnection, () => auctionSniper.reconcileBuyerJobs());
+app.use("/api/ebay/connection", ebayConnection.api);
+app.get("/ebay/connection/callback", (req, res, next) => {
+    if (secondaryServer && req.socket.localPort === SECONDARY_PORT) {
+        res.status(404).set({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" }).end();
+        return;
+    }
+    next();
+});
+app.use(ebayConnection.callback);
 app.get("/api/storage", async (_req, res) => {
     try {
         const backend = storageBackend();
@@ -197,6 +222,52 @@ app.post("/api/deal-hunt", tracked(async (req, res) => {
         if (error instanceof DealHuntInputError) { res.status(error.status).json({ error: error.message }); return; }
         const failure = evaluationFailure(error);
         res.status(failure.status).json(failure.status === 500 ? { error: "The hunt could not complete. Completed research was saved." } : failure);
+    }
+}));
+
+app.get("/api/collector-strategy/live", tracked(async (req, res) => {
+    const id = req.query.searchId;
+    if (!isSearchDiagnosticId(id)) { res.status(400).json({ error: "A valid saved search ID is required." }); return; }
+    try { res.json({ report: await latestLiveCollector(id) }); }
+    catch { res.status(503).json({ error: "The saved live comparison could not be read." }); }
+}));
+app.post("/api/collector-strategy/live", tracked(async (req, res) => {
+    const runId = req.get("X-Pokemon-Flipper-Search-Id");
+    const { sourceSearchId, maxTotal } = req.body ?? {};
+    if (!isSearchDiagnosticId(runId) || !isSearchDiagnosticId(sourceSearchId) || typeof maxTotal !== "number") {
+        res.status(400).json({ error: "Supply a run ID, a saved search ID and an all-in price limit." }); return;
+    }
+    const signal = requestSignal();
+    try {
+        const report = await runLiveCollector(runId, sourceSearchId, maxTotal, signal, req.body.reuseRecentListings === true);
+        if (!signal.aborted) res.json({ report });
+    } catch (error) {
+        if (signal.aborted) return;
+        if (error instanceof LiveCollectorInputError) res.status(400).json({ error: error.message });
+        else {
+            console.error("Live collector search stopped", error instanceof Error ? error.message : "unknown error");
+            res.status(503).json({ error: searchFailureMessage(error) });
+        }
+    }
+}));
+app.get("/api/collector-strategy", tracked(async (req, res) => {
+    const id = req.query.searchId;
+    if (!isSearchDiagnosticId(id)) { res.status(400).json({ error: "A valid saved search ID is required." }); return; }
+    try { res.json(await collectorGuideState(id)); }
+    catch { res.status(503).json({ error: "The saved collector guide could not be read." }); }
+}));
+app.post("/api/collector-strategy", tracked(async (req, res) => {
+    const id = req.get("X-Pokemon-Flipper-Search-Id");
+    if (!isSearchDiagnosticId(id)) { res.status(400).json({ error: "A valid saved search ID is required." }); return; }
+    const signal = requestSignal();
+    try {
+        const report = await runCollectorGuide(id, signal);
+        if (signal.aborted) return;
+        if (report) res.json({ available: true, report });
+        else res.status(404).json({ error: "No saved exact-slab comparison is available for this search." });
+    } catch (error) {
+        if (!signal.aborted) res.status(503).json({ error: storageFailure(error)?.message ?? "The collector strategy could not finish its saved checks." });
+        console.error("Collector strategy could not complete", error instanceof Error ? error.message : "unknown error");
     }
 }));
 
@@ -434,6 +505,29 @@ app.post("/api/listings/:id/evaluate", tracked(async (req, res) => {
     }
 }));
 
+app.post("/api/listings/:id/cardmarket", tracked(async (req, res) => {
+    const signal = requestSignal();
+    try {
+        const saved = await loadPrivateEvaluation(req.params.id);
+        const account = await originalListingSearch(req.params.id, saved, req.get("X-Pokemon-Flipper-Search-Id"));
+        if (!saved || !account) {
+            res.status(409).json({ error: "A photo assessment tied to its original search is required for Cardmarket research." });
+            return;
+        }
+        if (req.body?.market !== cardmarketComparisonKey(saved.evaluation)) {
+            res.status(409).json({ error: "This card’s assessment changed. Reopen its current analysis to check Cardmarket." });
+            return;
+        }
+        signal.throwIfAborted();
+        const comparison = await withAiUsageContext({ searchId: account, listingId: req.params.id },
+            () => compareCardmarket(saved.evaluation));
+        if (!signal.aborted) res.json(comparison);
+    } catch (error) {
+        if (signal.aborted) return;
+        const failure = evaluationFailure(error);
+        res.status(failure.status).json(failure);
+    }
+}));
 
 // Optional focused photo review: cached details, one paid request on first use.
 app.post("/api/listings/:id/photo-review", tracked(async (req, res) => {
@@ -500,6 +594,7 @@ if (isProduction) {
 async function stopServer() {
     if (shutdown.signal.aborted) return;
     shutdown.abort();
+    auctionSniper.stop();
     auctionTracker.stop();
     server.close();
     if (secondaryServer?.listening) secondaryServer.close();
@@ -542,4 +637,5 @@ server.listen(PORT, "127.0.0.1", () => {
         secondaryServer.listen(SECONDARY_PORT, "127.0.0.1", () => console.log(`Same app available on http://localhost:${SECONDARY_PORT}`));
     }
     auctionTracker.start();
+    void trackSharedWork(auctionSniper.start()).catch(() => console.error("Auction sniper could not start. Inspect its saved queue."));
 });

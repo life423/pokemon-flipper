@@ -48,6 +48,7 @@ export interface DealHuntReport {
     }[];
 }
 export interface DealHuntResponse {
+    gradingOpportunity?: import("./grading-watch.ts").GradingOpportunity;
     auctionOpportunity?: import("./auction-opportunity.ts").AuctionOpportunity;
     collectorAuction?: import("./collector-auction.ts").CollectorAuction;
     report: DealHuntReport;

@@ -107,8 +107,15 @@ function gradeScenarios(value: Evaluation, now: number) {
 }
 
 type Scenarios = ReturnType<typeof gradeScenarios>;
-function gradeMath(scenarios: Scenarios) {
-    if (!scenarios.length) return "The photo assessment and matched sales do not establish a priced grading route.";
+function gradeMath(scenarios: Scenarios, value: Evaluation, now: number) {
+    if (!scenarios.length) {
+        const grade = displayedRawGrade(value)?.range.likely;
+        const { total } = listingTerms(value, now);
+        const purchase = total === null ? "this copy" : `this copy at ${dollars(total)} delivered`;
+        if (!grade) return `Pass on grading ${purchase}. The photos do not establish a likely grade to price.`;
+        const grades = grade > 1 ? `grade ${grade} and grade ${grade - 1}` : "grade 1";
+        return `Pass on grading ${purchase}. The photos suggest grade ${grade}. The available sales and grading costs do not establish a profitable resale at ${grades}.`;
+    }
     return scenarios.map(({ path, likely, lower }) => {
         const render = (label: string, scenario: typeof likely) => scenario
             ? `${label} (${path.grader} ${scenario.grade}), the projected ${scenario.profit < 0 ? "loss" : "profit"} is ${dollars(Math.abs(scenario.profit))} after all costs.`
@@ -278,7 +285,7 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
             const profitable = scenarios.filter(({ path, likely, lower }) => path.clears && path.profit > 0 && likely && likely.profit > 0 && lower && lower.profit > 0);
             const viable = profitable.find(({ path }) => goal !== "resell" || salesForExit(value, path, markets, now) >= MIN_RECENT_HUNT_SALES);
             exit = (viable ?? profitable[0] ?? scenarios.find(({ path }) => path.profit > 0))?.path;
-            reason = gradeMath(viable ? [viable] : scenarios);
+            reason = gradeMath(viable ? [viable] : scenarios, value, now);
             supported = !!viable && value.underwriting?.verdict.startsWith("BUY") === true;
             if (!supported && goal === "resell" && value.underwriting?.verdict.startsWith("BUY")) {
                 const raw = rawMarket(value, now);
@@ -325,7 +332,7 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
     return {
         listingId: value.listing.id, title: value.listing.title,
         summary: [slab ? "Graded card" : "Raw card", huntPrintingCheck(value) && "One set-specific original photo detail can resolve the printing.", value.listing.cardCondition && `seller describes it as ${value.listing.cardCondition}`,
-            value.listing.createdAt && `listed ${value.listing.createdAt}`].filter(Boolean).join(" · "),
+            value.listing.listedAt ? `first available ${value.listing.listedAt}` : value.listing.createdAt && `created ${value.listing.createdAt}`].filter(Boolean).join(" · "),
         available(completed) {
             const actions: DealHuntAction[] = ["check_listing", "inspect_photos", "check_sales"];
             if (completed.has("check_listing") && huntPrintingCheck(value) && huntPrintingTerms(value.listing, timestamp(), maxDelivered)) actions.push("resolve_printing");
@@ -349,7 +356,7 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
                 case "check_sales": return saleEvidence(now);
                 case "check_price_references": return checkedReferences(now);
                 case "calculate_grading": {
-                    if (!auction) return gradeMath(gradeScenarios(value, now));
+                    if (!auction) return gradeMath(gradeScenarios(value, now), value, now);
                     const grading = auctionOpportunity(value, targets, now, maxDelivered)?.grading;
                     return grading ? `At the next bid, ${grading.grader} ${grading.likelyGrade} projects ${dollars(grading.likelyProfit)} profit and ${grading.grader} ${grading.lowerGrade} projects ${dollars(grading.lowerProfit)}. Grading and submission add ${dollars(grading.gradingCosts)}.`
                         : "The next bid and grade-specific sales did not support a grading opportunity.";

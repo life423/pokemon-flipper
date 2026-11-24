@@ -1,10 +1,14 @@
 import type { DeeperPhotoReview, EbayUsage, Evaluation, ListingSummary, SearchIntent, Targets } from "./types";
+import type { SniperJob, SniperMode, SniperQuote } from "../../shared/sniper.ts";
+import type { BuyerAccount, BuyerEnvironment } from "../../shared/ebay-connection.ts";
 import type { CameraGradeResult } from "../../shared/camera-grade.ts";
+import type { CardmarketComparison } from "../../shared/cardmarket.ts";
 import type { ShortlistEntry, RefreshResult } from "../../shared/shortlist.ts";
 import type { PricingRetryResult } from "../../shared/pricing-retries.ts";
 import type { AiUsageDay } from "../../shared/ai-usage.ts";
 import type { DiscoveryOrder, ListingFilters, MarketplaceOrder } from "../../shared/listing-filters.ts";
 import type { SearchDiagnosticResult, SearchDiagnosticRow, SearchSourceCoverage } from "../../shared/search-diagnostic.ts";
+import type { CollectorStrategyState, LiveCollectorReport } from "../../shared/collector-strategy.ts";
 import type { DealHuntRequest, DealHuntResponse } from "../../shared/deal-hunt.ts";
 import type { BuyerListingReview } from "../../shared/wait-skip-review.ts";
 import type { SearchReviewSelection } from "../../shared/search-review-selection.ts";
@@ -69,7 +73,58 @@ export function runDealHunt(searchId: string, hunt: DealHuntRequest, signal: Abo
         body: JSON.stringify(hunt), signal,
     });
 }
+export function readCollectorStrategy(id: string, signal: AbortSignal): Promise<CollectorStrategyState> {
+    return request(`/api/collector-strategy?searchId=${encodeURIComponent(id)}`, { signal });
+}
+export function startCollectorStrategy(id: string, signal: AbortSignal): Promise<CollectorStrategyState> {
+    return request("/api/collector-strategy", { method: "POST", headers: searchHeaders(id), signal });
+}
+export function readLiveCollectorStrategy(sourceSearchId: string, signal: AbortSignal): Promise<{ report: LiveCollectorReport | null }> {
+    return request(`/api/collector-strategy/live?searchId=${encodeURIComponent(sourceSearchId)}`, { signal });
+}
+export function startLiveCollectorStrategy(sourceSearchId: string, maxTotal: number, runId: string, signal: AbortSignal): Promise<{ report: LiveCollectorReport }> {
+    return request("/api/collector-strategy/live", {
+        method: "POST", headers: { ...searchHeaders(runId), "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceSearchId, maxTotal }), signal,
+    });
+}
+export function fetchCardmarketComparison(listingId: string, market: string, searchId?: string): Promise<CardmarketComparison> {
+    return request(`/api/listings/${encodeURIComponent(listingId)}/cardmarket`, {
+        method: "POST", headers: { "Content-Type": "application/json", ...(searchId && searchHeaders(searchId)) },
+        body: JSON.stringify({ market }),
+    });
+}
 
+export function fetchAuctionReminders(signal?: AbortSignal): Promise<{ jobs: SniperJob[] }> {
+    return request("/api/sniper?mode=reminder", { signal });
+}
+export function fetchBuyerAccount(signal?: AbortSignal): Promise<BuyerAccount> {
+    return request("/api/ebay/connection?environment=production", { signal });
+}
+export function startBuyerConnection(environment: BuyerEnvironment): Promise<{ authorizationUrl: string }> {
+    return request("/api/ebay/connection/start", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ environment }),
+    });
+}
+export function disconnectBuyerAccount(): Promise<BuyerAccount> {
+    return request("/api/ebay/connection/disconnect?environment=production", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ environment: "production" }),
+    });
+}
+export function previewSnipe(url: string, mode: SniperMode, searchId?: string, signal?: AbortSignal): Promise<{ quote: SniperQuote }> {
+    return request("/api/sniper/preview", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url, mode, searchId }), signal,
+    });
+}
+export function armSnipe(quote: SniperQuote, mode: SniperMode, maxBid: number, searchId?: string): Promise<{ job: SniperJob }> {
+    return request("/api/sniper", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: quote.url, mode, maxBid, title: quote.title, endTime: quote.endTime, shipping: quote.shipping, buyerConnectionId: quote.buyerConnectionId, searchId }),
+    });
+}
+export function cancelSnipe(id: string): Promise<{ job: SniperJob }> {
+    return request(`/api/sniper/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
 export class ApiRequestError extends Error {
     constructor(message: string, readonly retryable = false, readonly retryAfterMs = 1500, readonly code?: string) { super(message); }
 }

@@ -81,6 +81,18 @@ test("authenticity assurances do not turn named single cards into mystery offers
     }
 });
 
+test("collector-number display case offers do not impersonate the card", () => {
+    for (const title of ["Leafeon V Alt Art 167/203 Evolving Skies Pokemon Magnetic 🧲 Extended Art Case",
+        "Leafeon V 167/203 Extended Artwork Case", "Extended-Art Frame for Leafeon V 167/203",
+        "Leafeon V 167/203 with an extended art case only"]) {
+        assert.equal(exclusionReason(single(title)), "Empty slab, case, or label", title);
+    }
+    for (const title of ["Leafeon V 167/203 with a magnetic extended art case", "Leafeon V 167/203 in an extended artwork frame",
+        "Leafeon V 167/203 extended art case included"]) {
+        assert.equal(exclusionReason(single(title)), null, title);
+    }
+});
+
 test("custom holders accompanying a card do not imply a custom card", () => {
     for (const accompaniment of ["with a custom protective case", "with a custom‑protective case", "in custom magnetic holder", "ships in a custom card sleeve",
         "includes custom top-loader", "comes with a custom fitted acrylic case", "custom protective case included"]) {

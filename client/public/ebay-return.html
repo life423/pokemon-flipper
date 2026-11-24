@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="referrer" content="no-referrer">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Return to Pokémon Flipper</title>
+</head>
+<body>
+  <p id="status">Returning to Pokémon Flipper on this computer…</p>
+  <noscript>Enable JavaScript to return to the local app.</noscript>
+  <script>
+    // Register the HTTPS copy of this file as the eBay accept and decline URL.
+    // Only the browser forwards the result to the fixed local app address.
+    const params = new URLSearchParams(location.search);
+    history.replaceState(null, "", location.pathname);
+    const callback = new URL("http://localhost:3017/ebay/connection/callback");
+    if (params.get("state") && (params.has("code") || params.has("error"))) {
+      for (const key of ["state", "code", "error"]) {
+        if (params.has(key)) callback.searchParams.set(key, params.get(key));
+      }
+      location.replace(callback.href);
+    } else {
+      document.getElementById("status").textContent = "Open Pokémon Flipper on this computer and open Sniper, then choose Sign in with eBay.";
+    }
+  </script>
+</body>
+</html>

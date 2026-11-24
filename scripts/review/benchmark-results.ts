@@ -1,3 +1,4 @@
+import type { BenchmarkFailure } from "./benchmark-queue.ts";
 import type { AnalysisState } from "../../client/src/analysis-state.ts";
 import { filterSearchResults, groupSearchResults, countSearchResults, type SearchFilters } from "../../client/src/search/results.ts";
 import { canAutoAnalyze } from "../../shared/analysis.ts";
@@ -54,7 +55,9 @@ function listingFilters(filters: SearchFilters): ListingFilters {
 // unreported transport attempts; the search usage ledger remains authoritative.
 export function summarizeBenchmark(listings: readonly ListingSummary[], evaluations: Readonly<Record<string, Evaluation>>,
     errors: Readonly<Record<string, string>>, intent: SearchIntent, targets: Targets,
-    { filters: selected = {}, includeOffers = false, now = Date.now() }: { filters?: Partial<SearchFilters>; includeOffers?: boolean; now?: number } = {}) {
+    { filters: selected = {}, includeOffers = false, now = Date.now(), failures = {} }: {
+        filters?: Partial<SearchFilters>; includeOffers?: boolean; now?: number; failures?: Readonly<Record<string, BenchmarkFailure>>;
+    } = {}) {
     const filters = { ...defaults, ...selected };
     const metadata = [...new Map(listings.map(listing => [listing.id, listing])).values()];
     const analyses: Record<string, AnalysisState> = {};
@@ -64,6 +67,7 @@ export function summarizeBenchmark(listings: readonly ListingSummary[], evaluati
         const resolved = withResolvedCriteria(fresh, evaluation, intent);
         const value = resolved.screen ? { ...resolved, screen: retargetScreen(resolved.screen, resolved.currentPrice, targets, undefined, includeOffers) } : resolved;
         if (evaluation) analyses[value.id] = { status: "done", evidenceKey: listingEvidenceKey(value), evaluation: retargetEvaluation(evaluation, targets, value) };
+        else if (failures[value.id]?.code === "AI_EVIDENCE_HELD") analyses[value.id] = { status: "held", evidenceKey: listingEvidenceKey(value), message: failures[value.id].error };
         else if (errors[value.id]) analyses[value.id] = { status: "error", evidenceKey: listingEvidenceKey(value), message: errors[value.id] };
         return value;
     });

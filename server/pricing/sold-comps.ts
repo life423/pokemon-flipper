@@ -63,7 +63,7 @@ export function readSoldTitleClaims(title: string, knownSets: readonly string[] 
     // A longer observed release must not borrow the ordinary Rocket alias.
     return returnsRelease ? { ...reading, set: returnsRelease } : reading;
 }
-export function matchesSoldTarget(sale: Comp, target: { name: string; setName: string | null; cardNumber: string | null; requireTitleIdentity?: boolean }, grader: string | null = null, grade: string | null = null): boolean {
+export function matchesSoldTarget(sale: Pick<Comp, "title">, target: { name: string; setName: string | null; cardNumber: string | null; requireTitleIdentity?: boolean }, grader: string | null = null, grade: string | null = null): boolean {
     const reading = readSoldTitleClaims(sale.title, target.setName ? [target.setName] : []);
     if (target.requireTitleIdentity && (!reading.cardName || !reading.set && !reading.cardNumber)) return false;
     const name = resolveScreeningName({ title: sale.title, claims: [reading.cardName], candidate: target.name, set: target.setName });
@@ -114,7 +114,7 @@ function titleAgrees(claim: PrintingClaim, printing: PrintingOrUnknown): boolean
 }
 
 // Why a comp's printing doesn't match, or null when it does.
-export function printingProblem(comp: Comp, printing: PrintingOrUnknown, setName: string | null | undefined): string | null {
+export function printingProblem(comp: Pick<Comp, "title" | "variant">, printing: PrintingOrUnknown, setName: string | null | undefined): string | null {
     if (hasBaseSetFourthPrint(normalizeSetName(setName), comp.title, comp.variant)) return "Base Set Fourth Print";
     const claim = printingClaimFromText(comp.title);
 

@@ -40,12 +40,20 @@ flowchart TD
    in the eBay query to catch shorthand titles, while exact search intent and
    label verification still use the full card identity. The same sold research
    session supports both discovery and screening.
-   If an exact slab Buy It Now search retains no listings, one lowest-price
-   Browse page and up to three detail reads can show the lowest checked
+   An exact slab Buy It Now search can also use one lowest-price
+   Browse page and up to three detail reads to show the lowest checked
    delivered ask and the purchase ceiling at its quoted shipping. This
    optional check uses the same search account and daily reserve. It reuses
    compatible saved slab evidence and labels matches based on listing details.
-   The comparison stays outside the Deals queue and does not set resale value.
+   The Best current buy card is available even with retained unresolved or losing
+   rows. It uses existing money math to show sold-based resale, total purchase
+   cost and projected profit or loss. It stays outside the Deals queue and does
+   not set resale value or dispatch AI. Already accepted assessments can supply
+   the card locally. Each candidate needs sales for its exact assessed condition
+   or slab grade. Qualifying candidates rank by percentage savings after
+   destination shipping and estimated purchase tax. Unknown shipping, material
+   conflicts and expired terms cannot supply a current recommendation. Coverage
+   and seller risks stay visible. Saved diagnostics preserve the comparison.
    A Buy It Now search defaults to newly listed inventory and can start with
    eBay's lowest-price order. The local result sort only reorders loaded rows.
    If the display fills
@@ -229,7 +237,8 @@ All paths below are relative to the repository root.
 | Money and purchase decisions | `shared/money/underwriting.ts`, `config.ts`, `offer.ts`, `rating.ts`, `targets.ts` | Deterministic calculations shared by server and browser. |
 | App orchestration | `client/src/App.tsx`, `client/src/analysis-state.ts` | Requests, queues, cancellation and loading/error/completed state. |
 | Search display and settings | `client/src/search/results.ts`, `settings.ts`, `presentation.ts`, `SearchControls.tsx`, `TargetFields.tsx` | Pure result selectors, preferences, labels and controls; no provider calls. |
-| Cards and analysis details | `client/src/components/DealCard.tsx`, `DetailPanel.tsx`, `components/analysis/` | `AnalysisDetails` composes financial, evidence, price and offer sections with shared presentation primitives. |
+| Cards and analysis details | `client/src/components/DealCard.tsx`, `DetailPanel.tsx`, `components/analysis/` | `AnalysisDetails` composes financial, evidence, price and offer sections. Desktop docks analysis alongside the results; compact screens keep a modal. Opening and resizing reuse the same loaded assessment. |
+| Responsive focus and dismissal | `client/src/useMediaQuery.ts`, `useDialog.ts` | The 80rem layout breakpoint is shared by App and analysis. Stable stack entries retain their live modality across resizes; modal entries alone lock scrolling and contain focus. Settings and expanded photos keep Escape priority. |
 | Liquidity/activity labels | `shared/liquidity.ts` | Describe retained matched-sale samples honestly; a broader volume fetch no longer runs as a separate writer. |
 
 `shared/analysis-priority.ts` orders eligible work without purchasing evidence.
@@ -381,10 +390,10 @@ its provider-request counts and limitations.
 Recorded sales and activity do **not** establish when this particular copy will
 sell. This architecture does not add or guarantee a 30–60 day resale forecast.
 The compact route also does not establish a full-search cost saving or repair
-every photo/identity judgment. A controlled cost benchmark is recorded in
-`search-cost-benchmark-2026-11-03.md`; useful-deal validation, deferred
-early-completion/English/visibility reports and the positive-deal example remain
-separate work.
+every photo/identity judgment. The [validation guide](validation.md) retains
+measured benchmark scope and explains the required normal-flow and live checks.
+The [active checklist](../LOCAL_TODO.md) records remaining coverage and
+positive-deal validation.
 
 ## Continuing a measured diagnostic
 
@@ -403,4 +412,4 @@ candidate keys and reason codes. Separate experiment storage preserves accepted
 photo findings. Its original search's generation allowance, exact preflight,
 dispatch-only Stop and maximum output reservation still apply. `--replay`
 cannot buy missing work. Batch/Flex are not enabled. Measurements and limits are
-recorded in `catalog-and-evidence-validation-2026-11-04.md`.
+recorded in the [validation guide](validation.md).

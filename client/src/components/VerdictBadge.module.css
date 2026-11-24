@@ -16,7 +16,7 @@
 
 .strong {
     background: var(--success);
-    color: #052e16;
+    color: var(--on-success);
 }
 
 .buy {

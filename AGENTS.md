@@ -1,7 +1,7 @@
 # Project memory and working agreement
 
-Updated November 8, 2026. These are current requirements. Older dated reports
-describe their own checkpoints; consult Git for branch and delivery state.
+Updated November 24, 2026. These are current requirements. Consult Git for
+branch and delivery state; obsolete planning reports are removed, not archived.
 
 ## Workspace and delivery
 
@@ -15,15 +15,16 @@ describe their own checkpoints; consult Git for branch and delivery state.
   including the existing unstaged .env.example deletion.
 - Read tracked LOCAL_PLAN.md and LOCAL_TODO.md before product/strategy work.
   The user explicitly requested that Markdown notes and the roadmap travel with
-  Git for work across computers. Older entries describing ignored/private notes
-  are historical. Keep credentials, .env, API responses, paid evidence and data/
+  Git for work across computers. Keep credentials, .env, API responses, paid evidence and data/
   contents out of commits and public reports. A separate handoff is deferred.
 
 ## Product outcome
 
-Success means real, evidence-supported profitable cards reaching Deals.
-Loaded rows, completed checks or lower spending alone do not establish success.
-Never manufacture Deals or inflate prices to satisfy a count.
+The product goal is a buying guide people use and pay for. Prioritize work that
+helps a buyer choose a specific copy, set an all-in price or decide to wait.
+Use buyer decisions, repeat payments and research costs to evaluate the pilot
+in LOCAL_TODO.md. A reseller Deal requires supported positive profit after
+costs. Keep that milestone alongside the collector guide.
 
 When improving search, read the latest completed automatic review in
 `data/search-diagnostics/index.json` before requesting another paid scan. Treat
@@ -43,6 +44,13 @@ relevant sales activity, not a guaranteed date this copy will sell.
 Keep the interface decision-focused. Avoid decorative "AI" branding; prefer
 plain deal, photo-review, pricing and progress labels. Keep provider/cost and
 evidence details when they help an informed choice.
+
+The user confirmed the palette on November 23: primary #7C3AED, accent #A78BFA,
+surface #171923, profit #22C55E and review #F59E0B. Use the whole palette with
+meaning: neutral header/navigation and panel fills, green for Find deals and
+supported profit, purple for listing evaluation, lavender selection/focus and amber evidence
+cautions. Do not repeat purple across every heading, badge and control. Keep
+grading labels neutral so action emphasis does not imply a grading recommendation.
 
 ## Current flow
 
@@ -142,10 +150,7 @@ Read docs/architecture.md for the source map and reading order.
   Actual photographed holder/grader/grade determines resale, not seller category.
   A compact request finding raw does not buy another raw assessment automatically.
   BGS/TAG resale is separate from configured PSA/CGC submission services.
-- An unresolved First Edition stamp can use one original-image crop on a
-  supported raw Buy It Now listing when verified current terms and two exact
-  pricing outcomes establish that the stamp can change the decision. Keep
-  the original accepted evidence and share the search's spending ceiling.
+- Use the photographed set's edition marks. On English Neo Destiny, a clear empty stamp area establishes Unlimited. A manual assessment can resolve an ambiguous reading from the original front and a stamp detail in one metered check. Reuse the saved result on repeat assessment and price refresh. Automatic stamp research requires current terms and evidence that checking could change the purchase decision. Charge the original search account. Artwork-shadow checks apply to eligible original English Base Set cards.
 - Raw resale reads accepted historical photo-condition evidence first. A
   same-condition seller-clue cohort, or otherwise an unspecified-condition
   cohort, merits research if any confirmed sale could cover current costs.
@@ -265,8 +270,9 @@ Read docs/architecture.md for the source map and reading order.
   title/card contradictions still hold. Resolved metadata notes must not become
   manual review again when only prices are deferred.
 - Seller condition is a clue, not assessed condition. Keep Mint, Near Mint, LP,
-  MP, HP and Damaged distinct. Numeric ranges span at most three adjacent grades;
-  completed raw photo requests require a likely grade. Show confidence and label
+  MP, HP and Damaged distinct. Grading economics require a supported range of
+  at most three adjacent grades. Preserve a wider valid photo estimate, its
+  likely grade and the independently assessed play condition. Show confidence and label
   low-confidence or condition-only estimates as reference, outside pricing and
   grade filters. If no observation narrows the grade, show the full scale with
   no point estimate. Preserve older accepted photo and pricing evidence.
@@ -313,35 +319,16 @@ Read docs/architecture.md for the source map and reading order.
   live deal validation work in the tracked checklist. A durable search record
   needs versioned replay inputs and recorded outcomes under the original UUID.
 
-## Reference checkpoints
+## Maintained references
 
-- docs/deal-search-audit-2026-11-08.md: the supplied audit, reconstructed
-  Blastoise outcomes, mocked browser verification, live Mew ex results and
-  cache-only follow-up.
-- docs/financial-calculation-audit-2026-11-03.md and its fee-source companion:
-  cents-correct math and remaining fee/holding assumptions.
-- docs/price-first-screening-2026-11-03.md and
-  docs/graded-raw-assessment-paths-2026-11-03.md: sold-first/task split.
-- docs/search-cost-benchmark-2026-11-03.md: one search cost 1.40084 cents,
-  three new assessments, zero Deals; replay added no provider calls.
-- docs/candidate-selection-2026-11-03.md: saved-only 50-row replay recovered
-  42 sold contexts versus 35, improving research priority, not verified Deals.
-- docs/price-research-accounting-2026-11-03.md: shared 32/64 PKMN request
-  safeguards, 830 offline tests, live 65-credit / 0.3991-cent slab sample,
-  zero additional provider work on replay; this sample found no Deal.
-- docs/selective-model-comparison-2026-11-03.md: five isolated saved-example
-  checks cost 0.42322 cents; three cheaper slab checks and two focused stamp
-  reviews. Replay made no provider calls; production defaults/answers unchanged.
-  Stopping checkpoint: 858 tests pass under default and explicit cheaper slab
-  configuration; current CGC search cost 0.44524 cents and found no Deal.
-  Broader validation and automatic stronger follow-ups remain unfinished.
-- docs/candidate-admission-2026-11-04.md: bounded source-page refill, literal
-  publisher/holder name cleanup and source-order ties; six more saved PSA5/CGC9
-  checks cost 0.47467 cents, with original evidence preserved and free replay.
-  Production model defaults remain unchanged; no current Deal established.
-- docs/catalog-and-evidence-validation-2026-11-04.md: catalog/sold-title fixes,
-  adaptive sparse sold pages, reference-only price safeguards, nineteen new
-  assessments and six cheaper slab comparisons. Saved text ranking of thirty
-  candidates cost 0.08581 cents; net savings and positive Deals remain unproven.
-- Dated reports retain measured scope. Git records delivery history; private
-  notes retain the full strategy and implementation backlog.
+- [Current plan and supplied resources](LOCAL_PLAN.md).
+- [Active checklist](LOCAL_TODO.md).
+- [Workflow and code map](docs/architecture.md).
+- [Financial sources](docs/financial-sources.md) and
+  [money calculations](docs/money-calculations.md).
+- [Supplied audit and reproduced findings](docs/deal-search-audit.md).
+- [Validation and measured work](docs/validation.md).
+
+Keep one current plan and checklist. Preserve useful findings/source links in
+these guides, delete superseded reports and use Git for earlier versions.
+Do not delete original user resources or paid evidence as documentation cleanup.

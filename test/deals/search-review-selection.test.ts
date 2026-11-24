@@ -51,10 +51,19 @@ test("malformed, padded, duplicate, foreign or missing picks and a paused provid
     }), /buyer stopped/);
 });
 
-test("a freshly listed raw Near Mint copy with screened grading upside advances to the first fifteen", () => {
+test("fallback prioritizes fresh grade leads by eBay time and distinct photos, including copies without a condition label", () => {
     const now = Date.now();
-    const fresh = { ...rows[49], listedAt: new Date(now - 60_000).toISOString(), cardCondition: "Near Mint",
+    const date = (minutesAgo: number) => new Date(now - minutesAgo * 60_000).toISOString();
+    const fresh = { ...rows[49], listedAt: date(10), cardCondition: "Near Mint",
         screen: { gradingLead: { grader: "PSA" as const, grade: 8 } } } as ListingSummary;
-    const old = { ...fresh, id: "old", listedAt: new Date(now - 2 * 86400_000).toISOString() };
-    assert.equal(ruleSelection([...rows.slice(0, 48), old, fresh], now).listingIds[0], fresh.id);
+    const newest = { ...fresh, id: "underdescribed", listedAt: date(1), cardCondition: null };
+    const singlePhoto = { ...fresh, id: "thumbnail-pair", listedAt: date(0),
+        images: ["https://i.ebayimg.com/images/g/example/s-l500.jpg", "https://i.ebayimg.com/images/g/example/s-l1600.jpg"] };
+    const old = { ...fresh, id: "old", listedAt: date(25 * 60), createdAt: date(1) };
+    const undated = { ...fresh, id: "undated", listedAt: undefined };
+    const damaged = { ...fresh, id: "disclosure", listedAt: date(0), conditionNotes: ["Seller description: The card has a crease."] };
+    const pool = [...rows.slice(0, 42), singlePhoto, old, undated, damaged, fresh, newest];
+    const picks = ruleSelection(pool, now).listingIds;
+    assert.deepEqual(picks.slice(0, 2), [newest.id, fresh.id]);
+    assert.ok([singlePhoto, old, undated, damaged].every(row => !picks.includes(row.id)));
 });

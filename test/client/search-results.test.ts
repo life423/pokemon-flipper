@@ -5,6 +5,8 @@ import {
     type SearchFilters,
 } from "../../client/src/search/results.ts";
 import { competingAuctions } from "../../client/src/search/competing-auctions.ts";
+import { compareResaleReceipts, validReceipt, type ResaleReceipt } from "../../client/src/search/resale-receipts.ts";
+import { verifiedSlabMarketKey } from "../../shared/slab-market.ts";
 import { searchDiagnosticRows } from "../../client/src/search/diagnostic.ts";
 import type { AnalysisState } from "../../client/src/analysis-state.ts";
 import type { Evaluation, ListingSummary, RatingLevel, Screen, SearchIntent } from "../../shared/types.ts";
@@ -863,6 +865,35 @@ test("raw comparison finds the $0.48 condition upgrade only with a current quote
     terms.shipping = listings[2].shipping = 0;
     assert.ok(compare()!.betterConditionCopy!.difference < 0, "a better copy at a lower total is also shown");
     assert.equal(fetch.mock.callCount(), 0);
+});
+
+test("a seller's recent settled receipts support a separate resale comparison across exact fixed-price slabs", t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("Private receipt comparisons use no providers"));
+    const item = listing("cross-market", { currentPrice: 100, shipping: 5 });
+    const value = currentBuy(item, 165, "9");
+    const state = { ...done(value), pricingExpired: true };
+    value.slabPricing = null;
+    const market = verifiedSlabMarketKey(value)!;
+    const receipt: ResaleReceipt = { market, venue: "Whatnot", reference: "one", soldOn: "2026-10-31", payout: 154, fulfillment: 6 };
+    assert.ok(validReceipt(receipt));
+    assert.equal(validReceipt({ ...receipt, soldOn: "2026-02-30" }), false);
+    assert.equal(validReceipt({ ...receipt, payout: -1 }), false);
+    const sales: ResaleReceipt[] = [receipt, { ...receipt, reference: "two", soldOn: "2026-10-01", payout: 220 },
+        { ...receipt, reference: "three", soldOn: "2026-10-31", payout: 150 },
+        { ...receipt, reference: "older", soldOn: "2026-06-01" }, { ...receipt, reference: "later", soldOn: "2026-12-01" },
+        { ...receipt, reference: "other", market: "other printing" }];
+    const compare = () => compareResaleReceipts(item, state, sales, NOW, holoIntent);
+    const [result] = compare();
+    assert.equal(result.count, 3);
+    assert.equal(result.proceeds, 144);
+    assert.equal(result.cost, acquisitionCost(100, 5, MONEY_CONFIG.buying));
+    assert.equal(result.margin, 30.34);
+    assert.deepEqual(compareResaleReceipts({ ...item, images: ["https://example.invalid/new"] }, state, sales, NOW), []);
+    item.shipping = null;
+    assert.deepEqual(compare(), []);
+    item.shipping = 5;
+    value.identity!.printing = "FIRST_EDITION";
+    assert.deepEqual(compare(), []);
 });
 
 test("nearby auctions compare exact photographed slabs with current bid terms and a checked BIN after shipping and tax", t => {

@@ -28,7 +28,7 @@ export type SortKey = "best" | "overlooked" | "ending" | "priceLow" | "priceHigh
 export type TypeFilter = "all" | "AUCTION" | "FIXED_PRICE";
 export type KindFilter = "all" | "raw" | "graded";
 
-export type SearchPage = "search" | "shortlist" | "listing" | "camera";
+export type SearchPage = "search" | "shortlist" | "listing" | "sniper" | "camera";
 export interface SearchFilters {
     typeFilter: TypeFilter;
     kindFilter: KindFilter;

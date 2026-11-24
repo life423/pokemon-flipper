@@ -1,17 +1,129 @@
-# Shared project notes — November 8, 2026
+# Pokémon Flipper — current plan and resources
 
-This Markdown file is tracked at the user’s explicit request so the plan travels
-with the repository. Older entries calling it private or ignored describe the
-previous arrangement. Credentials, environment values, API payloads, paid photo
-evidence and data/ remain excluded. A separate computer handoff is deferred.
+Updated November 24, 2026. This file records current decisions and locates the
+resources behind them. [LOCAL_TODO.md](LOCAL_TODO.md) is the single active
+checklist. [AGENTS.md](AGENTS.md) contains the working agreement. Git retains
+earlier versions; obsolete planning reports are deleted rather than archived.
 
-The active checklist lives in [LOCAL_TODO.md](LOCAL_TODO.md). The
-[November 8 deal-search audit](docs/deal-search-audit-2026-11-08.md) records
-the user-supplied audit and coverage patch, the 50-row Blastoise reconstruction,
-and the live and saved Mew ex results. See Git for delivery history.
+## November 24 progress and saved priorities
 
-## Buy It Now price comparisons
+The [README](README.md) describes the usable app and setup. This plan keeps the
+product ideas, and [LOCAL_TODO.md](LOCAL_TODO.md) keeps the remaining work.
 
+Today's work expanded the AI's role from explaining a result to choosing which
+research function to call and which evidence panel should open. The available
+tools cover listing terms, original photos, matching sales, price references,
+raw resale and grading economics. Independent checks can run together when they
+concern different copies. The app retains the buyer's preferences, computes
+money in code and reuses accepted evidence.
+
+The current foundations also include cross-card hunts for collectors and
+flippers, auction opportunities under ten hours, original bid-limit tracking,
+fresh raw-card grading checks and collector-number discovery. These are working
+research tools. Buyer purchases, successful resales and repeat paid use remain
+outcomes to measure.
+
+The collector-number comparison used the same $33.85 item-price ceiling for
+the full-name search, `167/203` and `Evolving Skies 167`. Both alternate
+queries found the same older Leafeon V missed by the name query. Its original
+front showed 166/203. The first assessment had repeated the seller's incorrect
+167/203 identification, so the new path compares the original illustration
+against independently resolved catalog artwork before using the searched
+market's sales. No verified alternate-art 167/203 qualified in this trial.
+The older listing also fell outside the fresh-grading watch's 24-hour window.
+
+Andrew selected ideas **5, 7, 16, 18 and 20** from the twenty-item list below.
+Keep their original numbering. They mean competing auctions, cross-market
+resale, clean-front binder copies, same-art alternatives and new evidence on a
+saved listing. Initial app features exist for these directions. The next step is
+measuring their usefulness on real inventory, with same-art alternatives a
+lower priority than the four stronger selections.
+
+The AI should handle every retained card in Sorting and Wait or skip, perform
+the necessary investigation and give a useful buying decision. For a retained
+batch of fifty, first review at least the fifteen eligible candidates selected
+for inspection, then continue the remaining eligible work. A clear Buy, Pass or
+Wait and its concrete reason should replace a generic request for the shopper's
+review. Preserve the facts about missing evidence so the AI can try another
+view, price source, copy or market.
+
+Andrew authorized a substantial increase in API spending to make the workflow
+work, including an earlier request for 20 times the budget. The later current
+decision is uncapped OpenAI on this installation with recorded usage and
+cancellation. Provider daily quotas and per-search accounting remain separate.
+Measure useful decisions and errors alongside cost.
+
+## Product goal and next milestone
+
+Build a buying guide that Pokémon collectors and resellers find useful enough to
+pay for. The first offer answers a buyer's own question about a specific card:
+which available copy fits their condition preference and budget after shipping
+and tax, or what price or condition would make it worth waiting for?
+
+Test the guide with five people already shopping for cards. Record what they
+did with the answer, whether they paid for another comparison and what each
+guide cost to produce. The [active checklist](LOCAL_TODO.md) tracks the pilot.
+For resellers, the open milestone is still one available Buy It Now listing
+reaching Deals with supported positive profit after costs.
+
+Best current buy ranks checked listings by percentage savings against recent sales
+of the same printing and assessed condition or slab grade. The purchase cost
+includes destination shipping and estimated tax. Show the seller risks, comparison
+coverage and resale economics when a copy qualifies below market.
+It must never label a loss, an unaccepted offer or unresolved evidence as a Deal.
+A buyer should be able to act on the first line. The app reads the photos,
+checks matching completed sales and compares raw resale with grading after
+costs. It gives a buy, pass or wait recommendation at the quoted price.
+When further research cannot settle the value, explain what the app checked
+and what would change the decision. The shopper should not have to find the
+comparisons or do the grading math.
+A separate raw-copy comparison shows the lowest checked purchase total and the
+next-lowest for the same card, printing, finish, language and assessed condition.
+It requires front and back coverage and can use clearly labeled, seller-described
+matched sales as a collector reference. A certified PSA sale is displayed separately.
+Only the resale calculation can put the listing in Deals.
+
+From a saved exact-slab guide, the buyer can check live Buy It Now listings
+against an all-in limit. The model chooses which listings need verification.
+The app rechecks the slab identity, availability and destination shipping and
+calculates tax before recommending a purchase.
+
+## Collector features worth paying for
+
+The November 24 comparison screenshot groups its offer into scanning and collecting, tracking value, tools, and community. It advertises Pro analytics, widgets, centering and binder scanning. Those labels tell us what another app offers. Willingness to pay for our version still needs a buyer test.
+
+| Feature to test | What a collector should get from Pokémon Flipper |
+| --- | --- |
+| AI card scanner and condition | From a phone photo, identify the exact release, number, printing and finish. For a raw card, give one estimated grade, its confidence and the visible wear. For a slab, read its certified grade. Let the owner save that exact copy with its photos. The existing camera grader is a starting point. |
+| Collections and watchlists | Support multiple named binders, sets and want lists. Keep duplicates as individual owned copies with purchase cost and condition. Watch a wanted card across new listings, with a delivered budget and acceptable wear. Test demand for unlimited lists before promising unlimited usage. |
+| English, Japanese and Chinese cards | Add one language at a time with its own catalog, set numbering and matching sales. Test cards that share artwork across languages. Show when the exact language has too little evidence. Current supported searches are English. |
+| Sealed products | Match the exact product, language, release and configuration. Show box versus case quantity and whether the wrap or seal is visibly damaged. Price it from matched sealed sales. |
+| Current prices, price history and portfolio history | Show recent completed sales, their dates and condition next to the estimate. Save dated valuations for owned copies. Track acquisition cost, fees, realized proceeds and estimated net sale value. Show how much of a portfolio change came from prices versus adding or selling cards. |
+| Market trends and Pro analytics for portfolios, sets and watchlists | Show which prints drove a change, how many comparable copies actually sold and which owned or wanted cards were affected. Highlight a newly affordable missing card, a lower-cost upgrade or a verified resale opportunity. Thin samples get a visible confidence note. |
+| Home-screen widgets | Surface a short, actionable update such as “A wanted copy is within budget.” Include the last check time and open the exact listing and evidence. Test the alert in the app first. |
+| AI centering tool | Mark the border measurements on the original image, report front/back ratios separately and request a straighter retake when perspective makes them unreliable. Test estimates against straight-on scans with manually measured borders. |
+| Binder page scanning | Detect cards by pocket, preserve order, flag duplicates and ask for a close-up of an ambiguous slot. Let the buyer correct one pocket without rescanning the page. Test a nine-pocket binder against its owner's inventory. |
+| Shareable profiles and lists | Share a chosen want list or binder with a revocable link. Keep private costs, notes and storage locations private by default. A recipient should be able to see exactly which printing the collector wants. |
+| Follow collectors, activity feed, friend trade matches and leaderboards | Start with a two-way trade match using each friend's duplicates and wants. Show condition-adjusted values and the difference both ways. Test opt-in follows and a feed for wanted-card availability. Consider optional set-completion leaderboards only after people return to share or trade. |
+
+**First paid experiment**
+
+Ask a collector for one exact card, condition and all-in budget. Deliver a verified listing or a specific reason to wait, then offer to watch for the next matching copy. Measure whether they act on the recommendation, pay for the next one and return for the alert. Next test scanning a card they own and comparing selling raw with grading at the estimated grade and one grade lower. The [active checklist](LOCAL_TODO.md) tracks these tests.
+
+## Current implementation
+
+- Search intent, catalog lookup, listing discovery, exact sold screening,
+  prioritization, photos, deterministic valuation and saved results share one
+  workflow. Preserve raw resale, existing slab resale and raw-to-CGC/PSA grading.
+  For raw cards, check whether the likely grade covers purchase, grading and
+  resale costs. Also compare the live card's condition with photos of completed
+  sales for the same printing. A worse-condition sale can support a conservative
+  resale price when there is no verified same-condition price. Show the conditions
+  and the sold price used, without adding an assumed premium for the cleaner copy.
+- A pass can fetch 200 eBay summaries. Discovery screens beyond 50 unresolved rows
+  before deciding which 50 to retain for assessment/display. A thin newest-first
+  BIN pass can add one lower-price pass under the original research account.
+  Explicit continuation through saved overflow remains on the checklist.
 - A fixed-price listing can be worth researching when its delivered ask is
   below both the other matching asks and recent sold prices. Use the smaller
   discount and show both sample sizes. Keep seller-described condition and
@@ -24,3237 +136,181 @@ and the live and saved Mew ex results. See Git for delivery history.
   projected loss and one unresolved resale value. A fresh search also surfaced
   two grading candidates. Neither had sufficient evidence to recommend buying.
   Keep the listing-level receipts in private validation storage.
-
-## Live Buy It Now validation — November 8
-
-Named raw Buy It Now searches can now queue a grading lead when the ordinary
-raw sold search is empty. Recent exact PSA/CGC 8 or 9 sales must support the
-lower observed price after costs. The existing evaluator still needs a
-photo-supported grade range and verified pricing before a card reaches Deals.
-
-A live Unlimited Mewtwo search up to $80 had ordinary raw evidence for 45 of
-50 rows and therefore did not use the new fallback. Four automatic reviews
-found no deal. One targeted $44.99 shipped copy was Lightly Played, with no
-supported numeric grade or raw resale price. The five assessments on the
-same search account cost 1.78238¢ against a 10¢ cap. The run exposed two
-screening bugs: better-condition sold prices inflated priority for visibly
-seller-described played copies, and an advertised misprint inflated ordinary
-comps. Condition now affects queue order, and explicit print errors stay out
-of ordinary sold prices.
-
-The Any/Any graded Aerodactyl V 180/196 search checked 25 source listings,
-retained five and produced zero Deals. It used four Browse requests, six
-PKMNPrices requests and 0.48172¢ of OpenAI generation. A saved replay screened
-out one overpriced row after reconciling its Lost Origin release name and kept
-a texture-error claim out of ordinary slab analysis. The UI now counts rows
-excluded by the price screen even when they never reach the results grid.
-
-The raw-only Shadowless Alakazam 1/102 search retained 50 from 85 source listings;
-30 more passed initial eligibility but were outside the retained batch. Of the
-50, 32 had exact market scope. The two native raw sale requests returned empty
-confirmed-sale pages, so no row advanced to paid photos. The other 14 price
-requests were catalog misses from title fragments. Review those misses with
-catalog-anchored normalization; this does not solve empty sold data. Reuse
-exact graded sales for a separate raw-to-grade research signal when the
-purchase and grading costs work at a realistic grade.
-
-A known purchase was already ended and correctly refused as a live candidate.
-Its historical photo assessment cost 0.473¢ and missed the blank stamp area.
-The original seller's title and visible printing disagreed with an overstated
-item detail. Identity now accepts that downward correction when title and
-photos agree; an unreadable stamp or conflicting slab label still holds. A
-provider-blocked replay with manually observed photo facts confirmed the
-correct Shadowless catalog record. It did not establish condition, resale
-value, or a live Deal. Original photos and diagnostic reports remain ignored.
-
-## Search intent and analysis budget — November 8
-
-The user raised the OpenAI ceiling to $0.10 for new search accounts. Existing
-accounts retain their original ceilings, costs and reservations. Aim well below
-the cap by reusing evidence and resolving identity and price before photos.
-
-Resolve unambiguous searches with local rules and the catalog. Pilot a cheap
-text-only call for ambiguous intent using catalog candidates and explicit user
-constraints. Allow abstention. Try listing text selectively after sold-price
-screening if it could avoid a paid photo review. The existing text ranking pilot
-avoided zero photo calls, so measure saved calls and missed candidates before
-enabling it automatically. For valuation, use the cheapest verified exact
-available Buy It Now match including shipping as a competitive ceiling.
-Keep it separate from completed-sale evidence.
-
-A 12-phrase replay used saved catalog and listing data without calling eBay or
-PKMNPrices. It reproduced two free-screening gaps. Search grade ranges now
-handle spelled-out values, and shared finish parsing keeps "Reverse Holo Foil"
-and "Non Holo Foil" distinct from regular holo. The saved Dark Blastoise catalog
-still resolves holo to 03/82 without requiring the number in eBay keywords.
-
-One bounded text-only call received four search phrases and two preselected
-saved catalog pools. It chose Evolving Skies Umbreon VMAX 215/203 for Moonbreon,
-abstained on the sleepy Mew description, and preserved the broad Umbreon VMAX
-and Galarian Gallery controls. Both token counting and generation returned HTTP
-200. Generation cost $0.0001202 (0.01202¢), with 1,027 input and 35 output tokens.
-Replay reused the answer with no provider call. This was a controlled
-experiment with supplied candidates. It did not measure the app's ability to
-retrieve candidate pools for nicknames, live search recall, or saved photo calls.
-This catalog-selection experiment remains separate from production. Production
-has a narrower, bounded text cleanup for unresolved phrasing. Delivered-price
-language such as "under $350 shipped" still needs its own constraint.
-
-## Market-led slab searches and partial-number recovery — November 5
-
-Used saved exact PSA10 markets to calculate break-even item ceilings with the
-existing cents-based tax/fee/shipping engine and Any/Any targets. Mew GG10/GG70:
-$683.70 with free inbound shipping, $676.70 with $7 assumed shipping, $588.14
-under the lower observed resale. Giratina VSTAR GG69/GG70: $381.56/$374.56/
-$346.18 respectively. Existing price-sorted Browse adapters returned 54 and 56
-source rows; neither search admitted an exact matching listing under its median
-ceiling. Each used one Browse request and zero price-provider or paid AI calls.
-Their distinct queries have separate search IDs; no existing account was reset.
-
-A normal HTTP Evolving Skies PSA9 search then returned 199 single-card summaries
-from 811 reported results. Initially 71 were screened, 21 price-excluded and 50
-retained. Forty-five retained rows failed exact-market identity before useful
-price research; 28 had null names, with publisher-era text common among them.
-One catalog 429 and other temporary/incomplete price states also occurred;
-these were not proof of absent markets or exhausted daily quota.
-
-Fixed the demonstrated partial-number boundary in existing modules: move the
-literal collector-number extractor unchanged into card-identity.ts and remove
-its former local definition from title-reader.ts. Both reading and name cleanup
-share it. Sword & Shield publisher metadata can now be reconciled beside an
-explicit plain partial collector number, numeric slab grade and mapped written
-release. Full-number behavior remains; bare numbers, lone promo/release codes,
-unknown wording, printing/finish/grade constraints and other full-fraction-only
-metadata rules remain conservative. Saved normalized publisher residue is
-reconciled against the original observed phrase. No denominator is inferred.
-
-Targeted real Medicham V #186 and Rayquaza #111/#194 research established exact
-markets and excluded all three saved asks without buying photos. Medicham's
-single matched PSA9 sale was $36.25 against $38.45 asking, yielding -$19.09 after
-configured costs. Normal HTTP rerun under the SAME Evolving search account then
-screened 116, excluded 66 and retained 50, leaving 80 unprocessed eligible rows
-in that source window. Seven retained rows had sold references. These are
-observed live-run changes with updated caches and recovered provider work, not
-a claim that all 45 extra exclusions were caused solely by one parser edit.
-
-The most plausible retained lead was Pikachu #049 PSA9 at $29, with one $65
-reverse-holo sale suggesting $8.08 net under $7 assumed shipping. A fresh normal
-resolve confirmed active BIN terms but left shipping unquoted. Original photo
-triage shows a plain PSA9 label and no visible reverse-holo pattern, favoring
-ordinary non-holo. It does not support borrowing the reverse-holo sale. This is
-manual unsupported-premium triage, not accepted app identity, a financial PASS
-or a Deal. No paid photo assessment was purchased. The separate best-available
-purchase idea does not authorize presenting this copy as profitable.
-
-This pass used five Browse requests across the two focused markets, the broad
-search/rerun and one current-term resolve; the Evolving account recorded 163
-PKMN request attempts / 361 reported credits with one unreported-credit attempt.
-All three AI accounts remained at zero charged/held and the two-cent cap stayed
-unchanged. Final observed headroom was 4,969/5,000 Browse requests and
-19,641/20,000 PKMN credits, with no depletion warning. PKMN's UTC daily reset
-occurred during the work; do not subtract pre-reset observations as one day.
-
-Independent review and all 1,049 isolated tests, typechecks, build and whitespace
-checks passed. No runtime/test files were added or deleted; existing parser
-code was moved/reused. The unrelated .env.example deletion remains untouched.
-Private diagnostics/source photos remain ignored. The verified BIN milestone
-is still open; remaining source admission, residual descriptors, numberless
-ambiguous markets and exact-finish photo evidence remain concrete next work.
-
-## Numbered four-word names and live candidate screening — November 5
-
-The literal title reader's three-word ceiling hid valid Origin Forme Palkia
-VSTAR and Origin Forme Dialga VSTAR claims from catalog research. It now retains
-four-word names only when a collector number is actually present. Unknown words
-and printed forms remain intact; unnumbered searches retain their prior behavior.
-The existing native name/set/number checks still decide market compatibility.
-An old cached null name is recoverable from current literal claims, without a
-new paid title reading or changed saved-photo keys.
-
-Full-suite validation found that a known parenthetical holder-accessory note
-could now become a four-word name. The existing occurrence-aware name cleaner
-handles the exact (LIMITED EDITION GUARD) note only beside a numeric slab grade.
-The valid Shadowless sale remains included. Explicit signed-title name conflicts
-are excluded before optional checking; the retained test also verifies that an
-accepted veto of a different eligible comparison still affects final pricing.
-No arbitrary removal of unknown words, source-title rewriting or global set
-matching change was added.
-
-Bounded price research on the two original saved candidates added six PKMN
-requests / 35 reported credits, zero eBay requests and zero paid AI. Palkia PSA9
-had 11 exact sold observations, median $115, against a saved $114.99 ask with
-unquoted shipping. Its omitted release remains research context, not exact
-observed identity or preliminary profit. Dialga PSA9 had 20 matched observations,
-median $112.50, against $150 plus $9.99 shipping. Its upper outlier can keep it
-eligible for research, but the normal median economics lose $85.61; no label
-assessment was purchased. Saved terms are not fresh availability confirmation.
-The same original-account replay reused SQL with zero additional transports.
-
-One fresh normal HTTP search for Suicune V GG38/GG70 Crown Zenith PSA10 used one
-Browse request and nine PKMN requests / 20 reported credits. It screened all 23
-source rows, price-excluded 18 and retained five unresolved rows; none had a
-supported profitable median. Ordinary matched sales had median $200 versus
-retained asks of $238.72 or more. No photos were purchased. The search's AI
-account remains at zero charged/held, with the unchanged two-cent cap. Latest
-observed provider headroom was 4,974/5,000 Browse requests and 19,007/20,000 PKMN
-credits; these are dated observations, not a new poll or whole-account audit.
-
-Private reports remain in ignored data/candidate-validation/. No runtime/test
-files were created or deleted. Independent review and all 1,048 isolated tests,
-typechecks, production build and whitespace checks pass. The unrelated
-.env.example deletion remains untouched. Parent-release versus explicit-subset
-admission remains deferred: keep native catalog evidence and final filtering
-consistent before widening that boundary. The genuine profitable BIN milestone
-remains open. The user reiterated the ChatGPT comparison workflow; retain the
-existing separate best-available-purchase idea without calling a current loss a
-verified profitable Deal or buying more opinions to change an unfavorable grade.
-
-## Anchored slab-title recovery — November 5
-
-The existing screening-name cleaner now reconciles observed CRZ, Holo UR and
-separately written Galarian Gallery metadata only beside a written Crown Zenith
-release, full GG collector fraction and numeric slab grade. Source titles are
-unchanged. Printed forms/owners, unknown words, edition/finish checks and special
-slab labels remain distinct. Omitted sets still supply research references
-without becoming an exact observed scope. No new runtime module, paid stage,
-model/prompt change or assessment/cache-version bump was added.
-
-A cache-only replay of three saved retained lists (64 unique listing IDs across
-overlapping searches) through the production price-first session established
-five more exact scopes: three ordinary Mew CGC10 listings and Simisear VSTAR /
-Diancie PSA9. Four had no usable price context; the split-subtitle Mew already
-had references but no exact scope. All five are above target even using the
-upper observed sold price after costs, so they are excluded before photos.
-Paras now reaches catalog research but its required cache entry was missing;
-with uncached requests set to zero it remains deferred. The replay used current
-SQL contents, so changes to older reference medians are not market-growth claims
-or isolated measurements of this parser change.
-
-The replay dispatched zero eBay, PKMNPrices, photo, preflight or generation
-requests and changed no original search allowance. Private reports are under
-data/candidate-validation/2026-11-05/slab-name-replay*. Independent review and
-all 1,046 isolated tests, typechecks, production build and whitespace checks
-passed. No files were deleted in this focused cleanup; it modifies existing
-runtime/tests. The unrelated .env.example deletion remains untouched.
-
-The profitable BIN milestone remains open. A separate known admission boundary
-is a parent Crown Zenith title under an explicit Galarian Gallery query. Before
-widening that directional set match, establish the exact native catalog identity;
-do not infer it from a requested set or indiscriminately strip unknown wording.
-
-## Discovery-order and raw/slab follow-through — November 5
-
-Controlled diagnostics used the existing price-sorted Browse adapter through
-findDeals, preserving each original search account, price screen, 50-row bound
-and spending guards. This was not a new production source or evaluator.
-Crown Zenith PSA9 lowest-price discovery screened 82, excluded 44 and retained
-38; none had a supported positive median margin. It added one Browse request,
-26 PKMN requests/37 reported credits and zero AI. Do not automatically add a
-second source request to every search without evidence it improves outcomes.
-
-A distinct exact raw Mew search returned 173 summaries and retained 50; the
-lowest-price follow-up reused that same account. Raw and exact PSA10/CGC9/CGC10
-market research remained separate. One credible live copy received a normal
-HTTP assessment plus the existing single historical-copy check, costing
-$0.0056404 (0.56404 cents) total. The original model answer supported Near Mint
-raw condition but supplied no numeric grade range. Code did not erase a range;
-the existing sleeve/LIMITED rule lowered condition confidence. No accepted
-condition-matched eBay raw price resulted, and grade-specific sales cannot
-price a live copy with no supported range. Current shipping is unquoted and the
-reference math uses its disclosed assumption. Actual Any/Any client grouping
-is Sorting/CANT_PRICE, with zero manual-review reasons and zero Deals.
-
-Normal HTTP reopen returned savedEvaluation, no generation usage, no new price
-request and zero additional charge. A separate exact CGC10 slab search reused
-the market data, screened 15 and excluded five; remaining ordinary asks were
-above the supported margin or had unresolved claims. No additional photos were
-purchased. The cap did not stop these cases. Keep the genuine BIN milestone
-open, preserve accepted negatives and abstentions, and do not buy another
-opinion merely to obtain grade10 or convert a fallback estimate into a Deal.
-
-This batch changed no runtime code, model, prompt, allowance or financial
-assumption. Only tracked notes and ignored diagnostic reports were added.
-Latest observed daily headroom after the raw evaluation was 4,976/5,000 eBay
-requests and 19,062/20,000 PKMN credits; later observations remain in private
-reports. Source-order coverage, these finite samples and missing evidence do
-not establish that no deals exist across eBay.
-
-## Separate edition markets and retain paid findings — November 5
-
-The user reaffirmed that First Edition and non-First Edition prices are entirely
-different markets. Final sold eligibility already separates printing, finish,
-grader and grade, but preliminary ranking could attach profitable First Edition
-math to a missing-edition listing because the query requested that printing.
-One shared exact-scope predicate now gates preliminary math and saved financial
-priority, also replacing duplicate scope checks in raw context. Unknown and
-mixed markets retain separate observations and automatic identity research;
-they do not acquire a profit estimate, ceiling or hard price rejection.
-
-A provider-blocked replay of the saved Lapras changes its old band-3 $36.05
-expected/$5.91 lower-scenario priority to neutral identity research with no
-financial estimate. The original front label shows Unlimited. This is manual
-triage, not an accepted app assessment; it does not create a verified item-ID
-exception or a Deal. Replay made zero provider/photo/AI calls.
-
-The cache review found that Edition/Features/Printing item specifics could
-change without invalidating old financial advice. The existing identity parser
-now supplies the semantic printing claim to private financial context and
-legacy/private reuse checks. Shortlist refresh/resave compares the same claim.
-Changed or missing claims re-enter identity or clear stale advice; accepted
-photo keys/answers, model/prompt versions and spent counters are preserved.
-Equivalent edition wording and unrelated feature text retain reuse.
-
-The preceding cleanup also consolidates special slab title/parenthetical
-qualifier exclusions in the existing shared module. Screening and final sale
-eligibility agree before pagination/recency decisions. A retained-sale audit
-reprices contaminated saved graded summaries without a global pricing-version
-bump. The slab regression reuses photos and then reuses corrected pricing;
-affected raw-to-grade evaluations still enter the existing whole pricing path,
-so no claim of route-granular or universally free repricing is made.
-
-Metadata-only Zapdos, Haunter, Fossil PSA7 and Crown Zenith PSA9 scans plus one
-Lapras current-detail check used five Browse requests, 117 PKMN requests and
-336 reported credits, with zero new paid AI. Exact scopes removed overpriced
-copies before photos. No genuine profitable BIN was verified. Latest observed
-headroom was 4,981/5,000 eBay requests and 19,187/20,000 PKMN credits, not a new
-provider poll or a guarantee that another app has not consumed quota since.
-Private reports/photos remain under ignored data/candidate-validation/.
-
-All 1,043 isolated tests, both TypeScript checks, production build and whitespace
-checks pass. Independent reviews found no blocking issue in the preliminary
-scope or financial-cache corrections. Existing tests that expected financial
-priority from unresolved scopes were corrected; the diagnostic target-ranking
-fixture now supplies a real exact market instead of an empty ambiguous scope.
-No new runtime/test files, paid stage, model, budget increase or blanket cache
-invalidation was introduced. The profitable BIN milestone remains open.
-
-## Catalog recovery and economical candidate checks — November 5
-
-A focused normal BIN/graded search for Mewtwo GX 78/73 PSA9 returned 25
-listings, initially all without a pricing market. Existing SQL catalog data
-contained Mewtwo GX (Secret Shining); the shared name matcher rejected its
-parenthetical descriptor before fetching prices. The existing descriptor rule
-now recognizes that precise suffix while preserving printed Shining forms,
-owners, bare unknown wording and exact set/collector-number checks.
-
-The same original search then obtained 16 matched PSA9 transactions and excluded
-15 overpriced listings through the normal price screen. Six more ordinary
-titles retained Sun & Moon publisher wording as a name, preventing exact scope.
-The existing name cleaner now removes an observed era phrase only with a full
-collector fraction, numeric slab grade and separately written specific release;
-both callers pass their existing set context. Base Sun & Moon, missing anchors,
-joined unknown words, reversed phrases and printed Shining remain distinct.
-
-A provider-blocked replay through production price screening now excludes 21 of
-the original 25 listings, with zero new provider, photo, preflight or generation
-calls. Four residual/qualified/missing-set rows remain unresolved. No candidate
-is claimed as a Deal; even the cheapest ordinary slab loses money under the
-observed median and current costs. The two normal metadata passes share their
-original search ID: two Browse requests, six PKMN requests/22 reported credits,
-zero paid AI. Responses are saved through the shared SQL path.
-
-Separately, current-term checks of two cheap saved Entei leads used two Browse
-requests and no paid AI. Original photos show Promo 34 despite titles claiming
-Neo Revelation 6/64. Three other saved candidate fronts show the same mismatch.
-These are manual triage observations, not accepted app assessments; no item-ID
-exceptions, fake-card conclusions or changed market values were added. Private
-reports/photos remain excluded under data/candidate-validation/2026-11-05/.
-
-All 1,033 isolated tests, typechecks, production build and whitespace checks
-pass. Independent review caught an overly broad joined-word match; tightening
-the observed phrase and adding counterexamples corrected it before completion.
-No new runtime files, model/prompt changes, photo/valuation version changes or
-budget increases. The genuine profitable BIN milestone remains open. Resolve
-remaining identity residue from evidence, not by removing arbitrary words or
-purchasing more opinions about the same unsupported candidates.
-
-## Raw sold-copy selection correction — November 5
-
-The Arcanine review exposed a selection bias: an older profitable sale could be
-reviewed while a newer losing sale in the same seller-condition cohort was
-skipped. The existing evaluator now uses economics only to decide whether a
-condition cohort merits one check, then selects its newest unreviewed sale
-independently of individual profit. The same rule covers unspecified-condition
-sales. Seller clues remain research context; physical acceptance still decides
-which condition bucket receives a transaction.
-
-Two regressions retain newer losing sales and prove their accepted amounts lead
-to a completed PASS rather than a favorable replacement or a manual hold. The
-full 1,032 isolated tests, both typechecks and production build pass. No new
-runtime module, model/prompt, paid stage, accepted photo key, valuation revision
-or allowance change was added. Validation made no live provider calls. Keep
-pricing revision 14 so reusable paid work is not needlessly invalidated.
-
-This fixes selection within a research cohort, not whole-market sampling or the
-missing accepted LP comparison in the saved Arcanine valuation. That result
-stays reusable; buying another opinion just to create a Deal is not validation.
-The genuine profitable BIN milestone remains open.
-
-## Arcanine end-to-end validation stopping point — November 5
-
-The user's instruction was to follow the single-listing plan until it reaches
-a real blocker. Three low-priced saved raw candidates received current-term
-checks under original search 6b5ccf0d-facf-4316-a605-80c8d55db954. Condition
-additionalInfo is structured category context, not verified physical damage;
-the second candidate's original photos visibly show large creases. No new
-production source or evaluator was introduced.
-
-Item 327393272267 remains active at $55.99 plus $5.50 shipping. The normal HTTP
-evaluator reused existing live-card photo findings: English Unlimited Gym
-Challenge Blaine's Arcanine, Lightly Played, no numeric grade supported. One
-bounded sold-copy review cost $0.0032264 (0.32264 cents) and remains in SQL.
-Its $100 seller-titled LP+ comparison was assessed MP/MEDIUM, so it supplies no
-accepted LP resale price. The TCGplayer fallback is explicitly reference-only;
-neither its negative scenario nor seller-title LP medians are a verified eBay
-valuation. The real result is CANT_PRICE / Sorting, zero manual-review holds,
-zero Deals. The budget did not stop this case.
-
-Saved-result replay through the existing evaluator and UI result selectors
-preserved the same photo findings/category, used savedEvaluation and incurred
-zero generation, preflight, photo, Browse or PKMN requests. The original budget
-remains $0.02 with one settled attempt and no unresolved holds. Diagnostic files
-and photos stay excluded under data/candidate-validation/2026-11-05/.
-
-Stop at the missing condition-matched-price evidence rather than purchase a
-sequence of favorable comparisons. Existing acquisition chooses a profitable
-possible sale, then matching seller-condition clue, then newest date; it does
-not sort by highest price. However a future fresh valuation could select the
-$133.75 sale while skipping a newer $79.95 sale that would not cover costs.
-That is a selected sample, not an unbiased LP-market estimate. Review that
-selection/uncertainty before extending acquisition; no bug, confidence-policy
-change or additional paid probe is claimed here.
-
-## Data-provider headroom and best-available idea — November 5
-
-The user explicitly authorizes more useful eBay/PKMNPrices work and identifies
-AI cost optimization as the main financial concern. New search defaults are
-100 Browse requests, 128 preliminary price requests and 256 all-stage price
-requests. The observed Crown Zenith screening deferrals justify more price
-headroom; eBay headroom supports later detail verification. These are ceilings,
-not consumption targets. Existing 25/50 Browse and 64/128 price ledgers retain
-their original counters and limits. Daily quota protection, rate limits,
-SQL response reuse, warnings, row counts and the $0.02 AI cap remain intact.
-No new paid stage or automatic reanalysis is introduced.
-
-All 1,030 isolated tests, typechecks, production build and whitespace checks
-pass. Legacy partial/exhausted ledgers and original diagnostic caps remain
-covered. Validation used mocked providers and added no real provider or AI calls.
-
-Saved for later: show the best available purchase separately from a verified
-profitable flip. Explain current net economics and an independently sourced
-market outlook, including trend, liquidity, competition and holding time.
-A prediction is uncertain and cannot replace current transaction evidence or
-justify calling a currently losing purchase a verified Deal. This feature is
-not implemented now; the immediate original-account BIN validation remains next.
-
-## Query-scoped research correction — November 5
-
-A live Unlimited Fossil holo PSA8 scan exposed avoidable premium-market work:
-25 retained listings ranked positively only against unrequested First Edition
-sales. Existing sold screening now restricts missing seller printing/finish
-claims to explicit query research. This does not confirm physical identity or
-authorize an exclusion from query assumptions. Broad searches retain plausible
-markets, actual claims remain unchanged, and local retargeting retains the same
-narrowed references. Existing cached-intent cleaning also rejects guessed
-printing and conflicting finish/printing discovery keywords using shared parsers.
-No new runtime module, paid stage, prompt/model change or budget change was added.
-
-Cache-only production replay of all 50 saved Fossil rows removes all 25 borrowed
-positive priorities and all out-of-query printing references. It uses zero
-provider, photo, preflight or generation calls. Independent review found no
-blocking concerns; all 1,028 isolated tests, typechecks and production build pass.
-This corrects wasted prioritization; it does not itself establish a real Deal.
-
-Metadata-only Fossil and Crown Zenith scans used one Browse request each,
-62/64 PKMN requests and 156/237 reported credits respectively, with zero AI.
-Crown Zenith left useful markets deferred. A targeted Melony GG64 PSA10 follow-up
-used one Browse and three PKMN requests/six reported credits; all three returned
-listings were excluded by existing economics, before photo spending. A very
-specific raw Arcanine query returned no rows and spent no AI. A shorter query
-with the actual raw-card control returned 149 summaries and retained 50, all
-with preliminary sold references. That distinct search used one Browse request,
-four PKMN requests/24 reported credits and zero AI; it did not reset an earlier
-account. Seller-condition buckets are research context, not proof of any live
-copy's condition. The next step is to select one credible low-priced raw copy,
-verify current terms/photos under its original search account, and complete
-condition-matched resale evidence before checking its final Deals category.
-No profitable BIN is claimed.
-Private reports remain excluded under data/candidate-validation/ and
-data/search-benchmarks/. The unrelated .env.example deletion remains unstaged.
-
-## Correction reuse and next BIN validation — November 5
-
-The focused code review found a real cross-label duplicate bug: final graded
-pricing retained the first source row, allowing an old unknown amount to hide
-a later confirmed correction. One pure uniqueSoldComps function in the existing
-sold-comps module now replaces four inconsistent merge implementations across
-acquisition, screening, raw and slab pricing. Provider updated_at precedence
-comes first; without revision differences, confirmed transaction types beat
-unknown snapshots, then arrival order resolves ties. Neither price nor target
-fit chooses the winner. A newer explicit retraction remains rejected. Existing
-anonymous duplicate observations stay conservative across source aliases.
-Pricing revision 14 refreshes dependent money evidence without changing paid
-photo versions. All 1,024 isolated tests, both typechecks, build and whitespace
-checks pass; shared SQL storage reports ready. No new runtime module or paid
-stage was added. Unrelated .env.example deletion remains uncommitted.
-
-The user's unknown-amount extraction idea was evaluated, not implemented as an
-automatic paid stage. All 13 saved Kangaskhan null-sale-type rows lack a verified
-alternative amount. Cached ListingDetails.price is a bid/asking snapshot; one
-sampled public item page returned an in-progress auction view, so simply reading
-its price cannot confirm a transaction. Prefer provider corrections and known
-sale types; later targeted recovery needs explicit sold-state/ID/currency/final
-amount provenance before code can accept it. PKMNPrices documents updated_since
-for corrections. No extra eBay/PKMN or paid-model request was used by this review.
-
-One new ordinary BIN/graded query, Suicune V GG38/GG70 PSA9, screened 11 of 17
-returned listings and excluded six by existing sold-price economics. Five
-retained rows remain preliminary; the two supported references have 14 recent
-sales with median $61.80. The $69.99+$6.50 candidate models a $38.48 loss under
-current costs. No label assessment was purchased. Original account
-7378e133-9c5c-4812-9b3d-935caefff780 used one Browse request, six PKMN requests,
-17 reported credits and zero AI, with no cap change or daily warning. This did
-not find the desired positive BIN. Data remains excluded under
-data/candidate-validation/2026-11-04/focused-slab-bin/.
-
-LOCAL_TODO.md is now a concise current index rather than repeated dated
-checkboxes claiming completed work is still pending. The full older list remains
-in Git, with strategy details retained here and in dated docs. The immediate
-milestone remains a genuine supported live BIN reaching Deals; prioritize that
-before the larger strategy, worker-queue and UI backlog.
-
-## Confirmed-sale acquisition — November 4
-
-New PKMNPrices sold requests use the documented auction, fixed_price and
-best_offer_accepted filter to avoid returning historical unknown sale amounts.
-This does not relax exact identity, printing, grade, recency or transaction
-validation. Fresh filtered SQL pages take precedence, including short-lived
-empty responses. Useful original unfiltered cache chains remain readable with
-no new request allowance. Legacy cursors are cache-only; a missing continuation
-restarts at the confirmed root and never mixes opaque cursors across queries.
-Screening and final pricing share native URLs, transport sponsorship and saved
-responses; recovery retains the existing four-page bound and original ledgers.
-Selection memoization distinguishes printing-dependent legacy choices while
-the underlying provider response remains shared. No new module, model, photo
-version or financial assumption was introduced.
-
-All 1,022 isolated tests, both typechecks, build and whitespace checks pass.
-The original Kangaskhan CGC9 search account then made one filtered Unlimited
-lookup: zero rows, zero reported credits, zero Browse/photo/AI calls. The
-response saved through the normal shared SQL path. This is a provider coverage
-gap, not evidence of negative value or a supported Deal. No cap was raised and
-the profitable BIN milestone remains open. Evidence stays excluded in
-data/candidate-validation/2026-11-04/focused-slab-bin/confirmed-sales-check.json.
-
-A fresh Celebi V 245/264 PSA9 BIN query then used one Browse request and five
-PKMN requests/22 reported credits, zero AI. Of 17 screened rows, 11 were excluded
-by existing sold-price economics; six remained. Twenty recent transactions
-supported a $99.205 median; unresolved printing scopes stayed separate. The
-$90 candidate plus assumed shipping still models a $28.76 loss. No label
-assessment was purchased on these unsupported economics. Original account:
-ef60a6c7-2f89-4b02-b391-9d0c3adf44aa. This is a negative inventory sample, not a
-complete-market conclusion or a confirmed Deal. Bare OC/Error sold-title wording
-also warrants a later qualifier review; do not silently treat it as an ordinary
-slab or relax exact matching to make results appear.
-
-## Focused priority and retired-writer cleanup — November 4
-
-After 2c4c13a, continued with two narrow corrections and caller-proven deletion.
-Raw seller HP/damage/conflict cautions now survive missing market context and
-priced priority bands, after financial band selection. They affect order only,
-never physical condition, eligibility or financial verdicts. Slab routes are
-exempt. Unknown shipping uses the configured $7 research allowance instead of
-the screen's conservative $0 exclusion fallback. Replaying the saved $120 Light
-Dragonite terms gives priority profit -$4.83 instead of +$2.75. Its structured
-HP claim is available only with saved details; generic search summaries do not
-supply absent condition notes, and no extra detail fetch was introduced.
-
-Removed the orphan main-photo matcher, orphan discovery writer/wrapper and two
-exclusive writer test files after repository-wide caller tracing. No new module
-was added. Saved discovery keys/version/model, cleaning, compatibility types,
-pure matching and SQL public-cache routing remain, with a no-provider regression.
-Current bounded/deeper assessments and their active cancellation/save tests
-remain. All 1,016 isolated tests, both typechecks, build and whitespace pass.
-Current README feature descriptions now reflect one-sale pricing, saved-only
-retry compatibility and retirement of unused discovery writers.
-
-One fresh Kangaskhan Jungle holo CGC9 scope resolved 05/64 and retained seven
-rows, using one Browse and five PKMN requests/17 reported credits, zero AI.
-Cache-only diagnosis: First Edition page empty; all 13 Unlimited amounts have
-sale_type:null, so none establishes a confirmed transaction price. Eleven pass
-title matching; two date-formatted suffixes leave name residue. Provider docs
-confirm null sale type can retain an accepted offer's asking amount. Missing
-coverage was recorded separately from negative economics; no Deal manufactured.
-Private evidence stays in data/candidate-validation/2026-11-04/focused-slab-bin/.
-Original two-cent caps stayed unchanged. See LOCAL_TODO.md for the confirmed-sale
-filter, prose photo-number mismatch and structural-clue follow-ups.
-
-## Consistent sold pricing and varied BIN check — November 4
-
-Final graded valuation now applies the existing sold-target name/set/number/
-language/grader/grade checks before cached vetoes, recency selection and outlier
-handling. Previously, a provider-attributed wrong-card sale could pass final
-pricing even when preliminary screening rejected it. Offline counterexamples
-demonstrated both false losses and inflated profits; neither is an observed
-profitable listing. Original real-market fixtures retain their valid values.
-Terminal provider provenance, Base (Shadowless), and explicitly anchored Cosmos
-Holo descriptions preserve legitimate existing titles without erasing original
-claims, printed names or qualifiers.
-Actual SQL-only replay also retained all three accepted Dark Machamp auction
-sales and identical financial results after preserving the contextual Pokemon
-Rocket alias. Existing Crown Zenith/Galarian Gallery family relationships work
-in either direction without borrowing another explicit card number/release.
-The negative Mewtwo BIN remains PASS; its median changes slightly because the
-new graded sample stops at 20 rather than automatically collecting 40 sales.
-Both controls used original accounts with zero provider/photo/auth transports
-or ledger changes. They replay historical terms, not current availability.
-
-Final adapters share one bounded page collector and screening's four-page
-constant. Eligible slab evidence stops paging early; raw research retains its
-first two-page candidate window and recovers sparse later pages up to four.
-Canonical URLs/shared SQL caches are unchanged, so a third-page sale discovered
-by screening no longer disappears after purchasing a label. Eligibility callbacks
-make no paid checks. Cached/legacy comp checks still run once per final scope;
-Stop and cyclic cursors cannot start further page work. The original search's
-request allowances and AI reservations remain authoritative.
-
-Raw historical research filters positive-net source transactions BEFORE using
-seller-condition clues to prioritize them. An irrelevant low-price LP sale can
-no longer hide a useful unclaimed-condition source. The physical assessment
-still decides its real condition; one acquisition and negative-answer reuse are
-unchanged. Pricing revision 13 reprices financial results while preserving paid
-photo keys, prompts, models and findings.
-
-Two ordinary metadata/sold-only BIN queries (broad CGC 8 and PSA 7 holo scopes)
-screened 103 rows, excluded three by price, and retained 50 each. Three targeted
-current-detail checks and original public front photos ruled out apparent First
-Edition upside: all three copies were Unlimited. Total: five Browse requests,
-125 PKMN attempts, 395 reported credits, zero AI generations or charges; two
-attempts had no credit headers. This remains a negative bounded sample, not
-proof that the market has no deals. Last observed balances at 22:55 UTC were
-eBay 4,835/5,000 and PKMN 16,641/20,000, with no depletion warnings. Detailed
-private results stay under data/candidate-validation/2026-11-04/diverse-bin/.
-
-One additional fresh RAW scope, Light Dragonite Neo Destiny holo, resolved
-014/105 from the catalog and retained 30 matches. Current details and original
-photos showed serious structural damage in the two shortlisted $120/$240
-copies, so neither received paid grading-upside work. Other returned inventory
-remains unassessed, not rejected. This check used three Browse and seven PKMN
-requests/31 reported credits, zero generations; the original two-cent account
-remains intact. At its completion, observed remaining was eBay 4,832/5,000 and
-PKMN 16,618/20,000, without warnings. Private findings and photo paths stay in
-data/candidate-validation/2026-11-04/focused-raw-bin/.
-
-Verification: all 1,018 offline tests, both typechecks, production build and
-whitespace checks pass. The running app shell responds HTTP 200. No production
-files were added; existing pricing modules and tests were extended, and duplicate
-raw/graded page loops were consolidated in the provider adapter.
-
-The supported profitable BIN milestone remains open. Next selection should
-use useful exact-scope evidence, not repeat this negative matrix or weaken
-printing/condition requirements. Verified live BIN competition and raw-photo
-coverage remain on the broader roadmap.
-
-## Latest catalog coverage and fresh BIN check — November 4
-
-Seven new exact-slab markets were researched through ordinary HTTP metadata and
-sold screening: Dragonite CGC 8, Mewtwo CGC 8, Typhlosion 18 PSA 8, Giratina GG69
-PSA 9, Gengar 271 PSA 9, Charizard 199 PSA 9 and Pikachu 160 PSA 9. Eight requests
-included correction of an accidentally V-suffixed Pikachu query on the SAME
-account; no empty mismatched-name search was counted as a negative market.
-The initial batches screened 145 listings and excluded 67 by price, with eight
-Browse calls, 50 PKMN requests and 130 reported credits, zero paid generations. No supported
-positive-net BIN was established. Unknown metadata remains distinct from
-unprofitable exact-scope inventory.
-
-These checks found descriptor residue blocking cheap research. Existing name
-normalization now handles complete Full Alt/Alternate Art and source-observed
-FA/SIR/SV only with the required full-number, slab/release context. Fusion
-Strike joins the existing contextual SWSH release map. Saved residual-only
-claims reconcile without changing seller titles, real names/forms/owners,
-collector numbers, grade qualifiers or product exclusions. SV151-only and
-unanchored abbreviations remain unresolved rather than guessed.
-
-Saved SQL replay recovered 34 previously unpriced descriptor rows; all 34 were
-confident upper-price exclusions. The final replay made zero AI/preflight,
-Browse/Analytics/OAuth, PKMN or photo requests. One intervening ordinary Pikachu
-refresh filled missing normalized catalog/market cache keys on its ORIGINAL
-UUID: 77 screened, 63 excluded by price and 14 retained (previously 47 excluded
-and 30 retained), zero AI. Daily observed remaining at 21:20 UTC: eBay 4,840/5,000, PKMN 17,036/20,000,
-no depletion warnings. Those are observations, not promised future balances.
-All 1,002 offline tests, both typechecks, build and whitespace checks pass.
-
-Next useful milestone remains a supported profitable BIN, with verified live
-competition and targeted evidence when justified. Do not buy photos of these
-recovered overpriced rows, repeat this entire matrix, or raise the two-cent
-default merely to fill Deals. Promotional photos in historical galleries and
-conservative confidence/condition coverage remain later optimization work.
-
-## Current raw-resale checkpoint — November 4
-
-Fresh raw resale can now acquire one decision-relevant historical condition
-assessment after reading accepted SQL evidence first. It selects a recent
-confirmed exact-scope sale whose amount could support positive net resale,
-uses seller condition only as a research clue, and checks up to six photos
-with a 1,100-output-token limit. No repeated-comparison or second-opinion loop.
-One physically accepted condition match can price the route at LOW confidence.
-TCGplayer quotes remain reference-only; the older seller-title-only branch
-retains its three-sale compatibility floor pending retirement. Pricing revision
-12 reprices saved work without changing paid live-photo keys/prompts/models.
-The existing sold-title target matcher is shared with admission and cold sold
-acquisition, ruling out explicit wrong names/numbers/sets before detail or paid
-work. Cached physical findings retain precedence over mistaken seller titles.
-Negative readings, source indices, Stop behavior, accounting failures and the
-original search cap are preserved. Definitive historical 404/410 responses use
-the existing five-minute negative cache; temporary failures do not.
-
-The $75 holo Dark Blastoise exposed stale seller fields (20/82, Regular).
-Strong photographed 3/82 HOLO identity plus the explicit agreeing title and
-catalog now correct those fields locally, preserving original seller/paid data.
-Real printing, holder, language, title or authenticity conflicts remain holds.
-A resolved metadata discrepancy no longer becomes Review during price deferral.
-The physical answer reports MP with a possible crease. A suspected crease now
-blocks otherwise actionable BUY advice through local retargeting without
-rewriting the condition to Damaged; known priced losses remain finished. Such
-live uncertainty cannot buy a historical review that would not resolve it.
-
-Normal HTTP validation reused the original natural-query account. Three live
-raw assessments plus one historical condition assessment cost $0.0154424
-(1.54424 cents), four settled generations, no holds, unchanged $0.02 cap.
-The $100 live copy was assessed LP. A sold $162.54 copy advertised LP was instead
-assessed MP/MEDIUM and did not establish an accepted LP sale. No profitable BIN
-was manufactured. Saved HTTP replay returned CANT_PRICE/savedEvaluation with
-usage[], unchanged cost/generation/PKMN request counts. Historical cache
-diagnosis blocked all provider transports and added none. Data reports remain
-under data/candidate-validation/2026-11-04/raw-resale/.
-
-Verification: 999 offline tests, both typechecks, production build and whitespace
-checks pass. Current next work is a small metadata-only fresh CGC/PSA BIN check
-for a genuinely useful exact-scope candidate, followed by verified competing
-BIN ceilings and the broader backlog. A supported conditional auction is already
-proven; a supported profitable fixed-price purchase remains unproven. Do not
-raise the default cap or repeatedly recheck rejected historical photos.
-
-## November 4 continuation: committed checkpoint and catalog-first narrowing
-
-Committed 7b26ca0 (Restore catalog screening and validate auction Deals flow) on
-improve/slab-screening-and-model-validation. No push/merge requested. Preserve
-the unrelated .env.example deletion. Further fixes described below are not yet
-committed.
-
-Fresh BIN research used one original account
- aa576833-c2b4-4597-87c0-d36bff9c3b37 for Lugia V 186/195, Mew VMAX 269/264,
-Pikachu VMAX 188/185, Fossil Dragonite 4/62 and Fossil Gengar 5/62. One apparent
-Lugia bargain at $169 was actually photographed/labelled 185/195; the compact
-assessment correctly blocked it. Its sole generation cost was $0.0019812
-(0.19812 cents). The 2-cent ceiling remains; the user explicitly repeated
-permission for 10 cents only if desperately needed, not a default increase.
-
-Catalog suffix fixes for (Secret)/(Alternate Art Secret) unlocked 54 priced
-Mew/Pikachu listings without more AI; none supported positive net resale under
-observed terms. A vintage retry after an HTTP520/cooldown valued 74 rows, 28
-exact listing scopes; no exact-scope positive candidates were established.
-These samples do not establish that entire markets contain no deals. Unresolved
-metadata, printings and missing sales remain gaps. Before query validation,
-research consumed 121 PKMN requests / 708 reported credits, one failed request
-had no credit header, and 10 actual Browse calls (including one detail).
-
-Fixed false review causes: high-confidence photographed numbers plus agreeing
-explicit titles can resolve seller spreadsheet Jan-82/Feb-82/Aug-82 values in a
-local copy; original seller/paid evidence stays intact. Ordinary PSA NM–MT
-descriptions normalize Unicode dashes without stripping real qualifiers.
-Cache-only replay cleared Alakazam/Arbok identity holds with zero transports;
-they remain unpriced without exact saved sales. German Gyarados has a separate
-seller-set conflict, intentionally retained. Contextual GEM MINT before a numeric
-grader no longer creates a bogus Dragonite gem catalog target.
-
-User's conversational Dark Blastoise example exposed late query resolution.
-Anchored request wording now parses the name/finish. A complete bounded English
-catalog lookup runs before eBay and derives one collector number only when
-name/set/finish/edition support uniqueness. It uses the SAME screening source,
-64/128 allowances and database paths; complete records feed later row research.
-Actual saved provider pagination is page/total_pages, not cursor-based for
-catalogs; verified against SQL and covered by tests. Incomplete pages, variant
-uncertainty or ambiguous numbers abstain; storage/invalid accounting fails
-closed. Explicit typed numbers remain authoritative; cached model guesses cannot
-invent them. Derived numbers filter locally and do not exclude numberless titles
-at eBay. Actual query resolved to provider formatting03/82, equivalent to3/82,
-with 3 PKMN requests/4 credits, 0 AI/Browse; immediate repeat used 0 transports.
-Holo/non-holo/reverse remain separate. The physical listing still requires its
-own evidence; catalog resolution is not a Deal verdict.
-
-Final verification passed: 965 offline tests, both typechecks, production build
-and whitespace check. NormalHTTP account3ab92e4a-b606-4528-81ba-2b4af0e3f1ae
-confirmed exactnaturalquery inactualroute with0generations. The initial literal
-holographic keyword returned8eBayresults/4retained; canonicalholo returned762,
-first196retained/52screened/2priceexcluded/50loaded. Explicit retainednumbers
-were3/82,03/82,3or003; no20/82. Numberlesstitlesremaineligible, notphotoproven.
-Both runs sharetheoriginalqueryaccount:18PKMNrequests163reportedcredits,
-0AI,2Browsecalls. LatestAPIobservations: eBay4857/5000 and PKMN17201/20000
-remaining, no currentrapid-depletionwarning. Catalogvalidationused3morePKMN
-requests4credits inolderresearchaccount(total124/128); immediate repeatzero
-transports. Holographic→holo normalizeskeywords only and preservesnon/reverse
-modifiers. Sourceandtestsarecomplete; no additional commit after7b26ca0. Private reports live under data/candidate-validation/2026-11-04/
-bin-milestone and date-number-replay. Free catalog/local work is preferred;
-selective cheap text interpretation is still available for genuinely unclear
-queries. No new mandatory paid text stage or model change was added.
-
-Read-only final natural-query headroom check: 50 rows include22slabs; none
-has a usable exact-scope sold reference. Two exact identities have zero matched
-sales;20slabs have unresolved scope/metadata. Five apparent premium leads borrow
-FirstEdition evidence when edition is unstated; no deals were claimed from this.
-No additional photos, AI, provider calls or source changes for this check.
-
-Next: establish a supported profitable BIN; add verified cheapest matching BIN
-competition and auction closing-interest evidence; finish raw sold-condition
-acquisition. Do not confuse absent provider data with rejected economics or a
-conditional auction ceiling with an achievable winning price.
-
-# Pokemon Flipper local plan
-
-## Supported auction in Deals and focused fixes — November 4
-
-User authorized saved recheck, fresh liquid-market work and photos of plausible
-opportunities; requested quick best-available fallback if no fully supported
-Deal. User authorizes more eBay usage as useful with daily quota monitoring, and
-up to $0.10 AI per search ONLY as a desperate fallback. Current persistent cap
-remains $0.02; it was not raised. No commit/merge/push requested for this pass.
-
-Saved-only recheck: 24 accounts,213 slab rows,114 noweligible,35 exact-scope rows
-and zero profitable exact-scope saved asks. 34 apparent positive scopes were
-unknown-edition/premium hypotheses, not supported profits. No provider/SQL calls
-for that re-screen. Report: data/candidate-validation/2026-11-04/one-sale-recheck.
-
-Fresh Magikarp203/193PSA9 originally stalled24rows beforeprices/AI. Fixed cached
-English set-name fallback/longest match (200savednames), explicit Illustration
-Rare wording and standalone separators; known setcontext reaches both listing
-and sold-title parsing. EXTeamRocketReturns cannot be mislabeled TeamRocket.
-Dashed PSA-8 and other supported grader delimiters now parse. Paidreadingskeys,
-models and caps preserved. Resumed ORIGINAL Magikarpaccount
-68b724e4-958e-4e54-b001-4f6bd491ce4a:24screened,14priceexcluded,5labels,
-$0.008468,zeroDeals. Five-call market-only PKMN research used originalaccount
-and SQLprovider caches. MewtwoVSTAR GG44PSA9 BIN account
-6037f55f-47f4-46b4-9813-9aafdb26d6e7:2labels,$0.0029578,zeroDeals.
-These are negative inventory outcomes, not a cap failure.
-
-Normal HTTPauctionsearch account5296ebeb-03ff-43af-9b72-3770cc988172,
-query'Team Rocket holo PSA',AUCTION/graded,$50profit/.25ROI,offersoff:7labels
-cost$0.0105118;1BUY_GRADED reachedordinaryDeal grouping. DarkMachamp10/82,
-1stEdition,PSA8,listing128165131299,dcsports87,99.8%feedback. Price$127.50,
-ship$4.99,ends2026-11-05T01:30Z=Nov4 7:30PMCentral,within12hours. Label,
-actualstampandnumber manually inspected as well as appreading. Three matched
-PSA8FirstEditionHOLO transactions:$248(Oct27),$249.90(Oct26),$248.50(Sep30),
-median$248.50. Appmaxitembid$136.90,all-in$153.60,modelednetprofit$50,
-ROI32.55%;atobservedcurrentbidprofit$60.18. Conditionalauctionopportunity;
-0of3observedsalesclosedunderthisceiling,13bids,6+hoursremaining,so winning
-underlimit is uncertain. Do not claimrealizedprofitorcompletedBINmilestone.
-
-Cheapest exact-title BINmetadata reference was$250+unknownshipping; six source
-rows. No newAI forcompetitionand no production competition writer/cap wasadded.
-Saved foundauction throughnormalSavebutton tolocalShortlist; GET/api/shortlist
-confirmed acceptedreading recoveredwithusage[] and reusedSteps:savedEvaluation.
-
-Actual isolatedChromeUI proof used SAME originalauctionUUID (fixedtestUUID,
-neverresetallowance),normalform/queue/selectors,nomockedresults. Firstattempt
-foundrealUIbug:withViewTransition deferred event.target.value and controlled
-selects reverted toBIN/all. Capturedvalues synchronously inbothhandlers; second
-proof selectedAUCTION/graded,Deals1,correctDarkMachamp,maxsnipe136.90,unchanged
-7requests/$0.0105118. Screenshots/logs/browser-deals.json underprivate reportdir.
-One accidentalBINdiagnostic shared ORIGINALquotaaccount; noadditionalAI.
-Postbrowseraccount61/128PKMNrequests324reportedcredits;daily18061/20000left,
-eBay4869/5000left at19:15Z. Values are observations,not futurebalances.
-
-EmptyDeals fallback reuses currentfiltered/retargeted rows only: upto3 positive
-netPASS belowtargets or genuinequeued/reference-priced unverifiedoptions,
-noinventedprofitforunverified,no knownloss/mismatch/materialphoto risk/noquote
-rows. No newAPIonrender/detailopen;targetdefaults/preferences unchanged.
-All951offline tests,typechecks,build,diffcheckpass. Existing.env.example
-deletion preserved. Public measuredsummary appended to existingnew-cardreport.
-
-Next: demonstrate a supported fixed-price purchase, improve targetedinventory
-coverage without buying photos of plainlynegative markets, repair recurring
-date-formatted itemSpecifics (#Jan-82/#Aug-82/#Feb-82) that create false manual
-identity holds (literalcardnumber+photo shouldprevail), and finish bounded live
-BINcompetition. AuctionSTRONGrating/closingguide currentlyoverstates confidence
-when0historicalsaleswouldclearbidlimit; retainasexistingauctioncalculations
-audititem,not a closingforecast. Dealsviewcaption still says6needattentionwhile
-showing1Deal; align captionwithselectedview inlaterUIcleanup. Fullraw/grade,
-saved-note/codecleanup/market/queue backlog remains; oneauction is not fullgoal.
-
-## Two-pass research guidance saved — November 4
-
-User supplied another ChatGPT session's Dark Raichu example as guidance, not an
-instruction to inspect those listings now. Its prices, condition observations
-and availability are supplied claims, not independently verified current data.
-Preserve the current sequence: inexpensive exact-identity and sold-price research
-across summaries, then relevant photo assessment of plausible opportunities.
-Do not add a mandatory paid text stage or duplicate broad research just to mimic
-ChatGPT's source count. Runtime AI currently has no research tool loop: the app
-selects data and photos and requests structured answers. Two concurrent photo
-jobs and six selected raw photos are application policies, not API capabilities.
-
-Already present: separate identity attributes and printing/finish scopes, alias
-handling, exact grader/grade sold matching, first-edition stamp
-visible/absent/unreadable instructions, and deterministic shipping/tax-aware
-item-price ceilings. Conflicting seller Mint/LP claims are clues to inspect,
-not assessed condition or automatic manual-review grounds. Preserve the user's
-policy that a readable slab certificate metadata typo is informational.
-
-Useful gaps to integrate into existing backlog, not a new rewrite:
-- Source each material defect to the original photo, precise card region and
-  confidence. Current ordinary condition observations are broad-area strings
-  plus global confidence; structured per-finding provenance is unfinished.
-- Use an additive focused stamp/printing or angled-holo check only when that fact
-  changes the buying decision, reusing accepted identity, pixels and observations.
-  A request for a seller photo/video is actionable uncertainty, not a forced grade
-  or an automatically sent seller message. The focused stamp experiment is not
-  yet a production correction workflow.
-- Distinguish maximum all-in acquisition spend (item + inbound shipping + tax)
-  from maximum item price/bid and total investment including grading. Derive all
-  from the existing fee engine; never subtract shipping/tax twice. Current BIN
-  headline is item-only, not a distinct all-in acquisition ceiling.
-- Show separately labeled LP and NM resale/ceiling scenarios when condition
-  uncertainty materially changes profitability, including downside and the
-  exact missing evidence. Hypothetical scenarios must not assert a condition,
-  create fake sold evidence or establish a Deal by choosing the optimistic case.
-- Finish acquisition of condition-matched raw sold evidence; final bounded
-  evaluation currently only reads saved historical photo assessments. Keep raw
-  comps and exact graded comps separate, and recent actual sales primary.
-
-No new live card checks, provider calls, runtime/model/cap changes were made for
-this guidance. Continue the existing next sequence: saved one-sale re-screening,
-targeted fresh supported-Deal validation, then bounded verified BIN competition.
-
-Cleanup-history clarification: e220c75 retired 14 source/CLI and 14 old test files
-and consolidated HTTP/CLI evaluation around the bounded path, retaining paid
-evidence readers. Latest c104b45 deleted no whole files: it removed fillFromTitle
-and three orphaned tests within existing files. Do not claim complete cleanup or
-that deletion of inactive code alone reduced live provider costs.
-
-## Current committed checkpoint — November 4
-
-Committed c104b45 (Admit sparse sold evidence and simplify legacy title handling) on improve/slab-screening-and-model-validation. Includes one-sale screening/final recency, pricing revision11 with photo reuse, prior ten-search fixes/NoSymbol/Stopdrain, public measured results, and orphan title helper/3tests cleanup. 942offline tests, typechecks/build/whitespace passed before commit; independent review found no blocking functional issue. Updated outcome doc distinguishes historical3sale/944test checkpoint from current1sale/942tests. No push/merge requested or performed. Only pre-existing unstaged .env.example deletion remains; private notes and data remain ignored.
-
-Recommended next: (1) re-screen SAVED candidate/source snapshots under1sale admission without new data/AI calls and identify useful newly eligible prospects, preserving original IDs/allowances; (2) one targeted live exact-slab Deal validation with fresh availability/prices and accepted photo reuse; (3) implement bounded cheapest verified matching BIN competition as a resale ceiling, using existing rows/cache first. Keep raw TCG/condition-evidence policy and broader retired-writer cleanup separate. User asked commit then plan; do not start another product change merely to fill time.
-
-
-## One-sale admission and narrow cleanup completed — November 4
-
-User explicitly changed the temporary minimum to ONE recent exactly matched sale. This supersedes the older three-sale admission notes below. User corrected their wording: concern was unnecessary TESTS, not unnecessary UI text. Keep this work incremental; raw TCG/competition overhauls are deferred.
-
-Implemented: shared matched-reference minimum1; screening status/partial evidence/pagination use the same validator; stop cursor research after usable evidence. Exact graded current-window preference is90days with1+eligible sale after existing rejection rules; only0recent uses labeled180-day fallback. This prevents older prices/outlier selection from swallowing a sole current sale. Raw preliminary sale buckets remain distinct and allow research; final raw photo-condition acquisition/TCG estimate policy is unchanged. Single exact90-day slab scope can perform ordinary preliminary cost rejection under same one-sale rule. Confidence for1–2sales remainsLOW. Missing/unknown transaction amounts, mismatched card/printing/finish/grader/grade remain ineligible. No metadata-only Deals, invented grades or price data.
-
-Pricing version advanced ebay-resale-10→11 so old blended financial snapshots reprice, while accepted photo/condition keys/prompts/versions remain reusable. Extended the existing evaluator refresh regression to cover policy changes without another paid assessment. Existing source/admission/UI regressions updated to the new requirement rather than adding duplicate suites. Small source cleanup removed unused fillFromTitle, its private helpers/import and3orphaned tests:97lines removed,1importline added. Other live saved-evidence readers and spending/cancellation/money tests remain.
-
-Verified942/942offline tests, server/client typechecks, build, diffcheck; localappHTTP200. No paid generations, eBay or PKMNPrices data calls during this task. No commit/push requested. Pre-existing .env.example deletion preserved.
-
-Nextsmallpricingstep (not implemented here): exact cheapest LIVE matching BIN competition. Audit found ActiveReference types/UI/readers but no active writer; automatic valuation is sold-only, and BIN competition does not currently cap supported sold resale. Reuse current rows and accepted competitor label findings first; exclude target itself, preserve card/printing/finish/grader/exactgrade/qualifiers, include shipping, validate availability and seller risks, save cache/DB provenance, apply price ceiling separately from confirmed sold data. Asking-only references remain estimates until an explicit policy is agreed; do not claim photo verification for metadata-only competitors. User also suggests TCG for raw market as a later focused step. Two caller-proven retired photo-writer cleanup candidates remain in the backlog, not removed now.
-
-
-## Ten new card searches completed — November 4
-
-User's immediate milestone is one REAL profitable listing reaching Deals, then improve from that result. This batch did not achieve that outcome. Ten new targets: Rayquaza V, Giratina V, Jolteon, Vaporeon, Celebi, Raikou, Scizor, Flareon, Tyranitar, Zapdos. Eight exact slab searches plus two mixed raw/graded searches. 151 distinct returned candidates; 21 new generations; zero Deals. Ten-target generation cost $0.0422782 = 4.22782 cents, every original UUID below $0.02, zero unsettled holds. Extra Gengar prior-history control cost $0.003062; all work $0.0453402. Models and caps unchanged. 34 Browse/75 PKMN requests/372 credits for the ten; extra control 3 Browse/4 PKMN/35 credits. Setup Analytics/OAuth separate. Latest provider observations: 4,891/5,000 Browse and 18,471/20,000 price credits remaining at the recorded completion times, not future balances.
-
-Private measurements: data/search-benchmarks/new-ten-2026-11-04/summary.json and summary.md; sold-coverage-audit.md/JSON beside them. Public method: docs/new-card-deal-validation-2026-11-04.md. Giratina interrupted report preceded two settlements; latest ORIGINAL-ID ledger is authoritative (6 generations, $0.009485, zero holds). No counters or recovery records were cleared. Source now drains accepted jobs before shutdown/accounting; timeout is incomplete with claims preserved.
-
-Completed concrete fixes: conservative modern art/SWSH name cleanup enables exact-price exclusions; plain Miscut cannot borrow ordinary comps; Jungle No Symbol has an explicit unsupported market guard in preliminary/final/saved retarget/ordinary sold filtering. Original labels/keys/prompts/versions preserved; gaps remain Sorting, no false BUY/PASS. 944 tests/typechecks/build/whitespace pass. No new commit/push requested; preserve unrelated .env.example deletion.
-
-Next work based on evidence (do not run another ten-market matrix automatically):
-- [ ] Design and validate confidence-aware sparse-market photo admission. Current >=3-sale admission versus final 1–2-sale LOW pricing is inconsistent. Use actual confirmed exact transactions and separately labeled verified competition; don't silently convert historical unknown offer amounts into sold truth or blanket lower the threshold.
-- [ ] Close fresh raw resale's historical-photo-condition acquisition gap, or explicitly define a defensible alternative estimate policy with provenance. Current bounded evaluator only READS old sold-condition caches. Do not buy repeated raw assessments expecting nonexistent evidence. Preserve useful raw-to-grade paths; a selective grade-only follow-up must reuse accepted identity/condition and original relevant pixels.
-- [ ] Evaluate selective cheap text-only ambiguity resolution with an actual queue/defer policy and outcome/cost comparison. Prior rank-only pilot proved neither avoided photos nor net savings. Free rules and sold research first; no duplicated full photo work. Keep supported Luna with reasoning.none and old evidence reuse. Increasing cap/model cost is last resort, not response to missing sold data.
-- [ ] Preserve price scopes in priority explanations. Tyranitar PSA8 with unknown edition borrowed First Edition upside ($945 median) to rank as conservatively profitable although Unlimited sold reference was $387 and actual slab was Unlimited. Potential premium can justify research, but an unresolved high-value alternative is not a conservative floor across possible printings. No deterministic range/printing probabilities should be invented.
-- [ ] Improve real inventory coverage beyond these eight exact grader/grade searches only when the supported market path is ready. The test does not establish absence of deals across all grades, card conditions or the full marketplace. Consider a chosen liquid market, fresh BIN discovery and same-evidence replay before another broad paid batch.
-
-
-## Committed checkpoint and recommended next sequence — November 4
-
-Committed 0a0fe12 (Improve price evidence and quota-aware candidate screening) on improve/slab-screening-and-model-validation. Commit contains reviewed catalog/sold-coverage/evidence/UI/diagnostic/provider-quota changes. 927 tests pass under default and explicit cheaper slab configuration; typechecks/build/whitespace pass. No push/merge requested or performed. Pre-existing .env.example deletion stays unstaged; private plans, evidence, API payloads and ledgers remain ignored. No new paid/provider diagnostic calls were made to commit.
-
-Next priorities, preserving the broader historical backlog below:
-1. Close the supported-Deal outcome: use saved worthwhile/false-negative/unpriced examples as an acceptance set, trace each stage, fix the concrete blocker, then one targeted fresh English BIN test. Known historical examples are not assumed still live or profitable. Do not repeat the entire ten-search matrix or manufacture a Deal.
-2. Recover exact slab and raw-condition sold evidence: distinguish truly missing transactions from lost filters/pagination, reuse saved photos, preserve scope/provenance and distinguish modeled sparse-market estimates from actual sales. Spend useful provider quota before buying redundant photo work.
-3. Correct false photo/printing/language holds across cards: known front/back views, stamps, glare versus physical damage, seller metadata contradictions. Add narrowly targeted follow-up on one consequential uncertain fact and reduce routine manual review.
-4. Validate efficient task routing: broaden hard label/qualifier/half-grade/grader/reprint/miscategory controls; selectively deploy cheaper supported Luna for new slab reads only when justified. Evaluate an explicit text-priority/defer policy against missed candidates/useful outcomes and total cost. Its first measured pilot was cheap but did not prove savings; no automatic extra paid stage yet. Preserve accepted work and original caps.
-5. Keep raw resale, exact-slab resale and PSA/CGC grading opportunities; verify service cost/availability, fees, tax, shipping, downside and capital lock-up assumptions. Grading may require 90+ days; no blanket two-month promise.
-6. Complete twelve-hour auction workflow: exact sold evidence, current verified equivalent BIN cap, profitable snipe, total purchase costs and separate uncertain closing-price forecast/interest signals.
-7. Normalize long-term exact-market sold history in SQL; derive defensible liquidity/holding ranges and evaluate trends. Later test daily movers/stale-priced listings, relisting improvement, seller/collection clues and other saved strategies.
-8. Finish decision-first responsive UI/progress and desktop inspector; then durable server-owned search queue, shared transactional quota/account authority, public-user isolation and release validation before selling widely.
-
-User requested commit and the next plan only; do not start the next product step until authorized. Full strategy/UI/history backlog remains below.
-
-## Provider request headroom and visible alerts completed — November 4
-
-User explicitly authorized increasing app eBay/PKMN quotas and requested alerts if daily consumption is too fast. Implemented new-search defaults: 50 actual eBay Browse calls; 64 preliminary uncached price requests within 128 total PKMNPrices requests. Old Browse25 and price64 ledger accounts keep their original limits, used attempts and unsettled work; no counter resets. OpenAI cap remains $0.02. Provider daily limits/reserves unchanged. Normal cache hits remain free of new provider quota. Diagnostic ceilings follow defaults and original-report resumes retain recorded ceilings.
-
-Durable account-hashed local observations warn at <=20% remaining or >=5% of daily allowance consumed in a <=15-minute observed window. Minutely first/last records keep bounded history; stale/expired/future/out-of-order samples cannot claim a current balance. PKMN countdown reset anchored to durable response-completion time; eBay existing Analytics/reconciliation and reservation events update samples. /api/ai-usage reads only local monitor data; active discovery/detail/price/photo work polls it without extra provider requests. Banner above budgets/outside drawer warns visibly with readable units; stale idle warnings clear using app clock. Monitoring failure cannot invalidate accepted evidence or buy replacement work.
-
-927 tests pass under default and explicit GPT-6 Luna slab configuration; typechecks, build and whitespace pass. Local-only usage endpoint verified HTTP200, existing OpenAI cap0.02; observed eBay4934/5000 remaining with no warning at17:21UTC (historical observation, do not present as future current balance). New work added zero paid generations/Browse/PKMN provider requests. No commit or push requested in currenttask. Full public method/results: docs/catalog-and-evidence-validation-2026-11-04.md.
-
-Provider-use clarification: eBay and PKMNPrices are not billed per request; user authorizes additional calls as useful, with daily quota/credit resets and the flat PKMNPrices monthly subscription. Optimize OpenAI dollars separately from provider allowance consumption. Prefer useful exact sold-price/identity/competition evidence before photos; don't artificially starve research to save nonexistent per-use charges. Retain cache reuse, shared allowance accounting and daily reserve; raise tunable provider safeguards only when measured useful work is blocked, not automatically.
-
-## Text-only ranking measured — November 4
-
-User is right that a paid early text pass is worthwhile if it reduces total downstream photo cost; don't reject an added stage just because it is paid. Tested one isolated Standard GPT-6 Luna reasoning.none request on the original Blaine search account. Existing free eligibility reduced 50 metadata rows to 30 candidates sharing nine market summaries. 7,956 input / 125 output / zero reasoning tokens, $0.0008581 = 0.08581 cents, provider response 2.303s + preflight 0.919s. No image, Browse, PKMNPrices or other provider requests. Original search cumulative 1.78861 cents, zero unresolved holds, cap unchanged. Six of eight picks overlap the free top eight; historical selected outcomes are one PASS, four CANT_PRICE, one NEEDS_REVIEW, two unassessed. No avoided photos or net savings established. Saved outcomes cover too few rows to establish missed-Deal recall.
-
-Public method: docs/catalog-and-evidence-validation-2026-11-04.md. Private live: data/candidate-validation/2026-11-04/text-priority/2026-11-04T17-04-43-085Z-live/report.json; strict replay: data/candidate-validation/2026-11-04/text-priority/2026-11-04T17-05-44-938Z-replay/report.json, zero all provider/image/preflight/spend. Existing original photos are never repurchased. Diagnostics are separate from runtime; no production ranking/default switch. New script scripts/compare-listing-priority.ts only accepts saved BIN snapshots until auction-clock eligibility can be frozen. Stop remains dispatch-only so accepted answers save before SQL closes.
-
-- [x] Build and measure saved-data text-priority pilot within original allowance.
-- [ ] Decide an actionable selective queue/defer policy, compare broader labeled outcomes against free ordering, measure total cost and useful/missed candidates before enabling a paid stage. Do not classify unknowns as negatives or claim historical sunk costs were saved.
-- [ ] Consider ordinary grouped Standard+none requests for time-sensitive ambiguity; reserve Flex/24h Batch for delay-tolerant background work after tier-aware allowance/replay/cancellation integration. No silent standard/premium fallback after failures. Current bounded photo comparisons ALREADY use reasoning.none.
-
-Final verification: 914 offline tests pass under both default and explicit cheaper slab configuration, typechecks/build/whitespace pass. No commit/push requested; preserve unrelated .env.example deletion. Additional cleanup retests + six slab comparisons + this rank experiment total 4.41914 cents across original search accounts; none exceed 2 cents. Public report and private artifacts preserve scope.
-
-## Completed five-step catalog/evidence validation — November 4
-
-The five authorized correction/validation steps are complete. See the
-[public checkpoint](docs/catalog-and-evidence-validation-2026-11-04.md).
-This closes the immediate catalog/evidence batch, not the full roadmap or the
-requirement to find actual supported profitable opportunities.
-
-- [x] Use conservative canonical card names consistently for provider queries,
-  catalog-list admission, detail admission and final sold screening. Preserve
-  owner apostrophes, printed forms, gender/symbols and exact set/number; reject
-  wrong owners/species/forms instead of broad substring aliases. Positive legacy
-  owner-query caches remain reusable; empty malformed queries do not prevent a
-  corrected lookup. Controlled Snorlax, Leafeon V and Blaine's Arcanine retests
-  proved catalog recovery; missing sales must still be distinguished from lost
-  catalog work.
-- [x] Recover bounded sparse sold coverage with up to four pages per market,
-  stopping after three applicable observations. Reuse the final-valuation page
-  URLs and accepted facts, deduplicate transactions and retain partial/deferred
-  evidence without another photo purchase. Exact grade/printing/finish and the
-  existing 32-screen/64-total request safeguards remain separate and unchanged.
-  Corrected Dragonite diagnosis: all four legitimate Unlimited PSA 8 sales were
-  already on the FIRST cached page. The extra screening name comparison had
-  rejected exact Pokémon Company publisher and graded Himeno artist suffix
-  text. Conservative source-context cleanup recovers them; this case does not
-  demonstrate that cursor pagination caused the difference.
-- [x] Gate final Deals and offers on supported resale evidence. Explicit raw
-  TCGplayer estimates and asking-only slab references retain labeled scenario
-  context, but cannot create a final BUY or completed price rejection. Unknown
-  downside stays null. A separately supported route can still qualify; price
-  gaps stay Sorting unless a concrete material photo concern requires attention.
-  Legacy hypothetical prescreening retains its math and condition-upgrade
-  research potential without weakening final underwriting or excluding unpriced
-  grading upside. Reference-only UI no longer presents a verified profit/bid.
-- [x] Resume the four affected searches under their ORIGINAL search UUIDs and
-  persistent allowances, without ledger resets or forced photo rereads. Snorlax
-  added six assessments/1.17496 cents; Leafeon V six/0.97820 cents; Blaine's
-  Arcanine seven/1.70280 cents before the next reservation was correctly blocked;
-  Dragonite reused three accepted assessments for zero new generation cost.
-  Total: 19 new assessments, 3.85596 cents, 24 Browse and 41 PKMNPrices requests /
-  345 header-reported credits. Each original search stayed below its two-cent
-  cap. Strict Entei replay reused five accepted assessments and removed the
-  previous thin-fallback Deal, with no new provider work. No matched-sold-backed
-  profitable opportunity was established by these retests.
-- [x] Compare six saved, manually inspected English PSA 8 slabs (Dragonite,
-  Typhlosion and Suicune, with First Edition controls) using GPT-6 Luna. Historical
-  same-six generation cost 1.01916 cents versus 0.47737 cents: measured 53.16%
-  reduction. All six core label transcriptions matched; three stamp-presence
-  outputs abstained, while existing label interpretation resolved all six exact
-  identities/printings/routes without new review reasons. Six generations and
-  six preflights; zero Browse/PKMN calls; 12 known-CDN preparation photos. Strict
-  replay reused all six answers with zero provider/image/preflight calls.
-  Production defaults, accepted answers, prompts and caps remain unchanged.
-  This small PSA-only test is not proof of byte-identical historical images,
-  perfect raw-output agreement, every holder/qualifier task or whole-search savings.
-
-Saved Dragonite admission replay used current createPriceFirstSession,
-applySoldPriceScreen and candidateAdmission with Any profit/Any ROI/offers off,
-maxRequests=0 and blocked fetch. Available market contexts increased 3->7 of
-8 rows; all four newly available contexts retain the four Unlimited sales
-(median $337.50). Three overpriced rows are excluded BEFORE photos; the fourth
-remains eligible because its exact scope is unresolved. One unrecognized
-Dragonite Mod name remains deferred. Only the two cached first pages were read,
-with zero cursors/provider attempts; all 241 ledger/usage files remained
-byte-identical. This is a historical metadata-admission replay, not fresh
-availability, a new queue run or a verified Deal.
-
-Private artifacts:
-
-- [Original ten-search summary](data/search-benchmarks/ten-search-validation-2026-11-04/report.md).
-- [Snorlax retest](data/search-benchmarks/2026-11-04T16-30-15-035Z-resume-e33e1fcc-caf1-4798-8746-b81054e89ebd/report.json),
-  [Leafeon V retest](data/search-benchmarks/2026-11-04T16-30-15-035Z-resume-5d910f7e-7eee-4255-be97-bae17054bead/report.json),
-  [Blaine's Arcanine retest](data/search-benchmarks/2026-11-04T16-34-25-691Z-resume-a6fa5254-2a33-4b71-b9f4-ab093459131e/report.json),
-  [Dragonite resumed search](data/search-benchmarks/2026-11-04T16-36-39-326Z-resume-05a8f237-ac20-4fee-94a4-213173cb144d/report.json).
-- [Dragonite first-page name/admission replay](data/candidate-validation/2026-11-04/dragonite-first-page-admission-replay.json)
-  and its [reproducible cache-only runner](data/candidate-validation/2026-11-04/dragonite-first-page-admission-replay.mts).
-- [Strict Entei evidence replay](data/search-benchmarks/2026-11-04T16-42-35-816Z-replay-e23f2214-933d-4a5b-9842-97884ea1bd0f/report.json).
-- [Six-slab comparison](data/model-comparison/2026-11-04/runs/2026-11-04T16-33-58-096Z-live/report.json),
-  [strict comparison replay](data/model-comparison/2026-11-04/runs/2026-11-04T16-42-35-879Z-replay/report.json)
-  and [prepared source manifest](data/model-comparison/2026-11-04/six-slab-photo-manifest.json).
-
-Additional generation spending across the four retests and six slab comparisons
-was 4.33333 cents, distributed across the original searches, not one search's
-cost. The cleanup checkpoint passed 909 offline tests under both default and
-explicit cheaper-slab configuration, both typechecks, build and whitespace
-checks. No commit/push belongs to this checkpoint. Preserve the pre-existing
-.env.example deletion and slab-condition UI work.
-
-## Next measured experiment: text ordering before photos — November 4
-
-- [ ] Evaluate the user's new idea that a small paid TEXT-only GPT-6 Luna request
-  with reasoning.effort="none" may reduce total cost by improving which saved
-  candidates receive photos. The main agent is implementing an isolated saved-
-  metadata experiment only; no production text stage, default-model change or
-  cap increase has been made. Keep current free filtering/sold research first;
-  order ambiguous candidates within the same evidence band, retain source-linked
-  reasons, and never let the text model invent prices, condition, authenticity
-  or Deals. Measure useful selections, missed candidates, latency and TOTAL cost
-  against the existing free order, including the ranker's own charge. Spend only
-  under original UUID safeguards and preserve accepted photo work. A plausible
-  cheap request is not evidence of net savings; deployment requires measured
-  benefit. Exclude deprecated or retiring models from comparison/selection.
-
-## Ten-search live test and slab UI correction — November 4
-
-The original ten distinct bounded live searches, including Dragonite, completed
-before the five-step correction/retest batch above. Full private results are
-[data/search-benchmarks/ten-search-validation-2026-11-04/report.md](data/search-benchmarks/ten-search-validation-2026-11-04/report.md)
-and summary.json: 187 retained rows, 20 new photo assessments, 4.5203 cents
-reported OpenAI cost, 33 Browse calls and 95 PKMNPrices requests / 439 reported
-credits. Each search stayed below two cents; original IDs/ledgers were preserved.
-Zero matched-sold-backed profitable opportunities were validated. One Entei
-BUY_RAW depended on a thin TCGplayer fallback ($8.81 / 2.14%); the completed
-correction and strict replay above now keep that case unconfirmed in Sorting.
-The original two strict saved replays added no provider calls or spending.
-
-The resulting catalog, sold-coverage, fallback-evidence, controlled retest and
-six-slab comparison actions are now completed above. In particular, the initial
-Dragonite "final pagination recovered two sales" explanation was incorrect:
-publisher/artist name residue rejected two legitimate FIRST-page transactions.
-Sparse cursor recovery remains a separately implemented and tested capability.
-
-The requested slab UI fix removed the raw-condition field from listed/pending
-and photographed slabs. Actual photographed raw cards retain condition even
-with the wrong seller category. Its original checkpoint passed 875 tests,
-typechecks/build/whitespace checks. No commit/push was performed for that UI
-checkpoint; preserve the unrelated .env.example deletion.
-
-## New Dark Charizard examples and automation requirement — November 4
-
-User supplied two screenshots: an identified English TeamRocket DarkCharizard
-4/82 holo UnlimitedPSA9 slab asking$1275/free shipping with no verifiedPSA9
-sold comps, and a raw$265/free-shipping copy with glare but apparent heavyholo
-scratching that was routed to obscured-front/manualattention. Screenshotpaths:
-/var/folders/tf/ysl4ylwj4ss12t3rbc08r11h0000gn/T/codex-clipboard-afd58c1c-073f-4bc6-9525-a91ee8ca9f4e.png
-/var/folders/tf/ysl4ylwj4ss12t3rbc08r11h0000gn/T/codex-clipboard-1ae3a32c-10c8-40ac-bc3b-bdf175f7862d.png
-These overlap existing missing-price recovery/sparse-grade fallback, false
-obstruction/rawcondition and reduction-of-manual-review tasks; do not create
-separateitemIDpatches. User explicitly says addthese tolist whilecontinuing
-new-card liveDealtest, notdivert currentwork intoallnewpricing/photoalgorithms.
-
-- [ ] Trace whether exact samegrader/grade/printing/finish sold transactions
-  are genuinelyabsent or lost by lookup/variant/qualification/confirmation filters.
-  Use lastNrelevant verifiedsales and age/coverage; never mix grades/printings.
-- [ ] Design bounded graduated sparse-market recovery: exactrecent sales first,
-  olderexact sales with age/marketadjustment uncertainty, verifiedavailablelowest
-  equivalentBIN as competition/upperreference rather than completed-sale truth,
-  and optionally adjacentgrade/same-set orsimilar-market paired-sale ratios.
-  Peergrade ratios need sufficient matchedsamegrader/printing evidence, robust
-  distributions, holdoutvalidation and broad intervals; not a universal8->9
-  markup. Separate modelderived estimates from actualsold prices, retain downside
-  and provenance, never auto-createaDeal merely toreplaceCANTPRICE.
-- [ ] Preserve visiblewear/scratches as physical findings despite glare elsewhere.
-  Separate carddamage from imageobstruction, and damage tocase/sleeve fromcard.
-  Cannotassert scratchdepth orcalibratedgrade from screenshot alone. Limitedviews
-  canlowerconfidence without deleting supported condition/damage evidence.
-- [ ] Automation goal: ideally no routine humanreview pile. Missingmarketprices,
-  ordinaryglare, partialviews and simplemetadataerrors should be auto-resolved,
-  explained or remain pending/unpriced as appropriate. Reserve humanattention
-  for a concrete material unresolvedrisk the appcannotresolve; never manufacture
-  certainty/profit or send unpricedcards toDeals just toemptyreview.
-
-Additional saved example: DarkCharizard4/82 FirstEdition raw listing with seller
-phrase"oh god it is so bad", assessedDamaged with1-2range, but manualprinting
-conflict; user says keepforlater and stayon liveDealtest. Treat colloquialtitle
-remarks as sellercondition context, neverprinting/gradeauthority. Trace actual
-structuredprinting disagreement before claiming the phrase caused it; preserve
-photo-supportedgrade/damage and addcross-card regressions, not title-specific
-exceptions. Screenshot:/var/folders/tf/ysl4ylwj4ss12t3rbc08r11h0000gn/T/codex-clipboard-28275b02-621f-48a4-be2c-d4528f183ad2.png.
-
-Existingfallbackclarification: exactslabpricing already tries90day then180day
-matching sales;1-2eligible sales canpriceLOWconfidence. Missingmatch may be
-rejectedamount/variant/printing/etc, notlackoffallback. ActiveBINreferences have
-legacytypes/underwriting but no currentboundedresearchwriter; futureestimator
-mustnotinheritBUYfromaskingalone. Adjacentgradefill exists forraw-to-grade, not
-exactslabresale. LIMITED photo rules canstilllowerlikelygrade/confidence; keep
-these concretegaps linkedtoexistingtasks. No DarkCharizardprovider calls now.
-
-Historical authorized task at this checkpoint was an efficient capped
-end-to-end new-card live search for an actual profitable Deal, using a card not
-already searched and reusing API/SQL evidence. The ten-search validation and
-five-step correction/retest batch above have since completed; a supported
-profitable Deal remains unproven. Current follow-up is the isolated saved-
-metadata text-ordering experiment above. Keep the two-cent AI cap, 25 Browse per
-search/daily reserve and 32-screen/64-total price safeguards. Do not repurchase
-old photo assessments for the deferred Dark Charizard examples.
-
-## Commit checkpoint — November 4
-
-User asked what is next and suggested committing soon. Committed the reviewed
-candidate-admission/refill/title-cleanup/new-ID-history and diagnostic-report
-checkpoint as78d9e27 (Screen overpriced listings before paid analysis and refill
-candidates) on improve/slab-screening-and-model-validation.874offline tests passed
-under both default/cheaper-slab override; bothtypechecks/build/whitespace passed.
-Public-content review found no privateAPIdata/credentials/listingIDs in staged
-additions. No push ormerge requested/performed. Only pre-existing.env.example
-deletion remains unstaged. Privateplans/reports/ledgers stayignored.
-
-Recommendednext: one controlled useful liveend-to-end test for fresh EnglishBIN
-opportunities, inspect each screening/assessment/pricing/group transition and
-provider cost, then correct any concrete blocker between supported value and
-Deals. Do not manufactureDeal ifcurrentinventoryhasnone. Hardlabelvalidation,
-selectiveadditivefollowups and fulloldroadmap remainpending. No new livecalls
-were made merely tocommit oranswerwhatnext.
-
-## Candidate selection and model-validation checkpoint — November 4
-
-Working branch: improve/slab-screening-and-model-validation from freshly fetched
-main a14dd5b. User authorized the suggested first step, then explicitly asked to
-keep correcting concrete wasted work while progressing. They clarified the
-interest in more rows versus eBay request limits: 25 actual Browse requests per
-search is separate from a 200-summary source window and 50 retained rows.
-
-Implemented known publisher/accompanying slab-holder name cleanup before literal
-name validation, with the untouched title retained for junk/printing/finish/grade
-checks. Existing exactScope and exclusion math were not relaxed. Saved six-row
-CGC replay against stored record12927/sold page now blocks two unnecessary paid
-label checks: automatic eligibility3->1. Missing-set case remains unresolved;
-unknown grader comparison wording remains deferred. Replay spent0 and made0
-provider/image/preflight requests. Report:data/candidate-validation/2026-11-04/
-cgc-saved-replay.json. This is a historical selected-market replay, not fresh
-availability or exhaustive catalog/market proof.
-
-Refill selects later candidates from the same fetched200-summary window after
-confident price exclusions, retains at most50rows and one shared32request price
-screen session; unchanged64totalPKMN/25Browse/$0.02AI/daily guards. Missing prices
-staySorting. Stable priority ties retain source/newest order rather than listing
-ID order. Exclusions/counts and rerun-after-relaxed-targets behavior are explained
-in search details. Completed price exclusions are being added to newest-discovery
-seen bookkeeping so excluded rows don't repeatedly count as new inventory.
-
-Broader GPT-6Luna diagnostic:3PSA5+3CGC9 saved cases,6generations/6preflights,
-34,342input/2,625output,$0.0047467=0.47467c;0Browse/PKMN/Analytics/OAuth,
-5knownCDNphotosdownloaded during preparation. All6core slab fields match manual
-references; ordinaryEX qualifiers normalize;1CGCstamp remainsuncertain but saved
-production interpretation resolvesall6Unlimited/IDENTIFIED/slabOK with0providers.
-One diagnostic PSAsetalias is resolved by current production metadata/canonical
-catalog; missing seller-set variants remainuntested. Original6source caches
-unchanged, same originalUUIDbudgets allunder2c,0holds; strictreplay0requests/cost.
-Reports under data/model-comparison/2026-11-03/runs/2026-11-04T15-07-45-592Z-live
-and15-09-04-059Z-replay; ignored broader-slab-summary.md records percase details.
-
-Production defaults/prompts/paidkeys unchanged. No automatic stronger escalation
-or model migration. BGSsubgrades,halfgrades,qualifiedlabels,TAG,foreignandraw
-miscategory stillneedvalidation. Current6costcomparison is not a simultaneous
-historicalidenticalbytes trial or fullsearchsaving. ActualprofitableDeal still
-unverified; all previous roadmap/deferredscreenshots/financialassumptions remain.
-
-Final874offline tests pass under default AND explicitGPT-6Lunaslaboverride; both
-TypeScriptchecks,build,whitespacepass; localhost3017HTTP200. New-IDhistory records
-completedpriceexclusions only, preserves cancellation and normalreconsideration;
-duplicateIDs screenedonce within original200summarywindow. Fixed an existing
-transporttest sponsor race with an explicit first-dispatch barrier; no production
-transportchange. No commit/merge/push requested orperformed. Preserve pre-existing
-.env.exampledeletion and ignoredplans/data. Publicsummary:
-docs/candidate-admission-2026-11-04.md. Next: broaderhardlabelvalidation, selective
-additivefocusedreview and controlledactualDealvalidation; do notcallcurrent
-selected-marketreplay a new liveDeal or universalcostsaving.
-
-## Stopping checkpoint and next session — November 3
-
-User requested commit, push the feature branch, merge to main, push main and stop
-for sleep. Finish only verification and delivery; do not start new comparisons.
-Delivered: a14dd5bc93987dbc42ab4985b644d6a3c2fabdc2, "Preserve paid evidence
-across selective model research". Feature branch pushed, then fast-forward merged
-to main and main pushed. Local main, origin/main and GitHub main/feature heads
-all verified at that same hash. Current branch is main. Only the pre-existing
-.env.example deletion remains unstaged; ignored data and private notes stayed
-local. Local app root returned HTTP200 after the merge. No more feature work
-or provider comparisons started after the stopping request.
-
-Completed since 8842085: isolated content-keyed comparison runner; compact stamp
-experiment; exact GPT-6 Luna rates and bounded-only model override; resumable
-1–12-case diagnostic with original paid-history proof; independent slab-model
-selection with unchanged default; compatible old/new compact + combined readers
-across selection/rollback; private-value reuse and source-index preservation;
-falsy malformed historical caches now fail closed. Raw model, prompts and keys
-are unchanged. No automatic stronger follow-up or production model switch.
-
-Verification: all 858 offline tests pass under default and explicit GPT-6 Luna
-slab configuration; both typechecks, build and whitespace checks pass. Earlier
-five-case comparison cost $0.0042322 total; strict replay was provider-free.
-
-Fresh normal CGC9 Charizard Base Set Unlimited 4/102 holo Buy It Now search:
-search a6133d7b-e009-4d3c-9661-c2131d494ce4; six matching rows, three slab
-assessments/PASS, zero Deals/errors/attention, one unresolved Sorting row.
-Four Browse, four PKMNPrices requests/27 reported credits, three generations,
-$0.0044524 (0.44524 cents), zero holds. Report:
-data/search-benchmarks/2026-11-04T00-40-31-008Z-live-a6133d7b-e009-4d3c-9661-c2131d494ce4/report.json.
-No cheaper-model comparison of these CGC cases has run yet.
-
-Next session:
-- Read ignored varied-photo-manifest.json under data/model-comparison/2026-11-03.
-  cases[] contains three eligible PSA5 references with original search budgets;
-  offlineCases[] contains CGC8.5, BGS7.5 with subgrades, TAG6.5, PSA9(PD),
-  and raw anniversary/reprint references. Foreign and truly miscategorized raw
-  cases are still missing. Original UUIDs for legacy offline rows are unknown;
-  do not borrow an ID or reset a prior budget to purchase comparisons.
-- Use the newly saved current CGC cases and original search scope to extend
-  validation efficiently. Resume the varied checks only within remaining caps.
-- Enable cheaper cold-slab routing only after adequate case evidence; keep all
-  accepted readers and private valuations so changing models doesn't repurchase.
-- Stronger focused findings must stay additive and cite original pixels. Do not
-  copy base identity into a stamp-only result to fabricate independent evidence.
-  Only genuinely unknown facts can be filled under existing printing safeguards;
-  known disagreement, premium upgrades and authenticity concerns stay visible.
-  A trusted server-side worthwhile gate is needed; a posted browser flag is not
-  evidence. Optional budget denial must retain the accepted primary assessment.
-- Inspect overconservative preliminary scope/priority: the CGC search still paid
-  for three very overpriced slabs because the sold screen's exactScope was false.
-  Generalize any fix using identity/printing/finish evidence; don't blanket-reject
-  possible mislisted premium variants or change numerical estimates to get Deals.
-- Keep the central milestone: a current evidence-supported profitable listing in
-  Deals. Neither the PSA comparison nor the new CGC search establishes that yet.
-- Preserve all older roadmap entries, fee/availability updates, model-quality,
-  UI, durable queue, market history and strategic ideas. This is not the full list.
-
-## Grader market shift observation — November 3
-
-User reports that PSA service suspensions and reputation concerns may be moving
-buyers toward CGC and raising CGC values. Treat this as a market hypothesis,
-not a verified finding of misconduct or proof every CGC card has appreciated.
-Track exact card / printing / grade sales separately by grader, with recent
-sold transactions as primary price evidence. Include CGC in validation and
-retain both existing-slab resale and raw-to-grade strategies. Do not apply a
-blanket CGC premium or discount PSA based on headlines.
-
-Official PSA October 28 update confirms Value reopened October 29 in the US at
-$39.99, $500 max insured value, estimated 90–100 business days; Value Bulk still
-awaits reopening. New submission economics/service availability are separate
-from resale of existing certified slabs. Existing fee/account verification and
-market-history work remains on the roadmap; no fee assumptions changed during
-the model-routing task. Source checked November 3:
-https://www.psacard.com/articles/articleview/15779/psa-reopens-value-service-level
-
-## Current work checkpoint — November 3
-
-- Committed the price-accounting and reuse changes as `8842085` on
-  `improve/deal-candidate-selection`. No merge/push requested. Preserved the
-  unrelated unstaged `.env.example` deletion.
-- Isolated model experiment underway: three saved PSA7 labels with GPT-6 Luna;
-  two focused native-pixel edition-stamp crops with GPT-5.6 Terra. Original
-  search UUIDs and remaining 2-cent allowances are preserved. No fresh Browse
-  or PKMNPrices requests are needed. Manual reference labels are not prompts.
-- Diagnostic answers use a separate private SQL namespace and immutable image
-  content keys. Original paid assessments remain unchanged. This is not yet a
-  production model migration, automatic escalation, condition correction or
-  positive-Deal validation. Historical source inline bytes were not retained,
-  so current frozen images versus historical results are not a controlled A/B.
-- [x] Five-case isolated comparison completed. Three GPT-6 Luna slab checks:
-  $0.0018122=0.18122c vs historical $0.003991=0.3991c (54.6% less on these
-  controls). Card/holder/PSA7/cert fields correct on 3/3. Two raw NM-as-qualifier
-  outputs normalize correctly through existing grade rules; all three slab statuses OK,
-  ordinary complete PSA labels establish Unlimited, including the uncertain stamp.
-- [x] Two targeted GPT-5.6 Terra stamp crops: 592 input / 103 output,
-  $0.00242=0.242c. Venusaur CANT_TELL → NOT_PRESENT; historical wrong
-  Dark Blastoise NOT_PRESENT → VISIBLE. Dark Blastoise production had already been
-  corrected later; this tests focused review against a wrong prior, not a new
-  product fix. No condition/grade/value repetitions or production writes.
-- [x] Total new generation cost$0.0042322=0.42322c; five exactpreflights,
-  five generations, three CDN photo downloads; zero Browse / price / Analytics / OAuth.
-  Original three UUID budgets now 1.53404c / 0.58032c / 1.48004c; zero holds.
-- [x] Strict SQL saved replay 5/5, zero provider transports, new attempts or cost.
-  All five original primary cache keys present and fingerprints unchanged. Live report:
-  data/model-comparison/2026-11-03/runs/2026-11-04T00-05-37-306Z-live/report.json;
-  final replay 2026-11-04T00-12-10-933Z-replay/report.json under same runs folder.
-- [x] 846 offline tests, both TypeScript checks, production build pass. Fixed an
-  existing date-prefix privacy assertion that failed after the UTC day rolled to November 4;
-  now it checks the complete header without confusing the normal observer event timestamp.
-  Public report docs/selective-model-comparison-2026-11-03.md.
-- [ ] Next gate: varied saved reference cases, other graders / grades / qualifiers,
-  reprints, foreign cards, low resolution and metadata conflicts before production routing.
-  Then preserve compatible paid keys / readers, carry clear cheap findings forward,
-  target one consequential unresolved fact within same UUID cap, reprice dependent
-  routes only; do not automatically purchase both models or repeat corrected facts.
-  Real current profitable Deal validation remains pending. New diagnostic code
-  remains uncommitted after checkpoint 8842085; no merge or push requested.
-
-## Latest cost preference and selective model routing — November 3
-
-User explicitly authorizes as much PKMNPrices research as useful within reason;
-20,000 daily credits are subscription capacity, not a per-request cash bill.
-Current 32-screen/64-total request safeguards did not constrain the live five-call
-sample. They are tunable safeguards, not a product goal or permanent reason to
-leave useful comps missing; expand when measured need and provider capacity
-justify it. Preserve actual rate/daily limits and SQL reuse.
-
-User wants AI cost as low as possible while still finding an actual deal. The
-2-cent ceiling is not a spending target. Evaluate cheap first checks plus a
-stronger model only where it changes a worthwhile decision, without repeating
-clear work or automatically buying both stages for every listing. This is a
-request to think through the optimization, not a completed model migration.
-
-Actual measured bounded costs: RAW Venusaur three generations used52,072 input
-and2,995output tokens, cost$0.0140084 (1.40084c),74.3% input. Compact PSA7
-Charizard three generations used12,467input and1,248output, cost$0.003991
-(0.3991c),62.5% input; percopy0.08048–0.17156c. Both used one generation per
-assessed card, zero cached/reasoning/write tokens; strictreplays spent$0.
-Fewer irrelevant high-detail images/targeted crops and compact output are
-measurable levers. These small samples found0Deals, so they do not prove low
-cost per useful Deal or accuracy. Do not generalize three results into savings.
-
-Current default bounded model is gpt-5.6-luna, already the inexpensive family
-member. Official Nov3docs confirm$0.20/$1.20 perM input/output. GPT-6Luna is a
-candidate cheaper first-stage benchmark at published$0.10/$0.50 perM, image input
-and structured outputs supported; account access, actual image tokens and card
-accuracy untested. GPT-6.1Sol is a candidate compact stronger comparison at
-$2/$10 perM, not currently permitted in the guard's verifiedrate table. Sources:
-https://developers.openai.com/api/docs/models/gpt-5.6-luna
-https://developers.openai.com/api/docs/models/gpt-6-luna
-https://developers.openai.com/api/docs/models/gpt-6.1-sol
-At that discussion checkpoint no model/rate table/prompt/paid keys or cap changed. A later isolated diagnostic adds verified GPT-6 Luna spending rates, without changing the production model, prompts, accepted keys or caps.
-
-Recommended next experiment: reuse saved cheap findings on a small labeled set.
-Ask one compact stronger question only when it could change buy/pass/printing/
-condition and sufficient relevant photo evidence exists. Give relevant original
-images/crops and prior source-linked observations, requiring evidence-backed
-correction or unresolved; do not let a cheap guess become proof. Preserve clear
-slab identity/grade findings and never raw-grade an established slab. Keep fee/
-profit calculations in code and price-data refresh separate from photo work.
-Store additive refinement keyed by base answer, targeted fields, selected source
-images/crop/model/schema version; preserve original answer and provenance. Reprice
-only dependent routes on material correction, reuse unrelated observations.
-
-Existing deeper review is unsuitable as-is: legacy-record admission,8192output
-cap and no corrected grades/prices/odds. At current Terra rates its output-only
-reservation is9.83c, and a full2200output raw Terra pass alone is2.64c. A stronger
-stage needs compact schema/output limits plus exact-input reservation under the
-SAME remaining2c search budget. No hidden new ID or automatic repeated escalation.
-Changing the default ENV changes base versions/keys; preserve accepted old-model
-readers instead of bulk invalidation/reanalysis. Standalone cheap triage + stronger
-raw-condition route and direct stronger routing for selected hard raw cards are
-alternative experiments, not automatic additions; both can increase all-in cost.
-Measure correct decisions, false Deal/missed Deal rates, useful corrections,
-unresolvedcases, latency, totalpaidtokens/escalation and cost per useful outcome.
-
-## Price accounting final verification — November 3
-
-- [x] All830offline tests, bothTypeScript checks, build and whitespace pass.
-- [x] Screening32 + durable all-stage64 PKMN request limits are active. Cross-stage
-  identical path/TTL transport is coalesced; screening still has no retry loop
-  and no extra sold pages. Stopped-first-consumer sponsorship, partial-route
-  retention/resume, and unknown-credit display are covered by regressions.
-- [x] Controlled live English BaseSet Unlimited Charizard4/102 PSA7 holo BIN
-  test:11 matching rows,8 screened from automatic assessment,3 completed slab
-  checks/PASS,0Deals,0errors/attention. OpenAI$0.003991 =0.3991c,0holds;
-  3Browse,5PKMNrequests,65reportedcredits. Actual provider daily headers20000
-  limit/19217remaining; eBay Analytics4957of5000remaining. Source report:
-  data/search-benchmarks/2026-11-03T23-32-41-046Z-live-06f46836-7a2d-4537-8cd3-09dee94bba17/report.json.
-- [x] Strictsavedreplay sameUUID:0new generation/preflight/price/Browse/photos/
-  Analytics/OAuth,0additionalcost/credits,3accepted assessments reused, no count
-  reset. HTTPusage matchespersistedcounter;SQLready. Reportsstayignored.
-- [ ] Core actual-current-Deal validation remains pending: this sample correctly
-  rejected overpriced listings and did not establish a current opportunity.
-  Continue evidence/candidate quality next, not cap-exhaustion spending. Preserve
-  full existing backlog, deferred examples and saved positive/auction references.
-
-## Price research allowance and accounting — current November 3 checkpoint
-
-The filtering/cleanup work was committed as e220c75 on improve/deal-candidate-selection,
-as requested. No merge or push was requested for that checkpoint. The subsequent
-price-accounting implementation was committed as 8842085 on the same branch; no merge or push was requested.
-
-The user clarified PKMNPrices is a monthly subscription with 20,000 credits/day,
-and explicitly authorized higher usage. The old eight-request limit was only a
-preliminary request count, not eight credits or a unified all-stage budget.
-Current implementation raises preliminary requests to 32 and establishes one
-durable 64-attempt allowance per UUID across catalog, screening, final raw/slab
-valuation and retries. Keep the persistent $0.02 OpenAI cap, 25 actual Browse
-calls/search and daily eBay quota/reserve unchanged. Retain original data and
-response keys in Azure SQL; local request/credit accounting is separate.
-
-Provider x-credits headers report actual charged and last-observed remaining
-credits. Missing headers stay unknown; do not convert item counts into a dollar
-bill or describe the local API-key namespace as provider-account-wide authority.
-Stop blocks queued/paced/later requests, while accepted responses finish saving.
-Partial valuation keeps completed routes and photos: price-only gaps remain
-Sorting, genuinely supported profitable routes still reach Deals, and a later
-explicit valuation resumes missing pricing without buying the same photos.
-
-Adversarial offline review found and is addressing stopped-first-consumer
-attribution in shared valuation/photo jobs, six-hour reuse freezing incomplete
-pricing, sibling cancellation losing accepted results, and duplicate identical
-URLs across screening/final transport pools. Keep these generalized regressions;
-no model/prompt/paid-cache version changes were authorized for this accounting.
-
-A full intermediate suite passed 825/825 after evaluator/accounting integration.
-Final checks and a controlled useful live sample/reuse check remain to be done
-after the cross-stage transport fix. Do not claim a real current Deal until a
-live available listing passes the actual evidence and unchanged fee/category
-rules. The user's core outcome is actual useful profitable results, not spending
-an allowance, filling rows or completing counters. Preserve all deferred photo,
-English/front, early-completion, auction, market-history and UI work below.
-
-Updated November 3, 2026, America/Chicago. This file is private to this checkout
-and excluded from Git. Keep it out of commits, GitHub, issue bodies and PRs.
-The complete actionable checklist is in LOCAL_TODO.md, also Git-ignored. Read
-both before resuming work; this file preserves design decisions and context.
-
-## Three filtering fixes completed — November 3
-
-The user authorized all three. Shared title exclusions now distinguish authenticity
-assurances and accompanying custom holders from actual mystery/proxy products.
-Observed single-card nonstock-front holder evidence corrects metadata only for
-matching ID/title/photos; query and UI raw/graded choices agree in results/counts
-and pending/automatic eligibility. Explicit direct-link submissions retain their
-independent scope through page changes and pending work. Unknown/contradictory
-holders remain unresolved; no unreadable certificate becomes raw evidence.
-
-Seller-condition clues now combine title, structured cardCondition and notes,
-retaining conflicting fields rather than overwriting them from titles. Explicit
-HP/damage and conflicts suppress only extra unpriced raw-context boost, never
-exclude cards or assign actual condition/grade/value. LP-to-cleaner upside stays.
-All787offline tests, both typechecks/build/whitespace pass; local200/SQLready.
-Zero eBay/PKMN/OpenAI generations or preflights were used. Models/limits/paidkeys
-and savedrecords unchanged. See docs/listing-filter-corrections-2026-11-03.md.
-No commit/delivery requested for this batch. Earlier findings below describe
-pre-fix checkpoints. Full roadmap and saved auction example remain intact;
-unified all-stage price-data accounting and useful-deal validation are next,
-not part of these three fixes.
-
-## Current cleanup and suggestion review — November 3
-
-The dedicated file-by-file cleanup is implemented on improve/deal-candidate-selection.
-HTTP, the evaluate CLI and benchmark now share one bounded evaluator/search path;
-legacy broad discovery, multiple-opinion/sold-photo writers and exclusive helpers
-are retired. Exact versions/keys and paid-record readers remain. A missing/stale
-financial checkpoint now reuses saved identityPasses instead of losing corrections.
-14 source/CLI and 14 old implementation test files removed; 766 offline tests,
-both typechecks/build pass. No paid or marketplace/data-provider requests were
-made for cleanup; readonly SQL readiness remains healthy. See the public code
-map and docs/code-cleanup-2026-11-03.md for implementation facts. This checkpoint
-is not a new live deal validation, model/cap change or delivery commit.
-
-The user supplied efficiency suggestions as discussion input, explicitly not a
-rewrite or new project rules. Existing canonical name cleaning, exact sold scopes,
-one-page summary collection, dedup, English/format/12h/price filters, memoized
-price research and raw/slab routes already cover much of them. Seller condition
-is a clue; LP may be better and MINT may be worse. Avoid adding blanket keyword
-bans or hard raw-median exclusions that erase real opportunities. Scope both
-2-cent generation accounting and separate eBay/PKMN usage honestly.
-
-Read-only review found three targetable quality gaps for later: photo-confirmed
-holder is not checked against raw-only/graded-only selection after miscategorized
-eBay summaries; current junk regex rejects ordinary Authenticity Guaranteed and
-custom protective case phrasing; raw-market priority damage caution reads title
-but not saved cardCondition. Do not claim these are fixed by cleanup. Manual
-pricing retry has an older disconnected producer: current bounded admission was
-already not issuing trusted tickets. Consumer/endpoint/UI retained forcompatibility;
-choose boundedexplicit retry reconnection or deliberate retirement separately,
-without silently reviving expensive prescreen/AI work. Existing unified all-stage
-PKMN budget/credits and deferred photo/early-stop reports remain pending.
-
-## Master roadmap — November 3 latest priority and backlog index
-
-This is the current roadmap index, not a replacement for the detailed ideas and
-historical checkpoints below. The user's full product plan is much broader than
-the three immediate implementation steps. Where an older checkpoint describes
-three candidates, an expiring development-wide Browse allowance, paused AI,
-unfinished SQL setup or unfinished price-first admission, the newest checkpoint
-and this index take precedence. Keep both private files Git-ignored.
-
-**Immediate sequence checkpoint:** step 1, bounded sold-price-first admission,
-and step 2, separate compact slab-label versus raw assessment, are implemented.
-One controlled end-to-end search cost/quality benchmark and saved replay are now
-complete. The live run cost $0.0140084 (1.40084 cents), completed three raw
-assessments and found zero Deals; this does not establish useful deal-finding
-performance or a universal search price. The next priorities to evaluate are
-selective photo/crop quality and candidate ranking, cost per useful verified
-result and unified price-data accounting. Keep the deferred screenshots and
-broader roadmap; do not silently substitute their fixes or a model/UI redesign.
-Useful spending remains welcome under the hard $0.02 AI cap and 25 actual
-Browse calls per search, with the daily account quota preserved. Do not spend
-the remaining allowance simply to reach either ceiling.
-
-**Completed foundation, with limits:** Azure SQL Basic schema/cache/assessment
-repositories and verified import are working; this is not a long-term normalized
-market-history system, public authentication, shared spending/quota authority or
-durable whole-search worker queue. Exact paid-request guards, reusable photo
-evidence, cancellation and cents-correct financial arithmetic are implemented.
-Step 1 uses existing SQL/file response caches, at most eight uncached PKMNPrices
-requests including catalog work, one 20-sale page per requested market, four
-screening workers, 50 metadata slots and a separate two-assessment automatic
-queue. Recent matched eBay sales supplied by PKMNPrices are the primary price
-evidence. Exact slab scopes and raw condition buckets/unspecified-condition
-context stay separate. Missing evidence does not become zero or a paid-review
-task. The 801-test step-1 checkpoint is recorded below; no new delivery commit
-is implied by saving this roadmap.
-
-The master work areas and their current status are:
-
-1. **Efficient graded/raw assessment paths — step 2 implemented; one controlled benchmark complete.** An existing slab
-   needs actual card/printing/finish and photographed grader/grade verification,
-   not repeated hypothetical raw condition or submission grading. Raw cards need
-   independent physical condition and only photo-supported grading upside. Reuse
-   prior accepted evidence, keep honest uncertainty and avoid adding paid stages
-   for information already known. Preserve fungible exact-grade market reuse.
-2. **Measured cost and end-to-end quality — initial benchmark complete, usefulness still unproven.**
-   The Venusaur Base Set 15/102 Unlimited holo BIN search loaded 50 metadata
-   rows, returned three raw assessments and zero Deals for 1.40084 cents in
-   58.271 seconds; replay added zero provider/AI work. Full attribution and
-   limitations are in the latest benchmark checkpoint below and
-   docs/search-cost-benchmark-2026-11-03.md. Later test ten substantially different
-   phrases, positive examples and cost per useful verified decision. Keep token
-   charges, returned-row credits and billing distinct; one bounded sample is
-   neither a universal price nor proof that mostly automatic deals now work.
-3. **Search completion and admission transparency — deferred screenshot.** A
-   screenshot of "1999 base set blastoise" reports 50 checks, one assessment,
-   49 incomplete, 0.293 cents reported cost, zero reserved and 1.707 cents
-   available while saying Search complete. This is below the reported two-cent
-   cap; the actual eligibility/price-screening allowance/completion cause is
-   unconfirmed. Later trace actual queue eligibility, unavailable/deferred sold
-   references, accounting and terminal states, and make completion/remaining-work
-   reasons intuitive. Do not assume a cap hit, rerun paid work just to reproduce,
-   or force spending to the limit. The user explicitly deferred this fix.
-   Screenshot: /var/folders/tf/ysl4ylwj4ss12t3rbc08r11h0000gn/T/codex-clipboard-390f27fd-4564-4da2-8046-3d069a95eec8.png.
-4. **Photo identity, coverage and language quality — deferred.** Generalize the
-   known false front-obscuration and English-card exclusions, full-back/cropped
-   detail confusion, and mistaken First Edition/Shadowless readings into tests.
-   Use stamp location, full copyright dates, artwork shadow, set symbols,
-   collector number and anniversary/reprint marks together; a lone "99" is not
-   a universal rule. The saved $900 Dark Blastoise and $158 English example stay
-   deferred. Sampling must disclose reviewed/unchecked images and never prove
-   full-gallery absence. A new prompt does not repair unchanged cached readings.
-5. **Grade estimates, confidence, model selection and deeper review.** Preserve
-   actual raw condition independently of a numeric grade. Aim for three adjacent
-   supported grade possibilities and estimated percentages, then calibrate with
-   real outcomes; do not manufacture precision when photos are inadequate.
-   Account for white backgrounds, glare, holders and hidden surface/edge detail.
-   Evaluate stronger default/selective high-value escalation and full-context
-   deeper review with useful crops/tools, revised estimates and dependent
-   repricing. The current model remains unchanged until that measured work is
-   authorized; incidental caveats should be notes, material unresolved risks
-   should be actionable. Preserve original paid evidence and corrections.
-   The controlled raw benchmark's six-photo checks produced no numeric grade
-   ranges and left two printing questions unresolved. Prioritize evaluating
-   decision-relevant photo quality/selection and original-resolution crops,
-   instead of treating six photos for every raw candidate or a spend ceiling as
-   the desired outcome. This is future work, not an automatic prompt/model change.
-   Future task/model routing should optimize measured cost per correct useful
-   result, not treat two cents as an ideal spend or add a cheap OCR pass by
-   default. Reuse typed observations in stronger targeted reviews; benchmark
-   current Luna first because an extra extraction layer can increase total cost.
-   The current cap/model stay unchanged pending an explicit new decision.
-6. **Long-term exact-market observations and provider accounting.** Add durable
-   sold observations beyond cached responses, preserving source IDs, currency,
-   attributed/shared scope, card/printing/finish, raw condition or exact slab
-   company/grade/qualifier, sale type, confirmed amount and sale/ingestion/update
-   dates. Incremental ingest, corrections, reconciliation/deletions, deduplication,
-   completeness and bounded refresh remain unfinished. Capture actual PKMNPrices
-   credit headers. Investigate sold-photo access before considering selective
-   historical raw-condition AI; URLs alone do not supply image evidence.
-   Save the user-approved worthwhile future gap fix: one clean per-search
-   price-data budget/accounting service across preliminary and post-photo
-   valuation, later forecasts and retries. The present eight-request allowance
-   applies only to preliminary PKMNPrices screening; it does not cap all later
-   catalog/sold-price work and is not durable per-search credit telemetry.
-   Keep calls, returned-row credits and any known dollar cost distinct, with
-   canonical cache/SQL reuse. See the final unified-price-budget note below.
-7. **Canonical catalog, search interpretation and efficient matching.** Reuse
-   card/set metadata and reference images for code and AI; normalize equivalent
-   phrases such as "1999 base set charizard" and "charizard 4/102" while keeping
-   editions, language, reprints and holo/reverse/non-holo distinct. Improve eBay
-   queries without suppressing possible seller mistakes. Continue cheap wrong
-   card/lot/gimmick/absurd-price exclusions and preserve cheap rare exceptions.
-8. **Listing freshness, availability and ownership boundaries.** Never present
-   ended/sold snapshots as current opportunities. Coalesce bounded refreshes,
-   separate listing membership/terms from durable card facts and paid photos,
-   preserve relist history, and recheck urgent purchase/snipe terms. Keep source,
-   fetch and assessment timestamps internally without resetting on reuse; retain
-   actual listing and transaction dates as trading information.
-9. **Auction research and actionable snipes.** Keep the current search-start
-   under-10-hour window. Later predict a closing range using comparable sold auctions,
-   available bid/watch signals and trends, separate from the after-cost safe
-   item-bid ceiling. Missing watchers stay unknown; an early $10 bid with seven
-   days left is no deal evidence. Cap an exact graded slab's snipe at the cheaper
-   verified equivalent Buy It Now on comparable delivered costs, with printing,
-   finish, company, grade and qualifiers matched. Save forecasts/outcomes and
-   consider configurable windows only after the initial flow works.
-10. **Liquidity, capital and holding periods.** Build an understandable numeric
-    liquidity scale and resale-time range with evidence/confidence from relevant
-    sold activity, active supply and coverage. Do not infer days-to-sell from
-    broad sales counts alone. Replace a universal 30–60-day cutoff with user
-    capital/holding preferences; include grading/shipping turnaround, capital
-    tied up and downside. Support all valuable cards; original-151 familiarity
-    and 1999–2003 expertise are optional strategy context.
-11. **Market outlook and daily research plans.** Use exact recent eBay sold
-    trends as the main evidence; PKMNPrices daily TCGplayer/Cardmarket aggregates
-    are separately labeled context. Distinguish observations from forecast
-    ranges, save a shared daily plan/recommendations instead of regenerating per
-    user, measure subsequent outcomes and retain cost/coverage/model provenance.
-12. **Strategies and AI-directed targeted research.** A saved future strategy:
-    identify the biggest daily exact-market value increases, then find live Buy
-    It Now listings that may not yet have been repriced. Compare a prior baseline
-    with multiple verified recent matching sold transactions, not one outlier
-    or an asking-price jump; reuse shared SQL history and a daily computation.
-    Require sufficient volume, confidence, liquidity and after-cost margin, and
-    refresh current terms/availability before advice. This remains a hypothesis
-    for later, not the active graded/raw assessment task. Other strategies:
-    new Buy It Now listings;
-    auction snipes; misspellings, generic titles, wrong sets, unmentioned holo,
-    First Edition/Shadowless mistakes; seller LP-to-NM/Mint and NM-to-Mint;
-    general-merchandise/new sellers; small cached samples of collection/storage
-    quality; unusually cheap sold items leading to other seller inventory;
-    heavily watched BINs, promotion plus age and presentation/relisting upside
-    all remain testable hypotheses. Deduplicate promoted/organic listings. Let
-    AI propose useful strategies and bounded follow-ups, with shared evidence,
-    explicit budgets, observable reasons and measured results rather than an
-    uncontrolled seller crawl or broad photo wave.
-13. **Public users, shared authorities and durable execution.** Authenticate
-    users and protect private notes/shortlists/fees/ceilings/budgets/holding
-    preferences. Move actual spending/quota reservations and reset authority into
-    shared SQL before independent replicas. Build server-owned jobs with saved
-    progress, subscriptions, cancellation and recovery; a browser queue or SQL
-    cache alone is not durable execution. Preserve accepted answers through
-    outages and never reset unknown holds during migration.
-14. **Financial assumptions and outcome validation.** The arithmetic audit is
-    complete, but account-specific PSA/service tax/invoice assumptions, single-
-    card versus batch shipping, grade weights, missing-grade fallbacks,
-    no-grade/turnaround risks and alternative-market policies still need evidence.
-    Keep raw as-is value distinct from post-grading resale and net profit from
-    headline resale value. Preserve realistic optional offers and clear actual
-    investment/downside scenarios; do not reopen corrected formula defects as
-    if they were all still unaudited.
-15. **Decision-first responsive interface and Android readiness.** Compact
-    always-visible format/raw-graded/price/profit/ROI/sort controls; rare advanced
-    popovers; comparative result rows; persistent desktop inspector with results
-    visible and full-screen phone details; expandable evidence/confidence;
-    meaningful compact AI/progress/budget states; accessible components and
-    reduced-motion transitions. Finish type/spacing/color/overlap/scrollbar and
-    drawer/header polish across sizes. Preserve the two saved UI concepts and
-    semantic purple palette as future references; no fabricated dashboard stats
-    or unnecessary framework rewrite. Android packaging/validation is later work.
-16. **Photo inspection, branding and release operations.** Original-resolution
-    undistorted zoom/slideshow and the supplied favicon pack are implemented;
-    refine interaction where evidence warrants it. Optional AI sharpening is a
-    later explicit-cost, labeled visual aid alongside the untouched original,
-    never grading/authenticity evidence. A better product name remains open.
-    Continue verified code/dependency cleanup, meaningful tests and responsive
-    accessibility validation; no blind deletion of needed code or paid data.
-    Before public deployment, verify DB backup/restore, retention, capacity,
-    least-privilege identities, observability, operating cost and scale behavior.
-
-The complete detailed checklists and historical decisions below remain useful
-context. They are not all completed, nor all part of the active step-2 patch.
-
-## Product goal and decisions
-
-Find real eBay opportunities with resale time estimated from each card's
-liquidity. The earlier 30–60 day goal is no longer a fixed cutoff. Users may
-prefer quick flips or commit more capital to valuable cards they are comfortable
-holding longer for a larger expected profit. Give raw resale, existing
-graded-card resale and raw-to-grade equal priority. Support the public and all
-valuable cards; the user's expertise in
-the original 151 and 1999–2003 is a strategy input, not a catalog restriction.
-For the current development scope, search and show **English cards only**.
-Retain foreign historical data; it must not appear as an English opportunity.
-
-- Useful AI spending is welcome; waste is not. The current hard ceiling is
-  **$0.02 per search**, aiming much lower, ideally a cent or a fraction of one.
-  This supersedes earlier looser budgets and requests to remove AI restrictions.
-- eBay's daily request quota is scarce even though requests are free. Preserve
-  quota for development, reuse saved responses and keep stop/cancel effective.
-- Start with a reliable small development workflow before broad automation.
-  Three admitted candidates is temporary development scope, not a production
-  throughput target and not a promise of three deals.
-- Show genuine Deals with their reasons and concerns. Sorting is the workbench.
-  Seller mistakes belong in Deals once verified. Remove separate Hidden finds
-  and Long shots categories. Manual review needs a material unresolved issue.
-- Azure SQL shared evidence storage is installed and connected for local
-  development. Public user accounts, shared budget/quota authority, a durable
-  server queue and the daily planning workflow remain separate unfinished work.
-- Retain an All matching listings view across outcomes, including relevant
-  cards that are not profitable Deals. Distinguish title/catalog matching from
-  photo-confirmed identity. Viewing matched inventory must not automatically
-  buy full AI assessments for each listing; current development coverage stays
-  limited and must be described honestly.
-- Equivalent phrases such as "1999 base set charizard" and "charizard 4/102"
-  should resolve to the same canonical card reference and reuse saved research.
-  A printed number is not sufficient to collapse reprints, editions, finishes
-  or language markets. This alias/intent layer is future work, not implemented
-  by the current narrower numeric provider lookup.
-- Live search results must exclude ended/sold listings. Retain listing history,
-  reusable card facts, sold observations and paid photo evidence independently.
-  Cache presence does not prove availability. Track status and expiry internally,
-  expire search membership, use known auction end times, and coalesce bounded
-  refreshes across users. Refresh relevant terms before buying/snipe advice;
-  unknown availability must remain explicit. Preserve relisting identities.
-- Estimate resale time from relevant liquidity and market evidence; show a
-  range and confidence. Respect each user's available capital, purchase budget
-  and acceptable holding period. Longer holding and higher prices do not
-  guarantee more profit. Include capital tied up, relevant holding costs and
-  grading/shipping turnaround when comparing opportunities. This clarification
-  supersedes fixed 30–60 day language in the historical notes below.
-- Do not automatically buy, bid, send offers or contact sellers. Offer drafts
-  and snipe recommendations remain advice unless separately authorized.
-- Paying users should receive fresh useful data. The latest user preference
-  is to keep data-fetch/source-update/analysis timestamps internally and remove
-  them from the visible cards/details. Keep actual listing-origin dates,
-  auction countdowns and sold-transaction dates as trading information. Maintain
-  refresh/invalidation checks and do not reset timestamps merely on reuse.
-
-## Current checkpoint
-
-The Azure SQL foundation is complete on `feat/azure-sql-foundation`, based on
-`33d3e9a`. The user has now authorized stopping-point commit, merge to main and push;
-see the delivery notes at the end for the final verification and Git result.
-
-- Resource group `rg-pokemon-flipper-dev`, Central US, server
-  `pokemon-flipper-dev-dc3874fb`, database `pokemon-flipper-dev`, Basic 5 DTU /
-  2 GB. Entra-only access, encrypted certificate-validated connections, and one
-  current-development-IP firewall rule. No service-tier increase was needed.
-- Schema version 1 is installed. Imported and read-back verified **41,316
-  cached responses plus 895 assessment records (42,211 total)** against the
-  checksummed backup. Original files and resumable import snapshots remain.
-  Large assessment batches timed out; bounded 20-record / 4 MiB batches resolved
-  the import without new provider requests or increasing the database tier.
-- `.env` selects SQL with Azure CLI authentication and local owner scope; its
-  prior version is retained privately under data/azure-sql/. The running local
-  `/api/storage` endpoint reports `{backend: "azure-sql", ready: true}`. Startup
-  and provider transports block if selected storage is unavailable; an error
-  cannot become a cache miss and trigger replacement provider work.
-- Public reusable evidence is stored separately from owner-specific financial
-  evaluations. Unknown/destination-specific cache scopes remain private. Exact
-  AI request claims prevent duplicate dispatches; accepted responses checkpoint
-  locally if SQL fails and can save later without requesting another answer.
-  The actual SQL canary used two independent repository consumers, one simulated
-  dispatch, and zero provider requests. It is not a two-process load benchmark.
-- **617/617 offline tests**, both TypeScript checks, production build, diff
-  checks, live SQL readiness and HTTP favicon verification pass. All ten supplied
-  favicon assets match the originals. Npm tests now always isolate local data.
-- All matching is visible/default using loaded filtered records only; the
-  three-candidate development coverage is explicit. Paused progress no longer
-  claims to be scanning or offers impossible pause/budget resume actions. Data
-  refresh/analysis timestamps are hidden, while listing and sold dates remain.
-- English-only scope is now enforced in eBay source searches, title/aspect
-  screening, full/deeper paid analysis and cached result/shortlist/direct-listing
-  display. Explicit foreign-language queries stop before paid interpretation.
-  Known foreign photo findings are saved and stop later paid work; unchanged
-  evidence is reused. Unknown language remains preliminary, not confirmed
-  English. Original saved foreign records remain preserved/removable.
-- The bounded two-cent workflow is implemented and verified with **667 offline
-  tests**, both typechecks, production build and diff checks. HTTP preliminary screening uses saved metadata/local rules; full work
-  combines identity, printing, photo coverage and raw condition or slab label in
-  one request, at most six unique photos. The transport performs exact token
-  counting on immutable inline images/schema, reserves maximum input/output
-  charges durably, and forbids automatic assessment retries/image fallback.
-  The tested local guard is now enabled, still operator-controlled with the
-  **$0.02** hard search cap. Ledger contents and eBay allowance stayed unchanged.
-  Unknown outcomes retain their holds. Reload/start a new browser search; old
-  paused runs do not resume automatically.
-- One controlled four-photo saved-listing assessment reported **$0.0030728**
-  (about **0.31 cents**) and correctly returned PASS for a heavily played
-  Unlimited Charizard, estimated grades 1–3. It used no Browse calls. A later
-  process reused the SQL photo evidence with zero AI/count/photo requests; its
-  attempted price refresh was blocked by the canary, so that run was not a
-  complete revaluation. An earlier rejected parameter request conservatively
-  retains $0.005338; cumulative canary commitment is $0.0084108. The canary is
-  not a whole-search cost/quality benchmark or a provider invoice.
-- Per-search UI reports settled charges, unresolved reservations, remaining
-  budget and generation counts. A budget stop prevents new paid stages while
-  accepted answers finish saving. Owner-private latest evaluations now survive
-  save-after-analysis and shortlist reload; fresh same-evidence prices are reused
-  with current-term recalculation. No broad paid search was launched for testing.
-- Shortlist, history, usage and real spending/quota authority remain local
-  files. SQL budget/quota tables are schema groundwork, not shared multi-replica
-  accounting or a worker queue. Do not expose separate local replicas publicly.
-- Development Browse allowance observed after validation: **9 of 25 used**,
-  expires November 3 at 2 AM CST, renewal required. Six earlier mock reservations
-  conservatively remain counted; test isolation prevents repeating that issue.
-  The user has also been trying the app; inspect live ledgers before more work.
-  At two-cent activation: 17/25 development requests used, 8 remain; eBay daily
-  Analytics reported 599/5,000 used. Activation did not reset either allowance.
-
-The preceding audit checkpoint below is historical:
-
-The seven-pass spending audit and fixes were committed as `33d3e9a` on
-`refactor/workflow-organization`, following `c4db04e`. No merge or push was
-performed. This private plan was excluded from the commit. The pre-existing
-`.env.example` deletion is unrelated and remains outside the commit.
-
-- Paid AI is paused and the local app is stopped. Persistent reservations cap
-  a search at two cents across stages, retries and local processes. Missing,
-  corrupt or unbounded accounting blocks paid dispatch.
-- Uncached production AI also remains blocked because trusted exact input
-  bounds are not configured. The previous large-photo workflow cannot be
-  assumed to fit two cents. This is an unfinished workflow requirement.
-- The development Browse allowance is **25 additional requests, 0 used** at
-  this checkpoint. The observed daily ledger is 588 used / 4,412 remaining.
-  Development allowance expires November 3 at 2 AM CST and then requires
-  explicit renewal; it does not expose the whole remaining daily allowance.
-  Check live ledgers before future work; these are saved checkpoint values.
-- **557/557 offline tests**, both TypeScript checks, production build and diff
-  whitespace checks pass. Mobile/desktop photo interaction checks used local
-  synthetic images. No new OpenAI generation/token-count or eBay Browse calls
-  were used during the audit. These checks do not establish resale performance.
-
-## Completed in the current changes
-
-- Persistent spending controls, per-search usage attribution and conservative
-  reservations before provider dispatch. Unknown billing retains its hold.
-- Stop, disconnect, changed-filter and retry cancellation, including Stop
-  while awaiting a spending reservation. Accepted answers still finish saving.
-- Shared in-flight work and cached evidence reuse across canceled/restarted
-  consumers; canonical photo keys reuse unchanged images across URL sizes.
-- Early rejection of unusable comparisons and reuse of unresolved readings
-  instead of repurchasing the same inconclusive evidence after 15 minutes.
-- Search-format, card-type and min/max price filters before paid screening;
-  one page of up to 200 source rows admits at most three development candidates.
-  Broad automatic discovery/recovery is suspended in this development slice.
-- Automatic auctions must end in strictly less than 10 hours from the fixed search-start time;
-  ended, missing-date and invalid-date auctions are excluded before paid work.
-- Ordinary raw cards use a $60 supported resale floor. Cheap potential
-  First Edition Base Set copies retain focused verification. Verified low-value
-  ordinary copies defer further work; disproved premiums cannot bypass the gate.
-  Manual full upgrades reuse saved photo/condition evidence.
-- Conditional LP-to-NM/Mint and NM-to-Mint screening uses existing price
-  evidence as a hypothesis, then requires photographic support.
-- Removed executable Long shot logic. Verified hidden opportunities use Deals;
-  deferred work stays in Sorting instead of becoming false Deals or routine Review.
-- Corrected photo-specific notes being shown as listing-wide missing views.
-  Listing 147652972123 has a cropped back close-up and a separate whole-back
-  photo; the close-up's limitation must not erase the whole-back evidence.
-- Visible AI work/paused/completed/failed state independent of search progress;
-  paused work no longer looks like a completed search. No-deals summaries show
-  search scope and what remains unassessed or blocked.
-- Default-open detail slideshow, prominent eBay action and original-image
-  zoom/pan/pinch/wheel/keyboard controls with preserved aspect ratio.
-- Listing time uses origin date as Listed and creation date as a separate
-  Created fallback. Unknown old dates do not trigger a lookup just to fill a label.
-- Confirmed that active application code is TypeScript; the old openai.js
-  screenshot was history, not a duplicate live implementation. Retained working
-  Vite/startup JavaScript and CLI tools; removed only verified obsolete code.
-
-## Next work in priority order
-
-1. **Shared evidence storage foundation is complete.** Azure SQL Basic is
-   provisioned, the existing cache/assessment import is fully verified, and the
-   running local app is connected. Preserve original evidence, private financial
-   settings and pause/spend/quota controls. Shared ledger authority, public
-   authentication, normalized market observations and durable workers remain
-   later steps; this milestone does not finish the entire research architecture.
-2. **Prove a small affordable workflow.** Design a bounded uncached request
-   that fits the two-cent cap, with immutable inputs, explicit output limits
-   and cancellation. Reuse saved evidence first. Do not resume broad analysis
-   or weaken the cap simply to demonstrate activity.
-3. **Measure one search.** Attribute every actual attempt, retry, task, model,
-   tier, image/input, output and cache write to its search. Show the total and
-   cache reuse; reconcile with provider usage where possible. Report missing
-   billing metadata as unknown, not zero or an exact invoice.
-4. **Audit financial calculations independently.** Check fees, purchase tax,
-   inbound/outbound shipping, grading costs/turnaround, profit, ROI, downside,
-   fallback pricing, offers, max purchase price and max bid/snipe formulas.
-   Passing regression tests preserves behavior; it does not validate old rates
-   or prove an attractive purchase price.
-5. **Add durable server jobs.** Build on shared storage so jobs save progress
-   and resume after restart/browser reconnection. Database persistence alone
-   does not make a queue or stop unnecessary analysis. Daily plans can reuse
-   the same store when their workflow is implemented.
-6. **Improve research quality and automation.** Evaluate stronger models and
-   selective escalation, narrow raw-grade estimates, independent condition
-   assessment, actionable deeper review and fewer incidental manual holds.
-7. **Build auction forecasts and useful liquidity.** Keep market-price
-   predictions separate from profitable bid limits and make the evidence and
-   uncertainty understandable on each card.
-8. **Expand strategies and daily planning.** Test the ideas below against
-   outcomes, within shared request/spend limits, before increasing volume.
-9. **Finish the interface and real workflow validation.** Refine controls,
-   cards, mobile layouts and Android readiness; run ten diverse searches once
-   a controlled live workflow is affordable. Track false deals, missed deals,
-   manual holds, latency, request counts and cost.
-
-## Search and candidate requirements
-
-- Separate Buy It Now from Auctions before searching; expose Raw / Graded /
-  Both, minimum purchase price and maximum purchase price. Empty prices mean
-  all prices. Potential raw grade is distinct from certified slab grade.
-- Accept natural phrases such as "charizard 1999 holo" and optimize eBay API
-  queries while preserving card, set, release, finish, language and grade.
-  Show the interpreted search. Do not force every strategy through one query.
-- Use cached market/price information to narrow price ranges before expensive
-  photo work. Normal targets are roughly $60–70+ resale, usually $80–100+.
-  Preserve rare valuable exceptions such as a few-dollar First Edition card.
-- Reject wrong names/sets, wrong releases, foreign-language mismatches, lots,
-  gimmicks and absurd asking prices early. Charizard versus Charmander,
-  Celebrations' anniversary logo and the Base Set 2 symbol/4/130 are examples.
-  A free title check cannot detect every photograph/title conflict; use a
-  focused image check when needed instead of full research of broad junk.
-- Favor useful condition-upside opportunities. HP/Damaged is lower priority,
-  with exceptional cases retained. Avoid blanket non-holo or fame exclusions.
-- Best Offer opportunities need an offer no more than 10% below asking and a
-  clear suggested offer/walk-away price. Let users disable offer-dependent
-  opportunities while keeping genuinely profitable Buy It Now purchases.
-
-## Auction and market research requirements
-
-- Initially search only auctions ending in strictly less than 10 hours, anchored to the
-  time the search starts. A $10 opening bid with seven days left is not evidence
-  that the auction is a deal. A configurable window can come later.
-- Estimate a closing-price range from relevant sold auctions, available bids,
-  watcher counts and their changes, market trend, listing age and uncertainty.
-  Missing watcher data is unknown; watchers alone are not purchase intent or
-  a measured probability of winning. Do not invent unavailable API fields.
-- Show a separate maximum profitable snipe, after all relevant costs and the
-  user's targets. Explain item bid versus total investment and downside.
-- For an existing slab, the snipe ceiling must not exceed the cheapest verified
-  available Buy It Now alternative for the same card, printing, finish,
-  language, grader, grade and qualifier, compared on equivalent delivered cost.
-  This ceiling is pending, not implemented by the under-10-hour search filter.
-- Price slabs from recent exact certified-grade sales after verifying label
-  and identity. Do not repeatedly estimate a raw grade for a verified slab.
-- Use PKMNPrices' actual recent eBay raw and graded sales. Preserve sold date,
-  attribution, currency, condition, qualifications, pagination completeness
-  and freshness. Keep market-feed quotes distinct from exact matched sales.
-- Show an understandable numeric liquidity scale and an estimated resale-time
-  range with evidence/confidence. The scale is undecided. Broad sales counts
-  alone do not establish exact-grade sell-through or days to sell; include
-  grading turnaround. Match recommendations to each user's capital and
-  acceptable holding period instead of enforcing a universal time cutoff.
-- Save forecasts and eventual outcomes for backtesting. Separate observed
-  market direction from AI predictions and make coverage/uncertainty visible.
-
-## AI assessment requirements
-
-- Use a capable model for substantive decisions and escalate valuable,
-  uncertain cases when another assessment could change the purchase decision.
-  Model choice and experiments remain subject to the current hard spending cap.
-- For raw cards, aim for three adjacent candidate grades with an estimated
-  percentage for each, rather than PSA 3–8. Percentages are AI estimates until
-  calibrated against outcomes. Do not fabricate a narrow range from poor photos.
-- Assess condition independently of seller Mint/NM/LP claims and show both
-  PSA and CGC possibilities. Preserve the user's potential-grade filter based
-  on the upper possibility, while explaining likelihood and photo confidence.
-- Report how many photos/views were analyzed and what is missing: front,
-  back, corners, edges, holo surface, focus, glare and sleeves. White/light
-  backgrounds can conceal whitening through low contrast; that alone does not
-  prove seller deception or actual damage.
-- Printing checks should read/crop the entire copyright line alongside the
-  edition stamp, artwork shadow, set symbol, number, fonts and layout. Keep the
-  Alakazam false-Shadowless case as a regression. Do not use a lone "99" as a
-  universal Shadowless rule.
-- Rework LIMITED-mode grade erasure and incidental manual-review routing.
-  Let AI explain uncertainty; keep numeric validation, identity/authenticity
-  conflicts and audited financial rules. Current message fixes do not finish
-  this redesign.
-- Deeper AI review should use the strongest suitable bounded model, actual
-  listing context and useful crops. It may revise grades, probabilities,
-  prices and recommendations, with dependent repricing and a visible explanation.
-  The current observations-only restriction remains to be changed.
-- Let AI choose follow-up strategies/tools within durable job and budget
-  controls. Retrieve listing evidence through tools; a URL in a prompt is not
-  automatically fetched. Never repay for unchanged photos or identical tasks.
-
-## Strategy ideas to test
-
-These are hypotheses to evaluate, not rules that create a Deal by themselves.
-
-| Strategy | Evidence to use and limits |
-| --- | --- |
-| Fresh Buy It Now | Newly listed inventory, exact market value and listing age; catch underpricing before others do. |
-| Auction snipe | Ending soon, comparable sales and interest; a profitable ceiling is separate from an expected close. |
-| Seller listing mistakes | Misspellings, generic titles, omitted First Edition, Shadowless listed as Unlimited, holo listed as non-holo and wrong set; verify the actual printing. |
-| Understated condition | LP that may be NM/Mint, or NM that may be Mint; photographs must support the upside. |
-| General merchandise seller | Seller inventory/history may suggest personal collection or limited market knowledge; specialist pricing and new-account intent remain hypotheses. |
-| Other cards from one collection | A small sample may reveal storage/condition patterns; never assign this card's condition from another copy. |
-| Cheap completed sale leads to a seller | Verify the unusually cheap sale, then inspect a small cached sample of that seller's current listings for other opportunities. |
-| Heavily watched Buy It Now | Compare asking price, age, changes and sold activity; test demand or price-ceiling signals against outcomes. |
-| Promoted stale listings | Promotion plus old age may justify lower priority; avoid an automatic ban and deduplicate promoted/organic copies. |
-| Original 151 familiarity | Optional buyer-recognition/liquidity hypothesis; use actual market evidence and preserve all valuable cards. |
-| Sold raw-card photo assessment | Potentially judge true condition in valuable sold comparisons; targeted/cached only, because broad historical review was a major cost source. |
-| Daily cards to hunt | Save a dated plan of promising cards/strategies from reused market evidence, with budgets and freshness, rather than regenerating on every page. |
-
-## Interface and later product work
-
-- Design study (Nov 8; reference for later UI work): reviewed 407 theory slides,
-  12 design-guideline pages and the seven authored snapshots in the
-  [Advanced CSS course](https://github.com/jonasschmedtmann/advanced-css-course/tree/cf60eed1dbf87ba5464c2a3fa291c87dae668b7b).
-  The useful combination is [Natours](https://natours.netlify.app/) for visual
-  hierarchy and responsive media, [Trillo](https://trillo.netlify.app/) for a
-  gallery leading into summary and evidence, and [Nexter](https://nexter.netlify.app/)
-  for layouts that adapt to their available width. The decks reinforce a small
-  type/spacing scale and muted secondary details (theory pp. 99–124, 185–217),
-  actions next to what they affect and short, purposeful feedback (pp. 223–229),
-  familiar table, gallery and sidebar patterns (pp. 270–301, 337–347), and
-  breakpoints chosen where the content stops fitting (pp. 371–373, 402–405).
-  Apply this to stable comparisons: exact card identity, ask/current bid, net
-  profit or safe bid, and evidence status first; expandable comps and uncropped
-  listing photos close by. Keep the existing responsive grid, focus handling
-  and reduced-motion support. Validate reading order, keyboard/touch controls,
-  contrast and scrolling on narrow layouts. Avoid hover-only pricing, tall
-  marketing heroes and the demo's CSS-only modal in the deal workflow.
-- Additional screenshot supplied explicitly as possible notes for later, not now,
-  saved at data/design/ui-palette-notes-2026-11-02.png. Candidate palette:
-  Primary #7C3AED; Accent #A78BFA; Surface #171923; Profit #22C55E;
-  Review #F59E0B. Purple currently signals grading; separate grading semantics
-  from the primary action color, verify contrast and keep text/icon meaning.
-  Suggested later order: App.tsx compact permanent filters, DealCard.tsx
-  decision-oriented comparison rows, DetailPanel.tsx persistent desktop inspector.
-  Do not invent dashboard metrics from the mockups. Prioritize making a buying
-  decision clear in seconds while retaining expandable supporting evidence.
-- Possible UI rough draft supplied by the user is saved unchanged at
-  `data/design/ui-rough-draft-2026-11-02.png` (Git-ignored). This is a reference,
-  not an approved complete redesign. Explore its dark navy/blue/purple styling,
-  clear Search cards/Evaluate link navigation, prominent search, filters outside
-  a drawer, compact result rows, obvious shortlist/evaluate actions and desktop
-  sidebar for snapshot/shortlist/recent searches. Adapt to phone/tablet layouts
-  rather than preserving its desktop widths. Sample numbers and UI metrics are
-  placeholders; actual net profit/ROI must include audited costs. The draft's
-  development-limit box belongs to development rather than an invented public
-  product promise. Do not implement its implied features just by copying it.
-  A second purple-accent alternative is saved unchanged at
-  `data/design/ui-rough-draft-purple-2026-11-02.png`. Explore its quick-filter
-  chips, grade/set tags, target profit/ROI controls, Best Offer inclusion,
-  advanced filters and list/grid switch. Both images remain possible drafts.
-- Desktop header/control layout needs refinement; the settings drawer should
-  open AND close with a smooth transition and respect reduced-motion settings.
-  Save this for the UI phase; the latest user instruction is to finish the main
-  database task first, then advise when to build the two-cent workflow.
-- Six additional UI ideas were explicitly supplied **for later**, not as a
-  current implementation request:
-  1. Always-visible smart filter bar directly below search: listing format,
-     raw/graded, max purchase, profit and ROI targets, sorting; segmented
-     controls, numeric inputs and compact select popovers. Rarely changed
-     options in Advanced Filters popover instead of a screen-obscuring drawer.
-  2. Decision-first compact result rows: verdict, actual acquisition amount,
-     estimated net profit, ROI, safe bid, photo confidence and pricing status.
-     Auction current bids remain distinct from modeled maximum-bid outcomes.
-  3. Split-view inspector inspired partly by Forkify: persistent results left,
-     selected analysis right with no dark overlay; full-screen details on phones.
-  4. Reusable evidence/confidence components for matched sold comps, freshness
-     status, confirmed printing, grading uncertainty and liquidity, with
-     expandable explanations. Preserve the user's internal-timestamps preference
-     with current/needs-update status instead of exposing fetched timestamps.
-  5. Compact persistent expandable analysis strip: found, screened, fully
-     analyzed, awaiting analysis and material review; distinguish local
-     recalculation from operations that consume API/provider resources.
-  6. Evaluate Radix Primitives for accessible popovers/dialogs/selects/tooltips,
-     focus and keyboard behavior while keeping existing CSS Modules and visual
-     identity. Do not install dependencies or rewrite the framework now.
-     Reference: https://www.radix-ui.com/primitives
-- Keep essential search format, card type and price controls on the main screen.
-  Move advanced diagnostics/settings out of the overloaded drawer. Refine
-  typography, spacing, color, overlap and unnecessary scrollbars at all sizes.
-- Explain asking price, expected profit/loss, total invested, return and snipe
-  clearly. Remove the Bargain score stamp; show useful reasons instead.
-- Show estimated resale time, uncertainty and capital commitment. Allow user
-  preferences for faster flips versus longer holds of more valuable cards.
-- Show both PSA and CGC, independent seller/AI condition, grade uncertainty,
-  actual AI activity and review status. Missing price evidence must not be
-  mislabeled as an unperformed photo assessment.
-- Keep original listing photos at the top in a slideshow, easy to inspect with
-  high zoom that preserves aspect ratio. Make the eBay action prominent and
-  show when the listing was first listed, with honest date fallbacks.
-- Optional AI sharpening is future work, off by default, with explicit cost
-  and original/altered labels. Never use generated detail as grading evidence.
-- Explain no-deal outcomes: what was searched, what was excluded or deferred,
-  budget pauses and how much inventory remains unassessed. Do not call a tiny
-  sample a complete market search or promote uncertain inventory into Deals.
-- Android packaging/device validation, a better app name and wider public
-  release remain future work. Validate usefulness through actual outcomes.
-
-## Shared storage rules
-
-Cache public responses from every API, listing details/photos, exact assessment
-versions and market histories with source, scope, timestamps, completeness and
-refresh cursors. Store daily suggested cards and supporting evidence. Reuse
-across users, with a unique job/reservation to prevent simultaneous duplicate
-charges. Raw physical copies have separate condition evidence; equivalent slabs
-share appropriate market data. Keep credentials, private notes, budgets and
-user-specific fees private. A database does not replace request discipline.
-
-## Azure database recommendation
-
-The user selected Azure SQL Database Basic for an enterprise-quality foundation
-with low initial costs. It is now provisioned and connected as recorded above.
-Azure CLI access is verified on this Mac for the enabled `drewclark.io`
-subscription. The optional CLI upgrade prompt was declined. Use CLI access
-directly for authorized setup; verify subscription scope again before changes.
-
-- Basic offers 5 DTUs and 2 GB included storage. Central US retail rate checked
-  November 2, 2026: $0.161/day, approximately $4.90/month averaged over a year.
-  It is a reasonable starting capacity to test our deliberately small workflow;
-  the entire existing local data directory is about 214 MB before migration.
-  This size includes files that may not belong in SQL and does not estimate
-  database/index overhead or future growth. Measure actual load before launch.
-- Standard S0 offers 10 DTUs and 250 GB included storage. Checked Central US
-  retail rate is $0.4839/day, approximately $14.72/month on the same basis.
-  Both Basic/S0 have limited compute and do not support zone redundancy;
-  managed service quality does not imply enterprise-scale capacity at this cost.
-- Azure SQL has managed patching, backups, relational constraints/transactions
-  and JSON support suited to shared evidence and unique work claims. Use Blob
-  Storage for actual image files if persistent image storage is needed; keep
-  identity/fingerprints and references in SQL. Evaluate retention and cost first.
-- The Azure SQL free offer is a development alternative with 100,000 vCore
-  seconds, 32 GB data and 32 GB backups per month. It has no SLA. Pause-at-limit
-  avoids compute overages but can stop access until next month. Open connections
-  can consume the allowance. Do not accidentally provision ordinary billable
-  serverless or enable paid continuation. A small fixed tier avoids relying on
-  this free compute allowance while developing.
-- PostgreSQL remains viable, but Azure's cheapest Burstable tier is described
-  as mainly nonproduction and has no HA. Cosmos serverless adds request-unit
-  billing and partition design that our current relational workflow does not
-  require. Do not add multiple databases or a separate Redis cache without a
-  measured need. Alternative tiers/services remain recommendations, not deployed
-  resources; Azure SQL Basic is the implemented selection.
-- Quoted prices cover the base database with included storage, not the whole
-  app, AI, Blob storage, extra backup/network/monitoring or taxes. Verify the
-  selected subscription, region and current prices before provisioning.
-
-Official sources:
-- https://azure.microsoft.com/en-us/pricing/details/azure-sql-database/single/
-- https://prices.azure.com/api/retail/prices
-- https://learn.microsoft.com/en-us/azure/azure-sql/database/resource-limits-dtu-single-databases
-- https://learn.microsoft.com/en-us/azure/azure-sql/database/free-tier-faq
-- https://learn.microsoft.com/en-us/azure/reliability/reliability-sql-database
-- https://learn.microsoft.com/en-us/azure/postgresql/compute-storage/concepts-compute
-
-## Database placement and future research architecture
-
-Design around the coming server-owned research system. Azure SQL is the shared
-source of saved evidence, work ownership and accounting beneath backend services.
-Do not design the schema around the old browser-owned queue or merely mirror
-one JSON file for each old code module. Keep one backend and one SQL database
-initially; separate responsibilities in code rather than deploying many services.
-
-The browser or Android client submits a research request and reads saved status
-and results. A backend coordinator resolves intent, searches saved evidence,
-plans missing work and checks eligibility/budget. Workers claim only justified
-tasks, request providers through the existing guarded adapters, and save evidence
-and progress. AI can propose follow-up tasks within this same system. Background
-daily planning and auction refreshes use the same evidence and job controls.
-
-The evidence and financial-result layers remain distinct: public card facts,
-observed sales and copy-specific photo assessments are reusable; a purchase
-recommendation also depends on each user's fees, capital, targets and holding
-preferences and must be recomputed or stored privately with those inputs.
-
-Proposed logical groups in the same database:
-
-| Group | Data and ownership |
-| --- | --- |
-| Card identities and market evidence | Exact card/set/number/printing/finish/language, grader/grade/qualifier markets, dated sold observations, source, completeness and freshness. |
-| Listing and photo evidence | Listing identity, historical terms/seller observations, photo references/content fingerprints and versioned AI tasks/results. Raw physical copies remain distinct. |
-| Provider response cache | Source, query/context key, payload, fetched time and expiry; preserve marketplace/currency and destination scope. Do not share private provider data as public. |
-| Research requests and task claims | Owner, strategy, scope, subscribers, input/version key, state, cancel flags, durable checkpoints and bounded lease ownership. |
-| Spending and quota reservations | Atomic pre-dispatch holds, attempts, provider request IDs, settlements, unknown outcomes and provider-account reset windows. |
-| Market forecasts and daily plans | Observed inputs, model/version/date, liquidity and resale-time estimates, uncertainty, strategy recommendations and later outcomes. |
-| Private user data | Shortlists, notes, budgets, fee assumptions, acceptable holding periods, preferences and personalized financial projections. |
-
-Storage boundaries should expose focused backend repositories, for example
-`evidence`, `providerCache`, `researchJobs`, `usage` and `userData`. Domain logic
-calls these interfaces rather than embedding SQL throughout analysis modules.
-The initial import/adapters connect existing `server/analysis/store.ts` and
-`server/lib/cache.ts` to the new model, preserving paid evidence and original
-timestamps. `server/lib/shared-work.ts` remains useful for efficient cancellation
-among consumers inside one process, with SQL claims coordinating across users
-and processes. No frontend SQL connections or credentials.
-
-Rules that prevent another spending incident:
-
-- A confirmed miss is different from a SQL timeout/corrupt record. Storage
-  failure must never become "nothing cached, call AI/eBay again." In particular,
-  replace the generic cache reader's catch-all-as-null behavior for SQL access.
-- Claim an exact task and reserve its budget atomically before dispatch. Use
-  short transactions; never hold a database transaction through a provider call.
-  The entire analysis job must not be locked in one long SQL transaction.
-- Make SQL the shared authority for task ownership, per-search spending and
-  eBay usage before multiple backend instances can run. Preserve the existing
-  local emergency pause and migrate real counters/held reservations; a second
-  server must not receive a second independent allowance. Any transitional
-  file-backed mode is explicitly one-host-only, not shared multiuser accounting.
-- If a dispatched request's outcome is unknown, retain its hold and recovery
-  state. Lease expiry is not permission to purchase the assessment again. An
-  accepted answer needs a durable local recovery checkpoint if SQL is down;
-  recovery retries saving the answer, not calling the provider again.
-- Reuse successful AND unresolved assessments for unchanged evidence; photo
-  condition validity and market price freshness have separate clocks. Repricing
-  must not automatically rerun identity/condition work.
-- Keep images outside the 2 GB SQL database, with fingerprints/references in
-  rows. Blob storage is the future home for retained image bytes if needed.
-  Keep queried facts indexed, large evidence payloads in versioned JSON and
-  retention policies for short-lived caches/logs. Start with a small pool and
-  bounded workers suitable for Basic; measure throughput before public release.
-
-First implementation order: schema/repositories and import tooling; shared
-evidence and provider cache; durable task claims and spending/quota reservations;
-then the server-owned research coordinator/worker and client status connection.
-Back up existing files and compare imported reads before switching storage.
-Keep paid processing paused until the bounded workflow is verified. No cache
-clear, forced AI refresh or auth/account-sharing shortcut is authorized by this
-placement decision. The user subsequently authorized implementation: the SQL
-cache/evidence/import/claim foundation is complete, with the remaining shared
-accounting and server-owned research system explicitly deferred.
-
-## PKMNPrices documentation findings and reuse plan
-
-Read the user-provided /docs/cards, /docs/sets and /docs/price-history pages plus
-/docs/ebay-listings, /docs/data-coverage, /docs/export and /docs/rate-limits.
-Documentation access made no paid API requests.
-
-- Card list responses provide canonical IDs, names, numbers/totals, set and
-  language context, image URLs, TCGPlayer IDs and useful rarity/artist/HP facts;
-  prices are on the card-detail response. Retain this reference library and give
-  it to AI when useful. A catalog guess is not a rigid seller-title rejection
-  gate or proof of a particular physical card's printing or condition.
-- Existing queries already used documented name/per_page parameters. Plain
-  numeric number filtering is now implemented with older broader-cache reuse,
-  negative-cache TTL and family/number safeguards preserved (four new tests).
-  Full catalog ingestion, richer metadata retention and aliases remain future.
-- Daily /prices/history data is TCGplayer USD / Cardmarket EUR market aggregates,
-  not eBay sold transactions or graded prices. Limit counts rows, not days;
-  several conditions/variants consume several rows per date. These histories
-  supply additional labeled context, not sales counts or exact-grade liquidity.
-- /listings/ebay supplies individual raw/graded observations. Preserve currency,
-  exact/shared/unknown attribution, qualifiers, sale type and provenance. Closely
-  matched recent eBay transactions are the primary eBay resale evidence. Unknown
-  historical sale types may reflect asking prices; offer policies differ across
-  endpoints. Volume summaries exclude best offers from priced-sale medians even
-  when those sales contribute to counts. Do not assume uniform pricing confidence.
-- New sales use ingested_at cursors; late ingestion can describe an old sold_at.
-  Corrections use updated_since and replace by source ID. Deleted observations
-  are not emitted as deletions, so a bounded reconciliation strategy is needed.
-- Volume counts describe observed provider coverage, not total market sales,
-  exact-grade demand, sell-through or a measured time-to-sale distribution.
-- Market prices refresh daily. Repeated downloads do not produce newer data.
-  Reuse public responses with internal source/update/fetch times and distinct
-  freshness rules for market facts, listing availability and photo assessments.
-- The export is current raw-market CSV data, excludes graded/sold history,
-  requires Scale/Business, and permits two downloads per UTC day without API
-  credits. Do not assume the current subscription qualifies or download the
-  entire catalog automatically. API rows consume credits and can use prepaid
-  credits after the daily allowance; record charged/remaining/reset headers in
-  later provider accounting rather than treating PKMNPrices as unlimited.
-
-## Detailed notes retained from today
-
-The record below preserves the earlier investigation and decisions verbatim.
-Its interim delivery statements are historical; the current checkpoint and
-latest user instructions above take precedence.
-
-## November 2 active fixes, latest requirements and audit scope
-
-The user authorized fixing unusable comparisons, repeated unresolved reviews,
-cancellation and filter handling, plus verified dead-code cleanup. They then
-requested a complete codebase audit with seven different review passes, after
-another reported $8 search. Keep live provider processing paused during this
-work. No commit, merge or push is authorized for these new changes yet.
-
-Current work is on `refactor/workflow-organization` after c4db04e. Numerous
-uncommitted runtime and offline-regression changes implement the fixes; inspect
-Git rather than treating earlier "audit only" notes below as current status.
-The unrelated `.env.example` deletion remains outside this task's changes.
-The local 3017 server/watch process was stopped. At 11:38 AM CST, no copy was
-listening on 3017/3018/3000/33374; no live SDK attempts appeared after 11:00 AM.
-Two later image-fallback log entries were mocked offline tests, not live spend.
-The user confirms their browser URL was localhost:3017. Do not infer fresh
-spending or no other-account activity from the visible cached browser alone.
-
-- Seven audit passes: (1) provider dispatch/cancellation, (2) cache/reuse and
-  shared-work concurrency, (3) candidate eligibility/filter order, (4) identity,
-  condition, price and review-message evidence, (5) retries/fan-out/cost bounds,
-  (6) browser/server/restart/target lifecycle, (7) observability, billing
-  attribution, test isolation and eBay quota preservation. Record concrete
-  findings and regression evidence; do not promise zero possible future bugs.
-- User clarified the hard testing ceiling as **$0.02 per search**, aiming much
-  lower, ideally one cent or a fraction of a cent. This supersedes their earlier
-  ambiguous ".25 cents" wording. The persistent last-dispatch spending guard
-  and initialized ledger are now on disk, paused with capUSD0.02. It reserves
-  durable worst-case costs and blocks unknown/unbounded input/model/tier costs.
-  Existing full-photo output limits alone can exceed2c; do not claim uncached
-  photo analysis fits this budget. No token-count preflight provider calls have
-  been made or enabled. Do not resume paid work for this audit.
-- User also requested a development cap on eBay calls for today. A separate
-  persisted25-additional-Browse-call allowance is armed, used0, for the observed
-  quota window ending2026-11-03T08:00:00Z. Daily account ledger remains588used,
-  4,412remaining of5,000. Offline development needs no Browse calls. All further
-  mocked test suites must use temporary DATA_DIR so they cannot alter real
-  protective ledgers. Keep existing quota/reserve and never steal live leases.
-- Latest scope reduction: build a reliable development slice accepting only a
-  few cards, analyzing and sorting them, before broader automation. HTTP search
-  is being limited to three candidates BEFORE paid title/photo work; broad
-  discovery/recovery is disabled in development. Make that limit visible and
-  preserve future search strategies rather than deleting their implementation.
-- Before search, expose Raw / Graded / Both and Buy It Now / Auction formats,
-  plus optional minimum/maximum purchase prices. Asking-price filters default
-  to All prices; they are separate from a minimum expected resale value.
-  Ordinary automatic raw assessment uses a $60 feed-supported resale floor;
-  user said most targets will be worth $80–100+. Preserve the few-dollar
-  First Edition Base Set exception for focused verification, not a guaranteed
-  Deal. Manual research remains possible. Automatic auctions must end within
-  strictly less than 10 hours; exclude late/missing/invalid end times before paid work.
-- Market information should narrow paid work first. Existing slabs use recent
-  exact-card/language/printing/finish/grader/grade sales and their actual label,
-  not speculative raw grading. Raw cards use appropriately matched sold data
-  and independently assessed condition. User supplied PKMNPrices docs PDF at
-  `/Users/andrewclark/Downloads/ppp.pdf` confirming individual graded AND raw
-  eBay sold records, attribution, sale type, currency, sold_at vs ingested_at,
-  cursor pagination and update corrections. Do not equate its separate raw
-  market-feed quotes with confirmed eBay condition-matched sold prices.
-- Filter obvious wrong cards/sets/languages, lots, absurd asking prices and
-  ordinary low-value cards before expensive work. Examples: Charizard search
-  returning Charmander, a Pikachu anniversary logo indicating a different
-  release, and the Base Set 2 symbol/4/130 despite an inaccurate 4/102 title.
-  Do not use a blanket non-holo ban or fame whitelist; preserve valuable
-  exceptions and targeted photographic seller-mistake discovery.
-- New raw strategy: seller LP may actually be NM/Mint; seller NM may actually
-  be Mint. HP/Damaged is lower priority, with exceptional opportunities retained.
-  Feed-proven condition-upside leads are hypothetical until photos confirm;
-  recompute eligibility as targets/asking price change. Extremely cheap prices
-  may be a listing gimmick; verify actual item/terms and do not assume fake or
-  automatically award a Deal from price alone.
-- Multiple strategies remain supported, rather than a single hardcoded search
-  workflow. Seller inventory mix (general merchandise vs specialist cards) and
-  condition across other cards can be research/priority clues. A personal
-  collection may share storage history, but other cards are not proof of this
-  copy's condition or seller intent. Use small cached samples, not scans of an
-  entire seller inventory. Save observable evidence and label hypotheses.
-- Daily background AI planning is future work: use recent sales, trends and
-  liquidity to rank cards to hunt, save/reuse the day's plan, show refresh
-  time/coverage and a hard request/spend budget. **Shared user database is a
-  confirmed implementation requirement**, not just a possibility: user said
-  "we are going to implement the shared user database". Store reusable public
-  listing/photo assessments keyed by exact copy/evidence/task/model/prompt
-  version, plus exact-market histories, so multiple users do not repay for the
-  same evidence. A unique job/reservation must prevent concurrent duplicates.
-  Raw physical copies need separate condition evidence; slab market data uses
-  exact card/printing/language/grader/grade. Keep user-specific private settings,
-  budgets, fees and notes separate. SQLite is a local prototype option; shared
-  hosted SQL/MongoDB selection/migration is not yet implemented or decided.
-  A database alone cannot fix unnecessary AI calls.
-- Shared storage must also retain reusable responses from every API (with
-  source, query, fetched/updated time, completeness, freshness and incremental
-  refresh cursors where supported), plus each day's suggested cards/search
-  targets and their supporting evidence. Never share credentials, private user
-  notes, fees or budgets as public market data. Daily plans are reused through
-  the day, not regenerated on each page/search.
-- The product is intended for the public and all valuable cards, not limited
-  to the original151 or1999–2003. User's expertise in that era and belief in
-  broader recognition/liquidity of original151 are optional strategy/planner
-  inputs, not universal price rules or global catalog exclusions. Actual
-  evidence must establish value/liquidity. The user explicitly corrected this.
-- Result flow is being simplified: Sorting is the workbench, then verified
-  Deals. Verified seller-mistake/hidden opportunities appear in Deals with
-  their reason; no separate Hidden finds category. The arbitrary80%raw/20%sales
-  long-shot heuristic has been removed from rating/queue/grouping; retain
-  useful auction reference and max-bid facts, and legacy saved-field reading.
-  When there are no deals, explain query/scope, screened/excluded/deferred
-  counts, budget pauses and missing evidence. No profit/recommendation should
-  be manufactured by renaming a view. Paused analysis must not show green Done
-  while unfinished candidates remain. Essential controls belong on the main
-  screen; reserve drawers for advanced settings/diagnostics.
-- The three-card limit means candidates admitted to a development batch, not
-  three guaranteed Deals. One200-row Browse page costs one API request; free
-  exclusions/seen-history precede up to3 paid title/screens. Results should
-  explain unassessed/deferred rows without implying all eBay was searched.
-- Financial calculations require a separate full audit before purchase advice
-  is trusted: fees, sales tax, inbound/outbound shipping, grading/turnaround,
-  profit/ROI, offers, max purchase/bid/snipe, auction market references and
-  downside. Regression tests preserve behavior; they do not prove underlying
-  legacy assumptions/formulas/rates correct. User explicitly put this on todo.
-- Future auction research: configurable hours (current search cutoff12h),
-  available watcher/bid counts and snapshot changes, exact comparable sold
-  auctions, market trend and uncertainty. Compare a predicted closing RANGE
-  with a separate after-cost profitable snipe ceiling. Missing watchers stay
-  unknown; watcher counts are not measured win probabilities. Archive forecasts
-  and actual outcomes to evaluate strategies. Use cached/shared data first.
-- Additional hard auction requirement: an existing slab's snipe ceiling may
-  not exceed a verified available Buy It Now alternative for the SAME card,
-  printing, finish, language, grading company, grade and qualifier. Use the
-  lower of the after-cost profit ceiling and the alternative's equivalent
-  delivered cost. Unknown/unverified active alternatives must be labeled.
-  This belongs to the upcoming financial/auction audit, not a claim already
-  implemented by the current source-filter fixes.
-- Strategy hypotheses for future planner experiments: heavily watched BIN
-  listings may signal buyer interest/price resistance or an emerging price
-  level; compare ask, age, price changes, exact sold activity and outcomes.
-  Promoted listings plus long listing age may indicate stale/overpriced stock;
-  use as a priority cue, not an automatic rejection. Deduplicate promoted and
-  organic appearances. Strategies may be proposed by the user or AI, but retain
-  supporting evidence, refresh date, cost and outcome rather than assumed truth.
-- Additional seller-discovery hypothesis: an unusually cheap recent completed
-  sale may identify a seller whose current inventory contains other deals.
-  Start with saved exact-card/printing/grade/condition sold evidence, verify
-  whether the outlier actually reflects a comparable sale rather than a lot,
-  damaged copy, currency/shipping difference or misleading price, then inspect
-  only a small cached sample of that SELLER's current listings. A sold bargain
-  does not prove the remaining inventory is underpriced. Keep this workflow
-  within shared per-search AI and eBay allowances; never launch an unbounded
-  seller crawl or buy another assessment of unchanged evidence.
-- Production development Browse allowance now has requireRenewal:true. After
-  Nov3_08UTC it blocks until deliberately renewed, rather than falling back to
-  the full daily budget. Do not delete/reset the used ledger to renew it.
-- Future search-bar optimization: accept phrases such as "charizard 1999 holo"
-  and generate effective eBay API queries preserving name, release, finish,
-  language, grade and buying strategy, with visible interpretation. User asked
-  explicitly to keep this on the todo list.
-- UI requirements: visible actual AI-assessment activity independent of search
-  progress; responsive phone/tablet/desktop layout and touch controls (future
-  Android app); clear source/confidence and fewer false manual-review messages.
-  Top detail area has a default-open slideshow and prominent Open on eBay
-  action. Original full-resolution zoom must preserve aspect ratio, support
-  close inspection, pan/pinch/wheel, reset and keyboard access. Optional AI
-  sharpening is future work, off by default, explicitly costed/labeled beside
-  the original and never treated as grading evidence. App renaming is future.
-- Exact-message regression: saved listing 147652972123 has Photo 4 as a clear
-  whole BACK and Photo 2 as a BACK_DETAIL crop. The UI flattened Photo 2's
-  "Only upper-right portion..." into a global manual hold. The scope fix keeps
-  numbered photo notes and extra-photo requests separate from actual global
-  coverage/identity/authenticity/purchase blockers, reusing paid assessments.
-- User wants the real cost of one search measured after fixes. New telemetry
-  attributes calls to search UUID and records provider model/tier/request IDs,
-  token/cache-write counts and privacy-safe request hashes. No paid search has
-  yet been run on the new implementation. A computed token-based usage cost
-  is not an exact invoice when provider metadata is missing; report unknowns.
-- Final offline audit checkpoint: 557/557 tests pass with an isolated temporary
-  data directory; both TypeScript checks, production build and diff whitespace
-  checks pass. Stop during awaited spending reservation is also covered: no
-  native provider dispatch, while accepted responses remain cacheable. The
-  seven-pass audit is recorded in README. No OpenAI generation/token-count or
-  eBay Browse calls were used for this audit, no server was resumed and no
-  commit/merge/push was made. Real-cost measurement and the separate financial
-  audit remain pending; uncached production AI intentionally remains blocked
-  without trusted input bounds, even if the pause flag is changed.
-
-## November 2 AI research redesign and spending investigation
-
-These are the user's latest design requirements, saved for continued discussion
-and implementation. They are not implemented by adding these notes. The user
-interrupted the redesign because OpenAI credit was draining quickly and asked
-us to investigate waste first. They replenished credits, but explicitly support
-useful AI spending rather than waste. Do not interpret replenishment or the
-earlier wish to remove restrictions as permission to run uncontrolled research.
-
-- Use a stronger model for substantive analysis overall; do not optimize solely
-  for the cheapest model. Automatically escalate valuable, uncertain listings
-  to a stronger model when more analysis could change the buying decision.
-  Exact model choices and escalation thresholds remain to be evaluated.
-- Replace the fixed identity/condition-only workflow with AI-directed flipping
-  research. Let AI choose strategies, create targeted repeat eBay searches,
-  inspect an entire listing, select photos and original-resolution crops/zooms,
-  gather more comparisons and decide its own follow-up steps. Include fresh
-  underpriced Buy It Now, auction snipes and overlooked seller mistakes.
-  Raw resale, existing slabs and raw-to-grade remain equally important.
-- Move the remaining work from the browser's in-memory queue to durable
-  server-owned research jobs, with saved progress, deduplication, pause/cancel,
-  recovery after restart and browser reconnection. The machine/server must
-  remain running to execute work; persistence enables resumption later.
-  Existing per-listing saved answers are not a durable whole-search queue.
-- The user objects to code silently replacing the AI's judgment. Rework or
-  remove LIMITED mode's blanket grade/confidence erasure. Display AI estimates,
-  evidence, the number and types of analyzed photos, uncertainty and specific
-  concerns (glare, sleeves, stock photos, white-background contrast, etc.).
-  Reserve manual review for a material problem AI cannot resolve, rather than
-  incidental concerns. Keep schema/numeric validation and auditable money math
-  distinct from subjective overrides; an estimate must not become a guarantee.
-- Deeper review should invoke the strongest appropriate model and may revise
-  numeric grades, grade probabilities, price estimates and the recommendation.
-  Remove the current observations-only prompt restriction as part of that work.
-  Give it full listing context through actual retrieval tools, not merely a URL
-  in a prompt. Changed evidence should trigger dependent repricing and updated
-  purchase limits. Reuse unchanged paid evidence and show what changed and why.
-- Include seller-context observations: for example, a specialist/professional
-  dealer may have priced out the margin; a newer seller may be liquidating a
-  collection. Cite observable listing/account evidence, express inferred intent
-  as a hypothesis, and do not assume either seller type guarantees a bad/good
-  deal or let seller type alone determine profit.
-- Analyze recent dated eBay sales supplied by PKMNPrices for market direction
-  and the intended 30–60 day resale horizon. Show observed trends separately
-  from forecast ranges, supporting sale counts, data age and uncertainty.
-  Compare exact card/printing/finish and raw condition or slab company/grade.
-  Current adapters return up to 40 sales and discard pagination completeness;
-  preserve coverage metadata before treating a sample as the whole market.
-- Put an understandable numeric liquidity scale on each result card, with its
-  evidence/confidence and what the score means for reselling. The scale is not
-  yet chosen. Use exact-market activity where available; show unknown when
-  evidence is insufficient. Broad volume is not exact-grade sell-through, and
-  sales counts alone do not establish days-to-sell. Raw-to-grade also needs
-  grading/shipping turnaround considered against the 30–60 day goal.
-- eBay's daily quota remains a real constraint: every tool must use the existing
-  quota-aware transport, cached searches/details, deduplication and remaining
-  quota/reset accounting. AI can request follow-ups, but repeated calls need
-  new evidence or a useful decision purpose, not an endless loop. Preserve the
-  user's control to stop work and the existing no-automatic-purchase/bid/offer/
-  seller-message boundary. Keep model/task/request costs visible.
-- The user asked why preliminary routing and the queue were proposed first.
-  Explain that routing affects early evidence quality and the queue determines
-  whether work can finish without the browser, but these alone do not implement
-  their AI-directed research goal. Plan the broader workflow before patching
-  isolated stages or increasing models/concurrency indiscriminately.
-
-During the spending investigation, the verified local 3017 app and its tsx
-watcher were stopped to prevent further work; unrelated apps were left alone.
-Do not restart paid processing as part of an offline audit. Preserve caches,
-saved evaluations, the shortlist and the unrelated `.env.example` deletion.
-
-## November 2 offline spending audit findings
-
-Read-only provider audit after the user's credit-drain report; no new OpenAI,
-eBay or PKMNPrices requests were made for the investigation. The running 3017
-app and its tsx watcher were stopped. No runtime fixes/model changes have been
-implemented in this audit; `.env.example` remains the user's unrelated deletion.
-
-- `data/ai-usage/2026-11-02.ndjson` has 2,238 records from 16:06:12Z to
-  17:00:28Z (10:06–11:00 AM CST). Eight are recognizable offline mock-transport
-  test records. The other 2,230 include 347 full-photo attempts, 378 condition
-  attempts, 212 sold-condition calls and 840 seller-mistake scans.
-- All 345 successful full-photo usages match 345 distinct saved photo
-  fingerprints/current-version assessments. All 372 successful condition usages
-  match exactly two saved opinions for 186 listings. No runaway full-assessment
-  repeat loop was evidenced. A model/prompt version transition and broad
-  All-matching work explain the large first-use assessment wave.
-- Recorded tokens total about 17.4M input and 1.79M output. A rough standard-rate
-  estimate is $38–43, depending on cache writes (not tracked), not an invoice.
-  Full-photo checks account for about $14–17, condition about $13–14.5, sold-copy
-  reviews about $6–7. Most spending is broad high-detail photo work, not cheap
-  discovery/title reading. Reducing concurrency alone does not reduce its total.
-  Rates checked against official OpenAI gpt-5.6-terra/luna model pages and prompt
-  caching documentation; service-tier/cache-write fields are absent from logs.
-- Proven wasted sold work: 38 saved reviews target finish NOT_STATED, yet the
-  acceptance rules require exact photo finish equality (impossible for that
-  target). The same photo sets also have resolved HOLO cache entries. At least
-  37 calls correlate uniquely to logs: 512,408 input and 31,644 output tokens,
-  no cached inputs. `raw-prices.ts` accepts a sole variant, but `raw-comps.ts:41`
-  forwards unresolved identity to `sold-condition.ts:40`. Resolve/defer finish
-  before paid comparisons; do not simply accept an unverified finish.
-- `sold-condition.ts:96` permits repurchasing unsuccessful unchanged readings
-  after 15 minutes. Current saved entries cannot establish the complete number
-  of overwritten paid answers. Reuse unchanged negative evidence; a model/input
-  change or deliberate retry can justify reassessment.
-- The automatic client queue is separate from display filters. Known listing
-  type/raw/slab/price exclusions can still receive full paid work. Grade filters
-  needing unseen photo evidence must not be treated as already known.
-- Stop aborts the search stream but not already-started full evaluations; those
-  may start further paid condition/comp stages after Stop. Main-photo checks
-  also lack a cancellation signal. Add real cancellation that preserves paid
-  checkpoints and shared work still needed by another active consumer.
-- Raw full analysis always requests two condition opinions. Some sold-copy
-  MEDIUM assessments also request a second identical full-photo reading for
-  corroboration. These are intentional policy costs, not proof of a cache bug;
-  evaluate targeted second opinions instead of silently weakening evidence.
-- Telemetry lacks listing/job/input hashes, provider request IDs and cache-write
-  usage, limiting exact billing/duplicate attribution. Offline tests also pollute
-  the default local usage log. Improve attribution and test isolation before
-  larger live experiments. Do not claim this audit accounts for the entire
-  OpenAI account or proves external key usage absent.
-
-## November 2 grading requirements to implement later
-
-The user requested saving these requirements as notes, not implementing them yet:
-
-- Existing slab resale: after verifying the exact card/printing/finish, grading
-  company and certified numeric grade, use that grade and matching comparisons.
-  The user considers certified slabs standardized/fungible. Do not repeatedly
-  estimate raw condition or a hypothetical raw PSA grade for the same slab.
-  Preserve actual certificate, identity, qualifier and authenticity conflicts.
-- Raw cards: replace unhelpfully broad predictions such as PSA 3–8 with three
-  adjacent candidate grades and an estimated percentage for each. These would
-  be AI estimates, not calibrated grading probabilities. If photographs cannot
-  support a narrow estimate, state that evidence is insufficient rather than
-  fabricate precision. This is a pending requirement, not current behavior.
-- White/light photo backgrounds can hide back/edge whitening through poor
-  contrast. Treat this as a photo-evidence limitation and prefer contrasting
-  back/edge views; background color alone proves neither damage nor deception.
-- The user reports the app is broken and wants effective automatic deal finding.
-  Passing fixture tests/builds does not establish real-world buying performance.
-
-
-## CSS and responsive-interface reference read November 2
-
-Source: /Users/andrewclark/Downloads/slides-students-C04.pdf, Jonas Schmedtmann's
-Advanced CSS and Sass, 222 pages. Full extracted text reviewed; 39 representative
-theory/example slides visually inspected. Root also inspected pages 51, 112 and
-173. This is implementation/layout/architecture training, not a complete UX
-research or accessibility guide. Historical device statistics are not current
-product evidence.
-
-- Pages 21, 43–53: responsiveness, maintainability and performance belong
-  together; understand box sizing, flow and stacking before patching overlap;
-  plan page layout and independent reusable components.
-- Pages 60, 74–75, 109–113, 137–145, 172–176: shared tokens, fluid sizing,
-  deliberate wrapping/alignment, Flexbox components and Grid page layouts;
-  choose breakpoints where content breaks, not by a short device-name list.
-- Pages 120–125: responsive image delivery. Keep original full-resolution card
-  images available for accurate zoom; responsive thumbnails must not replace
-  the evidence originals.
-- Pages 14–16, 100, 153 and 194–213: purposeful transitions and nested responsive
-  layouts. Our accessibility/reduced-motion rules remain additional requirements.
-- Later application: aligned decision-first result rows; wrapping visible
-  filters; persistent desktop result/inspector grid that reflows on phones;
-  shared type/spacing/color tokens in existing CSS Modules; compact reusable
-  progress/budget and undistorted photo components. Do not copy floats,
-  checkbox-hack navigation, hover-only controls or decorative rotating cards;
-  no Sass/framework migration is implied.
-
-## Latest identity and search requirements from live testing
-
-- Seller-typed certificate differences alone must not block a readable graded
-  slab. Use photographed grader/grade/cert facts; show text discrepancies as notes.
-  Keep actual photo identity uncertainty, unreadable labels and concrete tampering
-  separate. Do not turn a confirmed overpriced slab into a Deal.
-- Explicit Celebration/anniversary reprints, Base Set 2 and other known releases
-  must not consume full AI assessment or appear as vintage Base Set matches.
-  A reused 4/102 number and vintage artwork do not identify the original release.
-  Current live Celebration read missed the visible Pikachu stamp; fix free title
-  aliases and result routing, preserve original saved AI evidence.
-- Search holo and reverse holo as distinct finishes; bare holo must not match
-  reverse holo by substring. Apply the same distinction to relevant sold comps.
-- Screen absurd asking prices before display and paid AI, using shared saved
-  recent-sold references first. Match exact card/release/language and actual
-  slab grader/grade (raw condition separately). Use a robust recent-sales center
-  over a defined window/count with minimum evidence and outlier handling, rather
-  than an unqualified average. Unknown/sparse markets and rare-print exceptions
-  remain explicit; do not impose one arbitrary dollar ceiling on all cards.
-  This price-first admission policy is next work, not completed by the current
-  photo/conflict fixes. Reuse provider data across candidates/users, with internal
-  freshness and finite refreshes, to avoid spending AI on obviously overpriced
-  Houndoom/Togetic examples supplied by the user.
-
-## November 2 stopping-point delivery
-
-User now requests commit, merge to main and push. Finish only current matching
-regressions/release checks, then stop. Keep unrelated .env.example deletion
-unstaged and private plan/TODO/data out of GitHub. Earlier paragraphs saying no
-commit/merge/push was requested describe the previous checkpoint.
-
-Actual saved replay of PSA5 listing287700156029: photographed certificate
-102800436 is used instead of seller145363878, slab OK, no manual-review reasons,
-PASS at $500 with modeled loss about$182. Celebration168833419127 is OTHER_SET
-for the vintageBaseSet search. Zero provider requests for this replay. Saved AI
-misread the Celebration stamp; deterministic title/release rejection now avoids
-that waste and later result routing excludes known incompatibilities. New inputs
-also receive explicit Pikachuanniversary/reprint-symbol guidance. Existing paid
-photos remain reusable. Holo/reverse finish precedence and slab-set alias tests
-are the last release checks. No price-first admission policy is claimed complete.
-
-Final release checks: 679/679 offline tests, both typechecks, build and whitespace
-checks pass. Actual3case selector replay retains bothPSA5slabs and excludes the
-Celebration listing. Strong physical finishes distinguish holo/reverse/nonholo;
-PSA PokemonGameBaseSet label aliases normalize without collapsing BaseSet2.
-
-Delivery complete: committed as 536e4d2e2cde0a986cc8b727d67a98afa175b199, fast-forward merged from
-feat/azure-sql-foundation into main and pushed to origin/main. Local HEAD,
-origin/main and a fresh remote refs/heads/main read all matched. On main; only
-the unrelated pre-existing .env.example deletion remains unstaged. Private
-plans, evidence, spending controls, API data and secrets were not committed.
-Stop here. Next work should begin from latest main on a new branch when the
-user resumes; price-first admission/financial audit and later interface work
-remain pending. Paid local guard remains enabled at $0.02/search; eBay
-development allowance and all used counts were preserved.
-
-## November 3 Mac disk cleanup (local only)
-
-User authorized disposable cache removal, all local Docker containers/images/volumes,
-all local Google Drive/OneDrive remnants, VirtualBox removal and then complete local
-Claude app/CLI remnant removal. No source changes or paid provider requests were made.
-No cloud Drive/OneDrive account files or Docker Hub images were altered.
-
-- Docker: removed 6 containers, 11 images, 6 volumes and 127 build-cache entries;
-  verified all object categories empty, then stopped Docker Desktop cleanly. Its
-  allocated VM disk shrank by 20,317,671,424 bytes. Keep Docker.app installed.
-  User preference: avoid starting local Docker builds/containers without a clear
-  need and awareness; Docker Hub deployment does not require retaining local data.
-- Deleted verified disposable VSIX/Electron/Homebrew caches (4,140,797,952 bytes),
-  npm download cache (~1.8GB), old Google DriveFS data (1,514,520,576 bytes), dangling
-  OneDrive link and small VirtualBox leftovers (180,224 bytes). Keep active npm MCP
-  runtime caches, current IDE extensions, Chrome personal data and Codex sessions.
-- SQL readback: 42,204 exact matches and 7 newer SQL versions, 0 missing/mismatched
-  for 42,211 migration records; baseline local file hashes matched migration snapshot.
-  SQL connected after narrowing existing CurrentDevelopmentMac firewall rule to the
-  current Mac IP. SQL has schema1, 41,349 cache entries and895 assessment heads.
-- Replaced loose data/price-cache, data/evaluations and data/database-migration with
-  verified data/backups/legacy-sql-migration-2026-11-03.tar.gz (38,223,854 bytes;
-  SHA256 1b9936c92989af7e0564cc7e188922be1abb33a8c84e0171213cba6736c25a1f).
-  Archive verified all84,428 files before deleting originals; saves411,897,856 bytes
-  net. It retains one old expired eBay search not in SQL. Preserve this compact
-  rollback archive and restore it first if migration tooling needs old snapshots.
-- Preserve .env, private notes, spending/usage/recovery ledgers, eBay development
-  allowance, shortlist/history and external temp-directory eBay quota authority.
-- After user enabled Full Disk Access and restarted ChatGPT, all8 exact OneDrive
-  app/group container roots became accessible and were removed without following
-  symlinks or reading/hydrating sparse placeholders. TemporaryItems was already empty.
-- User then requested all Claude leftovers removed: deleted main ~12.8GB support
-  folder including unused Claude VM, Claude Code binaries/state/config/local history,
-  caches/logs/preferences, URL handler and Chrome native-host manifest. Stopped exact
-  orphan native host2457 and unregistered two bundle paths. Combined post-restart
-  Claude+OneDrive deletion:13,328,433,152 allocated bytes,24 paths. Free space then
-  ~83.8GB(decimal). Detailed private reports: data/disk-cleanup/2026-11-03/.
-- Two interface removals were requested from user: Claude Chrome extension
-  fcoeoabgfenejglbffodgkkbkcdhcgfn (opened its exact extension page) and disabled
-  claude.app Full Disk Access row (select then minus). tccutil cannot resolve the
-  already-uninstalled bundles; Accessibility UI automation is disabled. Do not
-  modify TCC databases, browser profile preferences or bypass OS permissions.
-
-Repository stays on main at536e4d2; unrelated unstaged .env.example deletion remains.
-No new app features or release actions were part of disk cleanup.
-
-Claude final check: no matching app/runtime processes or LaunchServices paths;
-removed exact local Keychain services Claude Code-credentials and Claude Safe Storage
-through security delete-generic-password, then verified absence without reading secrets.
-
-## November 3 strategy idea: relisting upside
-
-User's real flipping strategy: find a desirable/nice card with a weak listing
-(bad photographs, poor or sparse description, non-SEO/uninformative title, possibly
-a newer seller), buy at a justified discount, then photograph and describe it well
-using the user's selling skills and resell for more. Evaluate an evidence-based
-presentation/marketing gap separately from condition improvement or grading.
-Poor photos/new seller alone do not establish a good physical card or a higher
-sale price. Compare matching sold listings and stronger presentations, account
-for costs/time, reuse shared evidence and keep all investigation within budgets.
-Saved for future strategy testing; do not expand current financial-audit scope.
-
-## November 3 future strategy: daily value movers and stale Buy It Now prices
-
-The user proposes using price/sold history to identify the cards whose market
-values have risen most that day, then searching live eBay Buy It Now inventory
-for sellers who may still be asking the earlier market price. This is a possible
-future strategy, not an implemented feature or a change to the current compact
-graded/raw assessment work.
-
-- Compare a prior baseline with the latest actual matching eBay sold trades,
-  keeping card, language, printing, finish, graded company/grade/qualifiers or
-  raw condition scopes distinct. Preserve the dates, sample coverage and source
-  attribution; changing condition/grade mix must not masquerade as appreciation.
-- Require multiple verified transaction amounts with meaningful sample support;
-  one outlier, thin market, unconfirmed accepted-offer amount or asking-price
-  change is not proof of a market jump. PKMNPrices daily TCGplayer/Cardmarket
-  aggregates may supply labeled context, not replace eBay transaction evidence.
-- Rank the observed change with confidence and liquidity, then compare live BIN
-  asking plus delivery with a defensible after-fee/tax/shipping resale outcome.
-  A rising price does not by itself establish a deal or predict future profit.
-- Refresh actual availability, price and shipping before purchase advice. A
-  cached below-market asking price may already be sold, changed or misleading;
-  whether a seller has failed to reprice remains an inference.
-- Reuse exact-market SQL history and one shared bounded daily computation across
-  users. Fetch only useful missing updates within provider/AI/Browse budgets,
-  deduplicate listing work, record strategy cost/results and avoid regenerating
-  the same market research for each user. Durable sold history and the daily
-  planner are still future prerequisites, beyond the completed response cache.
-
-## November 3 active implementation checkpoint
-
-Financialaudit branch audit/financial-calculations from freshly fetched main536e4d2.
-See LOCAL_TODO November3 section and docs/financial-calculation-audit-2026-11-03.md.
-User corrected eBay allowance intent:25 Browse calls PER SEARCH, never25/day.
-Current changes add persistent per-search caps with stableIDs acrossfollowups while
-keeping realdailyquota and2cAIcap. Oldsharedexpiredledgerremains historyunchanged.
-Only2PKMN sold-page probes10reportedcredits; noAI/noBrowse bythisaudit.
-3017isuser'stsxwatchdevserver; fileeditsrestartit, canabortuser'ssearch.
-Originalfinancialauditcontinues; price-first admission and liquidity/UIremainfuture.
-No commit/merge/push requested. Preserveunrelated.env.exampledeletion.
-
-Financial audit checkpoint complete on audit/financial-calculations:702offline
-tests, both typechecks, productionbuild and gitdiffwhitespacepass. Independent
-oracles verified99,999purchase amounts,108maxceilings and7,080fees. Normal3017
-andSQLstorageHTTPsmokespass; persearch25counterisdistinctfromdaily5000.
-Legacyglobalmodule/testsdeleted; oldledgerused23retainedunchanged. CLItools
-retainoneidacrosssteps. Fullreportdocs/financial-calculation-audit-2026-11-03.md.
-Newrawgradingassumptionsaremuted,nonblocking; noAIrouting/modelchanges.
-NoAI/Browsecallsbyus; only2PKMNrequests10reportedcredits. No commitrequested,
-no merge/pushdone; preserveunrelated.env.exampledeletion. Nextprice-firstadmission.
-
-## Standing user requirement: generalize every reported example
-
-When the user points out one incorrectly handled listing, investigate the root
-cause across the workflow, identify the wider failure class, anticipate related
-cases on other cards/searches, and implement reusable corrections plus meaningful
-regressions and counterexamples. Do not stop with a per-item patch, copied text
-exception or a cosmetic removal of a legitimate warning. Preserve original paid
-evidence, cost/quota safeguards and real unresolved risks. This requirement was
-explicitly repeated November3 during Chansey photo/condition/routing review.
-
-## November 3 live-search follow-up
-
-Current source admits up to 50 matching metadata listings, independently of
-25 actual Browse calls per search and the persistent $0.02 AI cap. Automatic
-work considers loaded candidates with two assessments in flight. Completed
-priced PASS leaves Sorting/attention but stays in All matching; pending work is
-not a failed verification. Photo controls are open above the image with a short
-opacity transition that honors reduced motion. Raw condition can remain
-supported while gradeRange is explicitly null. Structural and identity blockers
-remain enforced.
-
-A reported $900 Dark Blastoise is visibly First Edition in original photo 1.
-Original photo 7 is a whole back skipped by the old 6-of-11 sample. Revised
-sampling keeps the first two images and four intervals through the remaining
-gallery (1, 2, 4, 7, 9, 11 here). Absence/obscuration messages are scoped to
-reviewed photos. Edition instructions locate EDITION/circled-1 below the left
-artwork edge, separately from the set symbol on the right.
-
-One controlled verification with the same Luna model recognized the stamp and
-whole back: 15,924 input and 1,070 output tokens, $0.0044688 reported token cost,
-zero Browse or PKMNPrices requests. The actual accepted reading is retained in
-the shared SQL cache and private local audit. The original paid reading and
-private financial snapshot were preserved. No model, budget, blanket prompt
-revision or cache deletion changed. The new response still has UNKNOWN raw
-condition; do not claim all assessment quality or cached answers are fixed.
-
-Next: improve inexpensive admission from exact recent sold evidence, separate
-short graded-label work from raw-condition work, and measure full useful-search
-cost and decision quality. Evaluate broader low-detail coverage with selective
-high-detail views without multiplying paid stages. Saved misreadings need
-provenance-preserving correction; a new prompt alone does not update them.
-
-The user asked whether the initial model is too expensive. Actual automatic
-calls use gpt-5.6-luna, a cost-sensitive model at verified $0.20/M input and
-$1.20/M output. Leave the model unchanged for now. See
- docs/search-photo-workflow-review-2026-11-03.md for the detailed follow-up.
-
-Final follow-up verification: 736 offline tests, both typechecks, production build and whitespace checks pass. Gallery/progress responsive fixture checks pass and localhost3017 reports SQL ready. Newer valid shared bounded readings supersede older private results without purchasing another assessment; invalid evidence fails closed and stronger full legacy evidence keeps priority. Unknown raw condition plus no grade range skips price requests; grading-only routes skip raw sold-price requests. The actual Blastoise correction replay updated its current private evaluation from saved evidence with zero additional provider requests. Original snapshot remains in ignored audit files. No commit/merge/push requested or performed.
-
-Deferred user report — November 3: screenshot codex-clipboard-892e055b-0ee1-4ba6-a8f8-0a8b26a5e9c2.png. Dark Blastoise 3/82 at $900 has usable front views but is flagged as all reviewed fronts obscured; another Dark Blastoise listing at $158 is English but displays Only English cards are supported. User explicitly says NOT to fix these now: continue step 1, sold-price-first screening. Preserve these as generalized later language/visibility/false-review regression cases, not per-item exceptions.
-
-Deferred user-found positive deal — November 3: https://www.ebay.com/itm/227548256279 . User says this was a really good, recently listed Buy It Now deal. Save as a positive end-to-end regression/example for the new-listing strategy, to inspect later after step 1. Not fetched or assessed now; do not assume card identity, exact sold value or profit without evidence.
-
-November 3 testing order: user explicitly says do not inspect the positive deal yet; finish the other planned implementation steps before more live app testing. Continue the current price-first workflow. Offline regression/type/build checks remain necessary; avoid new live eBay searches, AI canaries, price-provider probes or deal inspection until implementation is finished and live testing is appropriate.
-
-
-## November 3 current price-first implementation and saved future ideas
-
-Continue step 1: sold-price screening before automatic paid photo work. The
-user explicitly says stay with the current plan. Do not fix the deferred
-English-language/front-obstruction screenshot or inspect deal227548256279 yet.
-The user subsequently reauthorized efficient eBay searches and paid AI
-assessments under the actual caps. Prefer offline checks; no automatic large
-live benchmark or blanket rereview.
-
-Existing Azure SQL caches provider price/sold pages and private valuations.
-Dedicated durable long-term sold-market observations have NOT been implemented.
-Build that later from exact attributed, confirmed sold amounts, with original
-sale/ingestion/update timestamps, correction revisions, deduplication and separate
-printing, finish, currency, raw condition and exact grader/grade/qualifier scopes.
-Do not let cache replay count one sale twice or fabricate new source freshness.
-PKMNPrices documents sold listing URLs but no raw sold-image field; investigate
-photo access separately before proposing paid assessment of sold raw cards.
-
-Future valuation idea: after a supported photo grade estimate, use actual sold
-prices at each supported grade to value the raw-to-grade route. Keep that
-post-grading resale projection distinct from an as-is raw valuation. Subtract
-submission, sale and delivery costs and account for turnaround/no-grade risk;
-no hypothetical certified value or broad market average should masquerade as
-the live raw card's cash value. Probability weights need visible evidence or
-explicit assumption labels. This is recorded for later, not a diversion from
-price-first screening.
-
-Current implementation checks local/saved metadata first, groups reusable sold
-research, then emits ranked rows for the existing automatic queue. Catalog and
-sold requests share a bounded8 uncached price-service transport allowance per
-scan, one20-sale page per market, no automatic retry; existing SQL/file provider
-caches are reused. This is separate from25 actual Browse requests per search
-and the durable2centAIcap. Exact slab grades are separate from raw buckets and
-unspecified-condition context. Sparse prices do not become zero, a rejection,
-or a manual identification task. Raw grade upside is not rejected using raw
-sold prices alone. A <=10dollar1stEditionBaseSetlead remains a focused exception.
-This work has not introduced a new AI model or rewritten full photo grading.
-
-
-Step1 stopping checkpoint — November3: sold-price-first screening complete.
-801offline tests, bothTSprojects, build and whitespacechecks passed. RealSQL
-readonly replay with maxRequests0 and blockedprovidertransports loadedexisting
-rawreferences; missingPSA5 remaineddeferred. Zero newAI/Browse/PKMNcalls inthis
-step; localhost3017 reportsSQLready. See docs/price-first-screening-2026-11-03.md.
-Existing2centAI/25Browse/search/dailyprotection unchanged. No commit/merge/push.
-Next recommendation: optimize short graded identity/label assessment separately
-from raw condition/grading-upside work, then controlled useful-search benchmark.
-Dedicated durable market history and deferred photo/language examples remain
-future work; do not claim them complete.
-
-## November 3 future optimization: task/model routing and reusable observations
-
-The user is brainstorming how to optimize all research work, and does not regard
-two cents as the ideal cost or target for every search. A cheaper OCR/AI path for
-clear slab labels and a stronger model for difficult judgments are possible
-future options. This does not change the current persistent $0.02 guard, model
-selection or approved compact RAW/SLAB_LABEL validation/documentation work.
-Budget and model changes require an explicit new decision; do not pivot now.
-
-- Measure cost per correct, decision-useful result across the whole workflow:
-  extraction plus verification, escalation, failures, token/image overhead and
-  reuse. Benchmark the current Luna route before adding another cheap OCR/AI
-  layer; paying twice or escalating most cheap answers can cost more overall.
-- Clear photographed grader/grade transcription, including half grades and
-  qualifiers, can be straightforward. Blur, glare, stock photos, label/case
-  context, conflicting evidence and authenticity concerns are harder. Test
-  false-confident outputs as well as easy successful examples, using bounded
-  representative samples rather than assuming a cheaper extractor is accurate.
-- Persist typed reusable observations with original photo number/content hash,
-  source image and crop/region-of-interest coordinates, task/model/schema version,
-  confidence and the concrete visible evidence. Keep actual transcribed text
-  separate from interpretation, seller claims and money calculations.
-- A stronger reviewer should receive the prior typed findings, the specific
-  unresolved question and only the necessary original photos/crops. Avoid
-  repeating clear label extraction, raw grading of an already established slab,
-  or unchanged accepted answers. Keep enough source context to challenge a
-  weak/incorrect cheap reading rather than blindly treating it as established.
-- Merge findings with provenance: preserve the original result, stronger
-  correction, disputed fields, evidence and dependent repricing. A cheap guess
-  must not silently become authoritative identity, grade or an authenticity
-  finding merely because another stage received it as text.
-
-Current observed compact canary: the saved PSA 5 example reported **$0.0021364**
-(**0.21364 cents**) for **7,232 input / 575 output tokens**, one generation,
-zero eBay Browse and zero price requests. Replaying saved evidence required
-zero additional AI generation. This is one label-assessment case, not a full
-useful-search benchmark, universal per-card cost, measured quality guarantee
-or evidence of a particular saving percentage.
-
-
-## November 3 graded/raw implementation checkpoint
-
-Step2 complete on audit/financial-calculations, no commit/merge/push requested.
-See docs/graded-raw-assessment-paths-2026-11-03.md. Current source separates
-advisory routing/cache/photo selection from structured requests and evaluation.
-Raw body/schema/key remain identical; new compact slab mode uses2uniquephotos,
-max1600output and conditionnull. No model/budget change, silent paid fallback,
-blanket paid rereview, longtermhistorymigration or early-stop screenshot fix.
-Both compatiblecachekeys preserve sourcephotoindices/newestacceptedfacts and
-strongfulllegacypriority. A certifiedcachedslab survives seller-categorychanges.
-
-820offline tests, bothTSchecks, productionbuild and whitespace pass. Real
-DarkBlastoisePSA5labels/cert correct,7232input575outputtokens,1settledgeneration
-$0.0021364=0.21364c,0holds. Two already-assessed examples skipped before selecting
-coldtest. ZeroBrowse/newPKMNcalls. SharedSQLanswer preserved; realevalreplay
-reused2photos and validPSA5 with0additionalAI/providerrequests; cachedsoldpage
-missing stayedPRICE_UNAVAILABLE under forcedcacheonlytest. No private valuation
-was overwritten by that replay. DuplicateinlineimageJSONremoved. SQLready.
-
-Full masterbacklog and newest dailymovers/task-modelrouting ideas remainprivate,
-including optimization of total costpercorrectusefulresult ratherthan treating
-2c as an ideal spend. Current2cguard remains protective untilexplicitnewpolicy.
-Next controlledcomplete-search cost/quality benchmark is still pending.
-
-## November 3 future gap fix: unified per-search price-data budget and accounting
-
-The user asked to save this as worthwhile future cleanup, not implement it now.
-The current limit of **eight uncached PKMNPrices transport requests** belongs
-to preliminary sold-price screening only, including that source's catalog
-lookups. It does not bound later post-photo valuation: catalog lookup and raw
-or exact slab/per-grade sold research can still use their existing fetch paths,
-including up to two sold pages per grade. There is no durable per-search
-PKMNPrices credit telemetry covering all those stages. Do not describe the
-preliminary allowance as a complete-search price-data or credit ceiling.
-
-- Implement a single clean price-data budget/accounting boundary shared by all
-  catalog/reference and pricing calls: preliminary admission, post-photo raw
-  resale, exact slab markets, raw-to-grade scenarios, retries, refreshes and
-  future forecast/liquidity/daily-strategy research. Define scope explicitly,
-  including shared computations with several consumers, before choosing limits.
-- Use stable search/task context and canonical provider/query/market keys, with
-  existing SQL cache and shared work, so identical research is reused instead
-  of independent stages buying the same facts. Retain evidence freshness,
-  currency, edition/finish, condition/grade and provider-attribution boundaries.
-- Account separately for actual transport calls, returned rows and provider-
-  reported charged/remaining/reset credits. Track provider plan/rate metadata
-  and dollar charges only when supported; subscription/prepaid/unknown cost
-  must not be silently reported as free, zero or an invented per-call price.
-  Reports should distinguish cache reuse, charged work, reservations if used,
-  failures and unknown billing/coverage rather than mixing these units.
-- Preserve already valid partial facts when the remaining allowance is
-  insufficient, and mark unresearched evidence missing/deferred rather than
-  valuing it at zero or dropping the whole result. Cancellation blocks later
-  dispatch while accepted responses finish saving for reuse; retries and
-  restarts must not reset or bypass the future shared accounting.
-- Keep the price-data budget distinct from the independent **25 Browse calls
-  per search**, real eBay daily quota and **$0.02 AI guard**. The current eight-
-  call preliminary scope remains explicit until this refactor is implemented.
-  The benchmark's temporary **16-total-request diagnostic ceiling** is
-  diagnostic-only, not a production policy change or evidence that all price
-  calls are capped.
-
-This item belongs to master roadmap area 6 (exact-market history/provider
-accounting) and the controlled full-search benchmark. It does not change the
-current runtime, model, AI/Browse controls or approved work sequence.
-
-## November 3 controlled full-search benchmark and replay checkpoint
-
-The initial controlled search-cost benchmark is complete. Live evidence:
-data/search-benchmarks/2026-11-03T21-34-53-373Z-live-dbeed952-208b-4f07-ae2a-390878f657e1/report.json.
-Saved-result replay:
-data/search-benchmarks/2026-11-03T21-37-39-716Z-replay-dbeed952-208b-4f07-ae2a-390878f657e1/report.json.
-Public summary: docs/search-cost-benchmark-2026-11-03.md.
-
-- Query: **Venusaur Base Set 15/102 Unlimited holo**. Buy It Now, both raw and
-  graded, Any profit/Any ROI, Best Offers off. Actual bounded server search and
-  evaluator shared one persistent search ID; client eligibility, ranking and
-  two-slot feedback were reproduced after metadata screening. This was not a
-  browser timing run and excludes UI/bootstrap/shortlist/set-year work.
-- Elapsed **58.271 seconds**. Loaded **50 metadata rows: 39 raw, 11 graded**.
-  Sold screening returned **35 AVAILABLE / 15 DEFERRED**; all 15 deferrals were
-  due to the eight-request preliminary price allowance. **Two slabs** were
-  preliminarily excluded as above target. **33 rows** were auto-eligible;
-  three raw assessments completed, a fourth request was blocked before paid
-  generation, and 29 eligible rows were not admitted. Fifty rows were never
-  claimed to mean fifty completed photo assessments.
-- Actual reported AI token charges: **$0.0140084 = 1.40084 cents**, **three
-  settled attempts, zero holds**, **$0.0059916 = 0.59916 cents remaining**.
-  Usage: **52,072 input / 2,995 output tokens**, **four input preflights** and
-  **three generations**. The fourth request's required reservation did not fit
-  the remaining budget, so no paid generation was sent. A guard may stop below
-  two cents; this does not explain the separately deferred Blastoise screenshot.
-- Transport: **five Browse, two Analytics, one OAuth**; Analytics/OAuth do not
-  consume the Browse allowance. **Nine PKMNPrices requests / 76 header-reported
-  credits**: eight preliminary requests plus one final-valuation second sold
-  page. No duplicate Browse or PKMNPrices request hashes were observed in this
-  run. The temporary diagnostic ceiling was **16 total uncached price calls**,
-  not a changed production allowance or dollar/credit cap. Token charges and
-  provider-credit headers are not a provider cash invoice.
-- Decision outcomes: **one PASS, two printing NEEDS_REVIEW, zero Deals**.
-  All three raw numeric grade ranges were **null**. The priced raw PASS used
-  an explicitly labeled **TCGplayer fallback** because there were **zero reused
-  photo-condition-matched raw sold copies**, even though preliminary sold-title
-  unspecified-condition context was available. Do not describe that fallback
-  as an exact condition-matched eBay sold valuation or count unresolved results
-  as verified profitable opportunities.
-- Replay of only those three completed assessments used the same search ID
-  and saved SQL evidence with provider/paid transports blocked: **zero new AI,
-  preflight, Browse, PKMNPrices or image-CDN calls**. Two results reused photo
-  answers and one reused a private valuation. Replay does not freshly confirm
-  eBay availability, and it does not assess the remaining 47 metadata rows.
-- Verification checkpoint: **837 offline tests**, both TypeScript projects,
-  production build and whitespace checks pass. Model, two-cent guard, 25 Browse
-  limit and production workflow were not changed for the benchmark. Deferred
-  early-stop/photo/English cases and the user-found positive deal remain future
-  work. No automatic spend-to-cap or blanket rereview was introduced.
-
-What this establishes: one bounded real server search's measured work, cost,
-deferrals and cache-only reuse. It does not establish successful deal discovery,
-general photo accuracy, a universal per-search price or a complete ten-search
-evaluation. Next evaluate **selective photo/original-crop quality and candidate
-ranking**, with cost per useful verified decision/opportunity rather than cost
-per loaded row or spending the cap. Keep the already-saved unified all-stage
-price-data budget/credit accounting gap visible. Any stronger-model/OCR/photo
-plan change requires its own measured decision; none is implemented by these
-notes. All broader master-roadmap ideas remain pending as recorded above.
-
-Read-only benchmark follow-up — canonical identity and queue priority: the
-three paid seller-LP candidates asked $150.48 + $38.49 shipping, $164.99 + $0,
-and $104.99 + $1.29. A fourth seller-HP candidate at $55 + $6 was denied before
-generation. All four had priority band 0 / evidence 2 with no priority-layer
-investment/profit estimate: the only sufficiently populated raw reference was
-12 UNSPECIFIED-condition sales (median $69.815); the HP bucket had one sale and
-could not price a condition-specific comparison. This does not prove there was
-no grading upside, or justify treating unknown condition as a cheap known grade.
-
-Saved names "venusaur light play", "venusaur ex-mt" and "venusaur swirl"
-created separate catalog query keys. Add this example to existing canonical-
-catalog/ranking work: normalize condition/marketing noise using actual catalog
-identity, while preserving real names/forms such as Dark, Alolan, Mega, ex, V
-and VMAX. Do not blindly strip words with broad regex rules or change budgets
-to work around duplicate identities. This is a saved future improvement only;
-the report inspection made no provider requests or production changes.
-
-
-### Offline condition parser finding from the November 3 benchmark
-
-The HP-stat cleanup in server/pricing/raw-comps.ts consumes `102 HP` in
-`Venusaur 15/102 HP Holo…`, deleting a real Heavily Played condition claim.
-This was reproduced with the current regex and the saved $44.14 sold reference;
-no new provider work occurred. Repair the boundary around collector numbers
-versus HP statistics with cross-card regressions (preserve 120 HP stats, HP
-condition tokens, fractions and modern variants). One recovered condition claim
-still cannot establish a reliable median or substitute for photo-conditioned
-sold evidence. Saved for later; the benchmark did not change this parser.
-
-
-### Product success and interface language — November 3
-
-The goal is actual evidence-supported, profitable opportunities reaching Deals.
-Loaded metadata, assessment counts and lower spend are supporting metrics, not
-the product outcome. Prioritize useful verified opportunities without inventing
-profit or hiding material uncertainty. User does not want prominent "AI"
-branding or buzzwords. Use plain deal/photo-review/pricing/action language;
-mention AI where cost, an optional action or evidence limitations make it useful.
-This preference does not remove accurate cost and provider-use reporting.
-
-
-### Keep both grading strategies and capital lock-up visible
-
-User confirmed retaining raw resale, raw-to-CGC and raw-to-PSA. Grading can
-mean 90+ days of capital lock-up but some grading plays remain worthwhile.
-Compare supported net proceeds, grader-specific fees/shipping/service levels,
-time through grading plus resale, and user holding/capital preferences.
-Do not discard raw grading upside solely because asking exceeds a raw median;
-do not assume uniform turnaround or remove PSA. This is strategy guidance
-for the existing paths and later capital/holding-period work, not a new
-turnaround claim or an implementation of those future features.
-
-
-### Candidate selection completed after checkpoint 24f0da1 — November 3
-
-Work continues on improve/deal-candidate-selection. Added conservative canonical
-research-name resolution that preserves printed forms/owners/gender, shared
-raw seller-condition parsing (collector HP versus hit points), extracted shared
-sold-reference validation and band0-only raw market-context ranking. Known
-shipping and one exact recent market are required for the ordinary prospect
-boost; tiny asks, seller damage/heavy play and ambiguous/mixed targets remain
-inspectable without that boost. No raw-median hard rejection, new grade/price
-assumption or Deal verdict. CGC and PSA opportunities remain separate; capital
-lock-up/holding-time work remains future scope. User's product wording preference
-kept: useful outcomes/evidence rather than AI buzzword branding.
-
-Actual saved 50-row metadata plus SQL-cache replay with price maxRequests=0 and
-provider transports blocked: AVAILABLE35->42, DEFERRED15->8, autoeligible33->39.
-12/12 descriptor-contaminated names resolve; not every missing market recovered.
-First ordinary raw prospects now64.99/69.99delivered, rather than the original
-150.48+38.49 and164.99 front batch. Zero new provider, image, preflight or paid
-assessment calls. No fresh availability or new verified Deals claimed. The
-HP parser correction moves the same cached44.14sale intoHP; unspecified median
-69.815->71 is parsing, not price growth. Publicdetail
-docs/candidate-selection-2026-11-03.md; private replay beside originalbenchmark.
-859offline tests, both typechecks, build passed. Checkpoint24f0da1 committed;
-these follow-up changes currently uncommitted. Next improvements must measure
-useful verified Deals, keep deferred photo problems/holding periods/fullprice
-budget on the broader roadmap, and preserve actual cap ledgers/shared evidence.
-
-## Saved auction reference supplied November 3, 2026 — later work
-
-User supplied a worked snipe example, explicitly to remember while finishing
-the three filtering fixes. Do not inspect the listing or implement the auction
-feature during this batch. URL https://www.ebay.com/itm/366764764463. User-observed
-identity: English 1999 Base Set Shadowless Mewtwo 10/102 PSA7; observed bid92,
-inbound shipping8, selected resale350, practical max bid225 before tax/shipping.
-These are dated user observations, not app-verified/live recommendations.
-
-Exact recent sold examples335,349.99,376 support approx350, not a guaranteed
-floor. Record source/date/printing/grade/amount/shipping and verified accepted
-offer amounts; preserve lower resale downside and outlier controls. Exclude
-FirstEdition/Unlimited/raw/othergrades from the PSA7Shadowless market.
-
-Current competing BIN user examples:375+5.64=380.64 from seller60%feedback/3score;
-389.99 free shipping from99.8%/36172seller. Confirm cheapest equivalent live
-identity/availability and disclose poor seller confidence; asking competition
-is distinct from stronger completed-sale evidence. Fine holo lines may be on
-slab rather than card; price actualPSA7, no speculative upgrade premium. Store
-photo observations separately from seller claims and retain paid findings.
-
-Illustrative settings only: purchase/resale buyer tax8.25%, selling fee13.25%
-on taxed sale total+0.40, outbound8, free buyer shipping, no promotion/othercost.
-User arithmetic: net291.40; acquisition at225bid252.22; profit39.18. Strict40profit
-ceiling224.23 rounded down. Reuse existing cents-correct fee/ROI engine and actual
-config; never replace current fee rates or targets with this example. Formula
-(netResaleProceeds-desiredProfit)/(1+purchaseTax)-inboundShipping, subject to
-stricter ROI/purchase budget and other applicable costs. Show maxitembid, total
-acquisition, resale/profit, comps, lower scenario, competingBIN and uncertainty.
-
-Reuse current cheapmetadatafilters, raw/slab split, exactsold scopes, sharedSQL
-and savedphoto versions. Refresh bid/shipping/availability/market separately;
-changedbid is not reason to rebuy photos. Research a bounded relevant soldsample
-and cheapest activealternatives first. Existing2centAI/25Browse/dailyguards stay.
-
-Verification of No Symbol saved compatibility: strict Jolteon replay /Users/andrewclark/programming/pokemon-flipper/data/search-benchmarks/2026-11-04T18-03-36-611Z-replay-46af169c-114f-47df-8718-b92ef7727ef7/report.json reused both accepted answers, returned CANT_PRICE/Sorting, preserved labels, and added zero generation/preflight/CDN/Browse/Analytics/OAuth/PKMN calls or cost.
+- Metadata establishes preliminary research scopes. Corroborated photographs or
+  slab labels establish physical identity. First Edition, Shadowless, Unlimited,
+  releases, finishes, languages, graders, grades and special tiers stay separate.
+- Current pricing uses eligible exact eBay transactions, supplied through
+  PKMNPrices. One valid sale can support sparse pricing with low confidence.
+  Recent sales and known BIN cohorts matter more than a stale aggregate;
+  the recent four-sale/48-hour rule and format-aware outlier handling exist.
+  TCGplayer estimates do not set final resale prices.
+- Clear slab labels establish the certified grade. Check identity, holder
+  condition and authenticity concerns without grading the enclosed card again.
+  Raw grades are photo estimates with honest confidence, independent of seller text.
+  Keep eBay’s category examples separate from actual seller disclosures about that
+  card. Verify fixed-price terms on the item before spending on Buy It Now photos.
+- Fees, purchase tax, resale tax fee bases, inbound/outbound shipping, supplies,
+  grading, profit, ROI and purchase ceilings stay in code. Any targets remove
+  the minimum targets, not costs or the positive-profit requirement for Deals.
+- Unknown destination shipping is provisional and differs from confirmed free
+  shipping. Terms and market prices refresh separately from unchanged photo facts.
+- Best Offer is enabled by default, with optional openings up to 15% below asking.
+  Drafts and private walk-away limits do not submit offers. Automatic auction
+  candidates must have strictly less than 10 hours remaining at the fixed search-start time.
+- The built-in sniper rechecks auction terms and alerts the buyer before close.
+  Scheduled automatic proxy bids target eBay Sandbox. Production bidding
+  depends on eBay approval, buyer authorization and a successful Sandbox trial.
+- Best current buy, projected losses, compact results and the desktop split
+  inspector are implemented. At wide desktop sizes, analysis stays beside the
+  results; smaller screens use an accessible modal. Opening, switching or resizing
+  the inspector reuses accepted assessments.
+- Shared SQL response and assessment storage exists. Shared transactional usage
+  authority, normalized market history and durable server-owned research remain
+  unfinished. Do not run independent replicas with independent local allowances.
+
+Implementation details and invariants:
+[architecture](docs/architecture.md), [money calculations](docs/money-calculations.md),
+[financial sources](docs/financial-sources.md), [audit](docs/deal-search-audit.md)
+and [validation](docs/validation.md).
+
+## Work order
+
+1. Run the collector pilot on buyers' chosen cards. Use saved evidence and
+   automatic review to identify what prevented a useful buying decision.
+2. Freeze and replay identical search inputs for unresolved rows beyond 50,
+   Blastoise release ambiguity, a genuine loss and a supported profitable case.
+   Exercise search → assessment → classification, not just an isolated calculator.
+3. Fix the demonstrated blocker in the existing path, remove the retired code
+   it replaces and preserve counterexamples, accepted evidence and accounting.
+4. Validate Best current buy and the next plausible profitable BIN through the
+   normal app with destination shipping. Report actual coverage, exclusions,
+   unresolved reasons, final outcomes and spend. Zero live Deals can be a valid
+   inventory result; it is not evidence that the entire market was searched.
+5. Continue the prioritized checklist. Broader strategies, production bidding, forecasting
+   and public deployment follow a trustworthy buying workflow.
+
+No routine pause for a commit or preference question is needed. Commit, merge and
+push when requested; preserve unrelated changes. Do not automatically purchase,
+bid, submit offers or message sellers.
+
+## API and evidence policy
+
+Useful provider calls are authorized. eBay and PKMNPrices have daily quotas under
+flat subscriptions; their requests and credits are separate from OpenAI dollars.
+The user specifically wants more useful data coverage and AI at the right stage.
+Zero calls or an arbitrarily cheap search is not the goal.
+
+Current new-search safeguards are 100 actual Browse requests, 128 uncached
+PKMNPrices screening requests and 256 across all pricing stages. These are tunable
+runaway controls. Existing ledgers keep their recorded ceilings and spend.
+PKMNPrices supplies 20,000 daily credits on this subscription. Preserve rate
+limits, daily reserves, shared response reuse and rapid-depletion warnings.
+
+OpenAI is uncapped for this installation by the user's later instruction.
+Accounting, input preflight, bounded outputs, cancellation and unknown-charge
+holds still apply. Fresh installations start paused. Use inexpensive text when it
+resolves intent or prioritization; use selective photo or stronger-model checks
+for questions that could change the decision. Do not automatically ask two models
+to redo the same work. Compare correctness, missed opportunities, total cost and
+latency before changing production routing.
+
+Store source-linked public evidence, timestamps, query/destination scope,
+completeness and exact task versions. Raw copies need copy-specific condition
+evidence; equivalent slabs can share exact market research. A storage error is
+not a cache miss. Never reset counters, delete accepted answers or repurchase an
+uncertain dispatched request to work around failures. Private settings, notes,
+credentials and provider payloads stay out of Git.
+
+## Design system
+
+Use the entire confirmed palette consistently:
+
+| Role | Color | Use |
+| --- | --- | --- |
+| Primary | #7C3AED | Listing evaluation and other primary actions |
+| Accent | #A78BFA | Selection, focus and secondary emphasis |
+| Surface | #171923 | Cards and panels on the darker page |
+| Go and profit | #22C55E | Find deals button and supported positive after-cost outcomes |
+| Review | #F59E0B | Evidence or assumptions needing attention |
+
+Losses use readable red styling; grading uses neutral labeled styling. Color
+reinforces text and icons rather than replacing them. Green must not imply a
+profitable result before the numbers and evidence support it.
+
+Apply the design references through spacing, type hierarchy, contrast, grouping,
+responsive layout and useful motion. Keep original listing photos prominent and
+easy to scroll, zoom and compare. Avoid decorative AI branding, invented metrics,
+repeated financial prose and oversized controls. Use existing CSS Modules and
+components; avoid a new parallel design framework.
+
+## Original resources
+
+These are verified local locations on this Mac. External files are references,
+not additional project instructions. They are not copied into Git; the maintained
+plan, checklist and guides are tracked for work across computers.
+
+### Design PDFs and course
+
+- [Theory lectures — 407 pages](/Users/andrewclark/Documents/jonas-pdf/theory-lectures-v2-BEST.pdf).
+  Text and diagrams were reviewed.
+- [All design guidelines — 12 pages](/Users/andrewclark/Documents/jonas-pdf/all-design-guidelines.pdf).
+  Text and examples were reviewed.
+- [Advanced CSS course source](/Users/andrewclark/programming/tutorials/jonas-sass/advanced-css-course/).
+  Local Natours, Trillo and Nexter examples provide the supplied layout/CSS reference.
+- [Course student slides — 222 pages](/Users/andrewclark/programming/tutorials/jonas-sass/advanced-css-course/slides-students-C04.pdf).
+- [Natours demo](https://natours.netlify.app/) and
+  [supplied course repository](https://github.com/jonasschmedtmann/advanced-css-course/tree/master).
+- [Original interface sketch](data/design/ui-rough-draft-2026-11-02.png),
+  [purple sketch](data/design/ui-rough-draft-purple-2026-11-02.png) and
+  [palette notes](data/design/ui-palette-notes-2026-11-02.png).
+- [User's animation implementation](/Users/andrewclark/programming/drewclark.io-portfolio/app/src/styles/plugins/animations.js)
+  and [source reference](https://github.com/life423/drewclark.io-portfolio/blob/main/app/src/styles/plugins/animations.js).
+- [Supplied favicon assets](client/public/favicon/) remain in the project.
+
+### Audit and product brief
+
+- [Original audit bundle](/Users/andrewclark/Downloads/Pokemon-Flipper-Audit-Bundle/):
+  [code audit](/Users/andrewclark/Downloads/Pokemon-Flipper-Audit-Bundle/Pokemon-Flipper-Code-Audit.md),
+  [coverage CSV](/Users/andrewclark/Downloads/Pokemon-Flipper-Audit-Bundle/Pokemon-Flipper-Coverage.csv),
+  [flow image](/Users/andrewclark/Downloads/Pokemon-Flipper-Audit-Bundle/pokemon-flow.png),
+  [flow SVG](/Users/andrewclark/Downloads/Pokemon-Flipper-Audit-Bundle/pokemon-flow.svg)
+  and [reproduction instructions](/Users/andrewclark/Downloads/Pokemon-Flipper-Audit-Bundle/reproductions/README.txt).
+  The reproduction folder contains discovery, client, shared, AI-guard and
+  analysis cases plus its Python runner.
+- [Original audit ZIP](/Users/andrewclark/Downloads/Pokemon-Flipper-Audit-Bundle.zip).
+- [Pasted app brief](/Users/andrewclark/.codex/attachments/5bfc761f-925c-4308-b6b8-e0c28ef57b8a/Pasted%20text.txt).
+  Its earlier budgets and behavior descriptions do not override current decisions.
+- The original `pokemon-flipper-deal-fixes.patch`, debugging PDF titled
+  “Debugging Why Pokémon Flipper ‘Can't Find a Deal’” and PKMNPrices `ppp.pdf`
+  were not found at their former locations. Recovered actionable findings live
+  in the maintained audit, provider notes below and active checklist. Their
+  originals have not been deleted by this cleanup.
+- Saved listing photos, responses, ledgers and automatic diagnostic reviews
+  remain under ignored `data/`. They are evidence for replay, not public reports.
+
+### Strategy references
+
+- Andrew’s [comic-book-data project](https://github.com/life423/comic-book-data) is the reference for a possible Pokémon PriceCharting importer. Its [scraper](https://github.com/life423/comic-book-data/blob/main/scraper/price_scraper.py) reads prices for owned Amazing Spider-Man issues, and its [scheduled workflow](https://github.com/life423/comic-book-data/blob/main/.github/workflows/daily-price-update.yml) updates collection data daily. Andrew reports it operated for over two years without a ban. For Pokémon, prototype a small watchlist keyed by exact release, number, language, finish and grade. Save dated source values, keep the prior observation on failure and check a price move against matched sales and live delivered prices.
+- The supplied [Pokémon Flipper Trends Google Cloud project](https://console.cloud.google.com/welcome?project=pokemon-flipper-trends-2026) is available to evaluate when the PriceCharting importer resumes. Save credentials outside Git. The importer remains on hold. Its eventual scheduler should use small batches, randomized request timing and one durable claim per product and observation window so overlapping jobs and restarts cannot duplicate a scrape.
+- [PriceCharting Pokémon big movers](https://www.pricecharting.com/big-movers?category=pokemon-cards):
+  future daily lead research at a random time between 5 and 6 a.m. Central.
+  A mover is a hypothesis to verify against exact sold evidence and current BIN
+  inventory; an aggregate raw increase does not establish a graded-market gain.
+- The buyer spotted a newly listed raw Shadowless Alakazam and judged it Mint
+  from the photos. The seller listed it as Near Mint. The incorrect First
+  Edition item detail played no part in the purchase. Replay the purchase as an
+  example of finding a clean copy early. Use the pictured printing for comps
+  and treat the buyer’s condition assessment separately from a certified grade.
+  [Purchased Alakazam listing](https://www.ebay.com/itm/227548256279).
+- [Shadowless Mewtwo PSA 7 auction example](https://www.ebay.com/itm/366764764463):
+  November 3 worked example for code-calculated ceilings, separate lower resale
+  scenarios and exact market matching. Its prices are not current recommendations.
+
+### Pricing a slab with few exact sales
+
+Read the grade from the holder. Use PKMNPrices for individual sold transactions. When those are sparse, look up the exact printing and grading company on Pokémon Price Tracker, including half grades. Show the estimate in dollars, its date, the number of reported sales and the total purchase cost. A buyer should be able to tell whether a figure represents a completed sale, a provider estimate or an active asking price. AI can search for missing completed transactions within the original search budget. Reuse the lookup across listings and replays. The planned PriceCharting importer can supply additional dated references once resumed.
+
+The $999 CGC 8.5 Dark Gengar has a separate exact comparison. The sold copy has certificate 6222960110 and sold for $999 on October 12. The listed slab has certificate 6216397042 and costs $1,081.42 with estimated tax. The app’s November 24 check found a $927.93 90-day estimate at medium confidence for this printing and grade. The eight-sale count covers the provider’s entire history. The buyer sees the age of the evidence and the scratch on the holder. [Completed eBay listing](https://www.ebay.com/itm/327355249346)
 
 ### Let AI choose what the app does next
 
@@ -3277,3 +333,100 @@ A resale hunt currently requires at least three distinct matching completed sale
 Let the AI also choose the existing page or panel that best explains its finding. For a newly listed raw Alakazam, it could use the original photos, look up sales at the likely grade and one grade lower, then show the grading costs and profit scenarios beside the search results. For a CGC 8.5 Dark Gengar, it could read the holder, reuse exact-grade sales and open the price comparison for that copy. Neither path requires the buyer to navigate through the intermediate checks.
 
 Expose each supported function and view by name, with the inputs it accepts. The app executes the selected function, supplies the result and opens the selected view for the same listing. Reuse paid evidence, enforce the search budget and calculate money in code. Record the steps and why the AI chose them so the buyer can see what led to the decision. Purchases, bids and seller contact remain buyer actions.
+
+### Andrew’s seller research and offer ideas
+
+- **Find mispriced cards from sellers who rarely list Pokémon.** Open the seller’s other items. A store full of tools or clothes with a few vaguely titled Pokémon singles is a reason to look more closely. Sample across categories, save how many items were checked and reuse that sample across the seller’s listings. Inspect plausible cards for overlooked printings or unusually good condition, check exact completed sales, then calculate what the buyer could make after costs. The inventory mix sets research priority. Feedback measures a different kind of risk.
+- **Compare how the seller photographs condition.** If the seller discloses edge or corner wear and the sleeve hides the affected area in every photo, pass. If their other cards have unsleeved closeups, report that observable difference without speculating about motive.
+- **Assess what is visible through a sleeve and draft a request for the missing view.** On the Neo Destiny Dark Gengar 6/105 example, the front is visible and the gallery includes a back. Read both originals, give a best estimate of the play condition and one numeric grade with confidence, and identify the visible feature behind it. Reflections can limit confidence about holo scratches. Keep the general photo-grading disclaimer in the footer. If an extra photo could change the buying decision, offer a copyable, editable message specific to that card and angle. Example for this listing: “Hi! Could you take a straight-on photo of the back of Dark Gengar out of the sleeve and a slightly tilted shot of the holo so I can see the surface? Thanks!”
+- **Send a buyer-authorized Best Offer with an optional witty note.** On an eligible listing, use the existing opening offer and private walk-away limit. Draft one short, editable line specific to the card, with plain and playful options. Let the buyer approve an individual offer or opt into sending within an explicit total budget that covers all outstanding offers. Check the shipped and taxed total, record the sent offer, and reconcile its status before any retry. Confirm the application’s production access and buyer authorization before enabling delivery. eBay documents an optional message on its buyer-side `makeOffer` operation. [eBay buying API migration guide](https://developer.ebay.com/develop/guides/sell/modern-apis-migration-guide)
+
+### Twenty deal-finding ideas to test
+
+These are product hypotheses. Start with small lots for flippers and clean-front
+copies for binder collectors. Reuse the existing exact-sales lookup, photo
+observations and cost calculations. Measure which buys survive verification and
+which recommendations shoppers act on before expanding the feature set.
+The [fifteen eBay tactics](#fifteen-ebay-tactics-for-the-deal-planner) turn several of these ideas into concrete research choices for the buyer's goal.
+
+The earlier seller and market hypotheses remain in scope too. Independently
+inspect a seller-described LP copy that may be Near Mint, or a Near Mint copy
+that may be Mint. Follow an unusually cheap completed sale into that seller's
+current inventory. Test whether watched BINs, listing age, price changes,
+promoted placement or weak presentation reveal an opportunity. For relisting
+upside, source the resale margin for the pictured condition and distinguish
+clearer photography or a better description from physical improvement.
+Deduplicate promoted and organic appearances. Use repeated exact-market sales
+to test daily movers and stale prices, and save one reusable daily research plan.
+
+1. Small lots. Price the two or three easiest cards to sell against the entire purchase. Count unidentified extras at zero and include fulfillment for each sale.
+2. Choose-your-card listings. Read the exact in-stock variation, its price and the photos that apply to that individual copy.
+3. Same-slab sale history. Match a readable certification number to a documented previous transaction. Check for relists and corroborate with recent sales of other copies.
+4. Documented print errors. Recognize a specific, collectible error with a published example and exact sold evidence. A stain or camera artifact cannot establish it.
+5. Competing auctions. Spot clusters of identical slabs ending minutes apart inside the 10-hour window. Show each buyer which single auction fits their delivered ceiling.
+6. Dealer cash offers. Compare a listing with an accessible, current cash buylist that accepts its printing, condition and quantity. Include shipping and a downgrade scenario.
+7. Cross-market resale. Compare a purchase with completed sales at a venue the buyer can sell on. Use that venue's fees, fulfillment and exact matching rules.
+8. Complete a sellable set. Identify the missing piece of a trio or promo set. Compare proven set proceeds with the existing pieces' net resale value and the missing piece's cost.
+9. Damaged holders. For an intact certified slab with cosmetic holder wear, compare selling as-is with an eligible paid reholder and two-way shipping.
+10. Buy a lot and keep one. Price the collector's target after conservative net proceeds from the other identifiable cards. Show the upfront cost and the cost if nothing resells.
+11. Combined shipping. Find pairs of wanted cards from one seller where a verified basket quote beats the cheapest split orders.
+12. Quantity discounts. Use actual volume pricing and available quantities. For a reseller, show proceeds on the first copy and recent demand for the rest.
+13. Private seller offers. Evaluate a real offer supplied by the buyer against exact sales and the cheapest public alternative. Check the offer terms and expiration.
+14. Overseas inventory. Verify the same English release and compare foreign and domestic copies after conversion, shipping and applicable import costs.
+15. Pickup opportunities. Find listings with usable local pickup and compare the checkout total plus the buyer's travel cost with delivered alternatives.
+16. Clean-front binder copies. Compare visibly clean fronts with documented back-only wear. Show the affected areas and the dollar saving against a cleaner copy.
+17. Grade-price inversions. Find a higher grade offered below a lower grade the collector is considering. Verify the same printing and grader and price each grade on its own evidence.
+18. Same-art alternatives. When the buyer wants the illustration, identify cheaper verified releases with the same artwork and name the actual printing.
+19. Collection upgrades. Price the all-in difference between buying the desired copy and the net proceeds of selling the buyer's current copy.
+20. New evidence on a saved listing. On a changed gallery, inspect the new photo that could resolve a prior stop, then explain whether the verdict changed. Reuse accepted evidence.
+
+### Fifteen eBay tactics for the deal planner
+
+For a flipper, test whether the specific copy can sell often enough at a profit after costs. For a collector, start with the printing, artwork, condition and delivered budget they actually want. Match completed sales by card number, set, printing, language, finish and raw condition or slab grader and grade. For an accepted Best Offer, use the actual accepted price when documented and exclude a crossed-out asking price from the sale calculation. [eBay Product Research](https://www.ebay.com/help/selling/selling-tools/terapeak-research-and-SEO?id=4853)
+
+The planner can already choose among offered markets, inspect a listing and its photos, resolve printing, read sales and price references, and calculate raw resale or grading economics. It can propose its own explanation for a mispricing and revise it after a check. [Deal hunt planner](server/analysis/deal-hunt.ts)
+
+1. **Find the card by number.** When a fixed-price raw-card market search finds no eligible new copy, the hunt tries the printed fraction and the set plus its collector number at the same item ceiling. It counts each eBay listing once. For a number-discovered lead, the app checks the original front against independent catalog artwork before using that market’s sales. A future trial can compare common misspellings.
+2. **Search the words a casual seller uses.** Try “old shiny Pokémon cards,” “childhood card binder” or “Pokémon dragon card” across broader categories. Existing photo inspection can identify an eligible single. Add broad-category discovery and lot handling before recommending a binder.
+3. **Learn one commonly confused variant.** A vague holo description can hide a valuable stamp, edition or finish. Inspect the relevant part of the original photo, confirm that the variant exists in this release, then fetch sales for the pictured printing. Use the set-specific printing check already available.
+4. **Find the overlooked card in a lot.** A supporting card in the last photo may cover much of the purchase. Add a lot reader that checks every photo, deduplicates repeated views, prices identified cards at their visible condition and assigns obscured or unidentified cards $0.
+5. **Calculate what the keeper costs.** Extend the lot calculation to deduct realizable net proceeds on the unwanted cards. For example, $90 delivered minus $50 after selling fees, postage and packaging gives a $40 effective cost. Count unsold cards at $0. The buyer pays $90 up front, and the keeper costs the full $90 if nothing else sells.
+6. **Follow a seller's pricing pattern.** A seller asking the same amount for every holo may have overlooked one card. The existing category sample can justify another photo check. Add a sibling-listings lookup, compare actual asking prices and verify each sibling's exact identity, condition and sales independently.
+7. **Set the ceiling before the listing appears.** Use exact recent sales, liquidity and all costs to calculate the maximum item price. A newly listed Buy It Now copy can trigger a terms and photo check against that ceiling. Extend the bounded fresh-listing check to persistent buyer targets and refresh stale sales before alerting. [eBay saved searches](https://www.ebay.com/help/buying/search-tips/saved-searches?id=4051)
+8. **Ask for the one photo that could change the decision.** Use the photo review to identify the missing evidence. Draft a specific request for an unsleeved back or a tilted holo surface. Add a seller-message draft and a changed-gallery check that reuses the other photos. The buyer chooses whether to send the request.
+9. **Propose a specific on-eBay bundle.** Combine the target with slower-moving cards the buyer genuinely wants. Add a bundle calculator and editable draft naming each card, the proposed total and delivery terms. Compare the seller-agreed combined delivery charge with separate purchases before assigning any savings. [eBay combined shipping](https://www.ebay.com/help/ship-track/ship-track-buying/combined-postage?id=4063)
+10. **Evaluate the first actual seller discount.** Watch a promising copy whose public price exceeds the ceiling. Add an input for a private seller offer and its expiration, then recalculate the delivered cost against exact sales and other available copies. A discount enters the math only once the buyer receives an offer. [eBay Best Offer](https://www.ebay.com/help/buying/buy-now/making-best-offer?id=4019)
+11. **Follow up after a verified unsold auction.** An expired listing alone leaves the result unknown. Add an explicit unsold outcome and a draft asking whether the seller would relist at a specific fixed price on eBay. Recheck the live relist's identity, availability and delivered price before recommending it.
+12. **Watch later copies from the same seller.** A seller running several similar auctions may attract fewer bids on a later one. Add same-seller grouping, independent ceilings for each copy and a remaining-quantity counter. Recheck the next legal bid within the ten-hour window and stop once the buyer has filled their quantity.
+13. **Plan a late bid at a fixed ceiling.** Use the current auction checks for a live copy with strictly less than ten hours left, a below-market price and a next bid within the buyer's after-cost ceiling. Skip the auction once the next legal bid exceeds the ceiling. Scheduled bidding stays on hold. [eBay bid sniping](https://www.ebay.com/help/buying/bidding/bid-sniping?id=4224)
+14. **Find eye appeal a collector values.** Inspect front and back separately. A clean-front binder copy with back whitening, or a lower-grade slab with attractive artwork, may satisfy the buyer for less. Price it at its actual raw condition or certified grade. Add an explicit front-appearance preference to compare suitable copies.
+15. **Follow the artwork across releases.** For an artwork-first collector, compare English promos, reprints and finishes that actually share the illustration. Add artwork matching and price each release independently. Extend discovery to other languages only after language-specific identification, numbering and matched sale coverage are supported. Current searches and pricing cover English cards.
+
+**Example chain, 1 → 3 → 6 → 9.** A number-only query finds a vaguely titled holo. The AI checks its pictured edition against matched sales. If the seller appears to price several holos identically, it can investigate a second card the buyer wants. Once both copies are verified, it can draft a two-card offer within the buyer's combined ceiling. This chain needs the alternate-query, sibling-listing and bundle tools above. At each step, save the clue, the tool chosen, the observed result and whether it changed the buyer's decision.
+
+## Retained provider and storage lessons
+
+PKMNPrices catalog records provide canonical names, set/number/language context,
+images and useful metadata; card details supply prices. A catalog candidate is
+not proof of the photographed copy. Preserve aliases and exact printed forms.
+
+Daily price history is TCGplayer/Cardmarket aggregate context, not exact graded
+eBay transactions or liquidity. Individual eBay observations require currency,
+printing, grader/grade, qualifiers, sale type and actual final-amount provenance.
+Provider volume is coverage, not total market demand or measured time to sell.
+
+Use ingestion cursors for arrivals and update cursors/source IDs for corrections.
+Late ingestion may describe an old sale. Deleted observations need bounded
+reconciliation. Daily market refreshes and listing/photo freshness have different
+clocks. Bulk exports have plan/access and download limits; do not assume unlimited
+access or download the whole catalog without a useful reason. Verify changing
+provider details before implementation.
+
+Azure SQL Basic is the selected shared database foundation. Keep large image bytes
+outside SQL, with fingerprints/references inside it. Use focused evidence/cache/job/
+usage/user repositories beneath one backend before adding services. Finish shared
+task claims and atomic spending/quota authority before independent replicas.
+Never hold a SQL transaction open through a provider request. Preserve dispatched
+unknown outcomes and save accepted answers through recovery rather than calling
+again. Measure capacity, retention and backups before wider release; verify
+current service terms and prices before changing infrastructure.

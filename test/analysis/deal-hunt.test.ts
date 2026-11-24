@@ -8,10 +8,10 @@ import { type DealHuntCandidate, runDealHunt } from "../../server/analysis/deal-
 import { createModelExperimentRunner } from "../../server/analysis/model-experiment.ts";
 
 const searchId = "addc12de-bbbe-4f5a-bae0-9a369a92ced2";
-type Prompt = { inventory: { index: number; title: string; listingId: string }[];
-    observed: { listingId: string; action: DealHuntAction; observation: string }[];
+type Prompt = { inventory: { index: number; title: string; listingId: string; freshRawGradingLead?: boolean }[];
+    observed: { listingId: string | null; action: DealHuntAction | "find_listings"; observation: string; hypothesisTested?: string }[];
     menu: { key: string }[]; remainingChecks: number };
-function planner(select: (prompt: Prompt) => string) {
+function planner(select: (prompt: Prompt) => string | { choice: string; reason: string }) {
     const cache = new Map();
     let dispatches = 0;
     const choose = createModelExperimentRunner({
@@ -21,7 +21,8 @@ function planner(select: (prompt: Prompt) => string) {
             dispatches++;
             assert.deepEqual(request.photos, []);
             assert.equal(getAiUsageContext().searchId, searchId);
-            return { result: { choice: select(JSON.parse(request.prompt)), reason: "Inspect the evidence that matters for this copy." },
+            const choice = select(JSON.parse(request.prompt));
+            return { result: typeof choice === "string" ? { choice, reason: "Inspect the evidence that matters for this copy." } : choice,
                 usage: { inputTokens: 30, outputTokens: 10 } };
         },
     });
@@ -71,6 +72,142 @@ test("a changed observation redirects the hunt to a different listing and sectio
     assert.deepEqual(changed.destination, { listingId: "0", section: "grading" });
     assert.equal(changed.steps[0].reused, true);
     assert.ok(model.dispatches() > dispatches);
+});
+
+test("a fresh raw lead can redirect the planner to a condition-matched raw exit or a different copy to grade", async () => {
+    for (const goal of ["grade_raw", "resell"] as const) {
+        function candidate(listingId: string, fresh: boolean): DealHuntCandidate {
+            return {
+                listingId, title: listingId, summary: fresh ? "Listed raw as Near Mint. Front and back available." : "Raw copy with front and back.",
+                freshRawGradingLead: fresh,
+                available(checked) {
+                    const actions: DealHuntAction[] = ["inspect_photos", "check_listing", "check_sales"];
+                    if (checked.has("inspect_photos") && checked.has("check_sales")) actions.push("calculate_grading");
+                    if (goal === "resell" && checked.has("inspect_photos")) actions.push("check_raw_resale");
+                    return actions;
+                },
+                read(action) {
+                    if (action === "inspect_photos") return fresh ? "Corner crease visible." : "Clean front and back, estimated grade 8.";
+                    if (action === "check_raw_resale") return "Five condition-matched sales support the raw exit.";
+                    if (action === "calculate_grading") return "Profitable at both 8 and 7 after submission costs.";
+                    return action === "check_sales" ? "Recent matched sales at grades 8 and 7." : "Verified delivered cost.";
+                },
+                outcome(checked) {
+                    if (!checked.has("check_listing") || !checked.has("inspect_photos")) return null;
+                    if (fresh && checked.has("check_raw_resale")) return { decision: "BUY", section: "sales", reason: "The raw exit clears costs." };
+                    if (!fresh && checked.has("calculate_grading")) return { decision: "BUY", section: "grading", reason: "The lower grade clears costs." };
+                    return null;
+                },
+            };
+        }
+        const markets = [candidate("Fresh copy", true), candidate("Second copy", false)].map(copy => ({
+            title: copy.title, summary: "Recent sales at multiple grades.", discover: async () => [copy],
+        }));
+        const inspectReason = "The fresh seller-described Near Mint copy may have enough margin to grade. Check its corners.";
+        const model = planner(({ inventory, observed, menu }) => {
+            const keys = menu.map(row => row.key);
+            if (!inventory.length) return "market-0/find_listings";
+            assert.equal(inventory[0].freshRawGradingLead, true);
+            const inspection = observed.find(step => step.listingId === "Fresh copy" && step.action === "inspect_photos");
+            if (!inspection) return { choice: "0/inspect_photos", reason: inspectReason };
+            assert.equal(inspection.hypothesisTested, inspectReason);
+            assert.equal(inspection.observation, "Corner crease visible.");
+            if (goal === "grade_raw" && inventory.length === 1) {
+                assert.ok(keys.includes("market-1/find_listings"), "The crease lets the AI switch markets before pricing the damaged copy.");
+                assert.ok(!keys.includes("0/check_raw_resale"));
+                return { choice: "market-1/find_listings", reason: "A crease cuts grading upside. Search another liquid market." };
+            }
+            const route = goal === "resell"
+                ? ["0/check_raw_resale", "0/check_listing", "0/finish/sales"]
+                : ["1/inspect_photos", "1/check_sales", "1/calculate_grading", "1/check_listing", "1/finish/grading"];
+            return route.find(choice => keys.includes(choice))!;
+        });
+        const run = () => runDealHunt({ searchId, goal, candidates: [], markets }, undefined, model.choose);
+        const report = await run();
+        assert.equal(report.decision, "BUY", report.reason);
+        assert.deepEqual(report.destination, goal === "resell" ? { listingId: "Fresh copy", section: "sales" } : { listingId: "Second copy", section: "grading" });
+        assert.ok(report.steps.every(step => !(step.listingId === "Fresh copy" && step.action === "calculate_grading")));
+        const dispatches = model.dispatches();
+        const replay = await run();
+        assert.deepEqual(replay.destination, report.destination);
+        assert.equal(model.dispatches(), dispatches);
+    }
+});
+
+test("standalone raw grading can switch markets after two misses and reserves checks to verify a purchased copy", async () => {
+    const visits: number[] = [];
+    const markets = Array.from({ length: 6 }, (_, index) => ({
+        title: `Raw market ${index}`, summary: "Matched grade sales.",
+        discover: async () => { visits.push(index); return []; },
+    }));
+    const model = planner(({ menu }) => menu.at(-1)!.key);
+    const report = await runDealHunt({ searchId, goal: "grade_raw", candidates: [], markets }, undefined, model.choose);
+    assert.deepEqual(visits, [5, 4, 3, 2]);
+    assert.equal(report.decision, "WAIT");
+    assert.match(report.reason, /4 markets checked.*verify a copy/);
+});
+
+test("after three markets and two Mewtwo photo checks, the grading hunt prices a feasible copy before the eight-check limit", async () => {
+    for (const lowerProfit of [-6, 14]) {
+        const copies: DealHuntCandidate[] = ["A", "B", "C"].map((letter, index) => ({
+            listingId: letter, title: `Mewtwo ${letter}`, summary: `Fresh raw copy, asking $${[37, 28, 52][index]}.`,
+            freshRawGradingLead: true,
+            available(checked) {
+                if (!checked.has("inspect_photos")) return ["inspect_photos"];
+                return checked.has("check_sales") ? ["check_listing", "calculate_grading"] : ["check_listing", "check_sales"];
+            },
+            read(action) {
+                if (action === "inspect_photos") return `Visible edge wear. Estimated grade ${index === 2 ? 3 : 4}.`;
+                if (action === "check_listing") return "Shipping and tax checked.";
+                if (action === "check_sales") return "Matched sales at grades 4 and 3.";
+                return `Likely grade 4 projects $22, grade 3 projects $${lowerProfit} after costs.`;
+            },
+            outcome(checked) {
+                return checked.has("check_listing") && checked.has("calculate_grading")
+                    ? { decision: lowerProfit > 0 ? "BUY" : "WAIT", section: "grading", reason: `At grade 3 the profit is $${lowerProfit}.` } : null;
+            },
+        }));
+        const markets = ["First empty market", "Second empty market", "Mewtwo"].map((title, index) => ({
+            title, summary: "Recent grade-matched sales.", discover: async () => index === 2 ? copies : [],
+        }));
+        // Replay the live planner's preference for a third copy's photos/terms, whenever the host would allow it.
+        const priority = ["market-0/find_listings", "market-1/find_listings", "market-2/find_listings", "0/inspect_photos",
+            "1/inspect_photos", "1/check_listing", "2/inspect_photos", "2/check_listing", "1/check_sales", "1/calculate_grading", "1/finish/grading"];
+        const model = planner(({ menu }) => priority.find(key => menu.some(item => item.key === key))!);
+        const report = await runDealHunt({ searchId, goal: "grade_raw", candidates: [], markets }, undefined, model.choose);
+        assert.deepEqual(report.steps.map(step => [step.listingId, step.action]), [
+            [null, "find_listings"], [null, "find_listings"], [null, "find_listings"], ["A", "inspect_photos"],
+            ["B", "inspect_photos"], ["B", "check_listing"], ["B", "check_sales"], ["B", "calculate_grading"],
+        ]);
+        assert.equal(report.decision, lowerProfit > 0 ? "BUY" : "WAIT");
+        assert.deepEqual(report.destination, { listingId: "B", section: "grading" });
+        assert.match(report.reason, /At grade 3/);
+    }
+});
+
+test("a late printing requirement that exceeds the grading allowance leaves a Wait with the concrete photo finding", async () => {
+    const copy: DealHuntCandidate = {
+        listingId: "unclear", title: "Mewtwo holo", summary: "Raw holo.",
+        available(checked) {
+            if (!checked.has("inspect_photos")) return ["inspect_photos"];
+            if (!checked.has("check_listing")) return ["check_listing"];
+            return ["resolve_printing", "check_sales"];
+        },
+        read(action) {
+            if (action === "inspect_photos") return "Visible back whitening. Estimated grade 4.";
+            if (action === "check_listing") return "The seller changed the claimed printing.";
+            assert.fail("Insufficient steps to check the printing, sales and grading economics.");
+        },
+        outcome: () => null,
+    };
+    const markets = [0, 1, 2, 3].map(index => ({
+        title: `Market ${index}`, summary: "Recent grade sales.", discover: async () => index === 3 ? [copy] : [],
+    }));
+    const report = await runDealHunt({ searchId, goal: "grade_raw", candidates: [], markets }, undefined, planner(({ menu }) => menu[0].key).choose);
+    assert.equal(report.decision, "WAIT");
+    assert.equal(report.destination, null);
+    assert.equal(report.steps.length, 6);
+    assert.match(report.reason, /Mewtwo holo.*Visible back whitening\. Estimated grade 4/);
 });
 
 test("invented cross-listing destinations cannot dispatch, and a cached invalid choice is not purchased again", async () => {

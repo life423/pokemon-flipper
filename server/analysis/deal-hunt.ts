@@ -19,6 +19,8 @@ export interface DealHuntCandidate {
     listingId: string;
     title: string;
     summary: string;
+    /** Host-screened, recently listed raw copy. Its condition and grading economics still need evidence. */
+    freshRawGradingLead?: boolean;
     available(completed: ReadonlySet<DealHuntAction>): DealHuntAction[];
     read(action: DealHuntAction, signal?: AbortSignal): Promise<string> | string;
     outcome(completed: ReadonlySet<DealHuntAction>): DealHuntOutcome | null;
@@ -37,7 +39,7 @@ export interface DealHuntMarket {
     releaseYear?: number;
     title: string;
     summary: string;
-    discover(signal?: AbortSignal): Promise<DealHuntCandidate[]>;
+    discover(signal?: AbortSignal, reportQueries?: (description: string) => void): Promise<DealHuntCandidate[]>;
 }
 
 type ResearchChoice = { action: DealHuntAction; index: number };
@@ -46,8 +48,8 @@ type MarketChoice = { action: "find_listings"; index: number; title: string; sum
 type Option = ResearchChoice | DestinationChoice | MarketChoice;
 
 const initialResearchLimit = 8;
-// A newly discovered raw flip may need terms, photos, sales and grading economics.
-const resaleVerificationSteps = 4;
+const gradingChecks: DealHuntAction[] = ["inspect_photos", "check_listing", "check_sales", "calculate_grading"];
+const resaleVerificationSteps = gradingChecks.length;
 const experiment = createModelExperimentRunner();
 const instructions = [
     "The menu identifies each listing by index. check_listing reads terms and costs. inspect_photos reuses the saved assessment or runs the normal bounded assessment when needed.",
@@ -68,14 +70,32 @@ function isListingCheck(option: Option): option is ResearchChoice {
     return option.action !== "find_listings" && option.action !== "finish";
 }
 
+function affordableGradingChecks(available: DealHuntAction[], checked: ReadonlySet<DealHuntAction>, remaining: number) {
+    // Printing or price evidence can become a prerequisite only after an earlier observation.
+    const needed = gradingChecks.filter(action => !checked.has(action));
+    for (const action of available) {
+        if (action === "resolve_printing" || action === "check_price_references") needed.push(action);
+    }
+    if (needed.length > remaining) return [];
+    if (needed.length < remaining) return available;
+    return available.filter(action => needed.includes(action));
+}
+
+function inventoryEntry({ listingId, title, summary, freshRawGradingLead }: DealHuntCandidate, index: number) {
+    return { index, listingId, title: title.slice(0, 200), summary: summary.slice(0, 500),
+        ...(freshRawGradingLead && { freshRawGradingLead: true }) };
+}
+
 async function selectOption(options: Option[], searchId: string, goal: DealHuntGoal,
-    inventory: { index: number; listingId: string; title: string; summary: string }[], steps: DealHuntReport["steps"],
+    inventory: ReturnType<typeof inventoryEntry>[], steps: DealHuntReport["steps"],
     choose: typeof experiment, remainingChecks: number, signal?: AbortSignal, auction = false, pivot = false) {
     if (options.length === 1) return {
         selected: options[0], reason: pivot ? "Only one eligible market remains to search and verify." : "This is the next available check.", reused: null,
     };
     const choices = options.map(key);
-    const observed = steps.map(({ listingId, title, action, observation }) => ({ listingId, action, observation,
+    const researchRawGrading = !auction && (goal === "grade_raw" || goal === "resell" && inventory.some(row => row.freshRawGradingLead));
+    const observed = steps.map(({ listingId, title, action, observation, selectedBy, reason }) => ({ listingId, action, observation,
+        ...(researchRawGrading && selectedBy === "model" && { hypothesisTested: reason }),
         ...(pivot && action === "find_listings" && { market: title }) }));
     const menu = options.map(option => {
         if (option.action === "finish") return { key: key(option), decision: option.decision, reason: option.reason };
@@ -97,12 +117,24 @@ async function selectOption(options: Option[], searchId: string, goal: DealHuntG
             : "For a flipper, prioritize recent sales activity and profit after costs at the next bid. An opening bid alone does not establish profit.");
     }
     if (options.some(option => option.action === "find_listings")) {
-        guidance.push(goal === "collect_slab"
-            ? "find_listings searches one exact slab market. Use matching sales, collector preferences and affordability to select a market. Verify the asking terms before recommending a copy."
-            : "find_listings opens current listings in the requested format for one exact market. Pick a promising market using recent matched sales and potential profit after costs. For resale the buyer cares about profit, regardless of card name. A historical profit or sales count is only a lead. Check an actual copy before recommending it.");
+        if (researchRawGrading && goal === "grade_raw") {
+            guidance.push("find_listings searches a raw market. Compare recent matched sales at attainable grades, listing costs and profit potential. A sale at a high grade does not establish that a raw copy will earn that grade.");
+        } else {
+            guidance.push(goal === "collect_slab"
+                ? "find_listings searches one exact slab market. Use matching sales, collector preferences and affordability to select a market. Verify the asking terms before recommending a copy."
+                : "find_listings opens current listings in the requested format for one exact market. Pick a promising market using recent matched sales and potential profit after costs. For resale the buyer cares about profit, regardless of card name. A historical profit or sales count is only a lead. Check an actual copy before recommending it.");
+        }
+    }
+    if (researchRawGrading) {
+        guidance.push("A freshRawGradingLead is a recently listed raw copy worth investigating. Treat seller condition as a claim. Inspect the original photos to establish wear and the likely grade. Use matching sales and calculate_grading to test profit after costs at that grade and one lower.");
+        guidance.push("You may devise another explanation for a mispricing using facts in the inventory or observations. In reason, name the clue and what the selected check would establish. A previous hypothesisTested is a planner rationale; use the resulting observation to pursue it, change strategy or switch copies.");
+        guidance.push("A vague title paired with an identifiable collector number, or an unusual card in a general-merchandise seller's sampled inventory, can justify inspecting a copy. Verify its identity and condition independently. Use the market ceiling to choose among new copies and include submission and selling costs in the final calculation.");
+        if (goal === "grade_raw" && remainingChecks <= resaleVerificationSteps) {
+            guidance.push("Use the remaining checks to finish a copy you can verify. Compare the observed grade, wear and delivered cost across feasible copies. Check matched sales and calculate the profit at the likely grade and one lower. Switch if observed evidence rules out the copy.");
+        }
     }
     if (checks.some(check => check.action === "resolve_printing")) {
-        guidance.push("resolve_printing inspects the edition mark appropriate to the identified set. Choose it when resolving the edition could change the decision.");
+        guidance.push("resolve_printing inspects the edition mark appropriate to the identified set. Choose it when resolving the edition could change the decision. A premium variant requires affirmative evidence from the pictured copy and matching sales.");
     }
     if (checks.some(check => check.action === "check_raw_resale")) {
         guidance.push("check_raw_resale tests selling the card as it is using matching condition, recent sales and costs. You can select it before grading, after an unprofitable grading result, or move to another liquid copy.");
@@ -166,7 +198,8 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
     const format = auction ? "auction" : "Buy It Now";
     const candidates = [...initial];
     const searchedMarkets = new Set<number>();
-    const huntMarketsForBuyer = goal === "resell" || auction && goal === "collect_slab";
+    const huntGradingMarkets = !auction && goal === "grade_raw" && markets.length > 0;
+    const huntMarketsForBuyer = goal === "resell" || auction && goal === "collect_slab" || huntGradingMarkets;
     const verificationSteps = goal === "collect_slab" ? 3 : resaleVerificationSteps;
     if (!isSearchDiagnosticId(searchId) || !Object.hasOwn(dealHuntGoals, goal) || candidates.length > DEVELOPMENT_SEARCH_LIMIT ||
         new Set(candidates.map(candidate => candidate.listingId)).size !== candidates.length ||
@@ -174,28 +207,38 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
         throw new Error("A deal hunt needs a valid search, a buyer goal and distinct listings.");
     }
     const steps: DealHuntReport["steps"] = [];
-    const wait = (reason: string): DealHuntReport => ({ searchId, goal, decision: "WAIT", reason, destination: null, steps });
+    const wait = (reason: string): DealHuntReport => {
+        const photo = huntGradingMarkets && steps.findLast(step => step.action === "inspect_photos");
+        return { searchId, goal, decision: "WAIT", reason: photo ? `${reason} Photo check for ${photo.title}. ${photo.observation}` : reason, destination: null, steps };
+    };
     const completed = candidates.map(() => new Set<DealHuntAction>());
-    const inventory = candidates.map(({ listingId, title, summary }, index) => ({ index, listingId, title: title.slice(0, 200), summary: summary.slice(0, 500) }));
+    const inventory = candidates.map(inventoryEntry);
 
     try {
         while (true) {
             signal?.throwIfAborted();
             // Once there is an auction to examine, leave room to reject its exit and verify another copy.
             const researchLimit = initialResearchLimit + (auction && candidates.length ? verificationSteps : 0);
+            const remainingChecks = researchLimit - steps.length;
             const options: Option[] = [];
             let hasUncheckedMarketCopy = false;
             let canSwitchCopy = false;
+            let gradingChecksExceedLimit = false;
             for (const [index, candidate] of candidates.entries()) {
                 const checked = completed[index];
                 const outcome = checked.size ? candidate.outcome(checked) : null;
-                if (steps.length < researchLimit) {
-                    for (const action of new Set(candidate.available(checked))) {
-                        if (checked.has(action)) continue;
+                if (remainingChecks > 0 && !(huntGradingMarkets && outcome)) {
+                    const available = [...new Set(candidate.available(checked))].filter(action => !checked.has(action));
+                    const affordable = huntGradingMarkets ? affordableGradingChecks(available, checked, remainingChecks) : available;
+                    if (available.length && !affordable.length && !outcome) gradingChecksExceedLimit = true;
+                    for (const action of affordable) {
                         options.push({ action, index });
                         if (!outcome && index >= initial.length) hasUncheckedMarketCopy = true;
-                        if (auction && index >= initial.length &&
-                            (checked.has("calculate_grading") || checked.has("check_raw_resale") || checked.has("resolve_printing"))) canSwitchCopy = true;
+                        if (index >= initial.length && checked.size) {
+                            const checkedAuctionExit = auction && (checked.has("calculate_grading") || checked.has("check_raw_resale") || checked.has("resolve_printing"));
+                            const checkedGradingLead = !auction && (huntGradingMarkets || goal === "resell" && candidate.freshRawGradingLead);
+                            if (checkedAuctionExit || checkedGradingLead) canSwitchCopy = true;
+                        }
                     }
                 }
                 if (outcome) {
@@ -204,7 +247,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                     }
                 }
             }
-            const canVerifyNewCopy = researchLimit - steps.length > verificationSteps;
+            const canVerifyNewCopy = remainingChecks > verificationSteps;
             const canBrowse = huntMarketsForBuyer ? canVerifyNewCopy && (!hasUncheckedMarketCopy || canSwitchCopy)
                 : steps.length < researchLimit && searchedMarkets.size < 2;
             if (canBrowse) {
@@ -213,6 +256,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                 });
             }
             if (!options.length) {
+                if (gradingChecksExceedLimit) return wait("The remaining checks cannot verify a grading purchase with matched sales and profit one grade lower.");
                 if (steps.length === researchLimit) return wait("The hunt reached its research limit before it could support a purchase for this goal.");
                 if (huntMarketsForBuyer && !canVerifyNewCopy && searchedMarkets.size < markets.length) {
                     const finding = !candidates.length && searchedMarkets.size
@@ -240,22 +284,23 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                     ...(cardKey && { differentCard: [...searchedMarkets].every(index => markets[index].cardKey !== cardKey) }),
                 };
             }) : eligible;
-            const { selected, also, reason, reused, fallback } = await selectOption(menu, searchId, goal, inventory, steps, choose, researchLimit - steps.length, signal, auction, pivot);
+            const { selected, also, reason, reused, fallback } = await selectOption(menu, searchId, goal, inventory, steps, choose, remainingChecks, signal, auction, pivot);
             const selectedBy = reused === null || fallback ? "app" : "model";
             signal?.throwIfAborted();
             if (selected.action === "find_listings") {
                 searchedMarkets.add(selected.index);
-                const discovered = await withAiUsageContext({ searchId }, () => markets[selected.index].discover(signal));
+                const queries: string[] = [];
+                const discovered = await withAiUsageContext({ searchId }, () => markets[selected.index].discover(signal, note => queries.push(note)));
                 signal?.throwIfAborted();
                 let added = 0;
                 for (const candidate of discovered) {
                     if (candidates.some(existing => existing.listingId === candidate.listingId)) continue;
-                    inventory.push({ index: candidates.length, listingId: candidate.listingId, title: candidate.title.slice(0, 200), summary: candidate.summary.slice(0, 500) });
+                    inventory.push(inventoryEntry(candidate, candidates.length));
                     candidates.push(candidate);
                     completed.push(new Set());
                     added++;
                 }
-                const observation = `${selected.summary} Found ${added} additional eligible ${format} ${added === 1 ? "listing" : "listings"} to check.`;
+                const observation = [selected.summary, ...queries, `Found ${added} additional eligible ${format} ${added === 1 ? "listing" : "listings"} to check.`].join(" ");
                 steps.push({ listingId: null, title: selected.title, action: selected.action, reason, observation, reused, selectedBy });
                 continue;
             }

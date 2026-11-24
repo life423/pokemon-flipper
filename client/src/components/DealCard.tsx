@@ -17,6 +17,8 @@ import { resaleActivity } from "../../../shared/liquidity.ts";
 import { hasSlabEvidence, photoEvidence } from "../../../shared/photo-evidence.ts";
 import { currentSellerMistakes } from "../../../shared/seller-mistakes.ts";
 import { AuctionSummary } from "./AuctionSummary";
+import { AuctionReminderButton } from "./AuctionReminderButton";
+import type { SniperDraft } from "./AuctionSniper";
 import { RawCardGrade } from "./RawCardGrade";
 import { ListingThumbnail } from "./ListingThumbnail";
 import { PhotoReview, type DeeperReviewState } from "./PhotoReview";
@@ -41,6 +43,7 @@ interface Props {
     selected: boolean;
     now: number;
     onOpen: () => void;
+    onSnipe?: (draft: SniperDraft) => void;
     years: Record<string, number>;
     minGrade?: number;
     targets?: Targets;
@@ -55,7 +58,7 @@ const LISTED_DATE = new Intl.DateTimeFormat(undefined, { year: "numeric", month:
 const signed = (value: number) => `${value < 0 ? "−" : "+"}${dollars(Math.abs(value))}`;
 const dateOf = (value: string | null | undefined) => typeof value === "string" && Number.isFinite(Date.parse(value)) ? new Date(value) : null;
 
-export function DealCard({ listing, analysis, assessmentNote, automaticDecision, reviewPending, selected, now, onOpen, years, index = 0, transitionName, minGrade = 0, targets = MONEY_CONFIG.targets, includeOffers, photoReviewState, saved, saving, onSave }: Props) {
+export function DealCard({ listing, analysis, assessmentNote, automaticDecision, reviewPending, selected, now, onOpen, onSnipe, years, index = 0, transitionName, minGrade = 0, targets = MONEY_CONFIG.targets, includeOffers, photoReviewState, saved, saving, onSave }: Props) {
     const evaluation = analysis?.status === "done" ? analysis.evaluation : null;
     const identityGap = evaluation !== null && !readyForPricing(evaluation.identity);
     const pricingExpired = analysis?.status === "done" && analysis.pricingExpired;
@@ -204,6 +207,7 @@ export function DealCard({ listing, analysis, assessmentNote, automaticDecision,
             </div>
             <div className={styles.actions}>
                 <button type="button" className={styles.open} onClick={onOpen} aria-label={`Open ${title}, ${auction ? "Auction" : "Buy It Now"}, ${details.source}: ${details.grade}, ${details.finish}`}>View analysis <span aria-hidden="true">↗</span></button>
+                <AuctionReminderButton listing={listing} analysis={showEconomics ? analysis : undefined} now={now} targets={targets} onSnipe={onSnipe} />
                 {onSave && <button type="button" onClick={() => { if (!saving) onSave(); }} aria-disabled={saving} aria-pressed={saved} aria-label={saving ? `Saving… ${title}` : saved ? `Saved: remove ${title} from shortlist` : `Save ${title} to shortlist`}>{saving ? "Saving…" : saved ? <>Saved <span className={styles.savedMark} aria-hidden="true">✓</span></> : "Shortlist"}</button>}
             </div>
         </div>

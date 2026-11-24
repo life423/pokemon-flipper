@@ -1,21 +1,25 @@
-/* Andrew's palette. Every color in the app comes from here. */
+/* User's purple/lavender palette; grading stays neutral, outcomes stay distinct. */
 :root {
     color-scheme: dark;
 
-    --bg: #0f1115;
-    --surface: #171a21;
-    --surface-alt: #202531;
-    --border: #2a3140;
-    --text: #f5f7fb;
-    --text-muted: #a8b0bf;
+    --bg: #0f1017;
+    --surface: #171923;
+    --surface-alt: #242630;
+    --surface-feature: #1b2029;
+    --border: #353344;
+    --border-control: #77758a;
+    --text: #f3f0fa;
+    --text-muted: #b6b2c7;
 
     --success: #22c55e;
     --warning: #f59e0b;
     --danger: #ef4444;
-    --accent: #3b82f6;
-    /* Buttons with white text: 5.2:1 contrast, where #3b82f6 is 3.7:1. */
-    --accent-strong: #2563eb;
-    --grade: #8b5cf6;
+    --accent: #a78bfa;
+    --accent-strong: #7c3aed;
+    --accent-hover: #6d28d9;
+    --on-accent: #ffffff;
+    --on-success: #10281f;
+    --grade: #94a3b8;
 
     /* What each color means, everywhere it appears. */
     --tone-buy: var(--success);
@@ -24,9 +28,9 @@
     --tone-pass: var(--danger);
     --tone-action: var(--accent);
     /* The same colors as text on dark surfaces, light enough to read. */
-    --grade-text: #b9a2fb;
-    --action-text: #93c5fd;
-    --pass-text: #f87171;
+    --grade-text: #d6deea;
+    --action-text: #c4b5fd;
+    --pass-text: #fca5a5;
 
     --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 

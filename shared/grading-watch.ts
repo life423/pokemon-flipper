@@ -1,3 +1,6 @@
+import { availablePhotoCount } from "./analysis-priority.ts";
+import { sellerConditionClues } from "./raw-condition-claim.ts";
+import { usableGradingLead } from "./sold-evidence.ts";
 import type { Grader, ListingSummary } from "./types.ts";
 
 export const GRADING_WATCH_FRESH_MS = 24 * 60 * 60_000;
@@ -22,8 +25,10 @@ export function freshListingTime(listing: Pick<ListingSummary, "listedAt" | "cre
 
 // A screening quote can justify inspecting photos. Only a completed assessment
 // with matching transactions can produce a buyer alert.
-export function freshGradingLead(listing: ListingSummary, now: number): boolean {
-    return listing.buyingOption === "FIXED_PRICE" && !listing.isGraded && !listing.match &&
-        listing.screen?.status !== "DROPPED" && !!listing.screen?.gradingLead &&
-        listing.images.length >= 2 && freshListingTime(listing, now) !== null;
+export function freshGradingLeadTime(listing: ListingSummary, now: number): number | null {
+    if (listing.buyingOption !== "FIXED_PRICE" || listing.isGraded || listing.match || listing.screen?.status === "DROPPED" ||
+        !usableGradingLead(listing) || availablePhotoCount(listing.images) < 2) return null;
+    const condition = sellerConditionClues(listing);
+    if (condition.severe || condition.conflict || condition.claim === "MODERATELY_PLAYED") return null;
+    return freshListingTime(listing, now);
 }

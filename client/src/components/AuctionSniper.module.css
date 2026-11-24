@@ -1,0 +1,90 @@
+.workspace {
+    display: grid;
+    gap: var(--space-5);
+    width: min(100%, 64rem);
+    margin: var(--space-6) auto;
+}
+.workspace > header { display: grid; gap: var(--space-1); }
+.cardDrawer { position: fixed; inset: 0; z-index: 42; }
+.cardPlanner { width: 100%; margin: 0; }
+.cardPlanner .planner { border: 0; padding: 0; }
+.cardPlanner .terms { border: 0; padding: 0; }
+.cardPlanner .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.workspace h2 { font-size: clamp(1.75rem, 4vw, 2.25rem); letter-spacing: -.035em; line-height: 1.15; }
+.workspace h3 { font-size: var(--text-lg); line-height: 1.3; }
+.workspace h4 { margin: 0; font-size: var(--text-md); overflow-wrap: anywhere; }
+.workspace p, .facts dt, .jobHead, .jobFacts { color: var(--text-muted); }
+.workspace strong, .jobFacts strong { color: var(--text); }
+.planner, .roster {
+    display: grid;
+    align-content: start;
+    gap: var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    background: var(--surface);
+    padding: clamp(1rem, 3vw, 1.5rem);
+}
+.workspace label { display: grid; gap: var(--space-1); color: var(--text-muted); font-size: var(--text-sm); }
+.workspace input {
+    width: 100%;
+    min-height: var(--tap);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border-control);
+    border-radius: var(--radius-control);
+    background: var(--bg);
+    color: var(--text);
+}
+.lookup { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: var(--space-2); }
+.primary, .secondary {
+    width: fit-content;
+    min-height: var(--tap);
+    padding: var(--space-2) var(--space-4);
+    border: 1px solid var(--border-control);
+    border-radius: var(--radius-control);
+    background: var(--surface-alt);
+    color: var(--text);
+    font-weight: 600;
+    cursor: pointer;
+}
+.primary { background: var(--accent-strong); border-color: var(--accent-strong); color: var(--on-accent); }
+.workspace button:disabled { opacity: .55; cursor: default; }
+.secondary:hover:enabled { border-color: var(--accent); }
+.primary:hover:enabled { background: var(--accent-hover); }
+.confirm, .jobHead, .jobFacts { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-3); }
+.terms { display: grid; gap: var(--space-3); padding-top: var(--space-4); border-top: 1px solid var(--border); }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: var(--space-3); margin: 0; }
+.facts dt, .terms p, .roster p, .jobHead, .jobFacts { font-size: var(--text-sm); }
+.facts dd { margin: var(--space-1) 0 0; font-weight: 600; }
+.bid { width: min(100%, 18rem); }
+.workspace .caution, .error p { color: var(--warning); }
+.account { display: flex; align-items: start; flex-wrap: wrap; justify-content: space-between; gap: var(--space-3); }
+.account p { margin-top: var(--space-1); font-size: var(--text-sm); }
+.accountStatus { display: inline-block; margin-inline-start: var(--space-2); color: var(--success); font-size: var(--text-sm); }
+.error { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.alert {
+    position: fixed;
+    z-index: 45;
+    inset: auto var(--space-3) max(var(--space-3), env(safe-area-inset-bottom)) auto;
+    display: flex;
+    gap: var(--space-3);
+    align-items: flex-start;
+    max-width: min(34rem, calc(100vw - var(--space-5)));
+    max-height: 45dvh;
+    overflow: auto;
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--border-control);
+    border-inline-start: 3px solid var(--warning);
+    border-radius: var(--radius-control);
+    background: var(--surface);
+    box-shadow: var(--lift);
+}
+.alert button { background: none; color: var(--text); border: 0; min-width: var(--tap); min-height: var(--tap); font-size: var(--text-lg); cursor: pointer; }
+.alert p + p { margin-top: var(--space-2); }
+.roster ul { list-style: none; padding: 0; margin: 0; }
+.roster li { display: grid; gap: var(--space-2); padding-block: var(--space-4); border-top: 1px solid var(--border); }
+.roster li:last-child { padding-bottom: 0; }
+.jobFacts { font-variant-numeric: tabular-nums; }
+.state { background: var(--surface-alt); border-radius: var(--radius-pill); padding: 2px var(--space-2); color: var(--text-muted); }
+.state[data-status="ARMED"], .state[data-status="SUBMITTED"] { color: var(--action-text); }
+.state[data-status="REMINDER"], .state[data-status="UNCERTAIN"] { color: var(--warning); }
+@media (max-width: 32rem) { .lookup { grid-template-columns: 1fr; } }

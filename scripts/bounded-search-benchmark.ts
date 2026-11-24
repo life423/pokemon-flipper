@@ -197,7 +197,7 @@ try {
         if (!intent) throw new Error("Search intent missing; final result grouping was not inferred.");
         const resolvedListings = report.listings.map(listing => report.queue!.otherLanguage.includes(listing.id) ? { ...listing, match: "OTHER_LANGUAGE" as const } : listing);
         report.final = summarizeBenchmark(resolvedListings, report.queue.evaluations as Record<string, Evaluation>, report.queue.errors, intent, targets,
-            { filters: { typeFilter: "FIXED_PRICE", kindFilter: "all" }, includeOffers });
+            { filters: { typeFilter: "FIXED_PRICE", kindFilter: "all" }, includeOffers, failures: report.queue.failures });
     } finally {
         clearTimeout(timer);
         const wasStopped = stopped.signal.aborted;

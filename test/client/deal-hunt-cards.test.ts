@@ -38,6 +38,19 @@ test("the hunt displays its decision alongside the actual listing and evidence",
         assert.ok(markup.includes(report.reason));
     });
 
+    await t.test("a fresh grading card withdraws its purchase advice exactly when the quote expires", () => {
+        const response = { report: { ...report, goal: "grade_raw" as const, decision: "BUY" as const, reason: "Current grading route clears target.",
+            destination: { listingId: listing.id, section: "grading" as const } }, evaluation, listing: { ...listing, buyingOption: "FIXED_PRICE" as const },
+            gradingOpportunity: { grader: "PSA" as const, dateSource: "listed" as const, listingDate: new Date(now - 1_000).toISOString(),
+                delivered: 50, gradingCosts: 36, validUntil: now + 1, likely: { grade: 8, profit: 65, sales30: 4 }, lower: { grade: 7, profit: 20, sales30: 2 } } };
+        assert.match(render(response), /View grading breakdown/);
+        response.gradingOpportunity.validUntil = now;
+        const markup = render(response);
+        assert.match(markup, /Recheck listing/);
+        assert.match(markup, /grading quote has expired/);
+        assert.doesNotMatch(markup, /View grading breakdown|Current grading route clears target|data-decision="BUY"/);
+    });
+
     const wait: DealHuntResponse = { report: { ...report, decision: "WAIT", destination: null,
         reason: "No eligible auction was found in the requested window." }, evaluation: null };
     await t.test("an empty Wait explains the outcome without making up a listing", () => {

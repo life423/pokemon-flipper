@@ -35,8 +35,11 @@ img {
 }
 
 a {
-    color: var(--accent);
+    color: var(--action-text);
 }
+
+input::placeholder { color: var(--text-muted); opacity: 1; }
+::selection { background: var(--accent-strong); color: var(--on-accent); }
 
 h1,
 h2,

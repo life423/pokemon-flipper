@@ -8,7 +8,7 @@
     overflow-wrap: anywhere;
     font-size: var(--text-sm);
 }
-.title { color: var(--action-text); font-weight: 650; }
+.title { color: var(--text); font-weight: 650; }
 .meta { color: var(--text-muted); font-size: var(--text-xs); line-height: 1.5; }
 .caution { color: var(--warning); }
 .caution strong { font-size: var(--text-sm); }

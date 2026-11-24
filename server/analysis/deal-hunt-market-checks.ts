@@ -1,13 +1,14 @@
-import { sameCardNumber } from "../../shared/card-number.ts";
+import { cardLanguageStatus } from "../../shared/card-language.ts";
+import { normalizeCardNumber, sameCardNumber } from "../../shared/card-number.ts";
 import { CONDITION_NAMES } from "../../shared/conditions.ts";
 import type { DealHuntGoal } from "../../shared/deal-hunt.ts";
 import { dollars } from "../../shared/format.ts";
-import { readyForPricing } from "../../shared/identity.ts";
+import { isPrinting, readyForPricing } from "../../shared/identity.ts";
 import type { ListingFilters } from "../../shared/listing-filters.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { acquisitionCost, gradingTier, maxBid, netFromSale } from "../../shared/money/underwriting.ts";
 import { affordableBidLimit } from "../../shared/auction-opportunity.ts";
-import { observedCardKind } from "../../shared/photo-evidence.ts";
+import { confirmedPhotoCard, observedCardKind } from "../../shared/photo-evidence.ts";
 import type { Evaluation, ListingSummary, SearchIntent, Targets } from "../../shared/types.ts";
 import { sameSetFamily } from "../identity/card-identity.ts";
 import { sameCatalogName } from "../identity/catalog-name.ts";
@@ -39,14 +40,36 @@ export function keepsSetSearchPreferences(m: HuntMarket, original?: SearchIntent
         (original.maxGrade == null || graded && m.grade !== null && m.grade <= original.maxGrade);
 }
 
-export function matchesHuntMarket(e: Evaluation, m: HuntMarket, pendingPrinting = false) {
+export function matchesHuntMarket(e: Evaluation, m: HuntMarket, pendingPrinting = false, lookingForRawGrading = false) {
     const id = e.identity;
     if (!id || !pendingPrinting && (!readyForPricing(id) || id.printing !== m.printing) || id.finish !== m.finish ||
         !(sameSetFamily(id.set, m.set) || matchesGallerySubset(id.set, id.cardNumber, m.set, m.cardNumber)) ||
         !sameCardNumber(id.cardNumber, m.cardNumber) || !sameCatalogName(id.name, m.name)) return false;
     if (m.kind === "slab") return observedCardKind(e) === "graded" && e.slab?.grader === m.grader && Number(e.slab?.grade) === m.grade;
     if (observedCardKind(e) !== "raw") return false;
+    // A graded exit identifies a card worth inspecting. The new copy gets its own photo grade and sale comparisons.
+    if (lookingForRawGrading && m.grader && !m.condition) return true;
     return m.condition ? e.condition?.rawCondition === m.condition : e.condition?.gradeRange?.likely === m.grade;
+}
+
+// A collector-number query can retrieve unnamed or unrelated cards. Confirm each
+// alternate-query find from the actual front before crediting it to this market.
+export function photoMatchesCollectorMarket(e: Evaluation, m: HuntMarket): boolean {
+    const check = e.photoCheck, photo = confirmedPhotoCard(check);
+    if (!check || !photo?.evidence?.some(note => note.trim()) || e.identity?.notThisCard ||
+        e.condition?.authenticity?.concern === "LIKELY_FAKE" || check.slab?.authenticity === "LIKELY_FAKE" ||
+        check.cardMatch?.verdict === "MISMATCH" || !matchesHuntMarket(e, m, false, true)) return false;
+    const names = [photo.name, check.printedName].filter((v): v is string => !!v?.trim());
+    const numbers = [photo.cardNumber, check.printedNumber].filter((v): v is string => !!v?.trim());
+    if (!names.length || !names.every(name => sameCatalogName(name, m.name)) ||
+        !numbers.length || !numbers.every(number => sameCardNumber(number, m.cardNumber))) return false;
+    if (photo.set) {
+        if (!sameSetFamily(photo.set, m.set) && !matchesGallerySubset(photo.set, photo.cardNumber, m.set, m.cardNumber)) return false;
+    } else if (normalizeCardNumber(m.cardNumber)?.total == null || !numbers.some(number => normalizeCardNumber(number)?.total != null)) return false;
+    if (photo.finish !== m.finish || cardLanguageStatus("", [photo.language]) !== "ENGLISH" ||
+        cardLanguageStatus(e.listing.title, [e.listing.aspects?.Language, e.identity?.language]) === "OTHER") return false;
+    const observedPrinting = e.identity?.evidence?.photo;
+    return isPrinting(observedPrinting) ? observedPrinting === m.printing : e.identity?.hasEditions === false && m.printing === "UNLIMITED";
 }
 
 export function describeHuntMarket(m: HuntMarket) {

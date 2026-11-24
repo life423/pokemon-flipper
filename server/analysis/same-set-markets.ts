@@ -3,6 +3,7 @@ import { normalizeCardNumber, sameCardNumber } from "../../shared/card-number.ts
 import { isRawCondition, type RawCondition } from "../../shared/conditions.ts";
 import type { DealHuntGoal } from "../../shared/deal-hunt.ts";
 import { hasSpecialSlabTitle } from "../../shared/grade-qualifier.ts";
+import { finishClaim } from "../../shared/finish.ts";
 import { isPrinting, readyForPricing } from "../../shared/identity.ts";
 import { parseListingLink } from "../../shared/listing-link.ts";
 import { money } from "../../shared/money/cents.ts";
@@ -15,7 +16,7 @@ import { median } from "../../shared/sold-evidence.ts";
 import type { CompSale, CompSummary, Evaluation, Grader, PricedPath, Printing } from "../../shared/types.ts";
 import { canonicalCatalogName } from "../identity/catalog-name.ts";
 import { finishOfVariant } from "../identity/card-identity.ts";
-import { compProblem, CONFIRMED_SALE_TYPES, matchesSoldTarget } from "../pricing/sold-comps.ts";
+import { compProblem, CONFIRMED_SALE_TYPES, matchesSoldTarget, printingProblem } from "../pricing/sold-comps.ts";
 import { confirmedHuntPage, savedHuntSaleRows } from "../pricing/saved-hunt-sales.ts";
 import { readHuntEvaluations, recentHuntCardIndex } from "./private-evaluation.ts";
 import { createSearchDiagnosticStore } from "./search-diagnostic-store.ts";
@@ -44,9 +45,10 @@ function copyMarkets(value: Evaluation, goal: DealHuntGoal, slab: boolean, inclu
     const paths = (value.underwriting?.paths ?? []).filter((p): p is PricedPath => p.status === "PRICED" && !referencePriceReason(value, p));
     if (slab) {
         const pricing = value.slabPricing, summary = pricing?.summary, label = value.slab;
-        if (goal === "grade_raw" || !label || !matches(pricing) || !summary || !verifiedSlabMarketKey(value) ||
+        if (!label || !matches(pricing) || !summary || !verifiedSlabMarketKey(value) ||
             pricing.grader !== label.grader || summary.grader !== label.grader ||
             String(pricing.grade) !== label.grade || String(summary.grade) !== label.grade) return [];
+        if (goal === "grade_raw" && (!(label.grader === "PSA" || label.grader === "CGC") || !Number.isInteger(Number(label.grade)))) return [];
         return [{ summary, path: paths.find(path => path.path === "GRADED_RESALE"), condition: null, variant: pricing.variant }];
     }
     if (goal === "collect_slab" || value.condition?.authenticity?.concern !== "NONE_SEEN") return [];
@@ -72,8 +74,8 @@ function copyMarkets(value: Evaluation, goal: DealHuntGoal, slab: boolean, inclu
     return result;
 }
 
-function eligible(scope: Scope, origin: HuntOrigin | null, goal: DealHuntGoal) {
-    return scope === "same_set" ? !!origin?.set.trim() && !!origin.name.trim() : scope === "any_card" && goal !== "grade_raw";
+function eligible(scope: Scope, origin: HuntOrigin | null) {
+    return scope === "same_set" ? !!origin?.set.trim() && !!origin.name.trim() : scope === "any_card";
 }
 
 function inHuntScope(set: string, name: string, number: string, scope: Scope, origin: HuntOrigin | null) {
@@ -86,7 +88,7 @@ function inHuntScope(set: string, name: string, number: string, scope: Scope, or
 export const MIN_RECENT_HUNT_SALES = 3;
 export function rankHuntMarkets(evaluations: Evaluation[], origin: HuntOrigin | null, goal: DealHuntGoal, scope: Scope, now: number,
     minimum: 1 | 3 = goal === "collect_slab" ? 1 : MIN_RECENT_HUNT_SALES, includeDownside = false): HuntMarket[] {
-    if (!eligible(scope, origin, goal)) return [];
+    if (!eligible(scope, origin)) return [];
     type Market = Omit<HuntMarket, "sales30" | "sales90" | "latestSaleAt" | "medianUsd" | "listingIds" | "projectedProfit">;
     type Sale = { at: number; price: number };
     const groups = new Map<string, { market: Market; sales: Map<string, Sale>; copies: Map<string, number | null> }>();
@@ -98,6 +100,11 @@ export function rankHuntMarkets(evaluations: Evaluation[], origin: HuntOrigin | 
             id.finish !== "HOLO" && id.finish !== "REVERSE_HOLO" && id.finish !== "NON_HOLO" ||
             cardLanguageStatus(value.listing.title, [id.language, value.photoCheck?.cardIdentity?.language, value.listing.aspects?.Language]) !== "ENGLISH" ||
             unsupportedVariantReason(value) || conflictsWithPhotoFinish(value.photoCheck, id.finish) || hasBaseSetFourthPrint(id.set, value.listing.title)) continue;
+        // A verified slab's completed sales can point a broad grading hunt to
+        // another card. Its purchase terms cannot describe a raw acquisition.
+        const useSlabSalesForRaw = kind === "graded" && goal === "grade_raw";
+        if (useSlabSalesForRaw && scope !== "any_card") continue;
+        const acquisitionKind = kind === "raw" || useSlabSalesForRaw ? "raw" : "slab";
         const set = setKey(id.set), name = canonicalCatalogName(id.name), number = normalizeCardNumber(id.cardNumber);
         if (!set || !name || number?.number == null || !inHuntScope(id.set, id.name, id.cardNumber, scope, origin)) continue;
         const { price, shipping, termsCheckedAt, endTime } = value.listing;
@@ -107,17 +114,17 @@ export function rankHuntMarkets(evaluations: Evaluation[], origin: HuntOrigin | 
             !value.underwriting?.shippingUnconfirmed
             ? { listingId: value.listing.id, price, shipping, potentialGrade: Number(value.slab?.grade ?? value.condition?.gradeRange?.high ?? 0) }
             : null;
-        for (const { summary, condition, path } of copyMarkets(value, goal, kind === "graded", includeDownside)) {
+        for (const { summary, condition, path, variant } of copyMarkets(value, goal, kind === "graded", includeDownside)) {
             const grader = condition ? null : summary.grader, grade = condition ? null : Number(summary.grade);
             const saleScope = JSON.stringify([set, number, name, id.printing, id.finish, grader, grade, condition]);
-            const key = JSON.stringify([saleScope, kind]);
+            const key = JSON.stringify([saleScope, acquisitionKind]);
             let group = groups.get(key);
             if (!group) {
                 group = { market: { set: id.set, cardNumber: id.cardNumber, name: id.name, printing: id.printing, finish: id.finish,
-                    kind: kind === "graded" ? "slab" : "raw", grader, grade, condition }, sales: new Map(), copies: new Map() };
+                    kind: acquisitionKind, grader, grade, condition }, sales: new Map(), copies: new Map() };
                 groups.set(key, group);
             }
-            if (value.listing.buyingOption === "FIXED_PRICE" && value.listing.availability === "ACTIVE") {
+            if (!useSlabSalesForRaw && value.listing.buyingOption === "FIXED_PRICE" && value.listing.availability === "ACTIVE") {
                 group.copies.set(value.listing.id, path && Number.isFinite(path.profit) && !value.underwriting?.shippingUnconfirmed ? path.profit : null);
                 if (observedAsk && path) (group.market.observedAsks ??= []).push(observedAsk);
             }
@@ -129,6 +136,12 @@ export function rankHuntMarkets(evaluations: Evaluation[], origin: HuntOrigin | 
                     !(sale.price > 0 && Number.isFinite(sale.price)) || ("currency" in sale && sale.currency !== "USD") ||
                     (condition ? sale.photoCondition !== condition : hasSpecialSlabTitle(sale.title)) ||
                     hasBaseSetFourthPrint(id.set, sale.title)) continue;
+                if (useSlabSalesForRaw) {
+                    const target = { name: id.name, setName: id.set, cardNumber: id.cardNumber, requireTitleIdentity: true };
+                    const finish = finishClaim(sale.title);
+                    if (!matchesSoldTarget(sale, target, grader, String(grade)) || printingProblem({ title: sale.title, variant }, id.printing, id.set) ||
+                        finish !== "NOT_STATED" && finish !== id.finish) continue;
+                }
                 const saleId = listing.itemId.split("|")[1]!;
                 const previous = transactions.get(saleId);
                 if (previous && (previous.scope !== saleScope || previous.at !== at || previous.price !== sale.price)) ambiguous.add(saleId);
@@ -206,7 +219,7 @@ export async function restoreSavedHuntSales(evaluations: Evaluation[], goal: Dea
 }
 
 export async function findHuntMarkets(origin: HuntOrigin | null, goal: DealHuntGoal, scope: Scope, signal?: AbortSignal, acceptsSet: (set: string) => boolean = () => true): Promise<HuntMarket[]> {
-    if (!eligible(scope, origin, goal)) return [];
+    if (!eligible(scope, origin)) return [];
     signal?.throwIfAborted();
     const [cards, diagnostics] = await Promise.all([recentHuntCardIndex(), index.recentAssessedListingIds()]);
     const byCard = new Map<string, string[]>();

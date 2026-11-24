@@ -3,6 +3,8 @@ import { useEffect, useRef, type RefObject } from "react";
 import type { AnalysisState, PriceRefreshState } from "../analysis-state";
 import type { ListingSummary, Targets } from "../types";
 import { useNow } from "../useNow";
+import type { SniperDraft } from "./AuctionSniper";
+import { AuctionReminderButton } from "./AuctionReminderButton";
 import { useDialog } from "../useDialog";
 import { MONEY_CONFIG } from "../../../shared/money/config.ts";
 import { priceEvidenceGap } from "../../../shared/money/price-evidence.ts";
@@ -19,6 +21,9 @@ import type { DealHuntReport } from "../../../shared/deal-hunt.ts";
 import { huntDecisionLabel } from "../search/hunt-result";
 import { OfferSection, type ReviewedDecision } from "./analysis/OfferSection";
 import { FinancialDecision } from "./analysis/FinancialDecision";
+import { ResaleReceiptPanel } from "./ResaleReceipts";
+import { CardmarketComparisonPanel } from "./CardmarketComparisonPanel";
+import { cardmarketComparisonKey } from "../../../shared/cardmarket.ts";
 import styles from "./DetailPanel.module.css";
 
 interface Props {
@@ -33,6 +38,7 @@ interface Props {
     reviewPending?: boolean;
     now: number;
     onClose: () => void;
+    onSnipe?: (draft: SniperDraft) => void;
     onAnalyze: (fresh: boolean) => void;
     onRefreshPrices?: () => void;
     priceRefresh?: PriceRefreshState;
@@ -46,13 +52,14 @@ interface Props {
     saving?: boolean;
 }
 
-export function DetailPanel({ listing, analysis, automaticDecision, reviewPending, now, onClose, onAnalyze, onRefreshPrices, priceRefresh, closing = false, docked = false, returnFocus, huntFocus, minGrade = 0, targets = MONEY_CONFIG.targets, includeOffers, photoReviewState, onPhotoReview, onSave, saved, saving }: Props) {
+export function DetailPanel({ listing, analysis, automaticDecision, reviewPending, now, onClose, onSnipe, onAnalyze, onRefreshPrices, priceRefresh, closing = false, docked = false, returnFocus, huntFocus, minGrade = 0, targets = MONEY_CONFIG.targets, includeOffers, photoReviewState, onPhotoReview, onSave, saved, saving }: Props) {
     const unavailable = listing.availability === "UNAVAILABLE" || Boolean(listing.endTime && Date.parse(listing.endTime) <= now);
     const evaluation = analysis?.status === "done" ? analysis.evaluation : null;
     const collecting = huntFocus?.report.goal === "collect_slab" && huntFocus.report.destination?.listingId === listing.id;
     const checking = Boolean(!collecting && reviewPending && !automaticDecision && !unavailable);
     const override = !collecting && automaticDecision && automaticDecision.decision !== "BUY" ? automaticDecision : null;
     const showPurchaseScenarios = !collecting && !checking && !override;
+    const comparisonMarket = evaluation && cardmarketComparisonKey(evaluation);
     const pricingExpired = analysis?.status === "done" && analysis.pricingExpired;
     const canRefreshPrices = onRefreshPrices && !unavailable && evaluation?.photoCheck &&
         (readyForPricing(evaluation.identity) || evaluation.pricingDeferred?.identityLookupPending) &&
@@ -124,6 +131,7 @@ export function DetailPanel({ listing, analysis, automaticDecision, reviewPendin
 
                 <div className={styles.detailActions}>
                     <a className={`${styles.primary} ${styles.listingLink}`} href={listing.url} target="_blank" rel="noopener noreferrer">Open on eBay ↗</a>
+                    <AuctionReminderButton listing={listing} analysis={showPurchaseScenarios ? analysis : undefined} targets={targets} now={now} className={styles.secondary} onSnipe={onSnipe} />
                     {onSave && <button type="button" className={styles.secondary} onClick={() => { if (!saving) onSave(); }} aria-disabled={saving} aria-pressed={saved}>{saving ? "Saving…" : saved ? "Remove from shortlist" : "Save to shortlist"}</button>}
                 </div>
                 <PhotoGallery images={analysis?.status === "done" ? analysis.evaluation.listing.photos ?? listing.images : listing.images} />
@@ -131,6 +139,9 @@ export function DetailPanel({ listing, analysis, automaticDecision, reviewPendin
 
                 {showPurchaseScenarios && analysis?.status === "done" && <FinancialDecision evaluation={analysis.evaluation} targets={targets} now={now} />}
                 {analysis?.status === "done" && section !== "sales" && <MarketReferences evaluation={analysis.evaluation} />}
+                {!checking && analysis?.status === "done" && comparisonMarket && <CardmarketComparisonPanel key={comparisonMarket}
+                    listing={listing} state={analysis} now={now} market={comparisonMarket} />}
+                {!checking && analysis?.status === "done" && <ResaleReceiptPanel listing={listing} state={analysis} now={now} />}
                 {!checking && (canRefreshPrices || priceRefresh) && <div className={styles.cta}>
                     {canRefreshPrices && <>
                         <p>Check current listing terms and sold prices using the saved photo assessment. This uses marketplace requests and no new AI.</p>

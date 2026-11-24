@@ -17,6 +17,7 @@ import { screenListingWithoutAi } from "../../server/deals/screen-listing.ts";
 import { canAutoAnalyze, resultGroup } from "../../shared/analysis.ts";
 import { readSearchLocally, readSearchWithoutAi } from "../../server/search/intent.ts";
 import { findDeals } from "../../server/deals/find-deals.ts";
+import { chooseReviewSelection } from "../../server/deals/search-review-selection.ts";
 import { writeCache } from "../../server/lib/cache.ts";
 import { hasSpecialSlabTitle } from "../../shared/grade-qualifier.ts";
 import { compProblem } from "../../server/pricing/sold-comps.ts";
@@ -333,6 +334,54 @@ test("a raw resale loss can still enter the photo queue on exact grading economi
     const cheaper = { ...gradedBuy, currentPrice: rawBuy.currentPrice };
     const repriced = applySoldPriceScreen(cheaper, evidence);
     assert.ok(analysisPriority(repriced).band >= 2, "a retained grade lead must not hide a now-profitable raw sale");
+});
+
+test("a fresh copy without a seller condition with weak raw resale reaches the named search's first 15 on matching graded sales", async () => {
+    const query = "1999 Base Set Charizard";
+    const date = (daysAgo: number) => new Date(NOW - daysAgo * DAY).toISOString();
+    const fresh = listing({ id: "fresh", images: ["front", "back"], listedAt: date(0.02) });
+    const old = { ...fresh, listedAt: date(3), createdAt: date(0.01) };
+    const undated = { ...fresh, id: "undated", listedAt: undefined };
+    const questioned = { ...fresh, id: "questioned", title: fresh.title + " NM?" };
+    const rows = [...Array.from({ length: 47 }, (_, i) => ({ ...old, id: String(i) })), undated, questioned, fresh];
+    const { run, calls } = harness({ raw: async () => three({ price: 25 }),
+        graded: async (_id, { grader, grade }) => grader === "PSA" && grade === "8"
+            ? three({ title: query + " 4/102 Unlimited Holo PSA 8", price: 300, grader, grade }) : [] });
+    let picks: string[] = [];
+    const output = await findDeals(query, { automaticPhotos: true, asOf: NOW, filters: { typeFilter: "FIXED_PRICE", kindFilter: "raw" },
+        onStart: summary => {
+            if (summary.reviewSelection) {
+                assert.equal(summary.reviewSelection.source, "ai");
+                picks = summary.reviewSelection.listingIds;
+            }
+        } }, {
+        readIntent: async () => readSearchLocally(query), readTitle: async title => readTitleByRules(title),
+        soldScreening: () => run, search: async () => ({ listings: rows, total: rows.length, skipped: 0 }),
+        selectReviews: (eligible, targets, signal, asOf) => chooseReviewSelection(eligible, targets, signal, asOf, async ({ request, validate }) => {
+            const candidates = JSON.parse(request.prompt.slice(request.prompt.lastIndexOf("\n") + 1)) as {
+                row: number; newGradingLead: boolean; dateInLast24h?: string; firstAvailable?: string; created?: string;
+            }[];
+            assert.equal(candidates.length, 50);
+            const leads = candidates.filter(item => item.newGradingLead);
+            assert.equal(leads.length, 1);
+            const lead = leads[0];
+            assert.equal(lead.firstAvailable, fresh.listedAt);
+            assert.equal(lead.dateInLast24h, "firstAvailable");
+            const olderCopy = candidates.find(item => item.created === old.createdAt)!;
+            assert.equal(olderCopy.firstAvailable, old.listedAt);
+            assert.equal(olderCopy.dateInLast24h, undefined);
+            return { result: validate({ rows: [lead.row, ...candidates.filter(item => item !== lead).slice(0, 14).map(item => item.row)] }),
+                key: "test", reused: false, answeredAt: "", usage: { inputTokens: 0, outputTokens: 0 } };
+        }),
+    });
+    assert.equal(output.length, 50);
+    assert.deepEqual(picks, output.slice(0, 15).map(row => row.id));
+    assert.equal(picks[0], fresh.id);
+    assert.deepEqual(output[0].screen?.gradingLead, { grader: "PSA", grade: 8 });
+    assert.equal(resultGroup(output[0], null), "candidates");
+    assert.equal(output[0].cardCondition, undefined);
+    assert.equal(calls.raw.length, 1);
+    assert.equal(calls.graded.length, 4);
 });
 
 test("a disclosed card crease blocks new and saved grade scouts while keeping a supported Damaged raw buy", async () => {

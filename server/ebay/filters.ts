@@ -12,6 +12,9 @@ const SEALED = /\b(booster (packs?|box(es)?)|elite trainer box(es)?|etb|sealed (
 // Not "sleeve" or "toploader": real single-card listings ship in them.
 const MERCH = /\b(plush(ie)?|stickers?|decals?|figures?|figurines?|funko|keychains?|posters?|art prints?|binders?|playmats?|deck box(es)?|coins?|pins?|burger king|topps|bicycle(?: mini)? playing cards?)\b/i;
 const NOT_A_CARD = /\b(empty (slab|case|box)|(slab|case|label|flip) only|no card)\b/i;
+const EXTENDED_ART_HOLDER = "extended[ -]+art(?:work)?[ -]+(?:display[ -]+)?(?:cases?|frames?|holders?)";
+const HOLDER_PRODUCT = new RegExp(`\\b${EXTENDED_ART_HOLDER}\\b`, "i");
+const HOLDER_WITH_CARD = new RegExp(`\\b(?:with|in|includes?|including)[ -]+(?:(?:a|an|the|magnetic|protective|acrylic)[ -]+)*${EXTENDED_ART_HOLDER}\\b|\\b${EXTENDED_ART_HOLDER}[ -]+included\\b`, "gi");
 
 // These phrases describe a seller assurance or an accompanying holder. Remove
 // only their ambiguous trigger words; every other junk rule still runs. A
@@ -74,7 +77,7 @@ export function listingExclusion(item: { title: string; itemId: string; itemGrou
     // "Champions Path ETB promo" is the single card that came in the box.
     if (SEALED.test(title) && !/\bpromo\b/.test(title)) return "SEALED";
     if (MERCH.test(title)) return "MERCHANDISE";
-    if (NOT_A_CARD.test(title)) return "EMPTY_HOLDER";
+    if (NOT_A_CARD.test(title) || HOLDER_PRODUCT.test(title.replace(HOLDER_WITH_CARD, ""))) return "EMPTY_HOLDER";
 
     return null;
 }

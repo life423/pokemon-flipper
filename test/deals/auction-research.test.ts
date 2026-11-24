@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { auctionPhotoPriority } from "../../shared/auction-research.ts";
-import { auctionHuntPrompt } from "../../client/src/search/auction-goal.ts";
-import { researchAuctionSellers } from "../../server/deals/auction-seller-research.ts";
+import { huntGoalPrompt } from "../../client/src/search/hunt-goal.ts";
+import { researchAuctionSellers, researchFreshRawSellers } from "../../server/deals/auction-seller-research.ts";
 import { ruleSelection } from "../../server/deals/search-review-selection.ts";
 import { EbayBudgetError } from "../../server/ebay/usage.ts";
 import type { ListingSummary } from "../../shared/types.ts";
@@ -15,12 +15,12 @@ function listing(name: string, hours: number, title = "Vintage holo card NM"): L
 }
 test("a broad auction goal keeps both inclusive years, the finish and the requested minimum profit", () => {
     const prefs = { minYear: 1999, maxYear: 2003, finish: "HOLO" };
-    assert.deepEqual(auctionHuntPrompt("Find vintage holos from 1999–2003 I can flip for at least $25."), {marketPreferences: prefs, minProfit: 25});
-    assert.deepEqual(auctionHuntPrompt("Find 1999 to 2003 holo auctions with $25 in profit"), {marketPreferences: prefs, minProfit: 25});
-    assert.deepEqual(auctionHuntPrompt("Find 1999 to 2003 holo auctions ending in under 10 hours for at least $25 profit"), {marketPreferences: prefs, minProfit: 25});
-    assert.deepEqual(auctionHuntPrompt("Find auctions with less than 10 hours left"), {marketPreferences: {}});
+    assert.deepEqual(huntGoalPrompt("Find vintage holos from 1999–2003 I can flip for at least $25."), {marketPreferences: prefs, minProfit: 25});
+    assert.deepEqual(huntGoalPrompt("Find 1999 to 2003 holo auctions with $25 in profit"), {marketPreferences: prefs, minProfit: 25});
+    assert.deepEqual(huntGoalPrompt("Find 1999 to 2003 holo auctions ending in under 10 hours for at least $25 profit"), {marketPreferences: prefs, minProfit: 25});
+    assert.deepEqual(huntGoalPrompt("Find auctions with less than 10 hours left"), {marketPreferences: {}});
     for (const query of ["find auctions ending in under 2 hours", "Mewtwo 10/102 auction", "find holo auctions under $40", "find vintage auctions", "2003 to 1999 auction", "find auctions for Japanese cards"]) {
-        assert.equal(auctionHuntPrompt(query), null, query);
+        assert.equal(huntGoalPrompt(query), null, query);
     }
 });
 test("auction research uses observed merchandise counts and reuses each seller sample across copies", async () => {
@@ -42,4 +42,33 @@ test("optional seller research falls back on exhausted eBay quota and propagates
     const rows=[listing("one",1)];
     assert.deepEqual(await researchAuctionSellers(rows, now, undefined, async () => { throw new EbayBudgetError("full","QUOTA"); }),rows);
     await assert.rejects(researchAuctionSellers(rows, now, undefined, async () => { throw new EbayBudgetError("invalid ledger","ACCOUNTING"); }),/invalid ledger/);
+});
+
+test("fresh raw seller research spends its two samples on distinct assessable sellers in buyer priority order", async () => {
+    function fixed(seller: string, overrides: Partial<ListingSummary> = {}): ListingSummary {
+        return { ...listing(seller, 80), buyingOption: "FIXED_PRICE", listedAt: new Date(now - 3_600_000).toISOString(),
+            mistakes: [{ kind: "GENERIC_TITLE", detail: "Set omitted from title." }], ...overrides };
+    }
+    const skipped = [
+        fixed("stale", { listedAt: new Date(now - 86_400_000).toISOString() }),
+        fixed("future", { listedAt: new Date(now + 1).toISOString() }),
+        fixed("auction", { buyingOption: "AUCTION" }), fixed("slab", { isGraded: true }), fixed("unscreened", { mistakes: [] }),
+        fixed("expired", { endTime: new Date(now).toISOString() }), fixed("first", { id: "damaged-copy", cardCondition: "Damaged" }),
+        fixed("conflict", { cardCondition: "Lightly Played" }), fixed("crease", { conditionNotes: ["Seller description: This card has a crease."] }),
+        fixed("title-crease", { title: "Card creased top corner" }),
+    ];
+    const first = fixed("First", { title: "Card NM, crease on the sleeve" }), again = fixed("first", { id: "another" });
+    const second = fixed("second", { listedAt: null, createdAt: new Date(now - 60_000).toISOString() }), third = fixed("third");
+    const rows = [...skipped, first, again, second, third];
+    const sampled: string[] = [];
+    const enriched = await researchFreshRawSellers(rows, now, undefined, async user => {
+        sampled.push(user);
+        return { sampledAt: new Date(now).toISOString(), cardListings: 1, otherListings: 25, categories: ["CCG singles", "clothing", "home and garden"] };
+    });
+    assert.deepEqual(sampled, ["first", "second"]);
+    assert.deepEqual(enriched.map(row => row.id), rows.map(row => row.id));
+    assert.deepEqual(enriched.filter(row => row.auctionResearch).map(row => row.id), [first.id, again.id, second.id]);
+    assert.ok(enriched.find(row => row.id === "First")!.auctionResearch === enriched.find(row => row.id === "another")!.auctionResearch);
+    assert.equal(rows.some(row => row.auctionResearch), false);
+    await assert.rejects(researchFreshRawSellers(rows, now, AbortSignal.abort(), async () => assert.fail("Cancelled at selection.")), { name: "AbortError" });
 });

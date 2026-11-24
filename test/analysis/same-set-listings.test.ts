@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { ListingSummary, SearchIntent } from "../../shared/types.ts";
 import { getAiUsageContext } from "../../server/ai/usage-context.ts";
-import { discoverMarketListings } from "../../server/analysis/same-set-listings.ts";
+import { discoverMarketListings, type MarketQueryObservation } from "../../server/analysis/same-set-listings.ts";
+import { EbayBudgetError } from "../../server/ebay/daily-budget.ts";
 import { shortlistMarketCopies } from "../../server/analysis/deal-hunt-market-checks.ts";
 
 const source = "743c9275-1cb4-4cd5-8ced-0ffe67777611";
@@ -15,6 +16,143 @@ function listing(index: number, title: string, overrides: Partial<ListingSummary
         currentPrice: 50, shipping: 5, isGraded: false, bids: 0, seller: null, endTime: null, images: ["photo"], ...overrides };
 }
 const knownSets = async () => ["Silver Tempest", "Neo Destiny"];
+
+const leafeon: SearchIntent = { ...market, cardName: "Leafeon V (Alternate Full Art)", sets: ["SWSH07: Evolving Skies"], cardNumber: "167/203" };
+const aliases = ["Leafeon V (Alternate Full Art) 167 Evolving Skies", "167/203", "Evolving Skies 167"];
+const onPage = (listings: ListingSummary[]) => ({ listings, total: listings.length, skipped: 0 });
+
+test("three same-ceiling searches admit name-free anchored leads, retain overlap and skip explicit contradictions", async () => {
+    const now = Date.parse("2026-11-24T12:00:00Z");
+    const row = (id: number, title: string, fields: Partial<ListingSummary> = {}) => listing(id, title,
+        { listedAt: new Date(now - 1000).toISOString(), currentPrice: 25, ...fields });
+    const old = row(1, "Leafeon V 167/203", { listedAt: new Date(now - 86_400_000).toISOString() });
+    const named = row(2, "Leafeon V 167/203 Evolving Skies"), nameless = row(3, "Old shiny Pokémon 167/203");
+    const setOnly = row(4, "Pokémon card Evolving Skies 167");
+    const numberFirst = row(5, "167 Evolving Skies holo");
+    const rejects = ["Espeon V 167/203", "Leafeon VMAX 167/203", "Pokémon card 167/204", "Evolving Skies 1167",
+        "Evolving Skies 167.5", "Evolving Skies $167", "Evolving Skies $ 167", "Evolving Skies 167 HP", "Espeon V 167/203 in my collection",
+        "Leafeon V 167/203 Extended Artwork Case", "Pokémon 167/203 Japanese", "Pokémon 167/203 proxy",
+        "Silver Tempest 167/203"].map((title, index) => row(20 + index, title));
+    const pages = [[old], [named, nameless, ...rejects, row(8, named.title, { currentPrice: 33.86 })], [named, setOnly, setOnly, numberFirst]];
+    const observations: MarketQueryObservation[] = [];
+    let calls = 0;
+    const result = await discoverMarketListings(source, leafeon, { maxPrice: 33.85 }, signal, {
+        knownSets, now: () => now, newlyListedRaw: true, collectorNumberDiscovery: "compare", onQuery: note => observations.push(note),
+        search: async (query, options) => {
+            assert.equal(query, aliases[calls]);
+            assert.deepEqual(options, { sort: "newlyListed", filters: { maxPrice: 33.85, typeFilter: "FIXED_PRICE", kindFilter: "raw" },
+                maxResults: 200, keepReserve: true, signal });
+            return onPage(pages[calls++]);
+        },
+    });
+    assert.equal(calls, 3);
+    assert.deepEqual(result.map(row => row.id), [named.id, nameless.id, setOnly.id, numberFirst.id]);
+    assert.equal(result[1].screen?.card?.name, null);
+    assert.ok(result.every(row => row.found?.how === "NUMBER_ONLY"));
+    assert.deepEqual(observations.map(note => note.eligibleIds), [[], [named.id, nameless.id], [named.id, setOnly.id, numberFirst.id]]);
+    assert.deepEqual(observations.map(note => note.numberOnlyIds), [[], [nameless.id], [setOnly.id, numberFirst.id]]);
+    assert.deepEqual(observations.map(note => note.newEligibleIds), [[], [named.id, nameless.id], [setOnly.id, numberFirst.id]]);
+    assert.deepEqual(observations[2].returnedIds, [named.id, setOnly.id, numberFirst.id]);
+});
+
+test("fallback expands only when the full-name query has no new usable copy", async () => {
+    const known = listing(1, "Leafeon V 167/203"), expensiveShipping = listing(2, known.title, { shipping: 100 });
+    const possible = listing(3, "Pokémon card 167/203");
+    for (const [hasNew, expected] of [[true, 1], [false, 3]] as const) {
+        const notes: MarketQueryObservation[] = [];
+        const found = await discoverMarketListings(source, leafeon, {}, signal, { knownSets, collectorNumberDiscovery: "fallback",
+            knownListingIds: new Set([known.id]), isUsable: row => (row.shipping ?? 0) < 10, onQuery: note => notes.push(note),
+            search: async query => onPage(query === aliases[0] ? [known, expensiveShipping, ...(hasNew ? [possible] : [])] : [possible]) });
+        assert.equal(notes.length, expected);
+        assert.deepEqual(found.map(row => row.id), [possible.id]);
+        assert.deepEqual(notes[0].newEligibleIds, hasNew ? [possible.id] : []);
+        assert.deepEqual(notes[0].numberOnlyIds, hasNew ? [possible.id] : []);
+    }
+});
+
+test("alternate artwork keeps the printed name and normalized number, while another set or denominator stays excluded", async () => {
+    const target = { ...leafeon, cardNumber: " # 167 / 203 " };
+    const plainName = listing(1, "Leafeon V 167/203 Evolving Skies");
+    const packed = listing(2, "Leafeon V 167/203 Evolving Skies - shipped in a penny sleeve");
+    const wrong = ["Leafeon V 167/203 Silver Tempest", "Leafeon V 167/204 Evolving Skies", "Leafeon VMAX 167/203 Evolving Skies shipped in a sleeve",
+        "Espeon V 167/203 Evolving Skies shipped in a holder"].map((title, i) => listing(i + 3, title));
+    const notes: MarketQueryObservation[] = [];
+    const found = await discoverMarketListings(source, target, {}, signal, { knownSets, collectorNumberDiscovery: "compare",
+        relatedIntents: [{ ...leafeon, cardNumber: "167/204" }, { ...leafeon, cardNumber: "167/junk" }],
+        onQuery: note => notes.push(note), search: async query => onPage(query === aliases[0] ? [] : [plainName, packed, ...wrong]) });
+    assert.deepEqual(notes.map(note => note.query), aliases);
+    assert.deepEqual(found.map(row => row.id), [plainName.id, packed.id]);
+    assert.deepEqual(notes[1].numberOnlyIds, [packed.id]);
+});
+
+test("a catalog numerator discovers only by set and number, preserving prefixes and suffix letters", async () => {
+    for (const [num, set, printed] of [["167", "Evolving Skies", "167"], ["TG01", "Silver Tempest", "TG1"], ["25a", "Neo Destiny", "25a"]]) {
+        const notes: MarketQueryObservation[] = [];
+        const expected = listing(1, `Pokémon card ${set} ${printed}`);
+        const same = listing(2, `Leafeon V ${printed}/203 ${set}`);
+        const wrong = [`old shiny card ${printed}/203`, `Leafeon V ${printed}/203`, "Leafeon V", `${set} ${printed}b`, `Espeon V ${set} ${printed}`,
+            `Leafeon V ${set} ${printed}/203 ${printed}/204`];
+        if (num !== "167") wrong.push(`${set} ${parseInt(printed.replace(/^[a-z]+/i, ""), 10)}`);
+        const found = await discoverMarketListings(source, { ...leafeon, cardNumber: num, sets: [set] }, {}, signal, {
+            knownSets, collectorNumberDiscovery: "fallback", onQuery: note => notes.push(note),
+            search: async query => onPage(query === `${set} ${num}` ? [expected, same, ...wrong.map((title, i) => listing(i + 3, title))] : []),
+        });
+        assert.deepEqual(notes.map(note => [note.strategy, note.query]), [
+            ["full_name", `${leafeon.cardName} ${num} ${set}`], ["set_number", `${set} ${num}`],
+        ]);
+        assert.deepEqual(found.map(row => row.id), [expected.id, same.id], num);
+        assert.deepEqual(notes[1].numberOnlyIds, [expected.id]);
+    }
+});
+
+test("slabs, auctions and malformed collector numbers use their single full-name query", async () => {
+    for (const [intent, typeFilter] of [[leafeon, "AUCTION"], [{ ...leafeon, graded: true, grader: "PSA", minGrade: 9, maxGrade: 9 }, "FIXED_PRICE"],
+        [{ ...leafeon, cardNumber: "167/unknown" }, "FIXED_PRICE"]] as const) {
+        let calls = 0;
+        await discoverMarketListings(source, intent, { typeFilter }, signal, { knownSets, collectorNumberDiscovery: "compare",
+            search: async () => { calls++; return onPage([]); } });
+        assert.equal(calls, 1);
+    }
+});
+
+test("an optional quota limit preserves completed pages, while baseline and accounting errors propagate", async () => {
+    const candidate = listing(1, "Leafeon V 167/203");
+    const observations: MarketQueryObservation[] = [];
+    const found = await discoverMarketListings(source, leafeon, {}, signal, { knownSets, collectorNumberDiscovery: "compare",
+        onQuery: note => observations.push(note), search: async query => {
+            if (query === aliases[2]) throw new EbayBudgetError("reserved", "QUOTA");
+            return onPage(query === aliases[0] ? [] : [candidate]);
+        } });
+    assert.deepEqual(found.map(row => row.id), [candidate.id]);
+    assert.deepEqual(observations.map(note => note.status), ["complete", "complete", "quota"]);
+    for (const [failAt, reason] of [[0, "QUOTA"], [1, "ACCOUNTING"]] as const) {
+        const error = new EbayBudgetError("failed", reason);
+        await assert.rejects(discoverMarketListings(source, leafeon, {}, signal, { knownSets, collectorNumberDiscovery: "compare",
+            search: async query => { if (query === aliases[failAt]) throw error; return onPage([]); } }), error);
+    }
+    const controller = new AbortController();
+    let calls = 0;
+    await assert.rejects(discoverMarketListings(source, leafeon, {}, controller.signal, { knownSets, collectorNumberDiscovery: "compare",
+        onQuery: () => controller.abort(), search: async () => { calls++; return onPage([]); } }), { name: "AbortError" });
+    assert.equal(calls, 1);
+});
+
+test("fresh grading discovery asks eBay for newest raw copies and uses the original listing date when supplied", async () => {
+    const now = Date.parse("2026-11-24T12:00:00Z");
+    const date = (hours: number) => new Date(now - hours * 3_600_000).toISOString();
+    const title = "Dark Gengar 6/105 Neo Destiny Unlimited Holo";
+    const rows = [listing(1, title, { listedAt: date(2) }), listing(2, title, { createdAt: date(3) }),
+        listing(3, title, { listedAt: date(24), createdAt: date(1) }), listing(4, title), listing(5, title, { listedAt: date(-1) })];
+    const found = await discoverMarketListings(source, market, { maxPrice: 100 }, signal, { knownSets, now: () => now, newlyListedRaw: true,
+        search: async (_query, options) => {
+            assert.equal(options?.sort, "newlyListed");
+            assert.equal(options?.cacheMode, undefined);
+            assert.equal(options?.filters?.kindFilter, "raw");
+            assert.equal(options?.filters?.typeFilter, "FIXED_PRICE");
+            return { listings: rows, total: rows.length, skipped: 0 };
+        } });
+    assert.deepEqual(found.map(row => row.id), [rows[0].id, rows[1].id]);
+});
 
 test("a liquid-market search spends a single reserved Browse page under the original search and screens the returned copies", async () => {
     const original = listing(1, "Dark Gengar 6/105 Neo Destiny Unlimited Holo");

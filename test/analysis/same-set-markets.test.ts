@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { rankHuntMarkets, restoreSavedHuntSales } from "../../server/analysis/same-set-markets.ts";
+import { rankHuntMarkets, restoreSavedHuntSales, type HuntMarket } from "../../server/analysis/same-set-markets.ts";
+import { marketItemLimit, photoMatchesCollectorMarket } from "../../server/analysis/deal-hunt-market-checks.ts";
 import { groupMarketSearches } from "../../server/analysis/deal-hunt-market-groups.ts";
 import { confirmedHuntPage, savedHuntSaleRows } from "../../server/pricing/saved-hunt-sales.ts";
 import type { Comp } from "../../server/pricing/types.ts";
@@ -11,6 +12,49 @@ import { cardEvaluation, salesSummary } from "../fixtures/card-evaluation.ts";
 const now = Date.parse("2026-11-24T12:00:00Z");
 const day = 86_400_000;
 const origin = { name: "Mewtwo", cardNumber: "10/102", set: "Base Set" };
+
+test("a number-discovered copy needs matching evidence from its own front for the exact market", () => {
+    const market: HuntMarket = {
+        name: "Leafeon V (Alternate Full Art)", set: "SWSH07: Evolving Skies", cardNumber: "167/203",
+        printing: "UNLIMITED", finish: "HOLO", kind: "raw", grader: "PSA", grade: 9, condition: null,
+        sales30: 3, sales90: 3, latestSaleAt: new Date(now).toISOString(), medianUsd: 150, listingIds: [], projectedProfit: null,
+    };
+    const e = cardEvaluation();
+    Object.assign(e.identity!, { name: market.name, set: market.set, cardNumber: market.cardNumber, hasEditions: false });
+    e.listing.title = "Old shiny Pokémon card 167/203";
+    const check = e.photoCheck!;
+    check.cardCount = "ONE";
+    check.printedName = "Leafeon V";
+    check.printedNumber = "167/203";
+    check.cardIdentity = { name: "Leafeon V", set: "Evolving Skies", cardNumber: "167/203", language: "English",
+        finish: "HOLO", confidence: "HIGH", evidence: ["The front shows Leafeon V and 167/203."] };
+    assert.equal(photoMatchesCollectorMarket(e, market), true);
+    check.cardIdentity.set = null;
+    assert.equal(photoMatchesCollectorMarket(e, market), true, "exact fraction plus printed name");
+    check.printedNumber = check.cardIdentity.cardNumber = "167";
+    assert.equal(photoMatchesCollectorMarket(e, market), false, "a numerator alone cannot distinguish sets");
+    check.cardIdentity.set = "Evolving Skies";
+    assert.equal(photoMatchesCollectorMarket(e, market), true, "readable numerator and independently observed set");
+    for (const mismatch of [{ name: "Leafeon VMAX" }, { cardNumber: "166/203" }, { cardNumber: "167/196" },
+        { set: "Fusion Strike" }, { language: "Japanese" }, { language: null }, { finish: "REVERSE_HOLO" },
+        { finish: "UNKNOWN" }, { confidence: "LOW" }, { evidence: [] }] as const) {
+        const copy = structuredClone(e);
+        Object.assign(copy.photoCheck!.cardIdentity!, mismatch);
+        assert.equal(photoMatchesCollectorMarket(copy, market), false, JSON.stringify(mismatch));
+    }
+    const stock = structuredClone(e);
+    stock.photoCheck!.images.forEach(image => { image.isStockImage = true; });
+    assert.equal(photoMatchesCollectorMarket(stock, market), false, "stock image");
+    check.printedNumber = "166/203";
+    assert.equal(photoMatchesCollectorMarket(e, market), false, "conflicting front transcription");
+    check.printedNumber = "167";
+    e.identity!.hasEditions = true;
+    assert.equal(photoMatchesCollectorMarket(e, market), false, "edition-sensitive market needs visual printing evidence");
+    e.identity!.evidence = { title: "NOT_STATED", itemSpecifics: "NOT_STATED", photo: "FIRST_EDITION", photoNotes: [] };
+    assert.equal(photoMatchesCollectorMarket(e, market), false, "conflicting observed stamp");
+    e.identity!.evidence.photo = "UNLIMITED";
+    assert.equal(photoMatchesCollectorMarket(e, market), true);
+});
 
 function rawCard(name: string, set: string, number: string, firstId: number, count: number, price = 50) {
     const value = cardEvaluation();
@@ -77,6 +121,68 @@ test("only recent active fixed-price observations with known shipping can guide 
         Object.assign(gem.listing, original, terms);
         assert.equal(market().observedAsks, undefined);
         assert.equal(market().sales30, 3);
+    }
+});
+
+test("fixed-price raw market groups keep distinct collector totals and acquisition limits", () => {
+    const lead: HuntMarket = { name: "Leafeon V", set: "Evolving Skies", cardNumber: "167/203", printing: "UNLIMITED",
+        finish: "HOLO", kind: "raw", grader: null, grade: null, condition: "LIGHTLY_PLAYED",
+        sales30: 3, sales90: 3, latestSaleAt: new Date(now).toISOString(), medianUsd: 50, listingIds: [], projectedProfit: null };
+    const other = { ...lead, cardNumber: "167/204", medianUsd: 100 };
+    const partial = { ...lead, cardNumber: "167", medianUsd: 75 };
+    const padded = { ...lead, cardNumber: "0167/0203" };
+    const targets = { minProfit: 10, minRoi: 0 };
+    const groups = groupMarketSearches([lead, other, partial, padded], "resell", targets, { typeFilter: "FIXED_PRICE" }, 0);
+    assert.deepEqual(groups.map(g => g.leads), [[lead, padded], [other], [partial]]);
+    assert.deepEqual(groups.map(g => g.ceiling), [lead, other, partial].map(m => marketItemLimit(m, "resell", targets, 0)));
+});
+
+test("cross-card grading can scout a new raw market from exact slab sales without treating the slab as an acquisition", () => {
+    const makeSlab = (grader: string, grade: number) => {
+        const e = rawCard("Venusaur", "Base Set", "15/102", 120000030000, 3);
+        const title = `Venusaur Base Set 15/102 Unlimited Holo ${grader} ${grade}`;
+        const slab = { status: "OK" as const, grader, grade: String(grade), caseCondition: "INTACT", gradeQualifier: null,
+            certNumber: null, certUrl: null, labelText: title, reasons: [], concerns: [] };
+        const summary = salesSummary(grader, grade, [195, 200, 205]);
+        summary.sales.forEach((sale, i) => Object.assign(sale, { soldAt: new Date(now - (i + 1) * day).toISOString(),
+            title, saleType: "fixed_price", url: `https://www.ebay.com/itm/${120000040000 + i}` }));
+        Object.assign(e.listing, { title, termsCheckedAt: new Date(now).toISOString() });
+        Object.assign(e.photoCheck!, { holder: "GRADED_SLAB", slab: { ...slab, present: true, authenticity: "NONE_SEEN" } });
+        Object.assign(e, { condition: null, rawPricing: null, slab,
+            slabPricing: { status: "PRICED", printing: "UNLIMITED", variant: "Unlimited Holofoil", grader, grade, summary } });
+        e.underwriting = underwrite(e);
+        return e;
+    };
+    const psa = makeSlab("PSA", 7);
+    const gradeMarkets = (e = psa) => rankHuntMarkets([e], null, "grade_raw", "any_card", now);
+    const [lead] = gradeMarkets();
+    assert.ok(lead);
+    assert.deepEqual([lead.kind, lead.grader, lead.grade, lead.condition, lead.sales30, lead.medianUsd], ["raw", "PSA", 7, null, 3, 200]);
+    assert.deepEqual([lead.listingIds, lead.observedAsks, lead.projectedProfit], [[], undefined, null]);
+    const [slab] = rankHuntMarkets([psa], null, "resell", "any_card", now);
+    const targets = { minProfit: 25, minRoi: 0 };
+    const [group] = groupMarketSearches([lead], "grade_raw", targets, { typeFilter: "FIXED_PRICE", kindFilter: "raw" }, 0);
+    assert.equal(group.intents[0].graded, false);
+    assert.equal(group.ceiling, marketItemLimit(lead, "grade_raw", targets, 0));
+    assert.ok(group.ceiling > 0 && group.ceiling < marketItemLimit(slab, "resell", targets, 0), "raw acquisition ceiling includes submission costs");
+    const raw = rawCard("Venusaur", "Base Set", "15/102", 120000050000, 3);
+    raw.gradedPricing = { PSA: { status: "PRICED", printing: "UNLIMITED", variant: "Unlimited Holofoil",
+        byGrade: [structuredClone(psa.slabPricing!.summary!)] } };
+    const combined = rankHuntMarkets([raw, psa], null, "grade_raw", "any_card", now);
+    assert.deepEqual(combined.map(m => [m.kind, m.sales30, m.listingIds]), [["raw", 3, [raw.listing.id]]]);
+    assert.equal(gradeMarkets(makeSlab("CGC", 7)).length, 1);
+    assert.equal(gradeMarkets(makeSlab("BGS", 7)).length, 0);
+    assert.equal(gradeMarkets(makeSlab("CGC", 8.5)).length, 0);
+    assert.equal(rankHuntMarkets([psa], origin, "grade_raw", "same_set", now).length, 0);
+    assert.equal(rankHuntMarkets([psa], null, "collect_slab", "any_card", now)[0].kind, "slab");
+    psa.photoCheck!.slab!.grade = "8";
+    assert.deepEqual(gradeMarkets(), []);
+    psa.photoCheck!.slab!.grade = "7";
+    const sale = psa.slabPricing!.summary!.sales[2];
+    for (const title of ["Venusaur Base Set 15/102 Unlimited Holo CGC 7", "Venusaur Base Set 15/102 First Edition Holo PSA 7",
+        "Venusaur Base Set 15/102 Unlimited Reverse Holo PSA 7", "Blastoise Base Set 2/102 Unlimited Holo PSA 7"]) {
+        sale.title = title;
+        assert.deepEqual(gradeMarkets(), [], title);
     }
 });
 

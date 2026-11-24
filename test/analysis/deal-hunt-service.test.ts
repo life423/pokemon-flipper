@@ -210,6 +210,97 @@ function liquidGradingMarket() {
     return lead;
 }
 
+const freshHuntRequest: DealHuntRequest = { ...goal, listingIds: [], scope: "any_card", standalone: true,
+    filters: { typeFilter: "FIXED_PRICE", kindFilter: "raw", maxPrice: 100 } };
+
+function freshCopy(number: number) {
+    const f = example(), row = f.inventory.rows[0].listing;
+    const id = `v1|${number}|0`, url = `https://www.ebay.com/itm/${number}`;
+    const images = ["front", "back"].map(side => `https://i.ebayimg.com/images/g/${number}-${side}/s-l1600.jpg`);
+    Object.assign(row, { id, url, images, listedAt: old,
+        screen: { status: "UNSCREENED", needsAnalysis: "IDENTITY", card: null, bestCase: null, assumed: null, reason: null } });
+    Object.assign(f.e.listing, { id, url, photos: images, listedAt: old, endTime: null });
+    Object.assign(f.details, { ...f.e.listing, images });
+    f.e.gradedPricing = { PSA: f.e.gradedPricing!.PSA };
+    for (const summary of f.e.gradedPricing.PSA!.byGrade!) {
+        Object.assign(summary, { newestSale: old });
+        summary.sales.forEach((sale, index) => Object.assign(sale, {
+            title: `Venusaur Base Set 15/102 Holo Unlimited PSA ${summary.grade}`,
+            url: `https://www.ebay.com/itm/${220000001000 + Number(summary.grade) * 10 + index}`,
+        }));
+    }
+    f.e.rawPricing = null;
+    f.snapshot.contextKey = evaluationContextKey({ ...f.e.listing, images });
+    f.snapshot.evidenceKey = listingEvidenceKey(row);
+    return { ...f, row };
+}
+
+test("a standalone fresh grading hunt assesses the ranked fifteen before choosing its buyer verdict", async () => {
+    const fixtures = Array.from({ length: 50 }, (_, index) => freshCopy(120000010001 + index));
+    const current = new Map(fixtures.map(f => [f.row.id, f]));
+    const picks = fixtures.slice(-15).reverse().map(f => f.row.id);
+    const saved = picks.at(-1)!;
+    const checked: string[] = [];
+    const stale = { ...fixtures[0].row, id: "older", listedAt: "2026-11-20T00:00:00Z", createdAt: stamp };
+    const expensive = { ...fixtures[0].row, id: "expensive", shipping: 500 };
+    let selections = 0;
+    const hunt = service(fixtures[0], {
+        snapshot: async id => id === saved ? current.get(id)!.snapshot : null,
+        markets: async () => [liquidGradingMarket()],
+        discoverMarket: async (_id, intent, filters, _active, options) => {
+            assert.equal(intent.graded, false);
+            assert.equal(filters.typeFilter, "FIXED_PRICE");
+            assert.equal(options?.newlyListedRaw, true);
+            return [stale, expensive, ...fixtures.map(f => f.row)];
+        },
+        researchFreshRawSellers: async rows => {
+            assert.deepEqual(new Set(rows.map(row => row.id)), new Set(current.keys()));
+            return rows;
+        },
+        selectReviews: async rows => {
+            selections++;
+            assert.equal(rows.length, 50);
+            return { source: "ai", listingIds: picks };
+        },
+        details: async id => current.get(id)!.details,
+        evaluate: async (id, opts) => {
+            assert.equal(opts?.automatic, true);
+            assert.equal(opts?.typeFilter, "FIXED_PRICE");
+            assert.equal(getAiUsageContext().searchId, searchId);
+            assert.equal(getAiUsageContext().listingId, id);
+            checked.push(id);
+            return current.get(id)!.e;
+        },
+    }, () => {
+        assert.deepEqual(new Set(checked), new Set(picks.filter(id => id !== saved)),
+            "planner receives all fifteen photo assessments, including the previously saved assessment");
+    });
+    const result = await hunt(searchId, freshHuntRequest, signal());
+    assert.equal(selections, 1);
+    assert.equal(checked.length, 14, "reuse prevents a second assessment when the planner selects an already inspected copy");
+    assert.equal(result.report.decision, "BUY", JSON.stringify(result.report));
+    assert.deepEqual(result.report.destination, { listingId: picks[0], section: "grading" });
+    assert.equal(result.alternative?.listing.id, picks[0]);
+    assert.match(result.report.marketNote!, /15 of 15/);
+    assert.match(result.report.reason, /grading.*costs/i);
+    assert.match(result.report.reason, /grade 7.*3 recent sales.*grade 6.*3 recent sales/i);
+});
+
+test("a standalone fresh grading buy requires the actual copy's edition and sales at the lower grade", async () => {
+    for (const missing of ["lower grade", "matching edition"] as const) {
+        const f = freshCopy(120000020001);
+        if (missing === "lower grade") f.e.gradedPricing!.PSA!.byGrade = f.e.gradedPricing!.PSA!.byGrade!.filter(s => s.grade !== 6);
+        else f.e.identity!.printing = "FIRST_EDITION";
+        const result = await service(f, {
+            markets: async () => [liquidGradingMarket()], discoverMarket: async () => [f.row],
+            selectReviews: async () => ({ source: "rules", listingIds: [f.row.id] }),
+            researchFreshRawSellers: async rows => rows,
+            snapshot: async () => null, evaluate: async () => f.e,
+        })(searchId, freshHuntRequest, signal());
+        assert.equal(result.report.decision, "WAIT", missing + " " + JSON.stringify(result.report));
+    }
+});
+
 test("omitting the hunt scope keeps a named search within its retained rows without market discovery", async () => {
     const result = await service(example(), { markets: unexpected, discoverMarket: unexpected })(searchId, goal, signal());
     assert.equal(result.report.decision, "BUY");
@@ -347,6 +438,72 @@ test("a liquid comparison market cannot qualify a copy whose assessed printing d
     assert.equal(result.evaluation, null);
     assert.equal(result.alternative, undefined);
     assert.deepEqual(result.candidates, []);
+});
+
+test("a number-discovered Leafeon can reach the buyer only after its original artwork matches the target", async () => {
+    const f = freshCopy(120000000167);
+    const lead = { ...liquidGradingMarket(), name: "Leafeon V (Alternate Full Art)", set: "Evolving Skies", cardNumber: "167/203" };
+    f.row.title = f.e.listing.title = f.details.title = "Evolving Skies shiny card 167/203";
+    Object.assign(f.e.identity!, { name: lead.name, set: lead.set, cardNumber: lead.cardNumber, hasEditions: false });
+    const check = f.e.photoCheck!;
+    check.printedName = "Leafeon V";
+    check.printedNumber = "167/203";
+    check.cardIdentity = { name: "Leafeon V", set: lead.set, cardNumber: check.printedNumber,
+        language: "English", finish: "HOLO", confidence: "HIGH", evidence: ["The original front reads Leafeon V, 167/203."] };
+    for (const summary of f.e.gradedPricing!.PSA!.byGrade!) {
+        for (const sale of summary.sales) sale.title = `Leafeon V Alternate Full Art 167/203 Evolving Skies Holo PSA ${summary.grade}`;
+    }
+    f.snapshot.evidenceKey = listingEvidenceKey(f.row);
+    f.snapshot.contextKey = evaluationContextKey(f.details);
+    const request: DealHuntRequest = { ...goal, goal: "resell", listingIds: [], scope: "any_card", standalone: true };
+    for (const saved of [false, true]) for (const artworkMatches of [false, true]) {
+        let artworkChecks = 0;
+        const dependencies: NonNullable<Parameters<typeof createDealHuntService>[0]> = {
+            inventory: unexpected, discovery: unexpected, markets: async () => [lead],
+            snapshot: async () => saved ? f.snapshot : null,
+            evaluate: saved ? unexpected : async () => f.e,
+            details: async () => f.details,
+            discoverMarket: async (_id, _intent, _filters, _active, options) => {
+                options?.onQuery?.({ strategy: "full_name", query: "Leafeon V 167 Evolving Skies", status: "complete", total: 0,
+                    returnedIds: [], eligibleIds: [], numberOnlyIds: [], newEligibleIds: [] });
+                options?.onQuery?.({ strategy: "collector_number", query: "167/203", status: "complete", total: 1,
+                    returnedIds: [f.row.id], eligibleIds: [f.row.id], numberOnlyIds: [f.row.id], newEligibleIds: [f.row.id] });
+                return [f.row];
+            },
+            verifyCollectorArtwork: async (e, m) => {
+                artworkChecks++;
+                assert.equal(e.listing.id, f.row.id);
+                assert.equal(m.cardNumber, "167/203");
+                return { matches: artworkMatches, reason: artworkMatches ? "Leafeon appears among autumn leaves."
+                    : "The abstract orange background matches the regular full art." };
+            },
+        };
+        if (saved && !artworkMatches) {
+            const unfinished = await service(f, { ...dependencies, verifyCollectorArtwork: unexpected, plan: async ({ markets }) => {
+                const [candidate] = await markets![0].discover();
+                assert.deepEqual(candidate.available(new Set()), ["inspect_photos"]);
+                return { searchId, goal: "resell", decision: "WAIT", reason: "Stopped before inspecting the candidate.", destination: null, steps: [] };
+            } })(searchId, request, signal());
+            assert.deepEqual(unfinished.candidates, [], "a cached primary reading cannot surface an unchecked alternative");
+        }
+        const result = await service(f, dependencies)(searchId, request, signal());
+        const observations = result.report.steps.filter(step => step.action !== "find_listings");
+        assert.equal(observations[0]?.action, "inspect_photos", JSON.stringify(result.report));
+        assert.equal(artworkChecks, 1, JSON.stringify({ saved, artworkMatches, report: result.report }));
+        if (artworkMatches) {
+            assert.equal(result.report.decision, "BUY", result.report.reason);
+            assert.equal(result.report.destination?.listingId, f.row.id);
+            assert.equal(result.alternative?.listing.id, f.row.id);
+        } else {
+            assert.deepEqual(observations.map(step => step.action), ["inspect_photos"]);
+            assert.match(observations[0].observation, /orange background/);
+            assert.equal(result.report.decision, "WAIT");
+            assert.equal(result.report.destination, null);
+            assert.equal(result.evaluation, null);
+            assert.equal(result.alternative, undefined);
+            assert.deepEqual(result.candidates, []);
+        }
+    }
 });
 
 test("a refreshed purchase total must fit the buyer's budget including shipping and estimated tax", async () => {

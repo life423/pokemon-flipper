@@ -125,3 +125,14 @@ test("latest metadata replaces duplicate rows and unrelated stored results do no
     assert.equal(result.counts.metadataLoaded, 1); assert.equal(result.counts.evaluationsReturned, 0); assert.equal(result.counts.errors, 0);
     assert.equal(result.listings[0].currentPrice, 100); assert.deepEqual(result.groups.all, ["same"]);
 });
+
+test("the saved benchmark reports an evidence hold on its own row", () => {
+    const row = listing("held");
+    const message = "An earlier photo request is unresolved.";
+    const result = summarizeBenchmark([row], {}, {}, intent, targets, {
+        now: NOW, failures: { [row.id]: { code: "AI_EVIDENCE_HELD", error: message } },
+    });
+    assert.equal(result.analyses[row.id].status, "held");
+    assert.equal(result.analyses[row.id].message, message);
+    assert.equal(result.counts.errors, 0);
+});

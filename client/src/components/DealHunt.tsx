@@ -5,7 +5,7 @@ import { dollars } from "../../../shared/format.ts";
 import { withFreshListing } from "../../../shared/fresh-listing.ts";
 import { timeLeft } from "../format";
 import { ListingThumbnail } from "./ListingThumbnail";
-import { huntDecisionLabel, huntSections, selectedHuntListing } from "../search/hunt-result";
+import { expiredGradingReason, huntDecisionLabel, huntSections, selectedHuntListing, supportsCrossCardHunt } from "../search/hunt-result";
 import type { Evaluation, ListingSummary, Targets } from "../types";
 import { runDealHunt } from "../api";
 import styles from "./DealHunt.module.css";
@@ -55,7 +55,9 @@ export function DealHuntResult({ result, now, updatedTerms, onEvidence, shortlis
 }) {
     const { report } = result;
     const auction = report.goal === "collect_slab" ? result.collectorAuction : result.auctionOpportunity;
-    const expired = auction && (auction.validUntil <= now || (updatedTerms.get(auction.listingId) ?? 0) > Date.parse(result.evaluation?.listing.termsCheckedAt ?? ""));
+    const grading = result.gradingOpportunity;
+    const expiredGrading = grading && grading.validUntil <= now;
+    const expired = expiredGrading || auction && (auction.validUntil <= now || (updatedTerms.get(auction.listingId) ?? 0) > Date.parse(result.evaluation?.listing.termsCheckedAt ?? ""));
     const bid = report.decision === "BID";
     const resaleBid = bid && !expired && result.auctionOpportunity?.status === "BID" ? result.auctionOpportunity : null;
     const discoveryReason = bid && result.alternative?.reason;
@@ -63,12 +65,14 @@ export function DealHuntResult({ result, now, updatedTerms, onEvidence, shortlis
     const selected = result.listing;
     const otherListings = result.candidates?.filter(row => row.id !== selected?.id &&
         (row.buyingOption !== "AUCTION" || Date.parse(row.endTime ?? "") > now)) ?? [];
-    const decision = expired ? "Recheck auction" : huntDecisionLabel(report);
+    const decision = expiredGrading ? "Recheck listing" : expired ? "Recheck auction" : huntDecisionLabel(report);
     const explanation = <>
-        <p>{expired ? "The auction terms have changed or expired. Run the hunt again for a current bid limit." : report.reason}</p>
+        <p>{expiredGrading ? expiredGradingReason : expired ? "The auction terms have changed or expired. Run the hunt again for a current bid limit." : report.reason}</p>
         {resaleBid && <p>Recent {resaleBid.marketLabel} sold estimate {dollars(resaleBid.marketValue)} from {resaleBid.sampleSize} matching {resaleBid.sampleSize === 1 ? "sale" : "sales"}.
             {" "}The next bid costs {dollars(resaleBid.nextTotal)} delivered.</p>}
-        {!bid && result.alternative && <p>{result.alternative.reason}</p>}
+        {grading && !expiredGrading && <p>{dollars(grading.delivered)} delivered · {grading.dateSource === "listed" ? "Listed" : "Listing created"}{" "}
+            {new Date(grading.listingDate).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</p>}
+        {!expired && !bid && result.alternative && <p>{result.alternative.reason}</p>}
         {report.marketNote && report.marketNote !== result.alternative?.reason && report.marketNote !== report.reason && <p>{report.marketNote}</p>}
     </>;
     return <div className={styles.result} data-decision={expired ? "WAIT" : report.decision}>
@@ -106,7 +110,7 @@ export function DealHunt({ searchId, listings, targets, filters, minPotentialGra
     takePrompt: () => boolean;
     now: number;
     updatedTerms: ReadonlyMap<string, number>;
-    onOpen: (report: DealHuntReport, listing: ListingSummary, evaluation: Evaluation, opener: HTMLElement, scope: DealHuntScope, alternative?: DealHuntResponse["alternative"], showPanel?: boolean) => boolean;
+    onOpen: (report: DealHuntReport, listing: ListingSummary, evaluation: Evaluation, opener: HTMLElement, scope: DealHuntScope, alternative?: DealHuntResponse["alternative"], showPanel?: boolean, gradingValidUntil?: number) => boolean;
     shortlistButton: (listing: ListingSummary) => ReactNode;
     onClear: () => void;
     onStart: () => void;
@@ -116,6 +120,7 @@ export function DealHunt({ searchId, listings, targets, filters, minPotentialGra
     const format = filters.typeFilter === "AUCTION" || filters.typeFilter === "all" && mixedFormat === "AUCTION" ? "AUCTION" : "FIXED_PRICE";
     const candidates = listings.filter(row => row.buyingOption === format);
     const [goal, setGoal] = useState<DealHuntGoal>(initialGoal ?? "resell");
+    const freshGrading = standalone && goal === "grade_raw" && format === "FIXED_PRICE";
     const [selectedScope, setScope] = useState<DealHuntScope>("any_card");
     const scope = selectedScope === "search" && !candidates.length ? "same_set" : selectedScope;
     const [result, setResult] = useState<HuntResult | null>(null);
@@ -143,12 +148,12 @@ export function DealHunt({ searchId, listings, targets, filters, minPotentialGra
             const ids = candidates.map(listing => listing.id);
             const response = await runDealHunt(searchId, {
                 goal, scope, listingIds: ids, targets, filters: { ...filters, typeFilter: format,
-                    ...(format === "AUCTION" && { minPrice: 0 }) }, minPotentialGrade, standalone, marketPreferences,
+                    ...(format === "AUCTION" && { minPrice: 0 }), ...(freshGrading && { kindFilter: "raw" }) }, minPotentialGrade, standalone, marketPreferences,
             }, controller.signal);
             if (controller.signal.aborted) return;
             const { report, evaluation, alternative } = response;
             const listing = selectedHuntListing(response, searchId, goal, scope, candidates, format);
-            if (listing && evaluation && start.current && !onOpen(report, listing, evaluation, start.current, scope, alternative, !standalone)) {
+            if (listing && evaluation && start.current && !onOpen(report, listing, evaluation, start.current, scope, alternative, !standalone, response.gradingOpportunity?.validUntil)) {
                 throw new Error("The listing changed while the hunt was running. Run it again with the latest evidence.");
             }
             setResult({ ...response, listing });
@@ -169,18 +174,19 @@ export function DealHunt({ searchId, listings, targets, filters, minPotentialGra
         start.current?.focus();
     }
     function viewEvidence(opener: HTMLElement) {
-        if (result?.listing && result.evaluation && !onOpen(result.report, result.listing, result.evaluation, opener, scope, result.alternative)) {
+        if (result?.listing && result.evaluation && !onOpen(result.report, result.listing, result.evaluation, opener, scope, result.alternative, true, result.gradingOpportunity?.validUntil)) {
             setError("The listing changed. Run the hunt again to check the latest evidence.");
         }
     }
-    const choices = Object.entries(dealHuntGoals).filter(([key]) => !standalone || key === "resell" || key === "collect_slab" && format === "AUCTION");
+    const choices = (Object.keys(dealHuntGoals) as DealHuntGoal[]).filter(key => !standalone ||
+        supportsCrossCardHunt(key, format) && (key !== "grade_raw" || filters.kindFilter !== "graded"));
     const years = [marketPreferences?.minYear, marketPreferences?.maxYear !== marketPreferences?.minYear && marketPreferences?.maxYear].filter(Boolean).join("–");
     const criteria = [years, marketPreferences?.finish?.toLowerCase().replace("_", "-"),
         filters.maxPrice !== undefined && `Up to ${dollars(filters.maxPrice)} delivered`,
-        marketPreferences && goal === "resell" && `Minimum profit ${dollars(targets.minProfit)}`].filter(Boolean);
+        marketPreferences && (goal === "resell" || freshGrading) && `Minimum profit ${dollars(targets.minProfit)}`].filter(Boolean);
     return <section className={styles.hunt} aria-label="Deal hunt">
         <h2>{busy ? (format === "AUCTION" ? "Searching auctions…" : "Searching listings…") :
-            format === "AUCTION" ? "Find an auction to bid on" : standalone ? "Find a card to flip" : "Deal hunt"}</h2>
+            format === "AUCTION" ? "Find an auction to bid on" : freshGrading ? "Find newly listed cards worth grading" : standalone ? "Find a card to flip" : "Deal hunt"}</h2>
         <p className={styles.note} role="status">{busy ? "Checking listings and price evidence. Listing cards appear here when the hunt finishes." :
             (standalone ? "" : `Starting with ${candidates.length} matching ${candidates.length === 1 ? "listing" : "listings"}. `) +
             "Reuses saved research and may use the remaining AI allowance."}</p>
@@ -188,6 +194,7 @@ export function DealHunt({ searchId, listings, targets, filters, minPotentialGra
         {goal === "resell" && <p>{standalone ? "Search across sets for" : "Look for"} cards with repeated recent sales of the same printing and condition or slab grade.
             {" "}{format === "AUCTION" ? "The next bid must fit your limit after costs." : "A Buy must clear your profit and ROI targets after costs."} Your purchase limit includes shipping and estimated tax.</p>}
         {goal === "collect_slab" && format === "AUCTION" && <p>Compare the next bid with recent sales of the same printing, grader and grade. Your bid limit includes room for shipping and estimated tax.</p>}
+        {freshGrading && <p>Search raw Buy It Now listings from the last 24 hours. Compare the condition visible in the photos with the seller’s description, then check profit after costs at the likely grade and one grade lower.</p>}
         {criteria.length > 0 && <p>{criteria.join(" · ")}</p>}
         <form onSubmit={hunt}>
             <div className={styles.controls}>
@@ -195,14 +202,14 @@ export function DealHunt({ searchId, listings, targets, filters, minPotentialGra
                     const next = event.target.value === "AUCTION" ? "AUCTION" : "FIXED_PRICE";
                     setMixedFormat(next);
                     if (standalone) onFormatChange?.(next);
-                    if (standalone && next === "FIXED_PRICE") setGoal("resell");
+                    if (standalone && !supportsCrossCardHunt(goal, next)) setGoal("resell");
                     if (!standalone && next === "FIXED_PRICE" && goal === "collect_slab" && scope === "any_card") setScope("search");
                     setResult(null); setError(""); onClear();
                 }}><option value="FIXED_PRICE">Buy It Now</option><option value="AUCTION">Auctions under 10 hours</option></select></label>}
                 {choices.length > 1 && <label>Buying goal<select value={goal} disabled={busy} onChange={event => {
                         const next = event.target.value as DealHuntGoal;
                         setGoal(next); setScope(standalone || next === "resell" ? "any_card" : "search"); setResult(null); setError(""); onClear();
-                    }}>{choices.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>}
+                    }}>{choices.map(key => <option key={key} value={key}>{standalone && key === "grade_raw" ? "Find newly listed raw cards worth grading" : dealHuntGoals[key]}</option>)}</select></label>}
                 {!standalone && <label>Cards to consider<select value={scope} disabled={busy} onChange={event => {
                         setScope(event.target.value as DealHuntScope); setResult(null); setError(""); onClear();
                     }}>
@@ -210,7 +217,7 @@ export function DealHunt({ searchId, listings, targets, filters, minPotentialGra
                         <option value="same_set">Other cards in the same set</option>
                         {(goal === "resell" || goal === "collect_slab" && format === "AUCTION") && <option value="any_card">Any card across sets</option>}
                     </select></label>}
-                <button type="submit" ref={start} className={styles.run} aria-disabled={busy}>{format === "AUCTION" ? "Find auction opportunities" : standalone ? "Find a flip" : "Run deal hunt"}</button>
+                <button type="submit" ref={start} className={styles.run} aria-disabled={busy}>{format === "AUCTION" ? "Find auction opportunities" : freshGrading ? "Find grading opportunities" : standalone ? "Find a flip" : "Run deal hunt"}</button>
                 {busy && <button type="button" onClick={cancel}>Stop</button>}
             </div>
         </form>

@@ -1,5 +1,6 @@
 import { isPrinting, normalizeCardNumber, normalizeSetName, printingClaimFromText, sameCardNumber, sameSetFamily, setFamily, titleDecidesPrinting } from "../identity/card-identity.ts";
 import { finishClaim } from "../../shared/finish.ts";
+import { freshListingTime } from "../../shared/grading-watch.ts";
 import { RAW_CONDITIONS } from "../../shared/conditions.ts";
 import { StorageUnavailableError } from "../storage/index.ts";
 import type { ListingSummary, ScreeningSoldEvidence, ScreeningSoldReference, SearchIntent, Targets } from "../../shared/types.ts";
@@ -145,9 +146,10 @@ export function createSoldScreening({ signal, targets, now = Date.now, source = 
         const condition = sellerConditionClues(listing);
         if (condition.severe || condition.claim === "MODERATELY_PLAYED" || listingDisclosesCardCrease(listing)) return [];
         if (rawEvidence.status === "AVAILABLE") {
-            // A clean seller claim warrants checking the grade spread. When
-            // raw sales already justify photos there is no extra work to buy.
-            if (condition.claim !== "MINT" && condition.claim !== "NEAR_MINT") return [];
+            // A new copy with no seller condition can also earn a photo check
+            // on its grade spread. Neither the omission nor a label assigns a grade.
+            const newlyOfferedWithoutCondition = !condition.claim && !condition.ambiguous && freshListingTime(listing, asOf) !== null;
+            if (condition.claim !== "MINT" && condition.claim !== "NEAR_MINT" && !newlyOfferedWithoutCondition) return [];
             const raw = applySoldPriceScreen(listing, rawEvidence, { targets });
             if (analysisPriority(raw, targets).band >= 2) return [];
         }

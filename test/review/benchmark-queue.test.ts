@@ -40,6 +40,21 @@ for (const code of ["AI_BUDGET", "PRICE_RESEARCH_BUDGET"]) test(`${code} denial 
     assert.equal(Object.keys(result.evaluations).length, 1); assert.equal(result.waiting.length, 3);
 });
 
+test("a held photo request leaves the queue open for independent candidates", async () => {
+    const rows = ["held", "next", "later"].map(listing);
+    const result = await runBenchmarkQueue(rows, {
+        ...base, evaluate: async row => {
+            if (row.id === "held") throw Object.assign(new Error("Earlier photo request unresolved"), { code: "AI_EVIDENCE_HELD" });
+            return { id: row.id };
+        },
+    });
+    assert.equal(result.stopped, null);
+    assert.equal(result.failures.held.code, "AI_EVIDENCE_HELD");
+    assert.deepEqual(result.errors, {});
+    assert.equal(result.admitted.filter(id => id === "held").length, 1);
+    assert.deepEqual(Object.keys(result.evaluations).sort(), ["later", "next"]);
+});
+
 test("non-English assessments are excluded rather than becoming manual review errors", async () => {
     const result = await runBenchmarkQueue([listing("foreign")], {
         ...base, evaluate: async () => { throw Object.assign(new Error("Not English"), { code: "OTHER_LANGUAGE" }); },

@@ -1,12 +1,27 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { CollectorStrategy } from "./components/CollectorStrategy";
+import comparisonStyles from "./components/BestCurrentBuy.module.css";
 import "./styles/tokens.css";
 import "./styles/base.css";
 
+const url = new URL(location.href);
+const savedStrategy = url.searchParams.get("strategy");
+const ebayResult = url.searchParams.get("ebay_connection");
+const openSniper = url.searchParams.get("view") === "sniper" || ebayResult !== null;
+const ebayReturnNotice = ebayResult === "declined" ? "You declined the eBay connection."
+    : ebayResult === "failed" ? "eBay sign-in could not finish. You can start again below." : undefined;
+if (ebayResult !== null) {
+    url.searchParams.delete("ebay_connection");
+    url.searchParams.set("view", "sniper");
+    history.replaceState(history.state, "", url);
+}
 createRoot(document.getElementById("root")!).render(
     <StrictMode>
-        <App initialPage={new URLSearchParams(location.search).get("view") === "camera" ? "camera" : "search"} />
+        {savedStrategy ? <main className={comparisonStyles.savedGuide}>
+            <a href="/">← Back to search</a><CollectorStrategy searchId={savedStrategy} standalone />
+        </main> : <App initialPage={openSniper ? "sniper" : url.searchParams.get("view") === "camera" ? "camera" : "search"} ebayReturnNotice={ebayReturnNotice} />}
     </StrictMode>
 );
 
