@@ -5,16 +5,44 @@ resource locations are in [LOCAL_PLAN.md](LOCAL_PLAN.md); verified audit finding
 are in [the maintained audit](docs/deal-search-audit.md). Git retains removed
 reports. Provider payloads, paid evidence, credentials and user data stay private.
 
+## November 24 stopping checkpoint
+
+Checkpoint verification: all 1,540 automated tests passed, both TypeScript
+checks passed, the production build passed, and staged whitespace checks passed.
+The build retains Vite's bundle-size advisory. These checks do not replace the
+pending browser/live acceptance below. This checkpoint is committed locally;
+no push was requested for the break.
+
+- [x] Interpret submitted search text with OpenAI before discovery; preserve
+  catalog identity, release years and the buyer's explicit constraints.
+- [x] Add condition-specific TCGplayer asking-price valuation after the AI
+  assesses the raw copy. Keep active offers distinct from completed sales.
+- [x] Replace the hard three-sale purchase veto with observed rolling 60-day
+  activity. Use robust sale summaries so an isolated high sale cannot set value.
+- [x] Align unpriced hunt eligibility with buyer review and recover eligible
+  temporary review failures with bounded retries under the original account.
+- [x] Add retained discovery continuation in batches of 50, with deduplication,
+  original constraints, persistent ownership and visible coverage status.
+- [ ] Independently accept the automatic 51st-listing continuation through the
+  browser, including cancellation, refresh, replay and quota exhaustion.
+- [ ] Expand broad hunts beyond markets seeded by saved accepted evaluations.
+  Continuation and larger menus do not establish coverage of unresearched cards
+  or all eBay inventory.
+- [ ] Finish live acceptance of condition quotes, activity captions and cold
+  search latency using another card. Do not run live Venusaur tests.
+- [ ] Demonstrate one available, correctly identified profitable deal after
+  costs; no new live deal or realized resale was established in this checkpoint.
+
 ## Current foundations and decisions
 
 - The shared price-before-photo workflow, raw resale, slab resale and CGC/PSA
   grading routes already exist and deserve equal priority. Clear slab labels
   establish the certified grade;
   do not regrade a slab as raw. Raw condition remains independent of seller claims.
-- Discovery can fetch 200 summaries per pass and screen beyond 50 unresolved
-  rows. A thin newest-first BIN search can add one lower-price pass. Fifty rows
-  are retained for assessment/display; rejected, deferred and not-reached rows
-  have distinct saved reasons. Lowest-price discovery and local sort are separate.
+- Discovery can fetch 200 summaries per pass and retain 50 rows per review
+  batch. Continuation preserves overflow, source offsets, constraints and the
+  original account; rejected, deferred and not-reached rows have distinct saved
+  reasons. Lowest-price discovery and local sort are separate.
 - Best current buy, explicit projected losses, compact comparison rows and the
   desktop split inspector are implemented. They do not establish a live profitable
   BIN. Best current buy requires a checked all-in purchase below its exact
@@ -26,7 +54,10 @@ reports. Provider payloads, paid evidence, credentials and user data stay privat
 - Use recent matched eBay transactions for resale. One eligible sale can support
   sparse pricing with low confidence. Preserve the current recent-BIN cohort and
   four-sales-within-48-hours rules, transaction formats, outlier handling and dates.
-  TCGplayer estimates do not price resale. Graded future value is not raw cash value.
+  Exact condition/printing TCGplayer offers can also price raw resale: use the
+  lowest valid delivered competition, capped by condition market value when
+  available, or the exact condition market value when offers are unavailable.
+  These estimates never count as completed sales. Graded future value is not raw cash value.
 - Fees, taxes, shipping, grading, profit, ROI and purchase ceilings stay in code.
   Any profit/ROI targets still require positive after-cost profit for Deals.
   Unknown destination shipping keeps estimates provisional and is different
@@ -58,6 +89,55 @@ reports. Provider payloads, paid evidence, credentials and user data stay privat
   dashboard metrics and decorative AI branding. Use existing CSS Modules/components.
 
 ## 1. Prove the live buying workflow
+
+- [x] Audit every explicit gate from eBay discovery to the Deal label. The
+  [complete blocker audit](docs/deal-blockers-audit.md) covers source admission,
+  matching, prices, photos, money, liquidity, auctions, budgets, recovery and UI.
+- [ ] Fix the reproduced raw evidence dead-end: pricing stops after one accepted
+  condition-matched sale, while final resale requires three recent matched
+  exits and never requests the missing two. Preserve condition correctness and
+  make the evidence deficit an actionable bounded research continuation.
+- [ ] Unify hunt and ordinary-review eligibility for repairable missing-price
+  rows, and requeue typed temporary failures after finite cooldowns under the
+  original account. These are confirmed integration gaps, not wrong API dollars.
+- [ ] Expand the AI's offered markets beyond saved accepted research and expose
+  continuation beyond eight grouped markets/six copies and after number-alias
+  verification misses. Record each gate and recovery action in diagnostics.
+
+- [ ] Demonstrate the app's primary outcome after fixing the reported searches.
+  Find a real deal the user can act on, with a specific available listing or
+  eligible auction, matching price evidence, recent relevant sales activity and
+  a supported after-cost purchase limit. Andrew reaffirmed that comparisons,
+  completed research and engineering progress alone have not delivered this.
+
+- [ ] After completing the search interpretation and speed fixes, show prices
+  from all connected pricing providers whenever presenting a card's value.
+  Andrew requested PKMNPrices, Pokémon Price Tracker and OpenAI price research
+  together, plus applicable Cardmarket comparisons. Include PriceCharting when
+  that paused integration resumes. Display each source's returned price, date,
+  currency and matching condition or grader/grade. Identify a sale, asking price
+  or aggregate estimate so the buyer can compare the figures. Reuse accepted
+  source responses and preserve the existing purchase-ceiling math. This request
+  is deferred until the active search fixes are complete.
+
+- [x] Complete OpenAI interpretation before discovery for every newly submitted
+  search. Send the original wording, resolve its meaning into a typed search
+  plan, show the interpretation, then route the refined criteria into the app.
+  Reuse the plan for Find new listings and watches under the same research
+  account. Preserve explicit card, set, number, years, finish, grade, format,
+  budget and profit constraints. Keep the buyer's original wording editable.
+- [ ] Verify all reported natural searches in the normal interface, including
+  `1999-2003 pokemon card holo`, `1999 venusaur`, the liquid vintage holo request
+  and `find a deal on a holo card form neo revolution`. The last request should
+  visibly resolve to Neo Revelation. A named card stays a named search, and a
+  broad deal goal can choose liquid markets within its release constraints.
+- [ ] Finish live latency acceptance using Neo Revelation or a broad vintage
+  holo request. Andrew asked to stop testing Venusaur. Queued versus active
+  work, six concurrent reviews, completed-result ordering and Stop have passed
+  offline browser checks. Same saved Neo screening fell from 107.25 to 20.98
+  seconds with zero providers, but a separate cold live metadata-only run still
+  took 145.8 seconds. Measure first useful decision and completion separately;
+  faster replay does not finish the live-speed requirement.
 
 - [x] Replace the generic “Resale unconfirmed” outcome with a buyer decision and
   its evidence. Replay the two raw Base Set Mewtwo 10/102 holos shown at $106.03
@@ -345,7 +425,7 @@ reports. Provider payloads, paid evidence, credentials and user data stay privat
 - [x] Let collectors hunt fairly priced slab auctions and flippers hunt liquid resale opportunities. Test different bid limits on the same slab. In an auction with multiple copies, the AI can select independent checks together, revisit printing from original photos, or try selling raw when grading misses the target.
 - [ ] After an unsuccessful auction search, start with a bounded page of auctions actually closing inside ten hours. Let the AI pick promising copies within the buyer’s preferences and verify exact sales, the legal next bid and delivered cost. Compare the number of supported recommendations and research cost against starting from previously priced cards.
 - [ ] Let a buyer type “vintage 1999 to 2003 holo” into the search bar and see every qualifying flip the hunt checks. Apply the inclusive release years and holo finish to every candidate. After two misses in the same hunt, try another printing of the same Pokémon, another card from around the same release year, or a card matching both. Stay inside the buyer’s explicit years, finish and budget. Replay two misses followed by a qualifying alternative and verify that every displayed flip has matching recent sales and positive profit after costs.
-- [ ] Measure how often resale-hunt recommendations actually sell at the projected profit and how long capital stays tied up. Compare the initial three-matched-sales-in-30-days threshold with realized outcomes for raw flips, slab resale and grading. Apply the verified exit-specific liquidity rule throughout Deals as the two workflows converge.
+- [ ] Measure how often resale-hunt recommendations actually sell at the projected profit and how long capital stays tied up. Compare observed rolling 60-day activity with realized outcomes for raw flips, slab resale and grading, without reinstating a hard transaction-count purchase veto.
 - [ ] Build sourced liquidity scores and resale-time ranges from exact sales,
   active supply and coverage. Include holding preferences, grading/shipping time
   and uncertainty; broad sales counts do not prove a time-to-sale guarantee.

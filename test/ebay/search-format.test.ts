@@ -188,7 +188,8 @@ test("English source searches exclude contradictory title/aspect evidence and pr
         if (address.includes("rate_limit")) return Response.json({ rateLimits: [{ apiName: "Browse", resources: [{ name: "buy.browse", rates: [{ count: 0, limit: 5000, remaining: 5000 }] }] }] });
         const params = new URL(address).searchParams;
         if (pages++ === 0) assert.equal(params.get("aspect_filter"), "categoryId:183454,Language:{English}");
-        else { assert.equal(params.get("category_ids"), null); assert.equal(params.get("aspect_filter"), null); assert.match(params.get("q")!, / english$/); }
+        else { assert.equal(params.get("category_ids"), null); assert.equal(params.get("aspect_filter"), null);
+            assert.doesNotMatch(params.get("q")!, / english$/i, "an English card need not put its language in the title"); }
         return Response.json({ total: 3, itemSummaries: [
             { itemId: "v1|english|0", title: "Charizard Base Set 4/102 Holo English" },
             { itemId: "v1|german|0", title: "Charizard Base Set 4/102 Holo German" },

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { findDeals, type SearchSummary } from "../../server/deals/find-deals.ts";
 import { readSearchLocally, readSearchWithoutAi } from "../../server/search/intent.ts";
-import { readTitleByRules, readTitleWithoutAi } from "../../server/ai/title-reader.ts";
+import { readTitleByRules, readTitleWithoutAi, readTitlesWithoutAi } from "../../server/ai/title-reader.ts";
 import { readCache, writeCache } from "../../server/lib/cache.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
 import { MODEL } from "../../server/ai/openai.ts";
@@ -308,6 +308,19 @@ test("invalid saved bounded metadata fails closed rather than becoming a new AI 
     const title = "Offline invalid title cache";
     await writeCache(`title-reading:v6:${MODEL}:${title.toLowerCase()}`, { kind: "SINGLE_CARD", cardName: 42 });
     await assert.rejects(readTitleWithoutAi(title), StorageUnavailableError);
+});
+
+test("a batched title read preserves saved corrections and ordinary literal fallbacks", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("batched title reuse cannot invoke a provider"));
+    const savedTitle = "Offline Charizard batch reading", literalTitle = "Charizard Base Set 4/102 Holo";
+    const saved = { kind: "SINGLE_CARD", cardName: "Charizard", set: "Base Set", cardNumber: "4/102", language: "English", grader: null, grade: null, condition: "Near Mint" };
+    await writeCache(`title-reading:v6:${MODEL}:${savedTitle.toLowerCase()}`, saved);
+    const readings = await readTitlesWithoutAi([savedTitle, literalTitle, savedTitle]);
+    assert.equal(readings.size, 2);
+    assert.deepEqual(readings.get(savedTitle), saved);
+    assert.deepEqual(readings.get(literalTitle), await readTitleWithoutAi(literalTitle));
+    await writeCache(`title-reading:v6:${MODEL}:${literalTitle.toLowerCase()}`, { kind: "SINGLE_CARD", cardName: 42 });
+    await assert.rejects(readTitlesWithoutAi([literalTitle]), StorageUnavailableError);
 });
 
 test("cancelling bounded query interpretation prevents the source request", async () => {

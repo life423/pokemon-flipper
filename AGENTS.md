@@ -57,7 +57,9 @@ grading labels neutral so action emphasis does not imply a grading recommendatio
 Read docs/architecture.md for the source map and reading order.
 
 - Search and Find new listings share one bounded pipeline with up to 200 eBay
-  summaries in the initial page and at most 50 retained matching rows. For a
+  summaries per source page and at most 50 retained matching rows per review
+  batch. Preserve overflow, seen listing IDs and source offsets in server-owned
+  continuation; later batches retain the original account and constraints. For a
   normal Buy It Now search, fewer than three preliminary margin candidates
   can trigger one lower-price page when there is more inventory to screen.
   The two passes deduplicate listing research, share one sold-price session,
@@ -131,7 +133,7 @@ Read docs/architecture.md for the source map and reading order.
   identity research eligible without borrowing the premium market. Changed or
   missing seller edition specifics invalidate financial reuse, including
   shortlist refresh/resave, while accepted paid photo answers remain reusable.
-- The browser queues eligible assessments, at most two in flight. Fifty metadata
+- The browser queues eligible assessments, at most six in flight. Fifty metadata
   rows can include work blocked before paid assessment. Reuse saved evidence
   first. Keep per-listing reasons tied to the queue's eligibility checks and
   count loaded listings separately from completed assessments.
@@ -151,7 +153,13 @@ Read docs/architecture.md for the source map and reading order.
   A compact request finding raw does not buy another raw assessment automatically.
   BGS/TAG resale is separate from configured PSA/CGC submission services.
 - Use the photographed set's edition marks. On English Neo Destiny, a clear empty stamp area establishes Unlimited. A manual assessment can resolve an ambiguous reading from the original front and a stamp detail in one metered check. Reuse the saved result on repeat assessment and price refresh. Automatic stamp research requires current terms and evidence that checking could change the purchase decision. Charge the original search account. Artwork-shadow checks apply to eligible original English Base Set cards.
-- Raw resale reads accepted historical photo-condition evidence first. A
+- Raw resale can use exact condition/printing TCGplayer offers after the live
+  copy's condition is assessed. Use the lowest valid delivered competition,
+  capped by exact condition market value when available; a labeled condition
+  market value can supply fallback pricing. Active offers never become sold
+  activity. Display rolling 60-day transactions separately, without a hard
+  three-sale purchase veto. Preserve exact identity, freshness and all costs.
+  Historical photo-condition evidence remains reusable. A
   same-condition seller-clue cohort, or otherwise an unspecified-condition
   cohort, merits research if any confirmed sale could cover current costs.
   Select its newest unreviewed sale regardless of that individual sale's profit;
@@ -178,8 +186,11 @@ Read docs/architecture.md for the source map and reading order.
   stages. Preserve exact input preflight, cancellation, output bounds and
   saved evidence. Fresh installations start paused. If a cap is restored,
   existing accounts retain their recorded ceilings, spending and holds.
-- Prefer saved/local interpretation. A bounded text request may remove
-  remaining conversational phrasing while preserving literal criteria. After
+- Each explicitly submitted search goes through the OpenAI search interpreter
+  before workflow routing. Reuse an identical accepted interpretation when
+  available. Keep the original request, show the interpreted criteria and
+  validate literal constraints and catalog matches in code. Find new listings
+  and watches reuse the accepted refined query. After
   sold screening, one bounded text request can reorder tied Buy It Now photo
   candidates when automatic photos are on. Neither request changes pricing
   or verification requirements.

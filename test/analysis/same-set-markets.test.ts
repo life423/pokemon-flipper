@@ -90,22 +90,24 @@ test("same-set discovery keeps distinct recent completed sales separate by set, 
     Object.assign(sales[4], { currency: "EUR" });
     const pool = [original, thin, stamped, gem, duplicate, incorrect, bucket];
     const exact = rankHuntMarkets(pool, origin, "resell", "same_set", now);
-    assert.deepEqual(exact.map(m => [m.name, m.sales30, m.sales90, m.condition, m.medianUsd, m.listingIds.length]), [["Blastoise", 4, 4, "LIGHTLY_PLAYED", 300, 2]]);
-    assert.equal(exact[0].liquidThrough, now + 27 * day);
+    assert.deepEqual(exact.map(m => [m.name, m.sales30, m.sales60, m.sales90, m.condition, m.medianUsd, m.listingIds.length]),
+        [["Blastoise", 4, 4, 4, "LIGHTLY_PLAYED", 300, 2], ["Zapdos", 1, 2, 2, "LIGHTLY_PLAYED", 300, 1]]);
+    assert.equal(exact[0].liquidThrough, undefined, "volume is descriptive rather than a purchase expiry");
     const any = rankHuntMarkets(pool, null, "resell", "any_card", now);
     assert.equal(any[0].name, "Gengar");
     assert.equal(rankHuntMarkets(pool, null, "collect_slab", "any_card", now).length, 0);
     assert.equal(rankHuntMarkets(pool, null, "resell", "same_set", now).length, 0);
 });
 
-test("ambiguous sale IDs, repeated URLs and expired markets never meet the activity threshold", () => {
+test("ambiguous sale IDs and repeated URLs never inflate observed activity", () => {
     const gem = rawCard("Blastoise", "Base Set", "2/102", 120000001100, 3);
     const wrongGrade = structuredClone(gem);
     wrongGrade.identity!.printing = wrongGrade.rawPricing!.printing = "FIRST_EDITION";
     assert.deepEqual(rankHuntMarkets([gem, wrongGrade], origin, "resell", "same_set", now), []);
     const s = gem.rawPricing!.prices![0].comps!.sales;
     s[1].url = s[0].url + "?var=25";
-    assert.deepEqual(rankHuntMarkets([gem], origin, "resell", "same_set", now), []);
+    const [sparse] = rankHuntMarkets([gem], origin, "resell", "same_set", now);
+    assert.equal(sparse.sales60, 1, "a valid remaining observation is reported without requiring three");
     assert.deepEqual(rankHuntMarkets([gem], origin, "resell", "same_set", now + 90 * day), []);
 });
 
@@ -182,7 +184,7 @@ test("cross-card grading can scout a new raw market from exact slab sales withou
     for (const title of ["Venusaur Base Set 15/102 Unlimited Holo CGC 7", "Venusaur Base Set 15/102 First Edition Holo PSA 7",
         "Venusaur Base Set 15/102 Unlimited Reverse Holo PSA 7", "Blastoise Base Set 2/102 Unlimited Holo PSA 7"]) {
         sale.title = title;
-        assert.deepEqual(gradeMarkets(), [], title);
+        assert.equal(gradeMarkets()[0]?.sales60, 2, title);
     }
 });
 
@@ -194,7 +196,7 @@ test("an affordable observed ask can put the ninth market on the menu without pr
     const menu = (maxPrice: number, minPrice = 0, minGrade = 0, ids: Set<string> = new Set(), profit = 0) =>
         groupMarketSearches([...empty, lead], "resell", { minProfit: profit, minRoi: 0 }, { maxPrice, minPrice }, minGrade, ids);
     const ranked = menu(60);
-    assert.equal(ranked.length, 8);
+    assert.equal(ranked.length, 9, "all eligible markets remain available after priority ordering");
     assert.equal(ranked[0].intents[0].cardNumber, "2/102");
     assert.equal(ranked[0].observedPurchaseTotal, 59.54);
     assert.equal(ranked[1].intents[0].cardNumber, "20/102");
@@ -236,7 +238,7 @@ test("auction hunt menu reserves space for a liquid slab from auction-only histo
     const highBinProfits = Array.from({ length: 8 }, (_, i) => ({ ...lead, name: "Other " + i, projectedProfit: 1000, sales30: 4 }));
     const slab = { ...lead, kind: "slab" as const, grader:"PSA", grade:8, condition:null };
     const menu = groupMarketSearches([...highBinProfits, lead, slab], "resell", { minProfit:0,minRoi:0 }, {typeFilter:"AUCTION"}, 0);
-    assert.equal(menu.length, 8);
-    assert.ok(menu.some(group => group.leads.includes(slab)), "both raw and slab exits appear in the bounded menu");
+    assert.equal(menu.length, 10, "priority ordering must not delete the ninth or tenth market");
+    assert.ok(menu.some(group => group.leads.includes(slab)), "both raw and slab exits remain available");
     assert.ok(menu.every(group => group.observedPurchaseTotal === undefined));
 });

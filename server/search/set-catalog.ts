@@ -3,10 +3,12 @@ import { setKey } from "../../shared/sets.ts";
 
 const MONTH_HOURS = 24 * 30;
 
+export const cachedSetYears = () => readCache<Record<string, number>>("pokemonpricetracker:set-years", MONTH_HOURS);
+
 // Reuse the catalog already loaded by the app. This helper never refreshes a
 // provider: a missing catalog leaves the existing literal rules in place.
 export function createCachedSetNames({
-    load = () => readCache<Record<string, number>>("pokemonpricetracker:set-years", MONTH_HOURS),
+    load = cachedSetYears,
     now = Date.now,
     ttlMs = 60_000,
 } = {}) {

@@ -3,6 +3,7 @@ import { jungleNoSymbolReason, type JungleVariantContext } from "../jungle-no-sy
 import { missingTextureReason } from "../grade-qualifier.ts";
 import { soldMarketPrice } from "../sold-evidence.ts";
 import { isPrinting } from "../identity.ts";
+import { isRawCondition } from "../conditions.ts";
 
 type PriceEvidence = Partial<Pick<Evaluation, "rawPricing" | "gradedPricing" | "slabPricing">> & JungleVariantContext &
     { identity?: Partial<Pick<Identity, "printing">> | null };
@@ -46,10 +47,27 @@ export function isRawSoldPrice(price: RawPrice): boolean {
         price.comps.count > 0 && soldMarketPrice(price.comps) === price.price);
 }
 
+// A matched live marketplace or condition-market estimate can price raw resale.
+// It is never counted as a completed transaction or photo-reviewed sold copy.
+export function isUsableRawPrice(price: RawPrice): boolean {
+    if (isRawSoldPrice(price)) return true;
+    const quote = price.offers;
+    if (!isRawCondition(price.condition) || !Number.isFinite(price.price) || price.price <= 0 ||
+        !quote || quote.source !== "TCGPLAYER" || quote.currency !== "USD" || quote.condition !== price.condition ||
+        quote.price !== price.price || !quote.printing?.trim() || !Number.isFinite(Date.parse(quote.checkedAt)) ||
+        !Number.isFinite(Date.parse(quote.snapshotAt))) return false;
+    if (price.basis === "TCGPLAYER_MARKET") return quote.method === "CONDITION_MARKET" &&
+        quote.marketPrice === price.price && quote.offers.length === 0;
+    return price.basis === "TCGPLAYER_OFFERS" && quote.method === "LOWEST_DELIVERED_COMPETITION" &&
+        quote.offers.length > 0 && quote.offers.every(offer => Number.isFinite(offer.total) && offer.total > 0 &&
+            offer.price >= 0 && offer.shipping >= 0 && Math.abs(offer.total - offer.price - offer.shipping) < .001) &&
+        price.price <= Math.min(...quote.offers.map(offer => offer.total));
+}
+
 export function withoutUnsupportedRawPrices(evaluation: Evaluation): Evaluation {
     const raw = evaluation.rawPricing;
-    if (!raw?.prices?.some(price => !isRawSoldPrice(price))) return evaluation;
-    const prices = raw.prices.filter(isRawSoldPrice);
+    if (!raw?.prices?.some(price => !isUsableRawPrice(price))) return evaluation;
+    const prices = raw.prices.filter(isUsableRawPrice);
     const { evidenceNote, ...saved } = raw;
     return { ...evaluation, rawPricing: prices.length ? { ...saved, prices } : {
         ...saved, status: "PRICE_UNAVAILABLE", prices: [], reason: "No matched eBay sold price is available.",
@@ -64,8 +82,8 @@ export function referencePriceReason(evaluation: PriceEvidence, path: PricedPath
     if (pricePrintingMismatch(pricing?.printing, evaluation.identity?.printing)) return PRICE_PRINTING_MISMATCH;
     if (path.path === "RAW") {
         const sold = evaluation.rawPricing?.prices?.some(price => price.condition === path.priceCondition &&
-            price.price === path.salePrice && isRawSoldPrice(price));
-        if (!sold) return "Raw resale needs a matched eBay sold price.";
+            price.price === path.salePrice && isUsableRawPrice(price));
+        if (!sold) return "Raw resale needs a matched condition price.";
     }
     if (path.path === "GRADED_RESALE" && evaluation.slabPricing?.activeReference && !evaluation.slabPricing.summary?.count) {
         return "Slab resale has only current Buy It Now asking references; matched sales for the photographed grader and grade are still needed.";

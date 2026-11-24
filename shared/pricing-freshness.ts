@@ -1,14 +1,14 @@
 import type { Evaluation } from "./types.ts";
 import { CONDITION_RULES_VERSION, RAW_CONDITIONS, isRawCondition, sellerCreaseOverridesCondition } from "./conditions.ts";
 import { hasSpecialSlabTitle } from "./grade-qualifier.ts";
-import { hasMismatchedPricePrinting, isRawSoldPrice } from "./money/price-evidence.ts";
+import { hasMismatchedPricePrinting, isRawSoldPrice, isUsableRawPrice } from "./money/price-evidence.ts";
 import { hasBaseSetFourthPrint } from "./reprint-release.ts";
 import { conflictsWithPhotoFinish } from "./photo-evidence.ts";
 import { hasSavedConditionExamples } from "./ebay-condition-notes.ts";
 
 // Pricing changes do not invalidate paid photo/condition assessments.
-export const PRICING_VERSION = "ebay-resale-18";
-export const PREVIOUS_PRICING_VERSION = "ebay-resale-17";
+export const PRICING_VERSION = "condition-resale-19";
+export const PREVIOUS_PRICING_VERSION = "ebay-resale-18";
 export const PHOTO_REVIEW_REVISION = 10;
 // Raw-condition prompting changes do not invalidate historical sold-copy categories.
 export const CONDITION_ASSESSMENT_REVISION = 2;
@@ -39,15 +39,21 @@ export function priceEvidenceHasExpired(evaluation: Evaluation, now: number): bo
 }
 
 export function currentPriceEvidence(evaluation: Evaluation, now = Date.now()): boolean {
+    const quote = evaluation.rawPricing?.prices?.find(row => row.condition === evaluation.condition?.rawCondition && isUsableRawPrice(row))?.offers;
+    if (quote && (!(now - Date.parse(quote.checkedAt) >= 0) || now - Date.parse(quote.checkedAt) >= 6 * 3_600_000 ||
+        quote.method === "LOWEST_DELIVERED_COMPETITION" && !(now - Date.parse(quote.snapshotAt) >= 0 && now - Date.parse(quote.snapshotAt) < 86_400_000))) return false;
     if (!evaluation.slab && hasSavedConditionExamples(evaluation.listing)) return false;
     if (hasMismatchedPricePrinting(evaluation) || conflictsWithPhotoFinish(evaluation.photoCheck, evaluation.identity?.finish)) return false;
     const condition = evaluation.condition?.rawCondition;
     // Previous assessments could have researched grades and cleaner raw copies
     // even though a disclosed crease requires a Damaged resale comparison.
     if (!evaluation.slab && condition && evaluation.gradedPricing && sellerCreaseOverridesCondition(condition, evaluation.listing.conditionNotes) &&
-        !evaluation.rawPricing?.prices?.some(price => price.condition === "DAMAGED" && isRawSoldPrice(price))) return false;
+        !evaluation.rawPricing?.prices?.some(price => price.condition === "DAMAGED" && isUsableRawPrice(price))) return false;
     if (evaluation.pricingVersion !== PRICING_VERSION) {
-        if (evaluation.pricingVersion !== PREVIOUS_PRICING_VERSION) return false;
+        if (evaluation.pricingVersion !== PREVIOUS_PRICING_VERSION && evaluation.pricingVersion !== "ebay-resale-17") return false;
+        // Raw valuations now consult condition-matched TCGplayer prices.
+        // Reuse accepted physical findings, but refresh older raw economics.
+        if (!evaluation.slab && !evaluation.underwriting?.verdict.startsWith("BUY")) return false;
         // v17 did not consider paying for a sold copy explicitly described as worse.
         // Refresh only the unresolved raw valuations where that could add evidence.
         const raw = evaluation.rawPricing, verdict = evaluation.underwriting?.verdict;
@@ -72,7 +78,7 @@ export function currentPriceEvidence(evaluation: Evaluation, now = Date.now()): 
     const soldSummaries = [...gradedSummaries, evaluation.rawPricing?.sellerConditionComps, evaluation.rawPricing?.cleanerSellerConditionComps,
         ...(evaluation.rawPricing?.ebayComps ?? []), ...(raw ?? []).map(price => price.comps)];
     if (soldSummaries.some(summary => summary?.sales?.some(sale => hasBaseSetFourthPrint(evaluation.identity?.set, sale.title)))) return false;
-    if (raw?.some(price => !isRawSoldPrice(price)) && !raw.some(isRawSoldPrice) &&
+    if (raw?.some(price => !isUsableRawPrice(price)) && !raw.some(isUsableRawPrice) &&
         !Object.values(evaluation.gradedPricing ?? {}).some(pricing => pricing.status === "PRICED")) return false;
     const age = now - Date.parse(evaluation.pricesCheckedAt ?? "");
     const bounded = BOUNDED_REVIEW_REVISIONS.some(revision => evaluation.assessmentVersion?.endsWith(`/bounded-prompts-${revision}`)) ||

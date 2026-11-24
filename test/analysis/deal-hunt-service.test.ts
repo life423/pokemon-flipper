@@ -6,7 +6,7 @@ import { retargetEvaluation } from "../../shared/money/targets.ts";
 import { PRICING_VERSION } from "../../shared/pricing-freshness.ts";
 import type { Evaluation, ListingSummary, SearchIntent } from "../../shared/types.ts";
 import { getAiUsageContext } from "../../server/ai/usage-context.ts";
-import { createDealHuntService } from "../../server/analysis/deal-hunt-service.ts";
+import { createDealHuntService, dealHuntRequest } from "../../server/analysis/deal-hunt-service.ts";
 import { runDealHunt } from "../../server/analysis/deal-hunt.ts";
 import { createModelExperimentRunner } from "../../server/analysis/model-experiment.ts";
 import { evaluationContextKey } from "../../server/analysis/private-evaluation.ts";
@@ -66,6 +66,96 @@ function service(fixture: ReturnType<typeof example>, overrides: Parameters<type
 }
 
 const signal = () => new AbortController().signal;
+
+test("hunt set preferences are bounded, normalized and kept separate from era preferences", () => {
+    const request = { ...goal, marketPreferences: { sets: [" Neo Revelation ", "Neo Revelation"], finish: "HOLO" } };
+    assert.deepEqual(dealHuntRequest(request).marketPreferences?.sets, ["Neo Revelation"]);
+    for (const sets of [[], [""], ["   "], "Neo Revelation", [null], ["x".repeat(121)], Array(9).fill("Neo Revelation")]) {
+        assert.throws(() => dealHuntRequest({ ...request, marketPreferences: { sets } }), { status: 400 });
+    }
+});
+
+test("hunt printing and certified-grade preferences reject widening before offering markets", async () => {
+    const targets = { minProfit: 0, minRoi: 0 };
+    const request = { goal: "resell", listingIds: [], targets, scope: "any_card", standalone: true };
+    const base = { name: "Dark Gengar", set: "Neo Destiny", cardNumber: "6/105", printing: "UNLIMITED", finish: "HOLO",
+        kind: "slab", grader: "CGC", grade: 8.5, condition: null, sales30: 3, sales90: 3, latestSaleAt: stamp,
+        medianUsd: 300, listingIds: [], projectedProfit: null };
+    for (const marketPreferences of [{ printing: "FIRST_EDITION", finish: "HOLO" },
+        { printing: "UNLIMITED", grader: "CGC", minGrade: 8, maxGrade: 9.5 }]) {
+        const desired = { ...base, printing: marketPreferences.printing };
+        const markets = [desired, { ...base, printing: marketPreferences.printing === "FIRST_EDITION" ? "UNLIMITED" : "FIRST_EDITION" },
+            ...(marketPreferences.grader ? [{ ...base, grader: "PSA" }, { ...base, grade: 7 }, { ...base, grade: 10 },
+                { ...base, kind: "raw" }] : [])];
+        const hunt = createDealHuntService({ now: () => now, discovery: unexpected, inventory: unexpected, snapshot: unexpected,
+            setYears: unexpected, markets: async () => markets, discoverMarket: unexpected,
+            plan: async input => {
+                assert.equal(input.markets?.length, 1, JSON.stringify(input.markets));
+                assert.match(input.markets![0].summary, marketPreferences.printing === "FIRST_EDITION" ? /first edition/ : /unlimited/);
+                assert.match(input.markets![0].summary, /CGC 8.5/);
+                return { searchId, goal: "resell", decision: "WAIT", destination: null, reason: "No copy inspected.", steps: [] };
+            } });
+        await hunt(searchId, { ...request, marketPreferences }, signal());
+    }
+    for (const marketPreferences of [{ printing: "UNKNOWN" }, { grader: "OTHER" }, { minGrade: 0 }, { maxGrade: 10.5 },
+        { minGrade: 8.2 }, { minGrade: 9, maxGrade: 8 }]) {
+        assert.throws(() => dealHuntRequest({ ...request, marketPreferences }), { status: 400 });
+    }
+});
+
+test("a cached Dark Gengar candidate must retain the hunt printing and certified grade", async () => {
+    const e = cardEvaluation();
+    Object.assign(e.identity!, { name: "Dark Gengar", set: "Neo Destiny", cardNumber: "6/105", printing: "UNLIMITED" });
+    Object.assign(e.listing, { id: listingId, title: "Dark Gengar Neo Destiny 6/105 Unlimited Holo", price: 20, shipping: 0,
+        buyingOption: "FIXED_PRICE", availability: "ACTIVE", termsCheckedAt: stamp, endTime: null,
+        photos: ["https://i.ebayimg.com/images/g/gengar/s-l1600.jpg"] });
+    e.photoCheck!.cardCount = "ONE";
+    const row = { id: listingId, title: e.listing.title, currentPrice: 20, shipping: 0, buyingOption: "FIXED_PRICE",
+        isGraded: false, images: e.listing.photos!, seller: null, url: e.listing.url, bids: 0, endTime: null };
+    const inventory = { intent: { cardName: "Dark Gengar", sets: [], cardNumber: null, printing: null,
+        graded: null, titleWords: [], source: "rules" }, filters: { typeFilter: "FIXED_PRICE" }, rows: [{ listing: row, assessable: true }] };
+    const snapshot = { version: 1, searchId, evidenceKey: listingEvidenceKey(row), contextKey: "unused", evaluation: e };
+    for (const [marketPreferences, expected] of [[{ printing: "UNLIMITED" }, 1], [{ printing: "FIRST_EDITION" }, 0],
+        [{ grader: "CGC", minGrade: 8, maxGrade: 9 }, 0]] as const) {
+        const hunt = createDealHuntService({ now: () => now,
+            discovery: async () => ({ searchId, savedAt: stamp, discovery: { total: 1, found: 1, skipped: 0, deferred: 0, retainedIds: [listingId] } }),
+            inventory: async () => inventory, snapshot: async () => snapshot, evaluate: unexpected, details: unexpected,
+            plan: async input => { assert.equal(input.candidates.length, expected); return { searchId, goal: "resell", decision: "WAIT",
+                destination: null, reason: "Only candidate scope was checked.", steps: [] }; } });
+        await hunt(searchId, { goal: "resell", listingIds: [listingId], targets: { minProfit: 0, minRoi: 0 }, marketPreferences }, signal());
+    }
+});
+
+test("a requested Neo Revelation market cannot broaden into Neo Genesis when no year was supplied", async () => {
+    const f = example(), lead = liquidGradingMarket();
+    let menuSeen = false;
+    const hunt = service(f, {
+        discovery: unexpected, inventory: unexpected, snapshot: unexpected, setYears: unexpected,
+        markets: async (_origin, _goal, _scope, _active, accepts) => {
+            assert.equal(accepts?.("Neo Revelation"), true);
+            assert.equal(accepts?.("Neo Genesis"), false);
+            return [{ ...lead, set: "Neo Genesis" }, { ...lead, set: "Neo Revelation" }];
+        },
+        discoverMarket: unexpected,
+        plan: async ({ markets, candidates }) => {
+            menuSeen = true;
+            assert.equal(candidates.length, 0);
+            assert.equal(markets?.length, 1);
+            assert.match(markets![0].title, /Neo Revelation/);
+            return { searchId, goal: "resell", decision: "WAIT", destination: null, reason: "The requested release has no checked copy yet.", steps: [] };
+        },
+    });
+    await hunt(searchId, { ...goal, goal: "resell", scope: "any_card", standalone: true, listingIds: [],
+        marketPreferences: { sets: ["Neo Revelation"], finish: "HOLO" } }, signal());
+    assert.equal(menuSeen, true);
+
+    Object.assign(f.e.identity!, { set: "Neo Genesis" });
+    const original = service(f, { plan: async ({ candidates }) => {
+        assert.equal(candidates.length, 0, "an existing different-release assessment cannot satisfy the set preference");
+        return { searchId, goal: "grade_raw", decision: "WAIT", destination: null, reason: "No copy in the requested release.", steps: [] };
+    } });
+    await original(searchId, { ...goal, marketPreferences: { sets: ["Neo Revelation"] } }, signal());
+});
 
 test("the service rejects a listing outside the search before any inventory, evidence or provider request", async () => {
     const hunt = service(example(), { inventory: unexpected, snapshot: unexpected, plan: unexpected });
@@ -281,9 +371,9 @@ test("a standalone fresh grading hunt assesses the ranked fifteen before choosin
     assert.equal(result.report.decision, "BUY", JSON.stringify(result.report));
     assert.deepEqual(result.report.destination, { listingId: picks[0], section: "grading" });
     assert.equal(result.alternative?.listing.id, picks[0]);
-    assert.match(result.report.marketNote!, /15 of 15/);
+    assert.match(result.report.marketNote!, /15 priority copies.*All 50 eligible copies remain available/);
     assert.match(result.report.reason, /grading.*costs/i);
-    assert.match(result.report.reason, /grade 7.*3 recent sales.*grade 6.*3 recent sales/i);
+    assert.match(result.report.reason, /grade 7.*3 sales in 60 days.*grade 6.*3 sales in 60 days/i);
 });
 
 test("a standalone fresh grading buy requires the actual copy's edition and sales at the lower grade", async () => {
@@ -342,7 +432,7 @@ test("a flip with no seed searches the liquid market with the buyer's filters an
     assert.deepEqual(result.report.destination, { listingId, section: "grading" });
     assert.equal(result.report.steps[0].action, "find_listings");
     assert.equal(result.alternative?.listing.id, listingId);
-    assert.match(result.alternative!.reason, /3 matched sales in 30 days/);
+    assert.match(result.alternative!.reason, /3 observed matching sales in 60 days/);
     assert.equal(result.evaluation?.listing.id, listingId);
     assert.deepEqual(result.candidates, [other]);
 });

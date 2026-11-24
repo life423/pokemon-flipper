@@ -7,7 +7,8 @@ import { chooseReviewSelection } from "../deals/search-review-selection.ts";
 import { availablePhotoCount } from "../../shared/analysis-priority.ts";
 import { freshListingTime } from "../../shared/grading-watch.ts";
 import { sellerConditionClues } from "../../shared/raw-condition-claim.ts";
-import { autoAnalysisBlockReason, meetsMinimumGrade, type AutoAnalysisBlockReason } from "../../shared/analysis.ts";
+import { meetsMinimumGrade, type AutoAnalysisBlockReason } from "../../shared/analysis.ts";
+import { FIRST_REVIEW_COUNT } from "../../shared/search-review-selection.ts";
 import { englishListingEligible } from "../../shared/card-language.ts";
 import { dealHuntGoals, type DealHuntAction, type DealHuntGoal, type DealHuntRequest, type DealHuntResponse } from "../../shared/deal-hunt.ts";
 import { buyerReviewBlock } from "../../shared/wait-skip-review.ts";
@@ -45,6 +46,7 @@ import { describeHuntMarket, huntOrigin, keepsSetSearchPreferences, marketItemLi
 import { groupMarketCopies, groupMarketSearches, huntMarketCardKey } from "./deal-hunt-market-groups.ts";
 import { supplementalResearch } from "../pricing/supplemental-research.ts";
 import { restoreRawComparisons } from "../pricing/saved-raw-comparisons.ts";
+import { sameSetFamily } from "../identity/card-identity.ts";
 
 export class DealHuntInputError extends Error {
     constructor(message: string, readonly status = 400) { super(message); }
@@ -57,6 +59,7 @@ export function dealHuntRequest(input: unknown): DealHuntRequest {
     const filters = body?.filters, minimumGrade = body?.minPotentialGrade ?? 0;
     const preferences = body?.marketPreferences;
     const years = [preferences?.minYear, preferences?.maxYear];
+    const grades = [preferences?.minGrade, preferences?.maxGrade];
     const freshGrading = body?.standalone === true && body.goal === "grade_raw" &&
         filters?.typeFilter === "FIXED_PRICE" && filters.kindFilter !== "graded";
     if (!body || typeof body.goal !== "string" || !Object.hasOwn(dealHuntGoals, body.goal) ||
@@ -74,6 +77,12 @@ export function dealHuntRequest(input: unknown): DealHuntRequest {
         (preferences !== undefined && (!preferences || typeof preferences !== "object" || Array.isArray(preferences) ||
             years.some(year => year !== undefined && (!Number.isInteger(year) || year < 1900 || year > 2100)) ||
             (preferences.minYear ?? 1900) > (preferences.maxYear ?? 2100) ||
+            ![undefined, "FIRST_EDITION", "SHADOWLESS", "UNLIMITED"].includes(preferences.printing) ||
+            ![undefined, "PSA", "CGC", "BGS", "SGC", "TAG"].includes(preferences.grader) ||
+            grades.some(grade => grade !== undefined && (!Number.isFinite(grade) || grade < 1 || grade > 10 || !Number.isInteger(grade * 2))) ||
+            (preferences.minGrade ?? 1) > (preferences.maxGrade ?? 10) ||
+            (preferences.sets !== undefined && (!Array.isArray(preferences.sets) || !preferences.sets.length || preferences.sets.length > 8 ||
+                preferences.sets.some(set => typeof set !== "string" || !set.trim() || set.length > 120))) ||
             ![undefined, "HOLO", "REVERSE_HOLO", "NON_HOLO"].includes(preferences.finish))) ||
         body.listingIds.some(id => typeof id !== "string" || !/^[\w|-]{1,120}$/.test(id)) ||
         new Set(body.listingIds).size !== body.listingIds.length || !targets ||
@@ -82,7 +91,9 @@ export function dealHuntRequest(input: unknown): DealHuntRequest {
     }
     return { goal: body.goal, scope, standalone: body.standalone === true, minPotentialGrade: minimumGrade,
         filters: filters && { typeFilter: filters.typeFilter, kindFilter: filters.kindFilter, minPrice: filters.minPrice, maxPrice: filters.maxPrice },
-        ...(preferences && { marketPreferences: { minYear: preferences.minYear, maxYear: preferences.maxYear, finish: preferences.finish } }),
+        ...(preferences && { marketPreferences: { minYear: preferences.minYear, maxYear: preferences.maxYear, finish: preferences.finish,
+            printing: preferences.printing, grader: preferences.grader, minGrade: preferences.minGrade, maxGrade: preferences.maxGrade,
+            ...(preferences.sets && { sets: [...new Set(preferences.sets.map(set => set.trim()))] }) } }),
         listingIds: [...body.listingIds], targets: { minProfit: targets.minProfit, minRoi: targets.minRoi } };
 }
 
@@ -113,7 +124,7 @@ export async function saveDealHuntInventory(searchId: string, intent: SearchInte
             source.screen?.junk || !englishListingEligible(source);
         const { screen, mistakes, ...listing } = source;
         const block = buyerReviewBlock(source);
-        rows.push({ listing, block, assessable: autoAnalysisBlockReason(source) === null, ...(excluded && { excludedFromHunt: true }),
+        rows.push({ listing, block, assessable: block === null, ...(excluded && { excludedFromHunt: true }),
             ...(screen?.reason && { screenReason: screen.reason }), ...(screen?.gradingLead && { gradingLead: true }) });
     }
     await writeCache(inventoryKey(searchId), { intent, filters, rows } satisfies HuntInventory);
@@ -160,7 +171,7 @@ interface ScopedCandidate extends DealHuntCandidate {
 
 function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searchId: string, saved: PrivateEvaluationSnapshot | null,
     inventory: HuntInventory | null, row: HuntRow | undefined, evaluations: Map<string, Evaluation>, deps: Dependencies,
-    filters: ListingFilters, minGrade: number, acceptsMarket: (set?: string | null, finish?: string | null) => boolean, markets: HuntMarket[] = [],
+    filters: ListingFilters, minGrade: number, acceptsEvaluation: (evaluation: Evaluation) => boolean, markets: HuntMarket[] = [],
     freshGrading = false): ScopedCandidate | null {
     // Never use an unrelated old version of a card simply because its eBay ID is the same.
     if (saved && (saved.evaluation.listing.id !== id || (row ? !rowMatches(row, saved) : saved.searchId !== searchId))) saved = null;
@@ -170,7 +181,7 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
     let checkFullListing = Boolean((markets.length || auction) && saved);
     let value = saved && retargetEvaluation(saved.evaluation, targets, row?.listing);
     if (freshGrading && (!row || freshListingTime(row.listing, deps.now()) === null)) return null;
-    const matches = (e: Evaluation) => e.listing.buyingOption === format && acceptsMarket(e.identity?.set, e.identity?.finish) && fits(e, row, inventory) && meetsMinimumGrade(e, minGrade) && (!markets.length || markets.some(market => matchesHuntMarket(e, market, !!huntPrintingCheck(e), freshGrading) && !evaluatedCriteriaMismatch(e, marketIntent(market)))) &&
+    const matches = (e: Evaluation) => e.listing.buyingOption === format && acceptsEvaluation(e) && fits(e, row, inventory) && meetsMinimumGrade(e, minGrade) && (!markets.length || markets.some(market => matchesHuntMarket(e, market, !!huntPrintingCheck(e), freshGrading) && !evaluatedCriteriaMismatch(e, marketIntent(market)))) &&
         (!row || matchesListingFilters({ ...row.listing, currentPrice: e.listing.price }, filters, e));
     if (value && !matches(value)) return null;
     const reader = () => value && dealHuntCandidate(value, goal, deps.now, markets, targets, filters.maxPrice);
@@ -239,8 +250,9 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
             if (freshGrading && result.decision === "BUY" && row) {
                 const opportunity = newGradingOpportunity(value, deps.now(), targets, withFreshListing(row.listing, value));
                 if (!opportunity) return { decision: "WAIT", section: "grading",
-                    reason: `${result.reason} A fresh grading buy requires front and back evidence, three recent sales at the likely grade, and a profitable sale comparison one grade lower.` };
-                return { ...result, section: "grading", reason: `Grading with ${opportunity.grader} costs ${dollars(opportunity.gradingCosts)} including submission shipping. Grade ${opportunity.likely.grade} projects ${dollars(opportunity.likely.profit)} profit after costs (${opportunity.likely.sales30} recent sales). One grade lower, grade ${opportunity.lower.grade} projects ${dollars(opportunity.lower.profit)} (${opportunity.lower.sales30} recent sales).` };
+                    reason: `${result.reason} A fresh grading buy requires front and back evidence, a supported value at the likely grade, and a profitable sale comparison one grade lower.` };
+                const activity = (quote: typeof opportunity.likely) => quote.sales60 === undefined ? `${quote.sales30} sales in 30 days` : `${quote.sales60} sales in 60 days`;
+                return { ...result, section: "grading", reason: `Grading with ${opportunity.grader} costs ${dollars(opportunity.gradingCosts)} including submission shipping. Grade ${opportunity.likely.grade} projects ${dollars(opportunity.likely.profit)} profit after costs (${activity(opportunity.likely)}). One grade lower, grade ${opportunity.lower.grade} projects ${dollars(opportunity.lower.profit)} (${activity(opportunity.lower)}).` };
             }
             return result;
         },
@@ -390,15 +402,22 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
             const filters: ListingFilters = { typeFilter: format, minPrice: Math.max(previous?.minPrice ?? 0, requested?.minPrice ?? 0),
                 kindFilter: freshGrading ? "raw" : previous?.kindFilter && previous.kindFilter !== "all" ? previous.kindFilter : requested?.kindFilter,
                 maxPrice: ceilings.length ? Math.min(...ceilings) : undefined };
-            const { minYear, maxYear, finish } = request.marketPreferences ?? {};
+            const { minYear, maxYear, finish, sets, printing, grader, minGrade, maxGrade } = request.marketPreferences ?? {};
             const yearRange = minYear !== undefined || maxYear !== undefined;
             const years = yearRange ? await deps.setYears() : {};
             const acceptsSet = (set?: string | null) => {
+                if (sets?.length && (!set || !sets.some(wanted => sameSetFamily(set, wanted)))) return false;
                 if (!yearRange) return true;
                 const year = yearOf(years, set);
                 return year !== null && year >= (minYear ?? 1900) && year <= (maxYear ?? 2100);
             };
             const acceptsMarket = (set?: string | null, cardFinish?: string | null) => (!finish || finish === cardFinish) && acceptsSet(set);
+            const preferenceIntent: SearchIntent = { cardName: null, sets: [], cardNumber: null, printing: printing ?? null,
+                graded: grader || minGrade !== undefined || maxGrade !== undefined ? true : null,
+                grader: grader ?? null, minGrade: minGrade ?? null, maxGrade: maxGrade ?? null, finish: finish ?? null,
+                titleWords: [], source: "rules" };
+            const acceptsEvaluation = (evaluation: Evaluation) => acceptsMarket(evaluation.identity?.set, evaluation.identity?.finish) &&
+                !evaluatedCriteriaMismatch(evaluation, preferenceIntent);
             const rows = new Map(inventory?.rows.filter(row => row.listing.buyingOption === format &&
                 (!row.excludedFromHunt || format === "AUCTION" && row.assessable && !row.listing.match && englishListingEligible(row.listing))).map(row => [row.listing.id, row]));
             const evaluations = new Map<string, Evaluation>();
@@ -411,7 +430,7 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                 const snapshots = await Promise.all(batch.map(id => deps.snapshot(id)));
                 batch.forEach((id, index) => {
                     const candidate = scopedCandidate(id, goal, targets, searchId, snapshots[index], inventory,
-                        rows.get(id), evaluations, deps, filters, minPotentialGrade, acceptsMarket);
+                        rows.get(id), evaluations, deps, filters, minPotentialGrade, acceptsEvaluation);
                     if (candidate) candidates.push(candidate);
                 });
             }
@@ -423,22 +442,25 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                 const leads = scope === "same_set" && !origin ? [] : await deps.markets(origin, goal, scope, active, acceptsSet);
                 active.throwIfAborted();
                 const knownIds = new Set(retained);
-                const permitted = leads.filter(lead => acceptsMarket(lead.set, lead.finish) && (scope !== "same_set" || keepsSetSearchPreferences(lead, inventory?.intent)));
+                const permitted = leads.filter(lead => acceptsMarket(lead.set, lead.finish) && keepsSetSearchPreferences(lead, preferenceIntent) &&
+                    (scope !== "same_set" || keepsSetSearchPreferences(lead, inventory?.intent)));
                 for (const group of groupMarketSearches(permitted, goal, targets, filters, minPotentialGrade, knownIds)) {
                     const [intent, ...relatedIntents] = group.intents;
                     const reference = group.leads[0];
                     const recentAsk = group.observedPurchaseTotal === undefined ? "" :
                         ` A matching copy was seen in the last 24 hours at ${dollars(group.observedPurchaseTotal)} including shipping and estimated tax. Check its current price and availability.`;
                     const summary = group.leads.map(describeHuntMarket).join(" ") + recentAsk;
+                    const queryOffsets = new Map<MarketQueryObservation["strategy"], number | null>();
                     markets.push({ cardKey: huntMarketCardKey(reference), releaseYear: yearOf(years, reference.set) ?? undefined,
                         title: `${reference.name} ${reference.cardNumber} · ${reference.set}`,
                         summary: summary + ` Research item prices up to ${dollars(group.ceiling)} before adjusting for shipping.`,
+                        hasMore: () => [...queryOffsets.values()].some(offset => offset !== null),
                         async discover(_signal?: AbortSignal, reportQueries?: (description: string) => void) {
                             const queries: MarketQueryObservation[] = [];
                             const useNumbers = format === "FIXED_PRICE" && !intent.graded;
                             const found = await deps.discoverMarket(searchId, intent, { ...filters, maxPrice: group.ceiling }, active,
-                                { relatedIntents, ...(freshGrading && { newlyListedRaw: true }), ...(useNumbers && {
-                                    collectorNumberDiscovery: "fallback", knownListingIds: knownIds,
+                                { relatedIntents, queryOffsets, ...(freshGrading && { newlyListedRaw: true }), ...(useNumbers && {
+                                    collectorNumberDiscovery: "compare", knownListingIds: knownIds,
                                     isUsable: listing => group.leads.some(lead => shortlistMarketCopies([listing], lead, goal, targets, filters).length > 0),
                                     onQuery: query => queries.push(query),
                                 }) });
@@ -458,22 +480,24 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                             const fresh = groupMarketCopies(listings, group, goal, targets, filters, deps.now())
                                 .filter(({ listing }) => !knownIds.has(listing.id) && matchesListingFilters(listing, filters) &&
                                     (!freshGrading || freshListingTime(listing, deps.now()) !== null));
-                            let picks = fresh.slice(0, 6);
+                            let picks = fresh;
                             if (freshGrading && fresh.length) {
                                 const pool = fresh.slice(0, DEVELOPMENT_SEARCH_LIMIT);
                                 const rows = await deps.researchFreshRawSellers(pool.map(copy => copy.listing), deps.now(), active);
                                 const ranked = await deps.selectReviews(rows, targets, active, deps.now());
                                 const copies = new Map(pool.map((copy, index) => [copy.listing.id, { ...copy, listing: rows[index] }]));
-                                picks = ranked.listingIds.map(id => copies.get(id)!).filter(Boolean);
+                                const priority = new Set(ranked.listingIds);
+                                picks = [...ranked.listingIds.map(id => copies.get(id)!).filter(Boolean),
+                                    ...fresh.filter(copy => !priority.has(copy.listing.id))];
                             }
                             const discovered: DealHuntCandidate[] = [];
                             for (const { listing, leads } of picks) {
                                 active.throwIfAborted();
-                                const row = { listing, assessable: autoAnalysisBlockReason(listing, deps.now()) === null, collectorQuery: numberQueries.get(listing.id) };
+                                const row = { listing, assessable: buyerReviewBlock(listing, deps.now()) === null, collectorQuery: numberQueries.get(listing.id) };
                                 const saved = await deps.snapshot(listing.id);
                                 // Each candidate verifies the complete identity against its viable exits.
                                 const candidate = scopedCandidate(listing.id, goal, targets, searchId, saved, null,
-                                    row, evaluations, deps, filters, minPotentialGrade, acceptsMarket, leads, freshGrading);
+                                    row, evaluations, deps, filters, minPotentialGrade, acceptsEvaluation, leads, freshGrading);
                                 if (!candidate) continue;
                                 const matched = saved ? leads.filter(lead => matchesHuntMarket(saved.evaluation, lead)) : [];
                                 const reason = (matched.length ? matched : leads).map(describeHuntMarket).join(" ");
@@ -484,9 +508,10 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                             if (freshGrading && fresh.length >= DEVELOPMENT_SEARCH_LIMIT) {
                                 // The same candidate closure retains its assessment for every subsequent planner check.
                                 let reviewed = 0;
-                                for (let i = 0; i < discovered.length; i += BOUNDED_AUTO_CONCURRENCY) {
+                                const firstReviews = discovered.slice(0, FIRST_REVIEW_COUNT);
+                                for (let i = 0; i < firstReviews.length; i += BOUNDED_AUTO_CONCURRENCY) {
                                     active.throwIfAborted();
-                                    const batch = discovered.slice(i, i + BOUNDED_AUTO_CONCURRENCY);
+                                    const batch = firstReviews.slice(i, i + BOUNDED_AUTO_CONCURRENCY);
                                     const results = await Promise.allSettled(batch.map(async candidate => {
                                         const photos = await withAiUsageContext({ searchId, listingId: candidate.listingId }, () =>
                                             Promise.resolve(candidate.read("inspect_photos", active)));
@@ -496,7 +521,7 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                                     const failure = results.find(result => result.status === "rejected");
                                     if (failure) throw failure.reason;
                                 }
-                                marketNote = `Reviewed photos for ${reviewed} of ${picks.length} selected copies from ${DEVELOPMENT_SEARCH_LIMIT} eligible listings for ${reference.name}.`;
+                                marketNote = `Reviewed photos for ${reviewed} priority copies. All ${discovered.length} eligible copies remain available for ${reference.name}.`;
                             }
                             return discovered;
                         } });

@@ -1,13 +1,13 @@
 import { useEffect, useReducer, useRef } from "react";
-import type { BuyerListingReview } from "../../../shared/wait-skip-review.ts";
+import { BUYER_REVIEW_MAX_ATTEMPTS, buyerReviewFailure, buyerReviewRetryAt, type BuyerListingReview } from "../../../shared/wait-skip-review.ts";
 import { listingEvidenceKey } from "../../../shared/listing-evidence.ts";
 import { BOUNDED_AUTO_CONCURRENCY } from "../../../shared/research-policy.ts";
 import { BEST_BUY_TERMS_MAX_AGE_MS } from "../../../shared/search-diagnostic.ts";
-import { reviewBuyerListing } from "../api";
+import { ApiRequestError, reviewBuyerListing } from "../api";
 import type { Evaluation, ListingSummary, Targets } from "../types";
 
-type Decision = Pick<BuyerListingReview, "decision" | "reason" | "offer" | "gradingOpportunity" | "auctionOpportunity"> & { unavailable?: true; expiredQuote?: true };
-type Completed = { key: string; transitionFrom?: string; decision: Decision; unavailable: boolean; validUntil?: number };
+type Decision = Pick<BuyerListingReview, "decision" | "reason" | "offer" | "gradingOpportunity" | "auctionOpportunity" | "failure"> & { unavailable?: true; expiredQuote?: true };
+type Completed = { key: string; transitionFrom?: string; decision: Decision; unavailable: boolean; validUntil?: number; retryAt?: number; attempts: number };
 const evidence = (row: ListingSummary) => [listingEvidenceKey(row), row.currentPrice, row.shipping, row.availability,
     row.buyingOption, row.bestOffer, row.bids, row.endTime, row.cardCondition, row.conditionNotes, row.termsCheckedAt, row.seller];
 interface Options {
@@ -64,7 +64,23 @@ export function useBuyerReviews(options: Options) {
             : completed.decision;
         if (completed.unavailable) unavailable++;
     }
-    const pending = queue.filter(listing => !decisions[listing.id]);
+    const pending = queue.filter(listing => {
+        const completed = results.current.get(listing.id);
+        return !decisions[listing.id] || allowResearch && completed?.key === reviewKey(options, listing) && completed.retryAt !== undefined;
+    });
+    useEffect(() => {
+        if (!enabled || !ready || !allowResearch || !searchId) return;
+        const future = pending.flatMap(row => {
+            const completed = results.current.get(row.id);
+            return completed?.key === reviewKey(options, row) && completed.retryAt !== undefined && completed.retryAt > Date.now()
+                ? [completed.retryAt] : [];
+        });
+        if (!future.length) return;
+        // Cooldowns release the concurrency slot. Stop/unmount/input changes
+        // clear this timer, while a later attempt keeps the original owner.
+        const timer = setTimeout(update, Math.min(2_147_483_647, Math.max(0, Math.min(...future) - Date.now())));
+        return () => clearTimeout(timer);
+    });
     useEffect(() => {
         if (!enabled || !ready || !searchId) return;
         for (const id of results.current.keys()) if (!latest.current.owners.has(id)) results.current.delete(id);
@@ -80,7 +96,9 @@ export function useBuyerReviews(options: Options) {
             if (running.current.size + busy.size >= BOUNDED_AUTO_CONCURRENCY) break;
             const id = listing.id, owner = options.owners.get(id), key = reviewKey(options, listing);
             const completed = results.current.get(id);
-            if (!owner || busy.has(id) || running.current.has(id) || completed?.key === key || completed?.transitionFrom === key) continue;
+            const retryDue = allowResearch && completed?.key === key && completed.retryAt !== undefined && completed.retryAt <= Date.now();
+            if (!owner || busy.has(id) || running.current.has(id) || completed?.key === key && !retryDue || completed?.transitionFrom === key) continue;
+            const attempts = (completed?.key === key ? completed.attempts : 0) + 1;
             const controller = new AbortController();
             running.current.set(id, controller);
             started = true;
@@ -100,11 +118,24 @@ export function useBuyerReviews(options: Options) {
                     if (result.offer && (!offers || result.decision !== "WAIT" || !(result.offer.opening > 0) ||
                         !Number.isFinite(result.offer.maxItemPrice) || result.offer.opening > result.offer.maxItemPrice)) throw new Error("Invalid offer");
                     const updated = currentOptions.onResult(current, result, owner);
-                    results.current.set(id, { key: reviewKey(currentOptions, updated.listing, updated.evaluation), transitionFrom: key, decision: { decision: result.decision, reason: result.reason, offer: result.offer, gradingOpportunity: result.gradingOpportunity, auctionOpportunity: result.auctionOpportunity, unavailable: result.unavailable }, unavailable: !!result.unavailable, validUntil });
-                } catch {
-                    if (!controller.signal.aborted) results.current.set(id, { key, unavailable: true, decision: {
-                        decision: "WAIT", unavailable: true, reason: "Wait to buy. The app could not finish checking this listing’s price and purchase terms.",
-                    } });
+                    const retryAt = allowResearch ? buyerReviewRetryAt(result.failure, result.retryAt, attempts, Date.now()) : undefined;
+                    const exhausted = result.failure?.retryable && attempts >= BUYER_REVIEW_MAX_ATTEMPTS;
+                    results.current.set(id, { key: reviewKey(currentOptions, updated.listing, updated.evaluation), transitionFrom: key,
+                        decision: { decision: result.decision, reason: result.reason + (exhausted ? " Automatic checks stopped after three attempts; this copy has not failed verification." : ""),
+                            offer: result.offer, gradingOpportunity: result.gradingOpportunity, auctionOpportunity: result.auctionOpportunity,
+                            unavailable: result.unavailable, failure: result.failure }, unavailable: !!result.unavailable, validUntil, retryAt, attempts });
+                } catch (error) {
+                    if (!controller.signal.aborted) {
+                        const failure = buyerReviewFailure(error instanceof ApiRequestError ? error.code : undefined, error instanceof ApiRequestError && error.retryable);
+                        const retryAt = allowResearch ? buyerReviewRetryAt(failure, error instanceof ApiRequestError
+                            ? error.retryAt ?? Date.now() + error.retryAfterMs : undefined, attempts, Date.now()) : undefined;
+                        const reason = error instanceof ApiRequestError ? error.message : "Wait to buy. The app could not finish checking this listing’s price and purchase terms.";
+                        results.current.set(id, { key, unavailable: true, retryAt, attempts, decision: {
+                            decision: "WAIT", unavailable: true, failure,
+                            reason: reason + (failure.retryable && attempts >= BUYER_REVIEW_MAX_ATTEMPTS
+                                ? " Automatic checks stopped after three attempts; this copy has not failed verification." : ""),
+                        } });
+                    }
                 } finally {
                     if (running.current.get(id) === controller) {
                         running.current.delete(id);
@@ -122,5 +153,6 @@ export function useBuyerReviews(options: Options) {
         update();
     };
     return { decisions, recheckQuote, remaining: pending.length, unavailable, reviewed: Object.keys(decisions).length - unavailable,
-        active: enabled && ready ? running.current.size : 0 };
+        active: enabled && ready ? running.current.size : 0,
+        activeIds: enabled && ready ? new Set(running.current.keys()) : new Set<string>() };
 }

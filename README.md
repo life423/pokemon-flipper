@@ -15,6 +15,16 @@ Start with the [current plan and supplied resources](LOCAL_PLAN.md),
 
 ## November 24 progress
 
+The latest checkpoint adds condition-specific TCGplayer raw resale estimates,
+rolling 60-day sales activity without a hard three-sale purchase veto, bounded
+recovery from temporary review failures, and discovery continuation in batches
+of 50. Active asks and completed sales have separate provenance. The AI assesses
+the raw copy's condition before the app selects its matching condition price.
+Broad hunts still depend on saved market seeds; expanding those seeds and
+independently accepting automatic continuation through the browser remain in
+the [active checklist](LOCAL_TODO.md#november-24-stopping-checkpoint). A new live
+profitable deal has not been demonstrated by this checkpoint.
+
 The buying guide now lets the AI choose from the app's research functions for a
 collector or reseller goal. It can search a liquid card market, inspect a copy's
 original photos, verify listing terms, fetch matching sales, compare additional
@@ -50,20 +60,23 @@ Auction sniper development and the planned PriceCharting importer are on hold.
 
 ## Search workflow
 
-1. Interpret the request and resolve catalog candidates while preserving typed
-   card, set, number, finish, edition, grader and grade constraints.
+1. Send the submitted search text to OpenAI for a structured interpretation.
+   Show the interpreted criteria, then route its refined query into card/set
+   discovery or a market hunt. Preserve card, set, number, years, finish,
+   edition, grader, grade, listing format and explicit purchase targets.
 2. Fetch up to 200 listing summaries per discovery pass. Apply known mismatches,
    listing-format, price and auction-window rules; deduplicate listing IDs.
 3. Gather exact recent sold evidence through PKMNPrices and the shared cache.
    Screen prices before buying photos. One eligible sale can support sparse
    research with low confidence. Unresolved evidence is not a zero price.
 4. Continue screening beyond 50 unresolved rows before selecting at most 50
-   retained rows for display and assessment. A thin newest-first BIN search can
+   retained rows per review batch. Continue saved overflow and later source pages
+   under the original account and constraints. A thin newest-first BIN search can
    add one lower-price pass under the same allowances. Local result sorting is
    separate from marketplace discovery order.
 5. With automatic assessment enabled, the app reviews every retained listing.
    For a batch with more than 15 eligible listings the AI picks the first 15,
-   with rule-based priority when the ranking service is unavailable. Two reviews
+   with rule-based priority when the ranking service is unavailable. Six reviews
    can run at once. Each card gives a buyer decision and its reason. Progress
    reports completed decisions and counts priority listings with photo evidence.
    Reuse accepted photo findings. Check only decision-relevant images, with
@@ -76,13 +89,16 @@ Auction sniper development and the planned PriceCharting importer are on hold.
    in code. Preserve unresolved, rejected and never-reached reasons separately
    from finished assessments and Deals.
 
-The normal queue allows two assessments in flight. Fifty retained rows do not
+The normal queue allows six assessments in flight, and independent grade-market
+lookups can overlap. Queued cards and active checks have distinct status labels.
+Completed decisions surface above pending cards in the default ordering.
+Fifty retained rows do not
 promise fifty paid assessments. Current searches are English-only; unknown
 language remains preliminary until identified.
 
 | Resale route | Required evidence |
 | --- | --- |
-| Sell raw as-is | Exact sold copies with accepted physical condition evidence |
+| Sell raw as-is | Assessed live condition and exact condition/printing TCGplayer valuation or supported condition-matched sold evidence |
 | Buy raw and grade | Supported raw grade estimate and exact PSA/CGC sales around it |
 | Resell an existing slab | Exact card, printing, finish, grading company and certified grade |
 
@@ -109,7 +125,10 @@ estimated tax and the costs of the chosen resale route.
 
 ### How the app handles a thin price market
 
-PKMNPrices supplies the matching sold transactions used for the resale calculation.
+PKMNPrices supplies matching sold transactions and TCGplayer condition offers.
+For raw resale, the app can use the lowest matching delivered asking price,
+capped by the exact condition market value when available, or a labeled
+condition market fallback. Asking prices never count as sold volume.
 For a photo-identified Buy It Now listing with a confirmed shipping quote, the app
 can check Pokémon Price Tracker for a product and grade summary. It can also run
 a single OpenAI web search for the exact raw condition or certified grade.
@@ -135,7 +154,8 @@ and reuses earlier checks when the same copy appears again.
 
 An alert shows the delivered price, grading and submission costs, and estimated
 profit after selling costs at two grades. The likely grade must meet the buyer’s
-targets with at least three matching sales in the past 30 days. One grade lower
+targets with supported matching sales, with observed 60-day activity shown
+separately. One grade lower
 must still yield a profit and have at least one matching sale. The assessment
 uses front and back photos, so a seller’s Near Mint description leaves room for
 the AI to recognize a cleaner copy. An expired quote can be rechecked from Results.
@@ -151,7 +171,7 @@ the AI to recognize a cleaner copy. An expired quote can be rechecked from Resul
   surfaces support the hierarchy. Grading labels remain neutral; losses use red.
 - Search controls preserve format, raw/graded choice, marketplace order and
   targets. Target changes reprice retained evidence without repeating photos.
-- Choose **Find a flip** on the search screen to hunt for a profitable card across sets without entering a name. The hunt uses recent matched sales to choose which markets to search. A resale Buy requires positive profit after costs, the buyer's targets and at least three distinct sales in the last 30 days for the proposed resale condition or slab grade.
+- Choose **Find a flip** on the search screen to hunt for a profitable card across sets without entering a name. The hunt uses saved market evidence to choose which markets to search. A resale Buy requires supported positive profit after costs and the buyer's targets. Observed sales in the last 60 days are shown separately from asking-price estimates, without a hard transaction-count veto.
 - For a named search, try `2000 Team Rocket Dark Alakazam 1/82 holo`, choose **Buy It Now**, and click **Find deals**. When the search finishes, select **Other cards in the same set** and click **Run deal hunt**. Open **Research steps** to see which alternatives it checked. A resale hunt can try a third or fourth market after empty searches while reserving enough checks to verify a copy.
 - After a Buy It Now search finishes, choose a buying goal under **Deal hunt**
   and select **Run deal hunt**. The guide can look for a raw card worth grading,
@@ -395,6 +415,10 @@ Completed browser searches save listing decisions and can run a short automatic
 text review. Private packets under `data/search-diagnostics/` help identify
 specific blockers. Verify their claims against saved listing evidence and code;
 a review is a proposal, not authority to relax identity or invent resale prices.
+
+The [Deal blocker audit](docs/deal-blockers-audit.md) lists the current rules
+that can exclude, hold, reject or hide a card, and the reproduced integration
+defects that still prevent some economically profitable candidates from qualifying.
 
 The [audit guide](docs/deal-search-audit.md) distinguishes existing behavior,
 reproduced defects, proposed repairs, offline fixtures and live-market evidence.

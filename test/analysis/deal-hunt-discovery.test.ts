@@ -127,7 +127,7 @@ test("after two misses the planner can pick a lower-ranked eligible market and r
         // The first two markets miss. Choose the last remaining different card on both pivots.
         return "market-" + [0, 4, 5, 3][checks] + "/find_listings";
     });
-    const input = { searchId, goal: "resell" as const, candidates: [], markets };
+    const input = { searchId, goal: "resell" as const, candidates: [], markets, maxSteps: 8 };
     const empty = await runDealHunt(input, undefined, model);
     assert.deepEqual(visits, [0, 4, 5, 3]);
     assert.equal(dispatches, 4);

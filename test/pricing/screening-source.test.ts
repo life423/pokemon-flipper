@@ -70,6 +70,48 @@ test("existing catalog and sold pages stay usable with zero new-request allowanc
     assert.deepEqual(source.stats(), { requests: 0, limit: 0 });
 });
 
+test("different cards share one cached set read within the same screening source", async t => {
+    offline(t);
+    const setsPath = "/sets?name=Revelation&language=English&per_page=50";
+    const set = { id: 82401, name: "Neo Revelation" };
+    await writeCache("pkmnprices:" + setsPath, { data: [set] });
+    for (const [id, name, number] of [[82402, "Raikou", "13"], [82403, "Entei", "6"]] as const) {
+        const card = { id, name, number, total_set_number: "64", set, prices: [] };
+        await writeCache(`pkmnprices:/cards?set_id=${set.id}&name=${name.toLowerCase()}&per_page=20`, { data: [card] });
+        await writeCache(`pkmnprices:/cards/${id}?currency=usd`, card);
+    }
+    const setFile = createHash("sha1").update("pkmnprices:" + setsPath).digest("hex") + ".json";
+    const readFile = fs.readFile;
+    let setReads = 0;
+    t.mock.method(fs, "readFile", async (file: Parameters<typeof fs.readFile>[0], ...args: any[]) => {
+        if (path.basename(String(file)) === setFile) setReads++;
+        return (readFile as any)(file, ...args);
+    });
+    t.mock.method(globalThis, "fetch", () => assert.fail("all metadata is already saved"));
+    const source = createScreeningPriceSource({ maxRequests: 0 });
+    assert.equal((await source.lookupCards({ set: "Neo Revelation", name: "Raikou", cardNumber: "13/64" }))[0]?.id, 82402);
+    assert.equal((await source.lookupCards({ set: "Neo Revelation", name: "Entei", cardNumber: "6/64" }))[0]?.id, 82403);
+    assert.equal(setReads, 1);
+});
+
+test("an exhausted screening source rejects missing pages without reserving provider pacing slots", async t => {
+    offline(t);
+    const frozen = clock;
+    t.mock.method(Date, "now", () => frozen);
+    const setTimeout = globalThis.setTimeout;
+    const waits: number[] = [];
+    t.mock.method(globalThis, "setTimeout", (callback: (...args: any[]) => void, delay: number, ...args: any[]) => {
+        waits.push(delay);
+        return setTimeout(callback, 0, ...args);
+    });
+    t.mock.method(globalThis, "fetch", () => assert.fail("an exhausted screening source cannot send a request"));
+    const source = createScreeningPriceSource({ maxRequests: 0 });
+    await assert.rejects(source.fetchRawComps(82501, "Holofoil"), ScreeningPriceBudgetError);
+    await assert.rejects(source.fetchRawComps(82502, "Holofoil"), ScreeningPriceBudgetError);
+    assert.deepEqual(waits, [], "disallowed misses must not enter the provider's one-second pacing queue");
+    assert.equal(source.stats().requests, 0);
+});
+
 test("a saved GG64/70 listing finds the catalog's exact GG64/GG70 PSA 9 sales", async t => {
     offline(t);
     t.mock.method(globalThis, "fetch", () => assert.fail("the saved catalog and sales must need no provider request"));

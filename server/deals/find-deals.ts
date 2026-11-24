@@ -4,7 +4,7 @@ import { addBinMarketComparisons } from "../../shared/bin-market-comparison.ts";
 import { searchListings } from "../ebay/listings.ts";
 import { readSearchWithAi } from "../search/query-assistance.ts";
 import { cardMismatch, gradingMatches, titleMatches, setMatches } from "../search/relevance.ts";
-import { readTitleByRules, readTitleWithoutAi } from "../ai/title-reader.ts";
+import { readTitleByRules, readTitleWithoutAi, readTitlesWithoutAi } from "../ai/title-reader.ts";
 import type { ListingSummary, SearchIntent, Targets } from "../../shared/types.ts";
 import { criteriaMismatch, marketplaceQuery, rawBuyItNowQuery, searchAttributes } from "../../shared/search-criteria.ts";
 import { screenListingWithoutAi } from "./screen-listing.ts";
@@ -27,6 +27,11 @@ import { ProviderError } from "../lib/http.ts";
 import { cents, MAX_OFFER_DISCOUNT_PERCENT } from "../../shared/money/cents.ts";
 import { findBinCompetition } from "./bin-competition.ts";
 import type { CollectorStrategyEvidence } from "../analysis/collector-strategy-evidence.ts";
+import { cachedSetYears } from "../search/set-catalog.ts";
+import { outsideSearchYears } from "../../shared/search-years.ts";
+import type { SearchContinuation } from "../../shared/search-continuation.ts";
+import { discoveryContinuations, type DiscoveryBacklog, type DiscoverySourceCursor, type DiscoveryBatchReceipt } from "./search-continuation.ts";
+import { getAiUsageContext, getBudgetContext, withAiUsageContext } from "../ai/usage-context.ts";
 
 const MIN_NEWEST_CANDIDATES = 3;
 const REFILL_BATCH_SIZE = 4;
@@ -35,6 +40,7 @@ function literalTitleBlock(listing: ListingSummary, intent: SearchIntent): Sourc
     const reading = readTitleByRules(listing.title, intent.sets);
     if (reading.kind && reading.kind !== "SINGLE_CARD") return "JUNK";
     if (!setMatches(reading.set, intent, reading.cardNumber)) return "OTHER_SET";
+    if (outsideSearchYears(intent, reading.set, listing.title)) return "OTHER_SET";
     if (intent.cardNumber && reading.cardNumber && !sameCardNumber(intent.cardNumber, reading.cardNumber)) return "OTHER_CARD";
     return null;
 }
@@ -43,6 +49,8 @@ interface FindSteps {
     readIntent: typeof readSearchWithAi;
     search: typeof searchListings;
     readTitle: typeof readTitleWithoutAi;
+    readTitles?: typeof readTitlesWithoutAi;
+    releaseYears?: typeof cachedSetYears;
     soldScreening?: SoldScreeningFactory;
     priceSource?: typeof createScreeningPriceSource;
     prioritizeText?: typeof prioritizeListingText;
@@ -52,6 +60,8 @@ interface FindSteps {
 }
 
 export interface SearchSummary {
+    continuation?: SearchContinuation;
+    sourceLimitReached?: boolean;
     mode: "development";
     reviewSelection?: SearchReviewSelection;
     deferred: number;
@@ -71,6 +81,8 @@ export interface SearchSummary {
 }
 
 export interface SearchOptions {
+    continuation?: string;
+    onProgress?: (progress: { found: number; screened: number }) => void;
     onStart?: (summary: SearchSummary) => void;
     onListing?: (listing: ListingSummary) => void;
     // Internal observation for new-ID discovery history; not an emitted result
@@ -93,19 +105,25 @@ export interface SearchOptions {
 
 // Screen one page in the requested marketplace order. When the newest BIN page
 // yields few candidates, a second pass can check cheaper inventory.
-export async function findDeals(search: string, {
-    onStart = () => {}, onListing = () => {}, onPriceExcluded = () => {}, onScreenedOverflow = () => {}, onSourceDisposition = () => {}, onCompetition, onCollectorEvidence, minPrice = 0, signal, targets,
-    includeOffers = false, automaticPhotos = false, marketplaceOrder, newOnly, filters, asOf = Date.now(),
+async function findDealsBatch(search: string, {
+    onProgress = () => {}, onStart = () => {}, onListing = () => {}, onPriceExcluded = () => {}, onScreenedOverflow = () => {}, onSourceDisposition = () => {}, onCompetition, onCollectorEvidence, minPrice = 0, signal, targets,
+    includeOffers = false, automaticPhotos = false, marketplaceOrder, newOnly, filters, asOf = Date.now(), continuation: continuationToken,
 }: SearchOptions = {}, dependencies: FindSteps = {
-    readIntent: readSearchWithAi, search: searchListings, readTitle: readTitleWithoutAi,
+    readIntent: readSearchWithAi, search: searchListings, readTitle: readTitleWithoutAi, readTitles: readTitlesWithoutAi, releaseYears: cachedSetYears,
     priceSource: createScreeningPriceSource, prioritizeText: prioritizeListingText, researchAuctionSellers, selectReviews: chooseReviewSelection, competition: findBinCompetition,
-}): Promise<ListingSummary[]> {
+}, resume?: DiscoveryBacklog): Promise<ListingSummary[]> {
     if (signal?.aborted) return [];
     if (cardLanguageStatus(search) === "OTHER") throw new EnglishOnlyError();
     let intent = await dependencies.readIntent(search, signal);
     if (signal?.aborted) return [];
+    if (intent.minYear !== undefined || intent.maxYear !== undefined) {
+        const releaseYears = await dependencies.releaseYears?.();
+        if (releaseYears) intent = { ...intent, releaseYears };
+        if (signal?.aborted) return [];
+    }
     const typedCollectorNumber = intent.cardNumber?.split("/", 1)[0];
-    const screenPrices = createPriceFirstSession(intent, { signal, targets, includeOffers, now: asOf, sourceFactory: dependencies.priceSource }, dependencies.soldScreening);
+    const screenPrices = createPriceFirstSession(intent, { signal, targets, includeOffers, now: asOf, sourceFactory: dependencies.priceSource,
+        onScreened: () => { screenedCount++; reportProgress(); } }, dependencies.soldScreening);
     let market: Awaited<ReturnType<typeof screenPrices.slabPurchaseMarket>> = null;
     try {
         intent = await screenPrices.resolveIntent();
@@ -132,35 +150,60 @@ export async function findDeals(search: string, {
     const query = marketCeiling !== null ? [intent.cardName, typedCollectorNumber ?? intent.sets[0], intent.grader, intent.minGrade].join(" ")
         : exactRawBin ? rawBuyItNowQuery(keywords, intent) : keywords;
     const sourceOptions = {
-        maxResults: SEARCH_SOURCE_PAGE_LIMIT, signal, filters: firstFilters,
+        maxResults: SEARCH_SOURCE_PAGE_LIMIT, signal, filters: firstFilters, anyCategory: true,
     };
     // Browse can ignore itemEndDate ranges. Bring soon-ending auctions into
     // the bounded page, then validate their actual end dates against the search start.
     const sourceOrder = newOnly ? "newest" : filters?.typeFilter === "AUCTION" ? "ending" : marketplaceOrder ?? "newest";
     const sourceSort = { lowest: "price", newest: "newlyListed", ending: "endingSoonest" } as const;
-    const firstPage: Awaited<ReturnType<typeof searchListings>> = marketCeiling === 0 || firstFilters.maxPrice !== undefined && firstFilters.minPrice > firstFilters.maxPrice
-        ? { listings: [], total: 0, skipped: 0, rejections: [] } : await dependencies.search(query, {
-        ...sourceOptions, sort: sourceSort[sourceOrder],
-        ...(newOnly ? { keepReserve: true } : {}),
-    });
+    const sources = [...(resume?.sources ?? [])];
+    const cursor = resume && !resume.pending.length ? sources.shift() : undefined;
+    let sourceBlocked = false;
+    let firstPage: Awaited<ReturnType<typeof searchListings>>;
+    if (resume?.pending.length) firstPage = { listings: resume.pending.slice(0, SEARCH_SOURCE_PAGE_LIMIT), total: resume.total, skipped: 0, rejections: [] };
+    else if (resume && !cursor || marketCeiling === 0 || firstFilters.maxPrice !== undefined && firstFilters.minPrice > firstFilters.maxPrice)
+        firstPage = { listings: [], total: resume?.total ?? 0, skipped: 0, rejections: [] };
+    else {
+        try { firstPage = await dependencies.search(cursor?.query ?? query, {
+            ...sourceOptions, sort: cursor?.sort ?? sourceSort[sourceOrder], ...(cursor && { offset: cursor.offset, filters: cursor.filters }),
+            ...(newOnly || resume ? { keepReserve: true } : {}),
+        }); }
+        catch (error) {
+            signal?.throwIfAborted();
+            if (!resume || !cursor || !(error instanceof EbayBudgetError && error.reason === "QUOTA")) throw error;
+            sources.unshift(cursor); sourceBlocked = true;
+            firstPage = { listings: [], total: resume.total, skipped: 0, rejections: [] };
+        }
+    }
+    let sourceLimitReached = resume?.sourceLimitReached === true || firstPage.sourceLimitReached === true;
+    function retainCursor(page: typeof firstPage, sourceQuery: string, sourceFilters: ListingFilters, sort: DiscoverySourceCursor["sort"]) {
+        sourceLimitReached ||= page.sourceLimitReached === true;
+        if (page.nextOffset === undefined) return;
+        const next = { query: sourceQuery, filters: sourceFilters, sort, offset: page.nextOffset, total: page.total };
+        const key = (row: DiscoverySourceCursor) => JSON.stringify([row.query, row.filters, row.sort, row.offset]);
+        if (!sources.some(row => key(row) === key(next))) sources.push(next);
+    }
+    if (!resume?.pending.length && !sourceBlocked) retainCursor(firstPage, cursor?.query ?? query, cursor?.filters ?? firstFilters, cursor?.sort ?? sourceSort[sourceOrder]);
     if (signal?.aborted) return [];
     const now = Date.now();
     const loaded = new Map<string, ListingSummary>();
     const considered = new Set<string>();
     const deferred = new Set<string>();
-    const excluded = new Set(newOnly?.excludeIds ?? []);
+    const excluded = new Set([...(newOnly?.excludeIds ?? []), ...(resume?.seenIds ?? [])]);
     const rejections = new Map<string, SourceRejectionReason>();
     const excludedByPrice: ListingSummary[] = [];
     let completeCoverage = true;
     let previouslySeen = 0, screenedCount = 0, priceExcluded = 0, unresolvedOverflow = 0;
     let total = firstPage.total, skipped = firstPage.skipped, started = false;
+    const reportProgress = () => onProgress({ found: loaded.size, screened: screenedCount });
     let pricePass: SearchSummary["pricePass"];
+    let continuation: SearchContinuation | undefined;
     const summary = (count: number): SearchSummary => ({ total, found: loaded.size, count, skipped, intent, mode: "development",
         deferred: deferred.size, screened: screenedCount, priceExcluded, sourceCoverage: completeCoverage ? "COMPLETE" : "PARTIAL",
         ...(unresolvedOverflow ? { unresolvedOverflow } : {}),
         ...(newOnly ? { previouslySeen } : {}), ...(pricePass ? { pricePass } : {}),
         ...(soldPurchaseCeiling === undefined ? {} : { soldPurchaseCeiling }),
-        marketplaceOrder: sourceOrder,
+        marketplaceOrder: sourceOrder, ...(continuation && { continuation }), ...(sourceLimitReached && { sourceLimitReached: true }),
     });
 
     const canAssess = (listing: ListingSummary) => autoAnalysisBlockReason(listing, asOf) === null;
@@ -208,6 +251,9 @@ export async function findDeals(search: string, {
             eligible.set(row.id, listing);
             deferred.add(row.id);
         }
+        reportProgress();
+        const titleReadings = dependencies.readTitles ? await dependencies.readTitles([...eligible.values()].map(listing => listing.title), signal) : null;
+        signal?.throwIfAborted();
         const matching: ListingSummary[] = [];
         let promising = 0;
         let batch: ListingSummary[] = [];
@@ -215,7 +261,6 @@ export async function findDeals(search: string, {
             if (!started) { onStart(summary(batch.length)); started = true; }
             signal?.throwIfAborted();
             const priced = await screenPrices(batch);
-            screenedCount += batch.length;
             // Confident price exclusions do not consume display slots.
             for (const listing of priced) {
                 signal?.throwIfAborted();
@@ -241,7 +286,8 @@ export async function findDeals(search: string, {
             signal?.throwIfAborted();
             considered.add(listing.id);
             deferred.delete(listing.id);
-            const screened = await screenListingWithoutAi(listing, intent, signal, dependencies.readTitle);
+            const screened = await screenListingWithoutAi(listing, intent, signal,
+                titleReadings ? async title => titleReadings.get(title)! : dependencies.readTitle);
             const mismatch = screened.match ?? cardMismatch(screened.screen, intent);
             const reason = mismatch && mismatch !== "UNCONFIRMED_CRITERIA" ? mismatch : screeningBlock(screened, pageFilters, asOf);
             if (reason) {
@@ -267,7 +313,7 @@ export async function findDeals(search: string, {
         const widenForOffers = !moreDirectListings && soldPurchaseCeiling !== undefined && offerCeiling !== null &&
             offerCeiling > soldPurchaseCeiling && offerCeiling >= firstFilters.minPrice;
         let cheaper: { matching: ListingSummary[]; newListings: number } | undefined;
-        if (filters?.typeFilter === "FIXED_PRICE" && (widenForOffers || moreDirectListings) && promising < MIN_NEWEST_CANDIDATES) {
+        if (!resume && filters?.typeFilter === "FIXED_PRICE" && (widenForOffers || moreDirectListings) && promising < MIN_NEWEST_CANDIDATES) {
             const nextFilters = widenForOffers ? {
                 ...firstFilters, minPrice: Math.max(firstFilters.minPrice, (cents(soldPurchaseCeiling) + 1) / 100), maxPrice: offerCeiling,
             } : firstFilters;
@@ -279,6 +325,7 @@ export async function findDeals(search: string, {
                 pricePass = { status: "UNAVAILABLE", newListings: 0, candidates: 0 };
             }
             if (cheaperPage) {
+                retainCursor(cheaperPage, query, nextFilters, "price");
                 signal?.throwIfAborted();
                 const before = loaded.size;
                 total = Math.max(total, cheaperPage.total);
@@ -289,16 +336,35 @@ export async function findDeals(search: string, {
             }
         }
         matching = addBinMarketComparisons(matching, excludedByPrice, asOf);
+        const pending: ListingSummary[] = [...(resume?.pending.slice(SEARCH_SOURCE_PAGE_LIMIT) ?? [])];
         if (matching.length > DEVELOPMENT_SEARCH_LIMIT) {
             // Prefer candidates with supported upside, then other assessment
             // candidates. Equal ranks preserve the first page's order.
             const ranked = matching.map(listing => ({ listing, priority: admissionPriority(listing) }));
             ranked.sort((a, b) => b.priority - a.priority || compareAnalysisPriority(a.listing, b.listing, targets, asOf));
             for (const { listing, priority } of ranked.slice(DEVELOPMENT_SEARCH_LIMIT)) {
-                if (priority === 0) unresolvedOverflow++;
-                onScreenedOverflow({ id: listing.id, reason: autoAnalysisBlockReason(listing, asOf) ?? "DISPLAY_LIMIT" });
+                pending.push(listing);
+                if (!getBudgetContext().searchId) {
+                    if (priority === 0) unresolvedOverflow++;
+                    onScreenedOverflow({ id: listing.id, reason: autoAnalysisBlockReason(listing, asOf) ?? "DISPLAY_LIMIT" });
+                }
             }
             matching = ranked.slice(0, DEVELOPMENT_SEARCH_LIMIT).map(({ listing }) => listing);
+        }
+        for (const id of deferred) { const listing = loaded.get(id); if (listing) pending.push(listing); }
+        const rootSearchId = resume?.rootSearchId ?? getBudgetContext().searchId;
+        if ((pending.length || sources.length || sourceLimitReached) && rootSearchId && /^[0-9a-f-]{36}$/i.test(rootSearchId)) {
+            completeCoverage = false;
+            if (sourceBlocked && continuationToken) continuation = { token: continuationToken, searchId: getAiUsageContext().searchId!,
+                pending: pending.length, moreSource: sources.length > 0, blocked: "QUOTA" };
+            else if (pending.length || sources.length) {
+                const pendingIds = new Set(pending.map(row => row.id));
+                continuation = await discoveryContinuations.create({ rootSearchId,
+                    request: { search, minPrice, filters, targets, includeOffers, automaticPhotos, marketplaceOrder, asOf, newOnly },
+                    pending: [...new Map(pending.map(row => [row.id, row])).values()],
+                    seenIds: [...new Set([...(resume?.seenIds ?? []), ...considered, ...rejections.keys()])].filter(id => !pendingIds.has(id)),
+                    sources, total, ...(sourceLimitReached && { sourceLimitReached: true }) });
+            }
         }
         if (cheaper) {
             const admitted = new Set(matching.map(listing => listing.id));
@@ -383,4 +449,29 @@ export async function findDeals(search: string, {
         }
     }
     return results;
+}
+
+/** Continuations reuse their original request and allowance; caller-supplied filters cannot widen one. */
+export async function findDeals(search: string, options: SearchOptions = {}, dependencies?: FindSteps): Promise<ListingSummary[]> {
+    if (!options.continuation) return findDealsBatch(search, options, dependencies);
+    const { receipt, reused } = await discoveryContinuations.run(options.continuation, getAiUsageContext().searchId, async (state, signal) => {
+        if (search.trim() !== state.request.search.trim()) throw new Error("The saved continuation belongs to a different search.");
+        let summary: SearchSummary | undefined;
+        const dispositions: SourceDispositionRow[] = [], overflow: ScreenedOverflowRow[] = [];
+        const listings = await withAiUsageContext({ watchBudgetId: state.rootSearchId }, () => findDealsBatch(state.request.search, {
+            ...options, ...state.request, signal,
+            onStart: value => { summary = value; options.onStart?.(value); },
+            onSourceDisposition: row => { dispositions.push(row); options.onSourceDisposition?.(row); },
+            onScreenedOverflow: row => { overflow.push(row); options.onScreenedOverflow?.(row); },
+        }, dependencies, state));
+        if (!summary) throw new Error("The continued search stopped before its batch could be saved.");
+        return { summary, listings, dispositions, overflow } satisfies DiscoveryBatchReceipt;
+    }, options.signal);
+    if (reused) {
+        options.onStart?.(receipt.summary);
+        for (const listing of receipt.listings) options.onListing?.(listing);
+        for (const row of receipt.dispositions) options.onSourceDisposition?.(row);
+        for (const row of receipt.overflow) options.onScreenedOverflow?.(row);
+    }
+    return receipt.listings;
 }

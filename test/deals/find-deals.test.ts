@@ -20,6 +20,29 @@ const listing = (title = "Charizard Base Set 4/102 Unlimited Holo English", extr
 });
 const read = async (title: string) => readTitleByRules(title);
 
+test("discovery reports source and settled pricing progress before retaining any listing", async () => {
+    const rows = [listing(undefined, { id: "one" }), listing(undefined, { id: "two" })];
+    const progress: { found: number; screened: number }[] = [];
+    let release!: () => void, started!: () => void;
+    const wait = new Promise<void>(resolve => { release = resolve; });
+    const pricingStarted = new Promise<void>(resolve => { started = resolve; });
+    let titleBatches = 0, emitted = 0;
+    const search = findDeals("Charizard Base Set", { onProgress: value => progress.push(value), onListing: () => { emitted++; } },
+        offlineSearchSteps(rows, {
+            readTitle: async () => assert.fail("the prepared title map handles this page"),
+            readTitles: async titles => { titleBatches++; return new Map(titles.map(title => [title, readTitleByRules(title)])); },
+            soldScreening: () => async () => { started(); await wait; return { status: "UNAVAILABLE", exactScope: false, references: [], note: "No saved sales." }; },
+        }));
+    await pricingStarted;
+    assert.deepEqual(progress, [{ found: 2, screened: 0 }]);
+    assert.equal(emitted, 0);
+    release();
+    const retained = await search;
+    assert.equal(titleBatches, 1);
+    assert.equal(retained.length, 2);
+    assert.deepEqual(progress.at(-1), { found: 2, screened: 2 });
+});
+
 test("foreign-language searches stop before query interpretation or source requests", async () => {
     const steps = offlineSearchSteps([], { readIntent: async () => assert.fail("foreign searches cannot start query research"),
         search: async () => assert.fail("foreign searches cannot consume eBay allowance") });

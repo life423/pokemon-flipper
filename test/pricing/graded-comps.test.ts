@@ -145,7 +145,7 @@ test("shared, unrecorded, qualified, special-tier, and old sales are all dropped
 
     assert.equal(summary.count, 0);
     assert.deepEqual(summary.dropped, {
-        "shared with another card": 2,
+        "shared with another card": 1,
         "qualified or special grade": 2,
         "older than 180 days": 1,
         "different grade": 1,
@@ -215,6 +215,64 @@ test("graded prices: one lookup per grade, for this card's own printing label", 
     assert.equal(pricing.status, "PRICED");
     assert.equal(pricing.byGrade[0].count, 0);
     assert.equal(pricing.byGrade[1].median, 2600);
+});
+
+test("independent grade requests overlap and keep their original grade order", async () => {
+    const { identity, card } = await identifyCard(
+        { title: "2000 Pokemon Neo Genesis Lugia 9/111 Holo Rare Unlimited",
+            aspects: { Set: "Neo Genesis", "Card Number": "9/111", "Card Name": "Lugia", Language: "English" } },
+        photos("Lugia", "9/111"), { lookupCards: async () => [LUGIA] });
+    const releases = new Map();
+    const waits = new Map([8, 9].map(grade => [grade, new Promise(resolve => releases.set(grade, resolve))]));
+    const started = [];
+    const pending = gradedPricesFor(card, identity, { low: 8, likely: 9, high: 9 }, {
+        now: NOW,
+        fetchComps: async (_record, { grade }) => {
+            started.push(grade);
+            await waits.get(grade);
+            return grade === 9 ? LUGIA_PSA9 : [];
+        },
+    });
+    try {
+        await new Promise(setImmediate);
+        assert.deepEqual(started, [8, 9], "one slow grade must not delay the other grade request");
+        releases.get(9)();
+        await new Promise(setImmediate);
+        releases.get(8)();
+        const result = await pending;
+        assert.deepEqual(result.byGrade.map(row => Number(row.grade)), [8, 9]);
+        assert.equal(result.byGrade[1].median, 2600);
+    } finally {
+        for (const release of releases.values()) release();
+        await pending.catch(() => {});
+    }
+});
+
+test("a failed grade lookup waits for already dispatched siblings to settle", async () => {
+    const { identity, card } = await identifyCard(
+        { title: "2000 Pokemon Neo Genesis Lugia 9/111 Holo Rare Unlimited",
+            aspects: { Set: "Neo Genesis", "Card Number": "9/111", "Card Name": "Lugia", Language: "English" } },
+        photos("Lugia", "9/111"), { lookupCards: async () => [LUGIA] });
+    let release;
+    const sibling = new Promise(resolve => { release = resolve; });
+    const failure = new Error("Retain the failed request accounting");
+    let finished = false;
+    const pending = gradedPricesFor(card, identity, { low: 8, likely: 9, high: 9 }, {
+        now: NOW,
+        fetchComps: async (_record, { grade }) => {
+            if (grade === 8) throw failure;
+            await sibling;
+            return LUGIA_PSA9;
+        },
+    });
+    const rejected = pending.catch(error => { finished = true; throw error; });
+    try {
+        await new Promise(setImmediate);
+        assert.equal(finished, false, "accepted sibling work must finish before the evaluator returns");
+    } finally {
+        release();
+    }
+    await assert.rejects(rejected, error => error === failure);
 });
 
 test("graded prices for Shadowless read sales under both labels, and the titles decide", async () => {

@@ -76,8 +76,12 @@ export function describeHuntMarket(m: HuntMarket) {
     const condition = m.condition ? CONDITION_NAMES[m.condition] : m.grader + " " + m.grade;
     const route = m.kind === "raw" && m.grader ? "after grading" : m.kind === "raw" ? "raw" : "slab";
     const printing = m.printing.replaceAll("_", " ").toLowerCase(), finish = m.finish.replaceAll("_", " ").toLowerCase();
-    return m.sales30 + (m.sales30 === 1 ? " matched sale" : " matched sales") + " in 30 days for " + m.name + " " + m.cardNumber + " (" + m.set + ", " + printing + " " + finish + ", " +
-        condition + " " + route + "), with a median of " + dollars(m.medianUsd) + ".";
+    const count = m.sales60 ?? m.sales30;
+    const days = m.sales60 === undefined ? 30 : 60;
+    const value = m.valueBasis?.startsWith("TCGPLAYER_") ? "TCGplayer estimate" : "matched sale estimate";
+    return count + (count === 1 ? " observed matching sale" : " observed matching sales") + " in " + days + " days for " + m.name + " " + m.cardNumber + " (" + m.set + ", " + printing + " " + finish + ", " +
+        condition + " " + route + "), with a " + value + " of " + dollars(m.medianUsd) + "." +
+        (m.valueBasis?.startsWith("TCGPLAYER_") ? " Current offers are not counted as sales." : "");
 }
 
 // A market median guides where to spend research. Each actual Buy still has to

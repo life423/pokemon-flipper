@@ -141,7 +141,7 @@ test("standalone raw grading can switch markets after two misses and reserves ch
         discover: async () => { visits.push(index); return []; },
     }));
     const model = planner(({ menu }) => menu.at(-1)!.key);
-    const report = await runDealHunt({ searchId, goal: "grade_raw", candidates: [], markets }, undefined, model.choose);
+    const report = await runDealHunt({ searchId, goal: "grade_raw", candidates: [], markets, maxSteps: 8 }, undefined, model.choose);
     assert.deepEqual(visits, [5, 4, 3, 2]);
     assert.equal(report.decision, "WAIT");
     assert.match(report.reason, /4 markets checked.*verify a copy/);
@@ -174,7 +174,7 @@ test("after three markets and two Mewtwo photo checks, the grading hunt prices a
         const priority = ["market-0/find_listings", "market-1/find_listings", "market-2/find_listings", "0/inspect_photos",
             "1/inspect_photos", "1/check_listing", "2/inspect_photos", "2/check_listing", "1/check_sales", "1/calculate_grading", "1/finish/grading"];
         const model = planner(({ menu }) => priority.find(key => menu.some(item => item.key === key))!);
-        const report = await runDealHunt({ searchId, goal: "grade_raw", candidates: [], markets }, undefined, model.choose);
+        const report = await runDealHunt({ searchId, goal: "grade_raw", candidates: [], markets, maxSteps: 8 }, undefined, model.choose);
         assert.deepEqual(report.steps.map(step => [step.listingId, step.action]), [
             [null, "find_listings"], [null, "find_listings"], [null, "find_listings"], ["A", "inspect_photos"],
             ["B", "inspect_photos"], ["B", "check_listing"], ["B", "check_sales"], ["B", "calculate_grading"],
@@ -203,7 +203,7 @@ test("a late printing requirement that exceeds the grading allowance leaves a Wa
     const markets = [0, 1, 2, 3].map(index => ({
         title: `Market ${index}`, summary: "Recent grade sales.", discover: async () => index === 3 ? [copy] : [],
     }));
-    const report = await runDealHunt({ searchId, goal: "grade_raw", candidates: [], markets }, undefined, planner(({ menu }) => menu[0].key).choose);
+    const report = await runDealHunt({ searchId, goal: "grade_raw", candidates: [], markets, maxSteps: 8 }, undefined, planner(({ menu }) => menu[0].key).choose);
     assert.equal(report.decision, "WAIT");
     assert.equal(report.destination, null);
     assert.equal(report.steps.length, 6);
@@ -239,7 +239,7 @@ test("the hunt cannot repeat a tool or continue searching beyond the bounded res
         available: () => ["check_sales"], read: () => "Exact sales missing", outcome: () => null,
     }));
     const model = planner(({ menu }) => menu[0].key);
-    const result = await runDealHunt({ searchId, goal: "collect_slab", candidates }, undefined, model.choose);
+    const result = await runDealHunt({ searchId, goal: "collect_slab", candidates, maxSteps: 8 }, undefined, model.choose);
     assert.equal(result.decision, "WAIT");
     assert.match(result.reason, /research limit/);
     assert.equal(result.steps.length, 8);

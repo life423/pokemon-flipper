@@ -193,10 +193,13 @@ async function loadAttempt(path: string, maxAgeHours: number, signal: AbortSigna
     const cached = await readApiCache(path, maxAgeHours);
     signal.throwIfAborted();
     if (cached) return { response: null, body: cached };
+    const available = () => [...(requestSponsors.get(key) ?? [])].some(sponsor => sponsor.available());
+    if (!available()) throw new ScreeningPriceBudgetError();
     const apiKey = process.env.PKMNPRICES_API_KEY;
     if (!apiKey) throw new PricingProviderError("PKMNPRICES_API_KEY is not set", "CONFIG");
     return limit(async () => {
         signal.throwIfAborted();
+        if (!available()) throw new ScreeningPriceBudgetError();
         if (Date.now() < coolingUntil) {
             throw new PricingProviderError(coolingKind === "CREDITS" ? "Price-service credits are unavailable. Check the provider account; cached prices still work." : "Price service is cooling down. Cached prices still work; retry missing prices after the cooldown.", coolingKind, coolingUntil);
         }
@@ -547,6 +550,17 @@ export const fetchRawComps: FetchRawComps = async (recordId, variant, selection)
 export const fetchCachedRawComps: FetchRawComps = (recordId, variant, selection) =>
     collectSoldPages(recordId, soldMarketParams(variant, null, null), selection, 2, cachedSoldPage);
 
+// These use the same cache, pacing, cancellation and original-search accounting
+// as sold research. Live offers are not completed transactions.
+export async function fetchTcgplayerConditionData(recordId: CardRecord["id"], condition: string, printing: string, cursor?: string) {
+    const params = new URLSearchParams({ condition, language: "English", printing, sort: "total_asc", limit: "20" });
+    if (cursor) params.set("cursor", cursor);
+    return apiGet(`/cards/${recordId}/listings/tcgplayer?${params}`, 1);
+}
+export async function fetchTcgplayerMarketData(recordId: CardRecord["id"]) {
+    return apiGet(`/cards/${recordId}`, DAY);
+}
+
 export class ScreeningPriceBudgetError extends Error {
     constructor() { super("The search's price-screening request allowance is exhausted. Saved price evidence remains available."); }
 }
@@ -557,10 +571,21 @@ export function createScreeningPriceSource({ signal: sourceSignal, maxRequests =
     const requestLimit = maxRequests;
     let requests = 0;
     const queryCatalogs = new Map<string, CardRecord[]>();
+    // One source session reads the same set/catalog and legacy sold paths for
+    // many copies. Keep positive saved responses and share pending SQL reads.
+    // A missing response remains refreshable after another stage saves it.
+    const cachedResponses = new Map<string, Promise<ApiBody | null>>();
     const queryKey = (query: { set: string; name: string }) => JSON.stringify([[...setFamily(query.set)].sort(), canonicalCatalogName(query.name)]);
     const cached: typeof readApiCache = async (path, maxAgeHours) => {
         signal?.throwIfAborted();
-        const result = await readApiCache(path, maxAgeHours);
+        const key = JSON.stringify([path, maxAgeHours]);
+        let pending = cachedResponses.get(key);
+        if (!pending) {
+            pending = readApiCache(path, maxAgeHours);
+            cachedResponses.set(key, pending);
+            pending.then(value => { if (!value) cachedResponses.delete(key); }, () => { cachedResponses.delete(key); });
+        }
+        const result = await pending;
         signal?.throwIfAborted();
         return result;
     };
@@ -572,7 +597,10 @@ export function createScreeningPriceSource({ signal: sourceSignal, maxRequests =
         const detach = attachSponsor(requestSponsors, key, sponsor);
         try {
             const { response, body } = await share(key, workSignal => loadAttempt(path, maxAgeHours, workSignal, key), signal);
-            if (!response || response.ok) return body;
+            if (!response || response.ok) {
+                cachedResponses.set(JSON.stringify([path, maxAgeHours]), Promise.resolve(body));
+                return body;
+            }
             if (response.status === 429) {
                 if (creditLimitReached(body)) throw creditLimitError(response);
                 coolingKind = "RATE_LIMIT";

@@ -4,14 +4,16 @@ import type { BuyerAccount, BuyerEnvironment } from "../../shared/ebay-connectio
 import type { CameraGradeResult } from "../../shared/camera-grade.ts";
 import type { CardmarketComparison } from "../../shared/cardmarket.ts";
 import type { ShortlistEntry, RefreshResult } from "../../shared/shortlist.ts";
+import type { SearchPlan, SearchPlanInput } from "../../shared/search-plan.ts";
 import type { PricingRetryResult } from "../../shared/pricing-retries.ts";
 import type { AiUsageDay } from "../../shared/ai-usage.ts";
 import type { DiscoveryOrder, ListingFilters, MarketplaceOrder } from "../../shared/listing-filters.ts";
 import type { SearchDiagnosticResult, SearchDiagnosticRow, SearchSourceCoverage } from "../../shared/search-diagnostic.ts";
 import type { CollectorStrategyState, LiveCollectorReport } from "../../shared/collector-strategy.ts";
 import type { DealHuntRequest, DealHuntResponse } from "../../shared/deal-hunt.ts";
-import type { BuyerListingReview } from "../../shared/wait-skip-review.ts";
+import { isBuyerReviewFailure, type BuyerListingReview } from "../../shared/wait-skip-review.ts";
 import type { SearchReviewSelection } from "../../shared/search-review-selection.ts";
+import type { SearchContinuation } from "../../shared/search-continuation.ts";
 
 export function fetchAuctionTracking(signal?: AbortSignal) {
     return request<import("../../shared/auction-tracking.ts").AuctionTrackingResults>("/api/auction-tracking", { signal });
@@ -56,16 +58,30 @@ const searchHeaders = (searchRunId: string = crypto.randomUUID()): Record<string
     const parent = watchBudgets.get(searchRunId);
     return { "X-Pokemon-Flipper-Search-Id": searchRunId, ...(parent && { "X-Pokemon-Flipper-Watch-Budget": parent }) };
 };
+export async function interpretSearchRequest(input: SearchPlanInput, searchRunId: string, signal: AbortSignal): Promise<SearchPlan> {
+    signal.throwIfAborted();
+    const plan = await request<SearchPlan>("/api/search-plan", { method: "POST",
+        headers: { ...searchHeaders(searchRunId), "Content-Type": "application/json" }, body: JSON.stringify(input), signal });
+    signal.throwIfAborted();
+    if (!plan || !["named_search", "market_hunt"].includes(plan.workflow) || !plan.query?.trim() ||
+        !plan.intent || !plan.marketPreferences || !["FIXED_PRICE", "AUCTION"].includes(plan.format) || !plan.summary?.trim())
+        throw new ApiRequestError("The search interpretation was incomplete. Run the search again.");
+    return plan;
+}
 export async function reviewBuyerListing(id: string, searchId: string, targets: Targets, offers: boolean, allowResearch: boolean, signal: AbortSignal): Promise<BuyerListingReview> {
     const path = `/api/listings/${encodeURIComponent(id)}/buyer-review?profit=${targets.minProfit}&roi=${targets.minRoi}&offers=${offers ? 1 : 0}`;
-    const read = () => request<BuyerListingReview>(path, { method: "POST", headers: { ...searchHeaders(searchId), "Content-Type": "application/json" },
+    signal.throwIfAborted();
+    // The queue owns the finite cooldown policy. A second retry layer here
+    // would multiply requests and could outrun a provider's actual retry time.
+    const result = await request<BuyerListingReview>(path, { method: "POST", headers: { ...searchHeaders(searchId), "Content-Type": "application/json" },
         body: JSON.stringify({ allowResearch }), signal });
-    try { return await read(); }
-    catch (error) {
-        if (!(error instanceof ApiRequestError && error.retryable) || signal.aborted) throw error;
-        await retryDelay(error.retryAfterMs, signal);
-        return read();
-    }
+    if (!result || result.listingId !== id || !["WAIT", "SKIP", "BUY"].includes(result.decision) || typeof result.reason !== "string" || !result.reason.trim() ||
+        result.unavailable && (result.decision !== "WAIT" || result.offer) ||
+        result.failure !== undefined && (!result.unavailable || !isBuyerReviewFailure(result.failure)) ||
+        result.retryAt !== undefined && (!result.unavailable || !result.failure?.retryable || !Number.isSafeInteger(result.retryAt) || result.retryAt < 0) ||
+        result.failure?.retryable && result.retryAt === undefined)
+        throw new ApiRequestError("The buyer review response was incomplete. Its purchase advice was not accepted.");
+    return result;
 }
 export function runDealHunt(searchId: string, hunt: DealHuntRequest, signal: AbortSignal): Promise<DealHuntResponse> {
     return request("/api/deal-hunt", {
@@ -126,7 +142,7 @@ export function cancelSnipe(id: string): Promise<{ job: SniperJob }> {
     return request(`/api/sniper/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 export class ApiRequestError extends Error {
-    constructor(message: string, readonly retryable = false, readonly retryAfterMs = 1500, readonly code?: string) { super(message); }
+    constructor(message: string, readonly retryable = false, readonly retryAfterMs = 1500, readonly code?: string, readonly retryAt?: number) { super(message); }
 }
 
 export function saveSearchDiagnostic(searchRunId: string, rows: SearchDiagnosticRow[], signal: AbortSignal): Promise<SearchDiagnosticResult> {
@@ -159,15 +175,18 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     const body = await response.json().catch(() => null);
 
     if (!response.ok) {
+        const declared = Number(body?.retryAfterMs);
+        const cooldown = Number.isFinite(declared) && declared > 0 ? Math.max(1500, Math.ceil(declared)) : 1500;
         throw new ApiRequestError(body?.error ?? `Request failed (${response.status})`, body?.retryable === true || body?.retryable === undefined && [502, 503, 504].includes(response.status),
-            Math.min(90_000, Math.max(1500, Number(body?.retryAfterMs) || 1500)), body?.code);
+            Math.min(90_000, cooldown), body?.code, Number.isSafeInteger(Date.now() + cooldown) ? Date.now() + cooldown : undefined);
     }
 
     return body as T;
 }
 
 export type DealsMessage =
-    | { type: "start"; total: number; found: number; count: number; skipped: number; intent: SearchIntent; reviewSelection?: SearchReviewSelection; mode?: "new" | "development"; deferred?: number; previouslySeen?: number; screened?: number; priceExcluded?: number; unresolvedOverflow?: number; soldPurchaseCeiling?: number; marketplaceOrder?: DiscoveryOrder; pricePass?: { status: "COMPLETE" | "UNAVAILABLE"; newListings: number; candidates: number } }
+    | { type: "progress"; found: number; screened: number }
+    | { type: "start"; total: number; found: number; count: number; skipped: number; intent: SearchIntent; continuation?: SearchContinuation; sourceLimitReached?: boolean; reviewSelection?: SearchReviewSelection; mode?: "new" | "development"; deferred?: number; previouslySeen?: number; screened?: number; priceExcluded?: number; unresolvedOverflow?: number; soldPurchaseCeiling?: number; marketplaceOrder?: DiscoveryOrder; pricePass?: { status: "COMPLETE" | "UNAVAILABLE"; newListings: number; candidates: number } }
     | { type: "listing"; listing: ListingSummary }
     | ({ type: "done" } & SearchSourceCoverage)
     | { type: "error"; error: string };
@@ -227,12 +246,13 @@ async function streamLines<T extends { type: string }>(
 
 export function streamDeals(
     query: string,
-    { minPrice, signal, targets, includeOffers = false, automaticPhotos = true, filters, searchRunId, marketplaceOrder }: { minPrice: number; signal?: AbortSignal; targets?: Targets; includeOffers?: boolean; automaticPhotos?: boolean; filters?: ListingFilters; searchRunId?: string; marketplaceOrder?: MarketplaceOrder },
+    { minPrice, signal, targets, includeOffers = false, automaticPhotos = true, filters, searchRunId, marketplaceOrder, continuation }: { minPrice: number; signal?: AbortSignal; targets?: Targets; includeOffers?: boolean; automaticPhotos?: boolean; filters?: ListingFilters; searchRunId?: string; marketplaceOrder?: MarketplaceOrder; continuation?: string },
     onMessage: (message: DealsMessage) => void
 ): Promise<void> {
     const criteria = targets ? `&profit=${targets.minProfit}&roi=${targets.minRoi}` : "";
     const order = marketplaceOrder ? `&order=${marketplaceOrder}` : "";
-    return streamLines(`/api/deals?q=${encodeURIComponent(query)}&min=${minPrice}${criteria}&offers=${includeOffers ? 1 : 0}&autoPhotos=${automaticPhotos ? 1 : 0}${filterQuery(filters)}${order}`, onMessage, signal,
+    const next = continuation ? `&continuation=${encodeURIComponent(continuation)}` : "";
+    return streamLines(`/api/deals?q=${encodeURIComponent(query)}&min=${minPrice}${criteria}&offers=${includeOffers ? 1 : 0}&autoPhotos=${automaticPhotos ? 1 : 0}${filterQuery(filters)}${order}${next}`, onMessage, signal,
         { headers: searchHeaders(searchRunId) });
 }
 

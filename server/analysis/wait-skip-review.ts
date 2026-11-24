@@ -22,7 +22,7 @@ import { currentPriceEvidence } from "../../shared/pricing-freshness.ts";
 import { evaluatedCriteriaMismatch } from "../../shared/search-criteria.ts";
 import { BEST_BUY_TERMS_MAX_AGE_MS } from "../../shared/search-diagnostic.ts";
 import type { Evaluation, ListingSummary, Targets } from "../../shared/types.ts";
-import { buyerReviewBlock, unconfirmedResale, type BuyerListingReview } from "../../shared/wait-skip-review.ts";
+import { buyerReviewBlock, buyerReviewFailure, isBuyerReviewFailure, unconfirmedResale, type BuyerListingReview } from "../../shared/wait-skip-review.ts";
 import { supplementalResearch } from "../pricing/supplemental-research.ts";
 import { StorageUnavailableError } from "../storage/index.ts";
 import { withAiUsageContext } from "../ai/usage-context.ts";
@@ -245,7 +245,8 @@ export function createBuyerListingReviewer(overrides: Partial<typeof defaults> =
                 if (reason && (!e || !["PRICING_CONFIG", "PRICING_CREDITS", "SCREEN_DROPPED"].includes(reason))) {
                     const result = response(["UNAVAILABLE", "JUNK", "UNSUPPORTED_TEXTURE", "SCREEN_DROPPED", "CRITERIA_MISMATCH"].includes(reason) ? "SKIP" : "WAIT",
                         reason === "SCREEN_DROPPED" && row!.screenReason ? row!.screenReason : stopReason[reason], "listing");
-                    return reason === "PRICING_CONFIG" || reason === "PRICING_CREDITS" ? { ...result, unavailable: true } : result;
+                    return reason === "PRICING_CONFIG" || reason === "PRICING_CREDITS"
+                        ? { ...result, unavailable: true, failure: buyerReviewFailure(reason, false) } : result;
                 }
                 if (inventory && !matchesListingFilters(listing, inventory.filters, e, inventory.intent.graded)) return response("SKIP", "This copy falls outside the search’s price or card-type filters.", "listing");
             }
@@ -293,10 +294,10 @@ export function createBuyerListingReviewer(overrides: Partial<typeof defaults> =
                     value?.deeperPhotoReview?.reviewedAt, value?.listing.termsCheckedAt])).digest("hex");
                 return `private-buyer-review:${action === "prices" ? "v3" : "v2"}:${searchId}:${listingId}:${hash}`;
             };
-            type Receipt = Omit<BuyerListingReview, "evaluation"> & { retryAt?: number };
-            const remember = async (result: BuyerListingReview, retryAt?: number) => {
+            type Receipt = Omit<BuyerListingReview, "evaluation"> & { recheckAt?: number };
+            const remember = async (result: BuyerListingReview, recheckAt?: number) => {
                 const { evaluation: _, ...receipt } = result;
-                for (const key of receipts) await deps.save(key, { ...receipt, retryAt });
+                for (const key of receipts) await deps.save(key, { ...receipt, ...(recheckAt !== undefined && { recheckAt }) });
                 return result;
             };
             let evidence: Evidence = e ? "saved" : "listing";
@@ -308,15 +309,24 @@ export function createBuyerListingReviewer(overrides: Partial<typeof defaults> =
                 if (!action || tried.has(action)) break;
                 const key = attemptKey(action, e);
                 const prior = await deps.cached<Receipt>(key, action === "terms" ? BEST_BUY_TERMS_MAX_AGE_MS / 3600000 : 6);
-                if (prior && (!prior.retryAt || prior.retryAt > deps.now())) {
+                if (prior) {
                     if (prior.listingId !== listingId || !["BUY", "WAIT", "SKIP"].includes(prior.decision) ||
-                        !["listing", "photos", "prices", "saved"].includes(prior.evidence) || typeof prior.reason !== "string" || !prior.reason.trim()) {
+                        !["listing", "photos", "prices", "saved"].includes(prior.evidence) || typeof prior.reason !== "string" || !prior.reason.trim() ||
+                        prior.failure !== undefined && !isBuyerReviewFailure(prior.failure) ||
+                        prior.retryAt !== undefined && (!Number.isSafeInteger(prior.retryAt) || prior.retryAt < 0) ||
+                        prior.recheckAt !== undefined && (!Number.isSafeInteger(prior.recheckAt) || prior.recheckAt < 0) ||
+                        prior.failure?.retryable && (prior.decision !== "WAIT" || !prior.unavailable || prior.retryAt === undefined)) {
                         throw new StorageUnavailableError("The saved buyer decision could not be verified.");
                     }
-                    if (prior.unavailable) return withSavedPrices(action, { ...response("WAIT", prior.reason, evidence), unavailable: true });
-                    if (e) break;
-                    if (prior.decision === "BUY" || prior.offer) return response("WAIT", "The evaluated copy and its current purchase terms are no longer available together.", "listing");
-                    return response(prior.decision, prior.reason, "saved");
+                    const cooldown = prior.retryAt ?? prior.recheckAt;
+                    if (!cooldown || cooldown > deps.now()) {
+                        if (prior.unavailable) return withSavedPrices(action, { ...response("WAIT", prior.reason, evidence), unavailable: true,
+                            failure: prior.failure ?? buyerReviewFailure(undefined, false),
+                            ...(prior.failure?.retryable && { retryAt: prior.retryAt }) });
+                        if (e) break;
+                        if (prior.decision === "BUY" || prior.offer) return response("WAIT", "The evaluated copy and its current purchase terms are no longer available together.", "listing");
+                        return response(prior.decision, prior.reason, "saved");
+                    }
                 }
                 active.throwIfAborted();
                 tried.add(action);
@@ -350,12 +360,19 @@ export function createBuyerListingReviewer(overrides: Partial<typeof defaults> =
                     if (failure.status === 500 && !failure.code && !failure.retryable) throw error;
                     const stop = response("WAIT", failure.error, e ? "saved" : "listing");
                     if (failure.status === 503 || failure.code === "AI_EVIDENCE_HELD") {
-                        const unavailable = { ...stop, unavailable: true as const };
+                        const typed = buyerReviewFailure(failure.code, failure.retryable === true);
+                        const unavailable: BuyerListingReview = { ...stop, unavailable: true, failure: typed,
+                            ...(typed.retryable && { retryAt: deps.now() + Math.max(failure.retryAfterMs ?? 30000, 3000) }) };
                         // A storage outage can prevent writing any receipt. Respond
                         // with its actual reason, and use a cooldown for other providers.
                         if (failure.code === "STORAGE_UNAVAILABLE") return unavailable;
                         // Store only the provider limitation. Rebuild the comparison from current saved evidence on replay.
-                        await remember(unavailable, deps.now() + Math.max(failure.retryAfterMs ?? 30000, 3000));
+                        // Credits/access or an explicit pause can be repaired by
+                        // the owner. Permit a later explicit check without asking
+                        // the browser to retry these holds automatically.
+                        const manualRecheck = !typed.retryable && !["AI_BUDGET", "AI_EVIDENCE_HELD", "PRICE_RESEARCH_BUDGET"].includes(typed.code)
+                            ? deps.now() + 30000 : undefined;
+                        await remember(unavailable, manualRecheck);
                         return withSavedPrices(action, unavailable);
                     }
                     return remember(stop);
@@ -385,7 +402,7 @@ export function createBuyerListingReviewer(overrides: Partial<typeof defaults> =
             if (result.decision === "WAIT" && !result.offer && e?.pricingDeferred) {
                 const note = e.pricingDeferred.note;
                 const reason = result.reason.includes(note) ? result.reason : `${result.reason} ${note}`;
-                return remember({ ...result, unavailable: true, reason }, deps.now() + 30000);
+                return remember({ ...result, unavailable: true, reason, failure: buyerReviewFailure("PRICE_RESEARCH_BUDGET", false) });
             }
             return remember(result);
         }, signal);

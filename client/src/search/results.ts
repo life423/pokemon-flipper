@@ -107,7 +107,8 @@ export function groupSearchResults(filtered: ListingSummary[], analyses: Record<
     return { ...grouped, bids, losses, all: filtered, new: filtered.filter((listing) => newIds.has(listing.id)) };
 }
 
-export function sortSearchResults(listings: ListingSummary[], analyses: Record<string, AnalysisState>, sort: SortKey, targets: Targets, now: number): ListingSummary[] {
+export function sortSearchResults(listings: ListingSummary[], analyses: Record<string, AnalysisState>, sort: SortKey, targets: Targets, now: number,
+    decisions: Readonly<Record<string, Pick<BuyerListingReview, "decision">>> = {}): ListingSummary[] {
     const compareBest = (a: ListingSummary, b: ListingSummary) => {
         const ea = evaluationOf(analyses[a.id]);
         const eb = evaluationOf(analyses[b.id]);
@@ -120,6 +121,9 @@ export function sortSearchResults(listings: ListingSummary[], analyses: Record<s
         }
         if (ra) return -1;
         if (rb) return 1;
+
+        const reviewed = Number(Boolean(decisions[b.id])) - Number(Boolean(decisions[a.id]));
+        if (reviewed) return reviewed;
 
         return compareAnalysisPriority(a, b, targets, now);
     };

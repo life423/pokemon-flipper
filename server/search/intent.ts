@@ -9,6 +9,7 @@ import { PRISMATIC_EVOLUTIONS_TITLE, XY_EVOLUTIONS_TITLE } from "../../shared/re
 import { readTitleByRules } from "../ai/title-reader.ts";
 import { StorageUnavailableError } from "../storage/index.ts";
 import { cachedSetNames } from "./set-catalog.ts";
+import { searchYears, withoutSearchYears } from "../../shared/search-years.ts";
 
 // What a search means. eBay does the matching; this says which of
 // eBay's results are the card the search is for, so other cards and
@@ -20,6 +21,14 @@ const MONTH_HOURS = 24 * 30;
 
 type Reading = Omit<SearchIntent, "source">;
 
+function correctedRequest(search: string, knownSetNames: readonly string[] = []): string {
+    const phrase = search.replace(/\bneo[\s-]+revolution\b/gi, "Neo Revelation");
+    const set = readTitleByRules(phrase, knownSetNames).set;
+    if (!set) return phrase;
+    const release = set.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+    return phrase.replace(new RegExp(`\\bform(?=\\s+${release}\\b)`, "gi"), "from");
+}
+
 // Without the AI: printing and grading words, a card number, and no
 // narrowing by name or set. Every eBay result for the search stays.
 export function readSearchByRules(search: string): SearchIntent {
@@ -27,9 +36,11 @@ export function readSearchByRules(search: string): SearchIntent {
     const claim = printingClaimFromText(search);
 
     const criteria = explicitCriteria(search);
+    const years = searchYears(search);
     return {
         cardName: null,
         sets: [],
+        ...(years && { minYear: years.minYear, maxYear: years.maxYear }),
         cardNumber: text.match(/\b(\d{1,3}\/\d{1,3})\b/)?.[1] ?? null,
         printing: isPrinting(claim) ? claim : null,
         graded: criteria.grader || criteria.minGrade != null ? true : /\b(raw|ungraded)\b/.test(text) ? false : /\bgraded\b/.test(text) ? true : null,
@@ -43,8 +54,9 @@ export function readSearchByRules(search: string): SearchIntent {
 // A literal local interpretation is only a search constraint, never evidence
 // about a physical card's identity, printing, finish or condition.
 export function readSearchLocally(search: string, knownSetNames: readonly string[] = []): SearchIntent {
-    const intent = readSearchByRules(search);
-    const local = readTitleByRules(fallbackKeywords(search), knownSetNames);
+    const phrase = correctedRequest(search, knownSetNames);
+    const intent = readSearchByRules(phrase);
+    const local = readTitleByRules(fallbackKeywords(phrase), knownSetNames);
     return { ...intent, cardName: local.cardName, sets: local.set ? [local.set] : [],
         cardNumber: intent.cardNumber ?? local.cardNumber,
         titleWords: local.cardName ? normalizeWords(local.cardName).split(" ").filter(Boolean).slice(0, 2) : [] };
@@ -71,7 +83,12 @@ export async function readSearchWithoutAi(search: string, signal?: AbortSignal):
 
 // The AI's reading, checked and cleaned. Anything off falls back to "any".
 export function cleanReading(reading: Reading, search: string): SearchIntent {
-    const literal = readTitleByRules(search);
+    // Reinterpret old literal year keywords and request clauses locally. The
+    // accepted cache stays intact and cannot keep a stale title-word constraint.
+    if (correctedRequest(search, reading.sets) !== search || searchYears(search) || /\b(?:that|which)\s+(?:is|are)\s+liquid\b/i.test(search))
+        return readSearchLocally(search, reading.sets);
+    const literal = readTitleByRules(withoutSearchYears(search));
+    const years = searchYears(search);
     // Older readers sometimes read the collector fraction 2/102 as a
     // reprint set name. Reuse the literal result and its marketplace words.
     if (literal.set === "Base Set" && literal.cardNumber?.includes("/") && sameCardNumber(literal.cardNumber, "2/102") &&
@@ -99,6 +116,7 @@ export function cleanReading(reading: Reading, search: string): SearchIntent {
     return {
         cardName: cardName && explicitlyTyped(cardName) ? cardName : null,
         sets: (reading.sets ?? []).map((set) => set.trim()).filter(Boolean),
+        ...(years && { minYear: years.minYear, maxYear: years.maxYear }),
         // A saved model interpretation is not a catalog authority. Retain
         // only the number actually typed, including partial/promo numbers.
         cardNumber: literal.cardNumber?.toUpperCase() ?? null,

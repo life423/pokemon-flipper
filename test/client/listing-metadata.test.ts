@@ -25,7 +25,8 @@ test("raw-condition facts are absent for listed and photographed slabs while act
             years: {}, includeOffers: false, onOpen() {}, ...extra }));
         return html.slice(0, html.indexOf("<details"));
     };
-    assert.match(overview(undefined, { reviewPending: true }), />Checking listing</);
+    assert.match(overview(undefined, { reviewPending: true }), />Queued for review</);
+    assert.match(overview(undefined, { reviewPending: true, reviewActive: true }), />Checking listing</);
     assert.match(overview({ status: "loading" }), />Checking listing</);
     assert.match(overview({ status: "error", message: "Provider offline" }), />Wait<[\s\S]*before the app could verify/);
     assert.doesNotMatch(overview(undefined, { automaticDecision: { decision: "BUY", reason: "Unsupported promotion" } }), />Buy<|Unsupported promotion/);
@@ -63,9 +64,11 @@ test("raw-condition facts are absent for listed and photographed slabs while act
         listing: item, analysis, now: Date.now(), reviewPending, onClose() {}, onAnalyze() {}, onRefreshPrices() {}, onPhotoReview() {}, includeOffers: true }));
     for (const analysis of [undefined, assessed, { status: "error", message: "Earlier attempt failed." }]) {
         const html = pendingPanel(analysis);
-        assert.match(html, />Checking listing</);
+        assert.match(html, />Queued for review</);
         assert.doesNotMatch(html, /Analyze listing \(paid|Deeper AI photo review · paid|Reanalyze full listing|Refresh pricing|Check Cardmarket offers|Try again|Est\. net profit at asking|Every path|Opening offer/);
     }
+    assert.match(renderToStaticMarkup(createElement(DetailPanel, { listing: item, now: Date.now(), reviewPending: true, reviewActive: true,
+        onClose() {}, onAnalyze() {}, onPhotoReview() {}, includeOffers: true })), />Checking listing</);
     assert.match(pendingPanel(undefined, false), /Analyze listing \(paid/);
     assert.match(pendingPanel(assessed, false), /Every path/);
     const vetoedPanel = renderToStaticMarkup(createElement(DetailPanel, { listing: item, analysis: assessed, now: Date.now(), onClose() {}, onAnalyze() {},

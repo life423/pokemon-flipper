@@ -14,8 +14,8 @@ export interface GradingOpportunity {
     validUntil: number;
     delivered: number;
     gradingCosts: number;
-    likely: { grade: number; profit: number; sales30: number };
-    lower: { grade: number; profit: number; sales30: number };
+    likely: { grade: number; profit: number; sales30: number; sales60?: number };
+    lower: { grade: number; profit: number; sales30: number; sales60?: number };
 }
 
 export function freshListingTime(listing: Pick<ListingSummary, "listedAt" | "createdAt">, now: number): number | null {

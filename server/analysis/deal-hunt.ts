@@ -32,6 +32,8 @@ interface DealHuntInput {
     candidates: DealHuntCandidate[];
     markets?: DealHuntMarket[];
     auction?: boolean;
+    /** Host-level runaway safeguard, independent of provider request allowances. */
+    maxSteps?: number;
 }
 
 export interface DealHuntMarket {
@@ -40,6 +42,8 @@ export interface DealHuntMarket {
     title: string;
     summary: string;
     discover(signal?: AbortSignal, reportQueries?: (description: string) => void): Promise<DealHuntCandidate[]>;
+    /** A later source page remains available under the same research account. */
+    hasMore?(): boolean;
 }
 
 type ResearchChoice = { action: DealHuntAction; index: number };
@@ -47,7 +51,7 @@ type DestinationChoice = { action: "finish"; index: number; section: DealHuntSec
 type MarketChoice = { action: "find_listings"; index: number; title: string; summary: string; differentCard?: boolean; releaseYear?: number };
 type Option = ResearchChoice | DestinationChoice | MarketChoice;
 
-const initialResearchLimit = 8;
+const initialResearchLimit = 128;
 const gradingChecks: DealHuntAction[] = ["inspect_photos", "check_listing", "check_sales", "calculate_grading"];
 const resaleVerificationSteps = gradingChecks.length;
 const experiment = createModelExperimentRunner();
@@ -193,7 +197,7 @@ async function selectOption(options: Option[], searchId: string, goal: DealHuntG
         reason: answer.result.reason, reused: answer.reused, fallback: answer.result.fallback };
 }
 
-export async function runDealHunt({ searchId, goal, candidates: initial, markets = [], auction = false }: DealHuntInput, signal?: AbortSignal, choose = experiment): Promise<DealHuntReport> {
+export async function runDealHunt({ searchId, goal, candidates: initial, markets = [], auction = false, maxSteps = initialResearchLimit }: DealHuntInput, signal?: AbortSignal, choose = experiment): Promise<DealHuntReport> {
     signal?.throwIfAborted();
     const format = auction ? "auction" : "Buy It Now";
     const candidates = [...initial];
@@ -201,7 +205,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
     const huntGradingMarkets = !auction && goal === "grade_raw" && markets.length > 0;
     const huntMarketsForBuyer = goal === "resell" || auction && goal === "collect_slab" || huntGradingMarkets;
     const verificationSteps = goal === "collect_slab" ? 3 : resaleVerificationSteps;
-    if (!isSearchDiagnosticId(searchId) || !Object.hasOwn(dealHuntGoals, goal) || candidates.length > DEVELOPMENT_SEARCH_LIMIT ||
+    if (!Number.isSafeInteger(maxSteps) || maxSteps < 1 || maxSteps > 512 || !isSearchDiagnosticId(searchId) || !Object.hasOwn(dealHuntGoals, goal) || candidates.length > DEVELOPMENT_SEARCH_LIMIT ||
         new Set(candidates.map(candidate => candidate.listingId)).size !== candidates.length ||
         candidates.some(candidate => !candidate.listingId.trim() || !candidate.title.trim())) {
         throw new Error("A deal hunt needs a valid search, a buyer goal and distinct listings.");
@@ -218,7 +222,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
         while (true) {
             signal?.throwIfAborted();
             // Once there is an auction to examine, leave room to reject its exit and verify another copy.
-            const researchLimit = initialResearchLimit + (auction && candidates.length ? verificationSteps : 0);
+            const researchLimit = maxSteps + (auction && candidates.length ? verificationSteps : 0);
             const remainingChecks = researchLimit - steps.length;
             const options: Option[] = [];
             let hasUncheckedMarketCopy = false;
@@ -252,7 +256,8 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                 : steps.length < researchLimit && searchedMarkets.size < 2;
             if (canBrowse) {
                 markets.forEach(({ title, summary }, index) => {
-                    if (!searchedMarkets.has(index)) options.push({ action: "find_listings", index, title, summary });
+                    if (!searchedMarkets.has(index) || markets[index].hasMore?.()) options.push({ action: "find_listings", index, title,
+                        summary: searchedMarkets.has(index) ? `Continue the next source page. ${summary}` : summary });
                 });
             }
             if (!options.length) {
@@ -270,7 +275,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             }
             // A supported buy for this goal has precedence over reporting a different copy's WAIT.
             const buys = options.filter(option => option.action === "finish" && option.decision !== "WAIT");
-            const eligible = buys.length ? buys : huntMarketsForBuyer && hasUncheckedMarketCopy
+            const eligible = buys.length ? buys : huntMarketsForBuyer && (hasUncheckedMarketCopy || options.some(option => option.action === "find_listings"))
                 ? options.filter(option => option.action !== "finish") : options;
             // After two unsuccessful markets, reserve the remaining checks for a new copy.
             // Let the planner compare every unsearched eligible market, including another printing.

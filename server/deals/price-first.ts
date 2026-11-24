@@ -12,13 +12,13 @@ import { maxBid, netFromSale } from "../../shared/money/underwriting.ts";
 import { soldMarketPrice } from "../../shared/sold-evidence.ts";
 
 export type SoldScreeningFactory = typeof createSoldScreening;
-interface PriceFirstOptions { signal?: AbortSignal; targets?: Targets; includeOffers?: boolean; now?: number; sourceFactory?: typeof createScreeningPriceSource }
+interface PriceFirstOptions { signal?: AbortSignal; targets?: Targets; includeOffers?: boolean; now?: number; sourceFactory?: typeof createScreeningPriceSource; onScreened?: () => void }
 
 // Finish shared market research before emitting photo-ready candidates. This
 // prevents the browser buying the first few assessments while stronger priced
 // candidates are still waiting for the same market page.
 export function createPriceFirstSession(intent: SearchIntent, {
-    signal, targets, includeOffers = false, now = Date.now(), sourceFactory,
+    signal, targets, includeOffers = false, now = Date.now(), sourceFactory, onScreened,
 }: PriceFirstOptions = {}, createScreening: SoldScreeningFactory = createSoldScreening) {
     signal?.throwIfAborted();
     const stopped = new AbortController();
@@ -46,7 +46,9 @@ export function createPriceFirstSession(intent: SearchIntent, {
                 sameSetFamily(card?.set ?? (intent.sets.length === 1 ? intent.sets[0] : null), "Base Set") &&
                 (card?.printing === "FIRST_EDITION" || intent.printing === "FIRST_EDITION");
             if (cheapEditionLead && listing.screen) candidate = { ...listing, screen: { ...listing.screen, focusedReview: "CHEAP_FIRST_EDITION_BASE_SET" } };
-            return applySoldPriceScreen(candidate, evidence, { targets, includeOffers });
+            const result = applySoldPriceScreen(candidate, evidence, { targets, includeOffers });
+            onScreened?.();
+            return result;
         }); } catch (error) { stopped.abort(error); throw error; }
         signal?.throwIfAborted();
         // Stable ties preserve newest-listing/source order. This ranks preliminary

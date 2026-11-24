@@ -52,7 +52,7 @@ export function groupMarketSearches(leads: HuntMarket[], goal: DealHuntGoal, tar
     if (filters.typeFilter === "AUCTION") {
         // Historic BIN margins describe a different purchase format. Start with liquid
         // auction markets across distinct cards before offering more grades of one card.
-        const volume = (group: MarketGroup) => Math.max(...group.leads.map(m => m.sales30));
+        const volume = (group: MarketGroup) => Math.max(...group.leads.map(m => m.sales60 ?? m.sales30));
         const ranked = [...groups.values()].sort((a, b) => volume(b) - volume(a));
         const featured = new Set<MarketGroup>();
         for (const kind of ["raw", "slab"] as const) {
@@ -65,12 +65,12 @@ export function groupMarketSearches(leads: HuntMarket[], goal: DealHuntGoal, tar
             if (!cards.has(card)) featured.add(group);
             cards.add(card);
         }
-        return [...new Set([...featured, ...ranked])].slice(0, 8);
+        return [...new Set([...featured, ...ranked])];
     }
-    // Compare affordable, previously seen copies before truncating. Within each
+    // Compare affordable, previously seen copies first. Within each
     // tier, preserve the existing ranking by sale activity and historical profit.
     return [...groups.values()].sort((a, b) =>
-        Number(b.observedPurchaseTotal !== undefined) - Number(a.observedPurchaseTotal !== undefined)).slice(0, 8);
+        Number(b.observedPurchaseTotal !== undefined) - Number(a.observedPurchaseTotal !== undefined));
 }
 
 // Acquisition costs and exit ceilings still apply to each copy individually.

@@ -102,7 +102,7 @@ const RECENT_DAYS = 180;
 const DAY_MS = 86400000;
 
 // A sale this far from the others' median is more likely a mislabeled
-// printing or a special copy than a price. Needs 3 or more sales.
+// printing or a special copy than an ordinary price.
 const OUTLIER_FACTOR = 2.5;
 
 function titleAgrees(claim: PrintingClaim, printing: PrintingOrUnknown): boolean {
@@ -195,7 +195,7 @@ function marketEstimate(sales: Comp[], now: number): CompSummary["marketEstimate
     if (recent.length === 4) {
         const newest = (recent[0].price + recent[1].price) / 2;
         const previous = (recent[2].price + recent[3].price) / 2;
-        return { price: rounded((newest + previous) / 2), method: "RECENT_FOUR",
+        return { price: rounded(median(recent.map(({ price }) => price))), method: "RECENT_FOUR",
             ...(recent[1].age < recent[2].age ? { recentTrendPercent: rounded((newest / previous - 1) * 100) } : {}) };
     }
 
@@ -235,7 +235,7 @@ export function summarizeComps(
         dropped[reason] = (dropped[reason] ?? 0) + 1;
     };
 
-    for (const comp of comps) {
+    for (const comp of uniqueSoldComps(comps)) {
         const verdict = verdicts?.get(comp);
         const problem =
             compProblem(comp, criteria) ??
@@ -248,11 +248,16 @@ export function summarizeComps(
         }
     }
 
-    if (kept.length >= 3) {
+    const activity = kept;
+    if (kept.length >= 2) {
         const middle = median(kept.map((comp) => comp.price));
+        const sparseFloor = kept.length === 2 ? Math.min(...kept.map(comp => comp.price)) : null;
 
         kept = kept.filter((comp) => {
-            const far = comp.price > middle * OUTLIER_FACTOR || comp.price < middle / OUTLIER_FACTOR;
+            // Two radically different observations cannot justify averaging an
+            // isolated premium into the ordinary price. Keep the lower amount.
+            const far = sparseFloor !== null ? comp.price > sparseFloor * OUTLIER_FACTOR
+                : comp.price > middle * OUTLIER_FACTOR || comp.price < middle / OUTLIER_FACTOR;
 
             if (far) drop("price far from the other sales");
 
@@ -262,6 +267,13 @@ export function summarizeComps(
 
     const prices = kept.map((comp) => comp.price).sort((a, b) => a - b);
     const estimate = marketEstimate(uniqueSoldComps(kept), criteria.now);
+    const saleFacts = (comp: Comp) => ({
+        ...(comp.photoCondition && { photoCondition: comp.photoCondition }),
+        ...(comp.photoCondition && comp.conditionEvidence?.length && { conditionEvidence: comp.conditionEvidence }),
+        ...(comp.sellerCondition !== undefined && { sellerCondition: comp.sellerCondition }),
+        ...(comp.sale_type ? { saleType: comp.sale_type } : {}),
+        price: comp.price, soldAt: comp.sold_at, title: comp.title, url: comp.listing_url ?? null,
+    });
 
     return {
         grader: criteria.grader,
@@ -275,16 +287,10 @@ export function summarizeComps(
         newestSale: kept.map((comp) => comp.sold_at).sort().at(-1) ?? null,
         confidence: confidenceFor(kept.length),
         dropped,
-        sales: kept.map((comp) => ({
-            ...(comp.photoCondition && { photoCondition: comp.photoCondition }),
-            ...(comp.photoCondition && comp.conditionEvidence?.length && { conditionEvidence: comp.conditionEvidence }),
-            ...(comp.sellerCondition !== undefined && { sellerCondition: comp.sellerCondition }),
-            ...(comp.sale_type ? { saleType: comp.sale_type } : {}),
-            price: comp.price,
-            soldAt: comp.sold_at,
-            title: comp.title,
-            url: comp.listing_url ?? null,
-        })),
+        sales: kept.map(saleFacts),
+        // A valid exact transaction still shows activity when its unusual
+        // amount is excluded from the ordinary-price estimate.
+        ...(activity.length !== kept.length && { activitySales: activity.map(saleFacts) }),
         windowDays: criteria.windowDays ?? RECENT_DAYS,
         ...(kept.length > 0 && kept.every((comp) => verdicts?.has(comp)) ? { checkedByAI: true } : {}),
     };

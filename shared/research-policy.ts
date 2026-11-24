@@ -13,6 +13,6 @@ export const PRICE_SCREEN_REQUEST_LIMIT = 128;
 export const SOLD_MARKET_PAGE_LIMIT = 4;
 // Bound in-flight detail/photo work independently of how many rows are shown.
 // More candidates can finish through saved evidence or remaining AI budget.
-export const BOUNDED_AUTO_CONCURRENCY = 2;
+export const BOUNDED_AUTO_CONCURRENCY = 6;
 // Maximum supplied photos accepted by the bounded assessment response schema.
 export const BOUNDED_PHOTO_LIMIT = 6;

@@ -1,6 +1,71 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { disconnectBuyerAccount, evaluateListing, fetchAuctionReminders, fetchBuyerAccount, startBuyerConnection, streamDeals, streamNewDeals } from "../../client/src/api.ts";
+import { disconnectBuyerAccount, evaluateListing, fetchAuctionReminders, fetchBuyerAccount, interpretSearchRequest, reviewBuyerListing, startBuyerConnection, streamDeals, streamNewDeals } from "../../client/src/api.ts";
+
+test("buyer-review recovery metadata keeps its original account and leaves retry scheduling to the queue", async t => {
+    const controller = new AbortController(), retryAt = Date.now() + 180_000;
+    const response = { listingId: "offline-alakazam", decision: "WAIT", reason: "Temporary provider cooldown.", evidence: "saved", evaluation: null,
+        unavailable: true, failure: { code: "PROVIDER_TEMPORARY", retryable: true }, retryAt };
+    const fetch = t.mock.method(globalThis, "fetch", async (_url: string, init?: RequestInit) => {
+        assert.equal(new Headers(init?.headers).get("X-Pokemon-Flipper-Search-Id"), "original-account");
+        assert.deepEqual(JSON.parse(String(init?.body)), { allowResearch: true });
+        return Response.json(response);
+    });
+    assert.deepEqual(await reviewBuyerListing(response.listingId, "original-account", { minProfit: 0, minRoi: 0 }, false, true, controller.signal), response);
+    fetch.mock.mockImplementation(async () => Response.json({ error: "Still cooling down", retryable: true, retryAfterMs: 180_000 }, { status: 503 }));
+    await assert.rejects(reviewBuyerListing(response.listingId, "original-account", { minProfit: 0, minRoi: 0 }, false, true, controller.signal),
+        (error: any) => error.retryable === true && error.retryAt >= Date.now() + 179_000);
+    assert.equal(fetch.mock.callCount(), 2, "no nested HTTP retry multiplies the queue's bounded attempts");
+    controller.abort();
+    await assert.rejects(reviewBuyerListing(response.listingId, "original-account", { minProfit: 0, minRoi: 0 }, false, true, controller.signal));
+    assert.equal(fetch.mock.callCount(), 2);
+});
+
+test("buyer-review API rejects unsafe or malformed automatic-retry metadata", async t => {
+    const base = { listingId: "offline-alakazam", decision: "WAIT", reason: "Unavailable", evidence: "listing", evaluation: null, unavailable: true };
+    for (const extra of [
+        { failure: { code: "AI_EVIDENCE_HELD", retryable: true }, retryAt: Date.now() + 3000 },
+        { failure: { code: "AI_BUDGET", retryable: true }, retryAt: Date.now() + 3000 },
+        { failure: { code: "PROVIDER_TEMPORARY", retryable: true } },
+        { failure: { code: "PROVIDER_TEMPORARY", retryable: true }, retryAt: "soon" },
+        { failure: { code: "PROVIDER_TEMPORARY", retryable: true }, retryAt: -1 },
+    ]) {
+        t.mock.method(globalThis, "fetch", async () => Response.json({ ...base, ...extra }));
+        await assert.rejects(reviewBuyerListing(base.listingId, "original-account", { minProfit: 0, minRoi: 0 }, false, true, new AbortController().signal), /response was incomplete/);
+    }
+});
+
+test("search interpretation sends the original request before canonical discovery under the same search ID", async t => {
+    const requests: { url: string; headers: Headers; body: unknown }[] = [];
+    const plan = { workflow: "named_search", query: "Venusaur 1999", intent: { cardName: "Venusaur", minYear: 1999, maxYear: 1999 },
+        format: "FIXED_PRICE", marketPreferences: {}, goal: null, minProfit: null, maxDelivered: null,
+        summary: "Find 1999 Venusaur listings." };
+    t.mock.method(globalThis, "fetch", async (url: string, init?: RequestInit) => {
+        requests.push({ url, headers: new Headers(init?.headers), body: init?.body && JSON.parse(String(init.body)) });
+        return url === "/api/search-plan" ? Response.json(plan) : new Response('{"type":"done"}\n');
+    });
+    const signal = new AbortController().signal;
+    const filters = { typeFilter: "FIXED_PRICE" as const, kindFilter: "all" as const };
+    const result = await interpretSearchRequest({ query: "please show me a venusaur from 1999", filters }, "one-request", signal);
+    await streamDeals(result.query, { minPrice: 0, filters, searchRunId: "one-request", signal }, () => {});
+    assert.equal(requests[0].url, "/api/search-plan");
+    assert.deepEqual(requests[0].body, { query: "please show me a venusaur from 1999", filters });
+    assert.equal(new URL(requests[1].url, "http://local").searchParams.get("q"), "Venusaur 1999");
+    assert.ok(requests.every(request => request.headers.get("X-Pokemon-Flipper-Search-Id") === "one-request"));
+});
+
+test("failed or cancelled interpretation cannot dispatch a fallback marketplace search", async t => {
+    const controller = new AbortController();
+    const fetch = t.mock.method(globalThis, "fetch", async () => Response.json({ error: "Search interpretation is unavailable." }, { status: 503 }));
+    await assert.rejects(interpretSearchRequest({ query: "find a deal form neo revolution" }, "one-request", controller.signal), /interpretation is unavailable/);
+    assert.equal(fetch.mock.callCount(), 1);
+    controller.abort();
+    await assert.rejects(interpretSearchRequest({ query: "1999 venusaur" }, "one-request", controller.signal));
+    assert.equal(fetch.mock.callCount(), 1);
+    fetch.mock.mockImplementation(async () => Response.json({ workflow: "unknown", query: "invented" }));
+    await assert.rejects(interpretSearchRequest({ query: "1999 venusaur" }, "one-request", new AbortController().signal), /interpretation was incomplete/);
+    assert.equal(fetch.mock.callCount(), 2);
+});
 
 test("known filters and a search identifier reach both search modes before paid work", async t => {
     const requests: { url: string; searchId: string | null }[] = [];
@@ -109,6 +174,18 @@ test("early EOF preserves delivered results but cannot become a completed search
     const messages: string[] = [];
     await assert.rejects(streamDeals("offline", { minPrice: 0 }, (message) => messages.push(message.type)), /ended before completion/);
     assert.deepEqual(messages, ["listing"]);
+});
+
+test("discovery progress arrives before retained rows without becoming a completed batch", async t => {
+    t.mock.method(globalThis, "fetch", async () => new Response([
+        { type: "progress", found: 200, screened: 0 }, { type: "start", count: 1 },
+        { type: "progress", found: 200, screened: 48 }, { type: "listing", listing: { id: "retained" } }, { type: "done" },
+    ].map(value => JSON.stringify(value)).join("\n")));
+    const messages: string[] = [];
+    await streamDeals("Venusaur", { minPrice: 0 }, message => messages.push(message.type));
+    assert.deepEqual(messages, ["progress", "start", "progress", "listing", "done"]);
+    t.mock.method(globalThis, "fetch", async () => new Response('{"type":"progress","found":200,"screened":48}\n'));
+    await assert.rejects(streamDeals("Venusaur", { minPrice: 0 }, () => {}), /ended before completion/);
 });
 
 test("a terminal message without a newline completes a fragmented UTF-8 stream", async (t) => {

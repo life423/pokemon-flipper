@@ -91,12 +91,10 @@ async function fetchVariantComps(
     const eligible = (sale: Comp) => eligibleComp(sale, criteria, target);
     const stopWhen = cachedChecks ? async (sales: readonly Comp[]) => {
         const signal = getPriceResearchSignal();
-        for (const sale of sales) {
-            if (!eligible(sale)) continue;
-            const verdict = (await cachedChecks([sale], target, signal)).get(sale);
-            if (verdict?.keep !== false) return true;
-        }
-        return false;
+        const passing = sales.filter(eligible);
+        if (!passing.length) return false;
+        const verdicts = await cachedChecks(passing, target, signal);
+        return passing.some(sale => verdicts.get(sale)?.keep !== false);
     } : (sales: readonly Comp[]) => sales.some(eligible);
     const comps: Comp[] = [];
     for (const sourceLabel of sourceLabels) {
@@ -125,15 +123,20 @@ export async function gradedPricesFor(
 
     const label = printingLabel(identity.printing, identity.set);
     const byGrade: CompSummary[] = [];
-
-    for (let grade = gradeRange.low; grade <= gradeRange.high; grade += 1) {
+    const grades = Array.from({ length: gradeRange.high - gradeRange.low + 1 }, (_, index) => gradeRange.low + index);
+    // These exact grade markets are independent. The provider adapter still
+    // enforces its request rate, concurrency, shared cache and search allowance.
+    // Await accepted sibling work before returning an error to the evaluator.
+    const summaries = await Promise.allSettled(grades.map(async grade => {
+        getPriceResearchSignal()?.throwIfAborted();
         const criteria: CompCriteria = { printing: identity.printing, setName: variant.setName, finish: variant.finish, grader, grade, now };
         const target = compTarget(card, identity, variant, grader, grade);
         const comps = await fetchVariantComps(card, variant, { grader, grade, fetchComps, criteria, target, cachedChecks });
-
-        byGrade.push(
-            await checkedSummary(comps, criteria, target, checkComps ?? cachedChecks)
-        );
+        return checkedSummary(comps, criteria, target, checkComps ?? cachedChecks);
+    }));
+    for (const result of summaries) {
+        if (result.status === "rejected") throw result.reason;
+        byGrade.push(result.value);
     }
 
     const details = { printingLabel: label, variant: variant.name, grader, byGrade };

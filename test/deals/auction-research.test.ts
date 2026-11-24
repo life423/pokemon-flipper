@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { auctionPhotoPriority } from "../../shared/auction-research.ts";
-import { huntGoalPrompt } from "../../client/src/search/hunt-goal.ts";
 import { researchAuctionSellers, researchFreshRawSellers } from "../../server/deals/auction-seller-research.ts";
 import { ruleSelection } from "../../server/deals/search-review-selection.ts";
 import { EbayBudgetError } from "../../server/ebay/usage.ts";
@@ -13,16 +12,6 @@ function listing(name: string, hours: number, title = "Vintage holo card NM"): L
         endTime: new Date(now + hours * 3_600_000).toISOString(), images: ["front", "back"], isGraded: false, url: "https://www.ebay.com",
         seller: { username: name, feedbackPercentage: 99, feedbackScore: 50 } };
 }
-test("a broad auction goal keeps both inclusive years, the finish and the requested minimum profit", () => {
-    const prefs = { minYear: 1999, maxYear: 2003, finish: "HOLO" };
-    assert.deepEqual(huntGoalPrompt("Find vintage holos from 1999–2003 I can flip for at least $25."), {marketPreferences: prefs, minProfit: 25});
-    assert.deepEqual(huntGoalPrompt("Find 1999 to 2003 holo auctions with $25 in profit"), {marketPreferences: prefs, minProfit: 25});
-    assert.deepEqual(huntGoalPrompt("Find 1999 to 2003 holo auctions ending in under 10 hours for at least $25 profit"), {marketPreferences: prefs, minProfit: 25});
-    assert.deepEqual(huntGoalPrompt("Find auctions with less than 10 hours left"), {marketPreferences: {}});
-    for (const query of ["find auctions ending in under 2 hours", "Mewtwo 10/102 auction", "find holo auctions under $40", "find vintage auctions", "2003 to 1999 auction", "find auctions for Japanese cards"]) {
-        assert.equal(huntGoalPrompt(query), null, query);
-    }
-});
 test("auction research uses observed merchandise counts and reuses each seller sample across copies", async () => {
     const rows = [listing("specialist", 3), listing("tools", 4), { ...listing("tools", 2), id: "another-copy" }, listing("third", 9)];
     const sampled: string[] = [];

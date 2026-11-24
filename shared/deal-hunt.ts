@@ -12,6 +12,11 @@ export type DealHuntScope = "search" | "same_set" | "any_card";
 export type DealHuntAction = "check_listing" | "inspect_photos" | "resolve_printing" | "check_sales" | "check_price_references" | "calculate_grading" | "check_raw_resale";
 export type DealHuntSection = "grading" | "sales" | "photos";
 export interface HuntMarketPreferences {
+    sets?: string[];
+    printing?: "FIRST_EDITION" | "SHADOWLESS" | "UNLIMITED";
+    grader?: "PSA" | "CGC" | "BGS" | "SGC" | "TAG";
+    minGrade?: number;
+    maxGrade?: number;
     minYear?: number;
     maxYear?: number;
     finish?: "HOLO" | "REVERSE_HOLO" | "NON_HOLO";

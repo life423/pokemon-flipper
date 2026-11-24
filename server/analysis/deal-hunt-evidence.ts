@@ -9,7 +9,7 @@ import { dollars } from "../../shared/format.ts";
 import { readyForPricing } from "../../shared/identity.ts";
 import { cents, meetsMoneyTargets } from "../../shared/money/cents.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
-import { isRawSoldPrice, referencePriceReason } from "../../shared/money/price-evidence.ts";
+import { isUsableRawPrice, referencePriceReason } from "../../shared/money/price-evidence.ts";
 import { rawBuyGuidance, rawPriceReferences } from "../../shared/money/raw-buy-guidance.ts";
 import { slabBuyGuidance } from "../../shared/money/slab-buy-guidance.ts";
 import { acquisitionCost } from "../../shared/money/underwriting.ts";
@@ -22,7 +22,7 @@ import { soldMarketPrice } from "../../shared/sold-evidence.ts";
 import type { CompSummary, Evaluation, Grader, PricedPath, Targets } from "../../shared/types.ts";
 import type { DealHuntCandidate, DealHuntOutcome } from "./deal-hunt.ts";
 import { supplementalMarket } from "../pricing/supplemental-research.ts";
-import { MIN_RECENT_HUNT_SALES, rankHuntMarkets, salesForExit, type HuntMarket } from "./same-set-markets.ts";
+import { rankHuntMarkets, salesForExit, type HuntMarket } from "./same-set-markets.ts";
 
 function listingTerms(value: Evaluation, now: number) {
     const { price, shipping, availability, termsCheckedAt } = value.listing;
@@ -75,7 +75,8 @@ function rawMarket(value: Evaluation, now: number) {
         !(pricing.finish || pricing.variant) || pricing.variant && finishOfVariant(pricing.variant) !== value.identity?.finish ||
         pricing.finish && pricing.finish !== value.identity?.finish) return null;
     const condition = value.condition?.rawCondition;
-    const row = pricing.prices?.find(row => row.condition === condition && isRawSoldPrice(row));
+    const row = pricing.prices?.find(row => row.condition === condition && isUsableRawPrice(row));
+    if (row?.basis?.startsWith("TCGPLAYER_")) return row;
     const comp = row?.comps ?? pricing.ebayComps?.find(row => row.grader === "RAW" && row.grade === condition);
     return row && comp?.grade === condition && comp?.grader === "RAW" && matchedPrice(comp, now) === row.price ? row : null;
 }
@@ -190,7 +191,9 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
         if (slabSales) return `${slabSales.count} matched ${value.slab?.grader} ${value.slab?.grade} sales. Sold estimate ${dollars(slabSales.price)}.`;
         if (reference) return `${reference.evidence} Estimated market value ${dollars(reference.price)}. ${reference.caseNote ?? ""}`.trim();
         if (slab) return "No recent sales verified for this printing, grader and grade.";
-        const observations = raw ? [`Condition-matched raw sale estimate ${dollars(raw.price)}.`] : [];
+        const observations = raw ? [raw.basis?.startsWith("TCGPLAYER_")
+            ? `Condition-matched TCGplayer estimate ${dollars(raw.price)}. Current offers are price evidence, not completed sales.`
+            : `Condition-matched raw sale estimate ${dollars(raw.price)}.`] : [];
         if (!raw) {
             const guidance = rawBuyGuidance(value, now, targets);
             if (guidance) observations.push(guidance.explanation);
@@ -221,7 +224,7 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
         if (next === null || shipping === null) return "Fresh purchase and shipping terms are needed to calculate raw resale profit.";
         const total = acquisitionCost(next, shipping, MONEY_CONFIG.buying);
         const profit = (cents(exit.path.expectedNet) - cents(total) - cents(exit.path.fixedCosts)) / 100;
-        return `Selling raw at the ${CONDITION_NAMES[exit.condition]} estimate of ${dollars(exit.price.price)} projects a ${profit < 0 ? "loss" : "profit"} of ${dollars(Math.abs(profit))} after all costs${auction ? " at the next bid" : ""}. ${exit.sales} matched ${exit.sales === 1 ? "sale" : "sales"} in the last 30 days.`;
+        return `Selling raw at the ${CONDITION_NAMES[exit.condition]} estimate of ${dollars(exit.price.price)} projects a ${profit < 0 ? "loss" : "profit"} of ${dollars(Math.abs(profit))} after all costs${auction ? " at the next bid" : ""}. ${exit.sales} observed matching ${exit.sales === 1 ? "sale" : "sales"} in the last 60 days.`;
     }
     function outcome(completed: ReadonlySet<DealHuntAction>): DealHuntOutcome | null {
         if (!completed.has("check_listing") || !completed.has("inspect_photos")) return null;
@@ -253,7 +256,7 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
             return { decision: "WAIT", section: "photos", reason: status + "The photos did not establish the exact printing needed to price this copy." };
         }
         const raw = rawChecked ? rawExit(now) : null;
-        const chooseRaw = raw && raw.path.clears && raw.path.profit > 0 && raw.sales >= MIN_RECENT_HUNT_SALES &&
+        const chooseRaw = raw && raw.path.clears && raw.path.profit > 0 &&
             (!completed.has("calculate_grading") || !gradeRoute);
         if (!chooseRaw && (!completed.has("check_sales") || gradeRoute && !completed.has("calculate_grading"))) return null;
         let section: DealHuntOutcome["section"] = gradeRoute && !chooseRaw ? "grading" : "sales";
@@ -283,7 +286,7 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
             const scenarios = gradeScenarios(value, now);
             hasGradeComparisons = scenarios.some(({ likely, lower }) => likely && lower);
             const profitable = scenarios.filter(({ path, likely, lower }) => path.clears && path.profit > 0 && likely && likely.profit > 0 && lower && lower.profit > 0);
-            const viable = profitable.find(({ path }) => goal !== "resell" || salesForExit(value, path, markets, now) >= MIN_RECENT_HUNT_SALES);
+            const viable = profitable[0];
             exit = (viable ?? profitable[0] ?? scenarios.find(({ path }) => path.profit > 0))?.path;
             reason = gradeMath(viable ? [viable] : scenarios, value, now);
             supported = !!viable && value.underwriting?.verdict.startsWith("BUY") === true;
@@ -310,11 +313,8 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
             const sales = salesForExit(value, exit, markets, now);
             const label = exit.path === "RAW" && exit.priceCondition ? `${CONDITION_NAMES[exit.priceCondition]} raw` :
                 exit.path === "GRADE" ? `${exit.grader} ${grade}` : `${value.slab?.grader} ${value.slab?.grade}`;
-            reason += ` ${sales} matched ${label} ${sales === 1 ? "sale" : "sales"} in the last 30 days.`;
-            if (sales < MIN_RECENT_HUNT_SALES) {
-                supported = false;
-                reason += ` The resale hunt needs at least ${MIN_RECENT_HUNT_SALES} to support buying.`;
-            }
+            reason += ` ${sales} observed matching ${label} ${sales === 1 ? "sale" : "sales"} in the last 60 days.`;
+            if (!sales) reason += " The returned evidence supplies no matching transactions in that window; a price quote alone does not establish sales activity.";
             if (exit.profit > 0 && !exit.clears) reason += " The projected return falls short of your profit or ROI target.";
         }
         if (!supported && completed.has("check_price_references") && !reference) {
@@ -386,12 +386,13 @@ export function newGradingOpportunity(value: Evaluation, now: number, targets: T
         if (!meetsMoneyTargets(cents(path.cost) + cents(likely.profit), cents(path.cost), targets.minProfit, targets.minRoi)) continue;
         const marketAt = (grade: number) => markets.find(m => m.kind === "raw" && m.grader === path.grader && m.grade === grade);
         const high = marketAt(likely.grade), low = marketAt(lower.grade);
-        if (!high?.liquidThrough || high.sales30 < MIN_RECENT_HUNT_SALES || !low) continue;
+        if (!high || !low) continue;
         const validUntil = Math.min(Date.parse(value.listing.termsCheckedAt!) + BEST_BUY_TERMS_MAX_AGE_MS,
-            listed + GRADING_WATCH_FRESH_MS, high.liquidThrough, Date.parse(low.latestSaleAt) + 30 * 86_400_000,
+            listed + GRADING_WATCH_FRESH_MS,
             Date.parse(value.listing.endTime ?? "") || Infinity);
         if (!(validUntil > now)) continue;
         return { grader: path.grader, listingDate: new Date(listed).toISOString(), dateSource: dates.listedAt ? "listed" : "created", validUntil, delivered: terms.total,
-            gradingCosts: path.fixedCosts, likely: { ...likely, sales30: high.sales30 }, lower: { ...lower, sales30: low.sales30 } };
+            gradingCosts: path.fixedCosts, likely: { ...likely, sales30: high.sales30, sales60: high.sales60 ?? high.sales30 },
+            lower: { ...lower, sales30: low.sales30, sales60: low.sales60 ?? low.sales30 } };
     }
 }

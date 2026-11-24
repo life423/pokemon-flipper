@@ -6,11 +6,22 @@ the applicable identity, condition or slab-label evidence. The app, single-listi
 CLI and benchmark use the same evaluator. Older request writers are retired;
 small compatibility readers preserve already-paid evidence.
 
+The November 24 checkpoint adds exact condition/printing TCGplayer raw
+valuation in `server/pricing/tcgplayer-raw.ts`, separate 60-day transaction
+activity in `shared/sales-activity.ts`, and bounded cooldown-aware browser
+recovery in `client/src/search/useBuyerReviews.ts`. Active asks never become
+completed-sales volume. There is no hard three-sale purchase veto. Retained
+overflow and source pagination use `server/deals/search-continuation.ts` under
+the original search account; browser acceptance beyond the first 50 remains
+pending. Broad hunts still seed from saved accepted markets.
+
 ## Follow one listing
 
 ```mermaid
 flowchart TD
-    S[Search or Find new listings] --> Q0[Local query parsing with optional text assistance]
+    S[Submitted search] --> Q0[OpenAI structured search interpretation]
+    Q0 --> H[Market hunt for a broad buying goal]
+    N[Find new listings or watch] --> F
     Q0 --> F[One eBay page, deduplicate and apply local filters]
     F --> P0[Bounded PKMNPrices sold research, cache first]
     P0 --> G[Rank candidates with optional listing text tie-break]
@@ -28,10 +39,11 @@ flowchart TD
 ```
 
 1. Normal HTTP search and **Find new listings** use the bounded path in
-   `find-deals.ts`. Query parsing uses saved and local rules first. A short
-   text request can clean up phrasing the rules leave behind while preserving
-   explicit card criteria. The initial page uses up to 200 eBay summaries,
-   local/cached metadata exclusions and at most 50 retained matching rows.
+   `find-deals.ts`. Explicit submitted text first uses the OpenAI interpreter in
+   `server/search/search-plan.ts`, with code validating its typed constraints.
+   Find new listings and watches reuse the accepted plan. The initial page
+   uses up to 200 eBay summaries, local/cached metadata exclusions and at most
+   50 retained matching rows per review batch.
    An exact slab Buy It Now search with a verified matched sale in the last
    30 days derives an item-price ceiling using the existing fee and target math.
    Its initial eBay request applies the lower of that ceiling and the user's
@@ -60,8 +72,9 @@ flowchart TD
    before three candidates clear preliminary financial screening, research can
    continue within the fetched page. When a second page is warranted, it
    samples lower prices. Both passes share the same sold-price session,
-   deduplicate researched IDs and retain at most 50 results. The search reports
-   unresolved rows that fell outside that display limit. Listing coverage shows
+   deduplicate researched IDs and retain at most 50 results per review batch.
+   Saved continuation preserves overflow and source offsets for later batches.
+   Listing coverage shows
    each fetched, identifiable listing that was rejected, was never screened,
    or was screened outside the display limit. It saves these decisions under
    the search ID. Older cached pages may have partial coverage. The extra
@@ -69,7 +82,8 @@ flowchart TD
    With Best Offers enabled, a thin exact-slab result can include listings
    within the offer discount range in that additional pass. Find new listings
    keeps newest-first ordering and excludes previously seen IDs.
-   Automatic auctions must fall within the fixed search-start 12-hour window.
+   Automatic auctions require more than zero and strictly less than ten hours
+   remaining at search start.
 2. Before candidates are emitted to the browser, `price-first.ts` runs shared
    sold research with at most four candidates in flight. Its source permits
    128 uncached PKMNPrices requests including catalog work, and adaptive reads of
@@ -109,7 +123,7 @@ flowchart TD
    Missing/deferred evidence stays in Sorting without an automatic paid
    request, except the existing focused-review exception for a raw First Edition
    Base Set lead priced at $10 or less. The browser considers eligible loaded
-   rows with two assessments in flight and reuses saved evidence first. The
+   rows with six assessments in flight and reuses saved evidence first. The
    local operator can run with or without a dollar ceiling. Every request is
    recorded against its search account. All nested Browse work shares the separate 100-request ceiling for new searches
    per search and account-wide daily quota protection.
@@ -186,7 +200,10 @@ flowchart TD
    sales, the existing recency estimate can use other confirmed transactions.
    Comparisons retain their sale format. Slab auction bid references prefer
    observed auction prices when present.
-   Raw resale first reads accepted sold-copy condition observations. When no
+   Raw resale first attempts exact TCGplayer condition/printing valuation after
+   the live assessment: lowest delivered competition capped by condition market
+   value when available, or a labeled condition-market fallback. If unavailable,
+   raw resale can read accepted sold-copy condition observations. When no
    suitable match exists, a same-condition seller-clue cohort merits research
    when any sale could cover the current purchase costs; otherwise consider the
    unspecified-condition cohort on the same basis. Select the newest unreviewed

@@ -12,6 +12,7 @@ export async function getSqlRepositories(): Promise<SqlRepositories> {
     return createSqlRepositories(await getSqlExecutor());
 }
 export async function readCacheEntry(key: string) { return (await getSqlRepositories()).readCacheEntry(key); }
+export async function readCacheEntries(keys: string[]) { return (await getSqlRepositories()).readCacheEntries(keys); }
 export async function writeCacheEntry(entry: CacheEntry) { return (await getSqlRepositories()).writeCacheEntry(entry); }
 export async function readAssessmentRecord(itemId: string, ownerId?: string) { return (await getSqlRepositories()).readAssessmentRecord(itemId, ownerId); }
 export async function writeAssessmentRecord(itemId: string, record: SavedRecord, ownerId?: string) { return (await getSqlRepositories()).writeAssessmentRecord(itemId, record, ownerId); }

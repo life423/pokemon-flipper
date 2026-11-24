@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { runBenchmarkQueue } from "../../scripts/review/benchmark-queue.ts";
+import { BOUNDED_AUTO_CONCURRENCY } from "../../shared/research-policy.ts";
 
 const listing = (id: string) => ({ id, title: `Card ${id}`, images: ["photo"], buyingOption: "FIXED_PRICE", currentPrice: 20, shipping: 0, isGraded: false, endTime: null,
     screen: { status: "CANDIDATE" } });
@@ -9,25 +10,26 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 const base = { filters: {}, targets: { minProfit: 0, minRoi: 0 }, signal: new AbortController().signal, assertTransport() {},
     failureOf: error => ({ code: error.code, error: error.message }) };
 
-test("diagnostic queue uses two slots, continues beyond three and excludes known ineligible rows", async () => {
+test("diagnostic queue respects the live slot limit, refills it and excludes known ineligible rows", async () => {
     const jobs = [], started = [];
     let inFlight = 0, peak = 0;
-    const work = runBenchmarkQueue([...Array.from({ length: 6 }, (_, n) => listing(String(n))), { ...listing("junk"), screen: { junk: true } }], {
+    const total = BOUNDED_AUTO_CONCURRENCY + 4;
+    const work = runBenchmarkQueue([...Array.from({ length: total }, (_, n) => listing(String(n))), { ...listing("junk"), screen: { junk: true } }], {
         ...base, evaluate: async row => {
             started.push(row.id); peak = Math.max(peak, ++inFlight);
             const job = deferred(); jobs.push(job); await job.promise; inFlight--; return { id: row.id };
         },
     });
-    await tick(); assert.equal(started.length, 2);
-    for (let n = 0; n < 6; n++) { jobs[n].resolve(); await tick(); }
+    await tick(); assert.equal(started.length, BOUNDED_AUTO_CONCURRENCY);
+    for (let n = 0; n < total; n++) { jobs[n].resolve(); await tick(); }
     const result = await work;
-    assert.equal(peak, 2); assert.equal(result.admitted.length, 6); assert.equal(Object.keys(result.evaluations).length, 6);
+    assert.equal(peak, BOUNDED_AUTO_CONCURRENCY); assert.equal(result.admitted.length, total); assert.equal(Object.keys(result.evaluations).length, total);
     assert.equal(started.includes("junk"), false); assert.deepEqual(result.waiting, []);
 });
 
 for (const code of ["AI_BUDGET", "PRICE_RESEARCH_BUDGET"]) test(`${code} denial stops admissions and preserves another accepted response`, async () => {
     const accepted = deferred(); let calls = 0;
-    const work = runBenchmarkQueue(Array.from({ length: 5 }, (_, n) => listing(String(n))), {
+    const work = runBenchmarkQueue(Array.from({ length: BOUNDED_AUTO_CONCURRENCY + 3 }, (_, n) => listing(String(n))), {
         ...base, evaluate: async () => {
             calls++;
             if (calls === 1) throw Object.assign(new Error("Insufficient reservation"), { code });
@@ -35,9 +37,9 @@ for (const code of ["AI_BUDGET", "PRICE_RESEARCH_BUDGET"]) test(`${code} denial 
         },
     });
     await tick(); accepted.resolve(); const result = await work;
-    assert.equal(calls, 2); assert.equal(result.stopped?.code, code);
+    assert.equal(calls, BOUNDED_AUTO_CONCURRENCY); assert.equal(result.stopped?.code, code);
     assert.deepEqual(result.errors, {}, "a spending pause is not a manual-review error");
-    assert.equal(Object.keys(result.evaluations).length, 1); assert.equal(result.waiting.length, 3);
+    assert.equal(Object.keys(result.evaluations).length, BOUNDED_AUTO_CONCURRENCY - 1); assert.equal(result.waiting.length, 3);
 });
 
 test("a held photo request leaves the queue open for independent candidates", async () => {
@@ -69,6 +71,6 @@ test("a diagnostic transport stop cannot refill the queue or retry an errored as
         ...base, assertTransport() { if (blocked) throw new Error("Diagnostic price ceiling reached"); },
         evaluate: async () => { calls++; blocked = true; throw new Error("Provider blocked"); },
     });
-    assert.equal(calls, 2); assert.equal(result.admitted.length, 2);
-    assert.equal(result.stopped?.code, "DIAGNOSTIC_TRANSPORT_LIMIT"); assert.equal(result.waiting.length, 6);
+    assert.equal(calls, BOUNDED_AUTO_CONCURRENCY); assert.equal(result.admitted.length, BOUNDED_AUTO_CONCURRENCY);
+    assert.equal(result.stopped?.code, "DIAGNOSTIC_TRANSPORT_LIMIT"); assert.equal(result.waiting.length, 8 - BOUNDED_AUTO_CONCURRENCY);
 });

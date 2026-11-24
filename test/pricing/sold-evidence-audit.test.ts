@@ -8,6 +8,7 @@ import { soldMarketPrice } from "../../shared/sold-evidence.ts";
 import { gradedResalePath } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { usualPrice } from "../../shared/money/auction.ts";
+import { observedSalesActivity } from "../../shared/sales-activity.ts";
 
 const now = Date.parse("2026-11-03T12:00:00Z");
 const criteria: CompCriteria = { printing: "UNLIMITED", setName: "Base Set", finish: "HOLO", grader: "PSA", grade: "7", now };
@@ -16,6 +17,23 @@ const sale = (price: number, overrides: Partial<Comp> = {}): Comp => ({
     variant: "Unlimited Holofoil", grader: "PSA", grade: "7", grade_qualifier: null,
     attribution: "exact", currency: "USD", sale_type: "fixed_price", listing_url: null,
     ...overrides,
+});
+
+test("one high transaction cannot inflate the ordinary sold price", () => {
+    for (const prices of [[20, 21, 22, 1000], [20, 1000]]) {
+        const summary = summarizeComps(prices.map((price, index) => sale(price, { id: index + 1,
+            listing_url: `https://www.ebay.com/itm/${123456000000 + index}` })), criteria);
+        assert.equal(summary.high, prices.length === 2 ? 20 : 22);
+        assert.equal(soldMarketPrice(summary), prices.length === 2 ? 20 : 21);
+        assert.equal(summary.dropped["price far from the other sales"], 1);
+        assert.equal(observedSalesActivity(summary.activitySales ?? summary.sales, now).sales60, prices.length,
+            "an eligible unusual transaction stays in activity while its amount cannot inflate value");
+    }
+    const recent = summarizeComps([20, 21, 22, 50].map((price, index) => sale(price, { id: index + 1, sale_type: "auction" })), criteria);
+    assert.equal(soldMarketPrice(recent), 21.5, "the four-observation estimate uses the median, not an outlier-sensitive average");
+    const one = summarizeComps([sale(21)], criteria);
+    assert.equal(soldMarketPrice(one), 21, "a sparse exact quote remains available with its actual low confidence");
+    assert.equal(one.confidence, "LOW");
 });
 
 test("four newest distinct sales within 48 hours drive the current price and show an observed move", () => {

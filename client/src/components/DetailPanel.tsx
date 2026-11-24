@@ -36,6 +36,7 @@ interface Props {
     analysis?: AnalysisState;
     automaticDecision?: ReviewedDecision;
     reviewPending?: boolean;
+    reviewActive?: boolean;
     now: number;
     onClose: () => void;
     onSnipe?: (draft: SniperDraft) => void;
@@ -52,7 +53,7 @@ interface Props {
     saving?: boolean;
 }
 
-export function DetailPanel({ listing, analysis, automaticDecision, reviewPending, now, onClose, onSnipe, onAnalyze, onRefreshPrices, priceRefresh, closing = false, docked = false, returnFocus, huntFocus, minGrade = 0, targets = MONEY_CONFIG.targets, includeOffers, photoReviewState, onPhotoReview, onSave, saved, saving }: Props) {
+export function DetailPanel({ listing, analysis, automaticDecision, reviewPending, reviewActive, now, onClose, onSnipe, onAnalyze, onRefreshPrices, priceRefresh, closing = false, docked = false, returnFocus, huntFocus, minGrade = 0, targets = MONEY_CONFIG.targets, includeOffers, photoReviewState, onPhotoReview, onSave, saved, saving }: Props) {
     const unavailable = listing.availability === "UNAVAILABLE" || Boolean(listing.endTime && Date.parse(listing.endTime) <= now);
     const evaluation = analysis?.status === "done" ? analysis.evaluation : null;
     const collecting = huntFocus?.report.goal === "collect_slab" && huntFocus.report.destination?.listingId === listing.id;
@@ -109,8 +110,8 @@ export function DetailPanel({ listing, analysis, automaticDecision, reviewPendin
                 </header>
 
                 {checking && <section className={styles.section} role="status">
-                    <h3 className={styles.sectionTitle}>Checking listing</h3>
-                    <p>The app is checking this copy against your buying criteria.</p>
+                    <h3 className={styles.sectionTitle}>{reviewActive || analysis?.status === "loading" ? "Checking listing" : "Queued for review"}</h3>
+                    <p>{reviewActive || analysis?.status === "loading" ? "The app is checking this copy against your buying criteria." : "This copy will be checked after the current listings finish."}</p>
                 </section>}
                 {override && <Section title={override.auctionOpportunity?.status === "BID" && override.auctionOpportunity.validUntil > now ? "Bid opportunity" : override.decision === "SKIP" ? "Skip" : "Wait"}><p>{override.reason}</p></Section>}
                 {section && evaluation && huntFocus && <section className={styles.huntEvidence} ref={huntEvidence} tabIndex={-1}

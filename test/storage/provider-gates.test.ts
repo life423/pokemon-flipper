@@ -77,6 +77,7 @@ test("price lookup's final dispatch gate survives a mocked cache miss", async ()
         mock.method(globalThis,'fetch',async()=>{calls++;throw new Error('Provider dispatch must be blocked');});
         mock.module(${JSON.stringify(cacheUrl)},{namedExports:{
             readCache:async()=>{misses++;return null;},
+            readCacheMany:async keys=>{misses+=keys.length;return keys.map(()=>null);},
             writeCache:async()=>{throw new Error('No provider result may be saved');}
         }});
         const { fetchRawComps }=await import(${JSON.stringify(pricingUrl)});

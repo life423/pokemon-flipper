@@ -6,6 +6,35 @@ import { currentPriceEvidence } from "./pricing-freshness.ts";
 import { autoAnalysisBlockReason, type AutoAnalysisBlockReason } from "./analysis.ts";
 import type { Evaluation, ListingSummary } from "./types.ts";
 
+export const BUYER_REVIEW_FAILURE_CODES = ["PROVIDER_TEMPORARY", "AI_CREDITS", "AI_PAUSED", "AI_BUDGET", "AI_EVIDENCE_HELD",
+    "PRICE_RESEARCH_BUDGET", "PRICE_RESEARCH_UNAVAILABLE", "STORAGE_UNAVAILABLE", "PRICING_CONFIG", "PRICING_CREDITS", "REVIEW_UNAVAILABLE"] as const;
+export interface BuyerReviewFailure {
+    code: typeof BUYER_REVIEW_FAILURE_CODES[number];
+    retryable: boolean;
+}
+export const BUYER_REVIEW_MAX_ATTEMPTS = 3;
+export const BUYER_REVIEW_MIN_RETRY_MS = 1500;
+
+export function isBuyerReviewFailure(value: unknown): value is BuyerReviewFailure {
+    const failure = value as BuyerReviewFailure | null;
+    return !!failure && BUYER_REVIEW_FAILURE_CODES.includes(failure.code) && typeof failure.retryable === "boolean" &&
+        (!failure.retryable || failure.code === "PROVIDER_TEMPORARY");
+}
+
+// Only a confirmed temporary provider/connection interruption can reopen an
+// unchanged copy automatically. Budget, held-charge and identity facts cannot.
+export function buyerReviewFailure(code: string | undefined, retryable: boolean): BuyerReviewFailure {
+    const known = BUYER_REVIEW_FAILURE_CODES.find(value => value === code);
+    return known && known !== "PROVIDER_TEMPORARY" ? { code: known, retryable: false }
+        : { code: retryable ? "PROVIDER_TEMPORARY" : known ?? "REVIEW_UNAVAILABLE", retryable };
+}
+
+export function buyerReviewRetryAt(failure: BuyerReviewFailure | undefined, retryAt: number | undefined, attempts: number, now: number): number | undefined {
+    if (failure?.code !== "PROVIDER_TEMPORARY" || !failure.retryable || !Number.isInteger(attempts) || attempts < 1 || attempts >= BUYER_REVIEW_MAX_ATTEMPTS ||
+        !Number.isSafeInteger(retryAt) || retryAt! < 0) return undefined;
+    return Math.max(retryAt!, now + BUYER_REVIEW_MIN_RETRY_MS * attempts);
+}
+
 /** A completed per-copy decision under the buyer's current search and targets. */
 export interface BuyerListingReview {
     listingId: string;
@@ -17,6 +46,9 @@ export interface BuyerListingReview {
     gradingOpportunity?: import("./grading-watch.ts").GradingOpportunity;
     offer?: { opening: number; maxItemPrice: number };
     unavailable?: true;
+    failure?: BuyerReviewFailure;
+    /** Absolute server cooldown; does not create a new search or spending allowance. */
+    retryAt?: number;
 }
 
 

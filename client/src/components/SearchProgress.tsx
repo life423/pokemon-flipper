@@ -20,6 +20,7 @@ interface Props {
     // The free check: listings checked of those that match the search.
     checked: number;
     total: number | null;
+    discoveryProgress?: { found: number; screened: number };
     buyerProgress?: { finished: number; total: number; priorityDone: number; priorityTotal: number; priorityUnavailable?: number; priorityPhotos?: number; unavailable: number; active: number };
     ai: { done: number; target: number; analyzing: number; waiting: number; failed: number; inconclusive?: number; held?: number; paused?: boolean };
     stats: { junk: number; dropped: number; unchecked: number; deals: number };
@@ -42,7 +43,7 @@ function readCollapsed(): boolean {
 
 // The search's progress, expanded with every step and count, or collapsed
 // to one line to leave room for results.
-export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal, checked, total, ai, buyerProgress, stats, usage, onStop, canStopAssessment, actions, details }: Props) {
+export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal, checked, total, discoveryProgress, ai, buyerProgress, stats, usage, onStop, canStopAssessment, actions, details }: Props) {
     const [collapsed, setCollapsed] = useState(readCollapsed);
     const listingWork = requestedPhase === "finding" || requestedPhase === "filtering";
     // A paid-AI pause does not stop the independently bounded metadata stream.
@@ -90,7 +91,7 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
     // How far along: the free check while it runs, then the AI.
     const buyerFraction = buyerProgress && buyerProgress.total > 0 ? (buyerProgress.finished + buyerProgress.unavailable) / buyerProgress.total : null;
     const percent =
-        phase === "finding"
+        phase === "finding" || listingWork && discoveryProgress
             ? null
             : phase === "ai"
               ? buyerProgress ? buyerFraction : ai.target > 0
@@ -119,14 +120,17 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
             : phase === "done"
               ? `${loaded} · ${assessed} for “${query}”`
               : phase === "stopped"
-                ? `Stopped after ${checked.toLocaleString()} of ${(total ?? checked).toLocaleString()} checks. Saved results remain available.`
+                ? discoveryProgress ? `Stopped after ${discoveryProgress.screened.toLocaleString()} preliminary listing checks.`
+                    : `Stopped after ${checked.toLocaleString()} of ${(total ?? checked).toLocaleString()} checks. Saved results remain available.`
                 : phase === "paused" ? `New photo checks are paused for “${query}”. Saved results remain available.`
                 : phase === "ai"
                   ? `Checking the best candidates for \u201c${query}\u201d`
                   : `Scanning listings for \u201c${query}\u201d`;
 
     const caption =
-        phase === "ai"
+        discoveryProgress
+            ? `${discoveryProgress.screened.toLocaleString()} preliminary listing checks completed`
+            : phase === "ai"
             ? `${ai.done} of ${ai.target} analysis attempts finished`
             : phase === "finding"
               ? "Finding listings..."
@@ -151,7 +155,9 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
                       ? `${ai.failed} ${ai.failed === 1 ? "assessment failed" : "assessments failed"}; see Wait or skip.`
                       : "Automatic analysis finished. Screened-only listings have not had full photo analysis.";
 
-    const compact = `${loaded} · ${decisions || assessed} · ${stats.deals} ${stats.deals === 1 ? "deal" : "deals"}`;
+    const compact = discoveryProgress
+        ? `${discoveryProgress.found.toLocaleString()} listings found · ${discoveryProgress.screened.toLocaleString()} preliminary checks completed`
+        : `${loaded} · ${decisions || assessed} · ${stats.deals} ${stats.deals === 1 ? "deal" : "deals"}`;
     const showAssessmentStatus = phase !== "done" || analyzing > 0 || ai.waiting > 0 || ai.failed > 0 || inconclusive > 0 || held > 0;
 
     const buyerLabel = buyerProgress && (phase === "stopped" ? "Listing checks stopped" : phase === "error" ? "Search ended early"
@@ -176,7 +182,7 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
 
                 <div className={styles.titles} aria-live="polite">
                     <h2 className={styles.title}>{title}</h2>
-                    <p className={styles.sub}>{collapsed || buyerProgress ? compact : subtitle}</p>
+                    <p className={styles.sub}>{collapsed || buyerProgress || discoveryProgress ? compact : subtitle}</p>
                     {collapsed && running && <ProgressBar percent={percent} thin />}
                 </div>
 

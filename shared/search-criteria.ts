@@ -5,6 +5,7 @@ import { setKey } from "./sets.ts";
 import { explicitReprintSet, hasBaseSetFourthPrint } from "./reprint-release.ts";
 import { confirmedPhotoCard, observedCardKind } from "./photo-evidence.ts";
 import { compareCardNumbers } from "./card-number.ts";
+import { outsideSearchYears, withoutSearchYears } from "./search-years.ts";
 
 type Finish = NonNullable<SearchIntent["finish"]>;
 const GRADER = "(?:psa|cgc|bgs|sgc|tag)";
@@ -43,11 +44,12 @@ export function explicitCriteria(search: string): Pick<SearchIntent, "grader" | 
 }
 
 export function fallbackKeywords(search: string): string {
-    return search.toLowerCase()
+    return withoutSearchYears(search).toLowerCase()
         // Remove request wording at the start, where it cannot be part of a
         // printed name. Keep letters/articles inside names such as Unown A.
         .replace(/^\s*(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:find|show|get)\s+(?:me\s+)?/i, "")
         .replace(/^\s*(?:(?:a|the|some)\s+)?(?:(?:good|great|best|profitable|cheap)\s+)?deals?\s+(?:on|for)\s+(?:(?:an?|the)\s+)?/i, "")
+        .replace(/\b(?:that|which)\s+(?:is|are)\s+liquid\b|\bliquid\s+(?=pok[eé]mon|cards?\b)/gi, " ")
         .replace(new RegExp(`\\b(?:(?:${GRADE_BOUND})\\s+)?${GRADE_ANCHOR}(?:${GRADE_RANGE}|(?:(?:${GRADE_BOUND})\\s+)?${QUERY_GRADE}(?:${GRADE_SUFFIX})?)`, "gi"), " ")
         .replace(/\b(?:can you|could you|show me|find me|i want|i am looking for|looking for|please|some|any|all|cards?|graded|grading|copies|from|with|the|by)\b/gi, " ")
         .replace(/\s+/g, " ").trim();
@@ -123,6 +125,7 @@ export function evaluatedIdentityMismatch(evaluation: Evaluation, intent: Search
     const card = photo ? { name: photo.name ?? identified?.name, set: photo.set ?? identified?.set, cardNumber: photo.cardNumber ?? identified?.cardNumber } : identified;
     const wantedSets = intent.sets.map(searchSetFamily).filter(Boolean);
     const cardSet = card?.set ? searchSetFamily(card.set) : "";
+    if (outsideSearchYears(intent, card?.set ?? evaluation.identity?.set, evaluation.listing?.title ?? "")) return "OTHER_SET";
     if (cardSet && wantedSets.length && !wantedSets.includes(cardSet)) return "OTHER_SET";
     if (compareCardNumbers(intent.cardNumber, card?.cardNumber) === false) return "OTHER_CARD";
     if (card?.name && !/^(?:unknown|not (?:known|visible|stated))$/i.test(card.name) && intent.titleWords.length) {
@@ -170,5 +173,6 @@ export function describeSearchCriteria(intent: SearchIntent): string[] {
     const grades = intent.minGrade != null || intent.maxGrade != null;
     const range = !grades ? "" : intent.minGrade === intent.maxGrade ? `${intent.minGrade}` : intent.maxGrade === 10 ? `${intent.minGrade ?? 1}+` : `${intent.minGrade ?? 1}–${intent.maxGrade ?? 10}`;
     return [intent.grader ? `${intent.grader}${range ? ` ${range}` : ""}` : grades ? `Grade ${range}` : intent.graded === null ? "" : intent.graded ? "Graded" : "Raw",
-        intent.finish === "HOLO" ? "Holo only" : intent.finish === "REVERSE_HOLO" ? "Reverse holo only" : intent.finish === "NON_HOLO" ? "Non-holo only" : "Any finish"].filter(Boolean);
+        intent.finish === "HOLO" ? "Holo only" : intent.finish === "REVERSE_HOLO" ? "Reverse holo only" : intent.finish === "NON_HOLO" ? "Non-holo only" : "Any finish",
+        intent.minYear === undefined ? "" : intent.minYear === intent.maxYear ? `${intent.minYear}` : `${intent.minYear}–${intent.maxYear}`].filter(Boolean);
 }

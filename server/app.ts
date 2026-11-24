@@ -7,6 +7,7 @@ import path from "node:path";
 import express from "express";
 import { CLIENT_ROOT } from "./lib/paths.ts";
 import { searchDeals } from "./deals/search.ts";
+import { discoveryContinuations } from "./deals/search-continuation.ts";
 import { evaluateBoundedListing, PriceOnlyEvidenceError } from "./analysis/bounded-evaluate.ts";
 import { EbayError } from "./ebay/api.ts";
 import { ebayUsage, EbayBudgetError } from "./ebay/usage.ts";
@@ -36,6 +37,7 @@ import type { SearchSummary } from "./deals/find-deals.ts";
 import type { ScreenedOverflowRow, SearchCompetition, SearchSourceCoverage, SourceDispositionRow } from "../shared/search-diagnostic.ts";
 import { completeSearchDiagnostic, loadDiagnosticDiscovery, loadDiagnosticResult, saveDiagnosticDiscovery } from "./analysis/search-diagnostics.ts";
 import { isSearchDiagnosticId, SearchDiagnosticInputError } from "./analysis/search-diagnostic-store.ts";
+import { interpretSearchRequest, SearchPlanInputError } from "./search/search-plan.ts";
 import { drainSharedWork, trackSharedWork } from "./lib/shared-work.ts";
 import { compareCardmarket } from "./pricing/cardmarket.ts";
 import { cardmarketComparisonKey } from "../shared/cardmarket.ts";
@@ -108,8 +110,14 @@ app.use("/api", (_req, res, next) => {
     if (shutdown.signal.aborted) { res.status(503).json({ error: "The app is shutting down." }); return; }
     next();
 });
-app.use("/api", (req, _res, next) => withAiUsageContext({ searchId: searchId(req.get("X-Pokemon-Flipper-Search-Id")),
-    watchBudgetId: isSearchDiagnosticId(req.get("X-Pokemon-Flipper-Watch-Budget")) ? req.get("X-Pokemon-Flipper-Watch-Budget") : undefined }, next));
+app.use("/api", async (req, _res, next) => {
+    const id = searchId(req.get("X-Pokemon-Flipper-Search-Id"));
+    // Continuation ownership comes from a server-saved token, including for
+    // later photo/price checks. A new batch does not mint new allowances.
+    const owner = await discoveryContinuations.budgetOwner(id);
+    withAiUsageContext({ searchId: id, watchBudgetId: owner ??
+        (isSearchDiagnosticId(req.get("X-Pokemon-Flipper-Watch-Budget")) ? req.get("X-Pokemon-Flipper-Watch-Budget") : undefined) }, next);
+});
 app.use("/api", (req, res, next) => {
     const stopped = new AbortController();
     const disconnect = () => { if (!res.writableEnded) stopped.abort(); };
@@ -207,6 +215,21 @@ async function recordDiagnosticDiscovery(req: express.Request, summary: SearchSu
         console.error("Deal hunt inventory could not be saved", error instanceof Error ? error.name : "unknown error");
     });
 }
+
+app.post("/api/search-plan", tracked(async (req, res) => {
+    const id = req.get("X-Pokemon-Flipper-Search-Id");
+    if (!isSearchDiagnosticId(id)) { res.status(400).json({ error: "A valid search ID is required." }); return; }
+    const signal = requestSignal();
+    try {
+        const plan = await interpretSearchRequest(req.body, signal);
+        if (!signal.aborted) res.set("Cache-Control", "no-store").json(plan);
+    } catch (error) {
+        if (signal.aborted) return;
+        if (error instanceof SearchPlanInputError) { res.status(error.status).json({ error: error.message }); return; }
+        const failure = evaluationFailure(error);
+        res.status(failure.status).json(failure.status === 500 ? { error: "Your search could not be interpreted. Please try again. Saved research was kept." } : failure);
+    }
+}));
 
 app.post("/api/deal-hunt", tracked(async (req, res) => {
     const id = req.get("X-Pokemon-Flipper-Search-Id");
@@ -365,6 +388,7 @@ app.post("/api/deals/new", tracked(async (req, res) => {
         const known: unknown = req.body?.knownIds ?? [];
         if (!query || query.length > 300 || !Array.isArray(known) || known.length > 500 || known.some((id) => typeof id !== "string" || id.length > 120)) throw new Error("A search and up to 500 known listing IDs are required.");
         await discoverNewListings(query, { signal, filters: readListingFilters(req.query), targets: searchTargets(req), includeOffers: req.query.offers === "1", automaticPhotos: req.query.autoPhotos === "1", minPrice: Math.max(0, Number(req.query.min) || 0),
+            onProgress: progress => { if (!signal.aborted) send({ type: "progress", ...progress }); },
             onStart: (summary) => { discovery = summary; send({ type: "start", ...summary }); },
             onScreenedOverflow: row => { overflowRows.push(row); },
             onSourceDisposition: row => { sourceDispositions.push(row); },
@@ -398,6 +422,7 @@ app.get("/api/deals", tracked(async (req, res) => {
 
     try {
         await searchDeals(searchText(req), {
+            ...(typeof req.query.continuation === "string" && { continuation: req.query.continuation }),
             signal,
             filters: readListingFilters(req.query),
             marketplaceOrder: readMarketplaceOrder(req.query.order),
@@ -405,6 +430,7 @@ app.get("/api/deals", tracked(async (req, res) => {
             includeOffers: req.query.offers === "1",
             automaticPhotos: req.query.autoPhotos === "1",
             minPrice: Number(req.query.min) || 0,
+            onProgress: progress => { if (!signal.aborted) send({ type: "progress", ...progress }); },
             onStart: (summary) => { discovery = summary; send({ type: "start", ...summary }); },
             onScreenedOverflow: row => { overflowRows.push(row); },
             onSourceDisposition: row => { sourceDispositions.push(row); },

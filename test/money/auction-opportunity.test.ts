@@ -7,6 +7,7 @@ import { PRICING_VERSION } from "../../shared/pricing-freshness.ts";
 import { BEST_BUY_TERMS_MAX_AGE_MS } from "../../shared/search-diagnostic.ts";
 import type { CompSummary, Evaluation } from "../../shared/types.ts";
 import { cardEvaluation, salesSummary } from "../fixtures/card-evaluation.ts";
+import { tcgplayerRawEstimate } from "../fixtures/tcgplayer-raw-estimate.ts";
 
 const now = Date.now(), stamp = new Date(now).toISOString(), targets = {minProfit: 5, minRoi: 0};
 const end = (ms: number) => new Date(now + ms).toISOString();
@@ -28,6 +29,25 @@ function raw() {
     return e;
 }
 const receipt = (e: Evaluation, budget?: number) => auctionOpportunity(retargetEvaluation(e, targets), targets, now, budget);
+
+test("a raw auction can use an exact TCGplayer estimate while sixty-day sale activity stays separate", () => {
+    const e = raw();
+    e.rawPricing!.conditionEvidence = "TCGPLAYER";
+    e.rawPricing!.prices = [tcgplayerRawEstimate(100, stamp)];
+    const opportunity = receipt(e)!;
+    assert.equal(opportunity.status, "BID");
+    assert.equal(opportunity.marketValue, 100);
+    assert.equal(opportunity.sales60, 0); assert.equal(opportunity.exitSales60, 0); assert.equal(opportunity.sampleSize, 0);
+    assert.ok(opportunity.maxBid! < 100, "fees, shipping and tax still constrain the bid");
+    const summary = sales("RAW", "LIGHTLY_PLAYED", [100]);
+    summary.sales[0].soldAt = new Date(now - 45 * 86_400_000).toISOString();
+    delete summary.sales[0].photoCondition; delete summary.sales[0].conditionEvidence;
+    e.rawPricing!.sellerConditionComps = summary;
+    assert.equal(receipt(e)?.sales60, 1); assert.equal(receipt(e)?.sales30, 0);
+    assert.equal(receipt(e)?.status, "BID");
+    e.listing.endTime = end(10 * 3_600_000);
+    assert.equal(receipt(e), null, "the strict ten-hour auction window is preserved");
+});
 
 test("only active auctions strictly under ten hours and under the matching as-listed price qualify", () => {
     for (const ms of [-1, 0, 10 * 3600000, 10 * 3600000 + 1]) assert.equal(withinOpportunityWindow(end(ms), now), false);
@@ -57,7 +77,7 @@ test("next bid, delivery and the buyer’s budget control the recommendation whi
 test("thin sales can establish an auction opportunity while mismatched markets, currencies and condition cannot", () => {
     const e = raw(), p = e.rawPricing!, rows = p.prices![0].comps!.sales;
     rows[1].url = rows[0].url; rows[1].price = rows[0].price; rows[1].soldAt = rows[0].soldAt;
-    assert.equal(receipt(e)?.status,"WATCH"); assert.equal(receipt(e)?.sales30,2);
+    assert.equal(receipt(e)?.status,"BID"); assert.equal(receipt(e)?.sales30,2); assert.equal(receipt(e)?.sales60,2);
     p.printing = "FIRST_EDITION"; assert.equal(receipt(e),null);
     p.printing = "UNLIMITED"; p.variant = "Reverse Holo"; assert.equal(receipt(e),null);
     p.variant = "Holofoil"; rows[0].photoCondition = "NEAR_MINT"; assert.equal(receipt(e),null);

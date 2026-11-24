@@ -417,6 +417,15 @@ test("best order favors stronger verified deals over a much larger thin-profit e
     assert.deepEqual(ids(sortSearchResults([thin, strong, waiting, strongMore], analyses, "best", targets, NOW)), ["strong-more", "strong", "thin", "waiting"]);
 });
 
+test("finished buying decisions surface while the rest of a search is still queued", () => {
+    const queued = listing("queued", { currentPrice: 10 }), checked = listing("checked"), buy = listing("buy");
+    const analyses = { [buy.id]: done(evaluation(buy, 250, "STRONG")) };
+    const decisions = { [checked.id]: { decision: "WAIT" as const }, [buy.id]: { decision: "BUY" as const } };
+    assert.deepEqual(ids(sortSearchResults([queued, checked, buy], analyses, "best", targets, NOW, decisions)), [buy.id, checked.id, queued.id]);
+    assert.deepEqual(ids(sortSearchResults([queued, checked, buy], analyses, "priceLow", targets, NOW, decisions)), [queued.id, checked.id, buy.id],
+        "an explicit price order remains available");
+});
+
 test("photographic discoveries use ordinary deal outcomes", () => {
     const discovered = listing("discovered-auction", { buyingOption: "AUCTION", found: { how: "PHOTO_SHOWS_IT", note: "Photo discovery" } });
     const value = evaluation(discovered, 250, "GOOD");

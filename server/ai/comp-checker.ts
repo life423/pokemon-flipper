@@ -1,5 +1,5 @@
 import { runStructured, MODEL } from "./openai.ts";
-import { readCache, writeCache } from "../lib/cache.ts";
+import { readCacheMany, writeCache } from "../lib/cache.ts";
 import { createLimiter } from "../lib/concurrency.ts";
 import { AI_CONCURRENCY } from "../../shared/work-limits.ts";
 import { createSharedWork } from "../lib/shared-work.ts";
@@ -88,11 +88,12 @@ export const checkComps: CheckComps = async (comps, target, signal) => {
 };
 
 export const cachedCompChecks: CheckComps = async (comps, target, signal) => {
+    signal?.throwIfAborted();
+    const saved = await readCacheMany<CompVerdict>(comps.map(comp => cacheKey(comp, target)), FOREVER_HOURS);
+    signal?.throwIfAborted();
     const verdicts = new Map<Comp, CompVerdict>();
-    for (const comp of comps) {
-        signal?.throwIfAborted();
-        const saved = await readCache<CompVerdict>(cacheKey(comp, target), FOREVER_HOURS);
-        if (saved) verdicts.set(comp, saved);
+    for (const [index, comp] of comps.entries()) {
+        if (saved[index]) verdicts.set(comp, saved[index]!);
     }
     return verdicts;
 };

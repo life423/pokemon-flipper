@@ -252,20 +252,25 @@ interface SearchResult {
     // Earlier cache entries contain only the aggregate skipped count.
     rejections?: { id: string; reason: SourceRejectionReason }[];
     unidentifiable?: number;
+    nextOffset?: number;
+    sourceLimitReached?: boolean;
 }
 
 export async function searchListings(
     search: string,
     {
         maxResults = PAGE_SIZE,
+        offset: firstOffset = 0,
         anyCategory = false,
         cacheMode,
         keepReserve = false,
         signal,
         sort,
         filters,
-    }: { maxResults?: number; anyCategory?: boolean; cacheMode?: "refresh" | "resume"; keepReserve?: boolean; signal?: AbortSignal; sort?: "newlyListed" | "price" | "endingSoonest"; filters?: ListingFilters } = {}
+    }: { maxResults?: number; offset?: number; anyCategory?: boolean; cacheMode?: "refresh" | "resume"; keepReserve?: boolean; signal?: AbortSignal; sort?: "newlyListed" | "price" | "endingSoonest"; filters?: ListingFilters } = {}
 ): Promise<SearchResult> {
+    if (!Number.isSafeInteger(firstOffset) || firstOffset < 0 || firstOffset >= 10_000 || firstOffset % PAGE_SIZE !== 0)
+        throw new Error("Choose a valid eBay search continuation offset below 10,000.");
     if (cardLanguageStatus(search) === "OTHER") throw new EnglishOnlyError();
     const scope = anyCategory ? "any" : "cards";
     signal?.throwIfAborted();
@@ -282,7 +287,7 @@ export async function searchListings(
     if (lower !== undefined && upper !== undefined && lower > upper) return { listings: [], total: 0, skipped: 0, rejections: [] };
     const priceRange = upper !== undefined ? `${lower ?? ""}..${upper}` : lower !== undefined ? String(lower) : null;
     const priceScope = priceRange === null ? "" : `:price:USD:${priceRange}`;
-    const key = `ebay:search:${maxResults}:${scope}:language:en:${sort ? `${sort}:` : ""}${normalizeText(search).trim()}${shippingCacheScope()}${filterScope}${priceScope}`;
+    const key = `ebay:search:${maxResults}:${scope}:language:en:${sort ? `${sort}:` : ""}${normalizeText(search).trim()}${shippingCacheScope()}${filterScope}${priceScope}${firstOffset ? `:offset:${firstOffset}` : ""}`;
     const load = async (signal: AbortSignal): Promise<SearchResult> => {
         const saved = await readCache<SearchResult>(key, sort && cacheMode !== "resume" ? 1 / 60 : SEARCH_MAX_AGE_HOURS);
         signal.throwIfAborted();
@@ -302,10 +307,11 @@ export async function searchListings(
         const rejections = new Map<string, SourceRejectionReason>();
         let unidentifiable = 0;
         let total = 0;
+        let nextOffset: number | undefined, sourceLimitReached = false;
         // Junk the free rules dropped: lots, sealed product, merch, fakes.
         let skipped = 0;
 
-        for (let offset = 0; offset < maxResults; offset += PAGE_SIZE) {
+        for (let offset = firstOffset; offset < Math.min(firstOffset + maxResults, 10_000); offset += PAGE_SIZE) {
             signal.throwIfAborted();
             if (keepReserve && (await ebayUsage())?.braking) {
                 throw new EbayBudgetError("Saving the rest of today's eBay allowance; extra searches paused.", "QUOTA");
@@ -313,7 +319,9 @@ export async function searchListings(
             const filter = [`buyingOptions:{${buyingOption ?? "AUCTION|FIXED_PRICE"}}`, `conditionIds:{${kind === "raw" ? UNGRADED : kind === "graded" ? GRADED : `${UNGRADED}|${GRADED}`}}`];
             if (priceRange !== null) filter.push(`price:[${priceRange}]`, "priceCurrency:USD");
             const params = new URLSearchParams({
-                q: `pokemon ${search}${anyCategory ? " english" : ""}`.trim(),
+                // Broader discovery must not require a seller to spell out
+                // "English" or "Pokemon" in an otherwise identifiable title.
+                q: anyCategory ? search.trim() : `pokemon ${search}`.trim(),
                 // Outside the card category, for listings filed in the wrong one.
                 ...(anyCategory ? {} : { category_ids: CCG_INDIVIDUAL_CARDS, aspect_filter: `categoryId:${CCG_INDIVIDUAL_CARDS},Language:{English}` }),
                 filter: filter.join(","),
@@ -353,6 +361,8 @@ export async function searchListings(
                 listings.push(toListing(item, termsCheckedAt));
             }
 
+            nextOffset = items.length === PAGE_SIZE && offset + PAGE_SIZE < total && offset + PAGE_SIZE < 10_000 ? offset + PAGE_SIZE : undefined;
+            sourceLimitReached = items.length === PAGE_SIZE && offset + PAGE_SIZE >= 10_000 && total > 10_000;
             if (items.length < PAGE_SIZE || offset + PAGE_SIZE >= total) break;
         }
 
@@ -361,6 +371,7 @@ export async function searchListings(
         const result: SearchResult = { listings, total, skipped,
             rejections: Array.from(rejections, ([id, reason]) => ({ id, reason })),
             ...(unidentifiable ? { unidentifiable } : {}),
+            ...(nextOffset !== undefined && { nextOffset }), ...(sourceLimitReached && { sourceLimitReached: true }),
         };
         await writeCache(key, result);
         return result;

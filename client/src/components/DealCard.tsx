@@ -40,6 +40,7 @@ interface Props {
     assessmentNote?: string;
     automaticDecision?: ReviewedDecision;
     reviewPending?: boolean;
+    reviewActive?: boolean;
     selected: boolean;
     now: number;
     onOpen: () => void;
@@ -58,7 +59,7 @@ const LISTED_DATE = new Intl.DateTimeFormat(undefined, { year: "numeric", month:
 const signed = (value: number) => `${value < 0 ? "−" : "+"}${dollars(Math.abs(value))}`;
 const dateOf = (value: string | null | undefined) => typeof value === "string" && Number.isFinite(Date.parse(value)) ? new Date(value) : null;
 
-export function DealCard({ listing, analysis, assessmentNote, automaticDecision, reviewPending, selected, now, onOpen, onSnipe, years, index = 0, transitionName, minGrade = 0, targets = MONEY_CONFIG.targets, includeOffers, photoReviewState, saved, saving, onSave }: Props) {
+export function DealCard({ listing, analysis, assessmentNote, automaticDecision, reviewPending, reviewActive, selected, now, onOpen, onSnipe, years, index = 0, transitionName, minGrade = 0, targets = MONEY_CONFIG.targets, includeOffers, photoReviewState, saved, saving, onSave }: Props) {
     const evaluation = analysis?.status === "done" ? analysis.evaluation : null;
     const identityGap = evaluation !== null && !readyForPricing(evaluation.identity);
     const pricingExpired = analysis?.status === "done" && analysis.pricingExpired;
@@ -123,7 +124,9 @@ export function DealCard({ listing, analysis, assessmentNote, automaticDecision,
             return [`Bid up to ${dollars(opportunity.maxBid)}`, "buy", reason];
         }
         if (override && !offer) return [override.decision === "SKIP" ? "Skip" : "Wait", override.decision === "SKIP" ? "pass" : "watch", override.reason];
-        if (checking) return ["Checking listing", "pending", "The app is checking this copy against your buying criteria."];
+        if (checking) return reviewActive || analysis?.status === "loading"
+            ? ["Checking listing", "pending", "The app is checking this copy against your buying criteria."]
+            : ["Queued for review", "pending", "This copy will be checked after the current listings finish."];
         if (pricingExpired) return ["Wait for fresh sales", "watch", "The saved prices are too old to support a purchase at today's asking price."];
         if (shippingPending) return ["Wait for shipping", "watch", "eBay did not quote shipping. The delivered cost could exceed the purchase limit."];
         if (evaluation && identityGap && verdict !== "PASS") {

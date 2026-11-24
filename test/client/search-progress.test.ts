@@ -16,6 +16,17 @@ test("compact photo progress distinguishes loaded listings, completed assessment
         ai: { done: 5, target: 20, analyzing: 3, waiting: 12, failed: 1 },
         stats: { junk: 0, dropped: 0, unchecked: 0, deals: 1 }, usage: null, onStop: () => {}, canStopAssessment: false };
     const render = (change: Record<string, unknown> = {}) => renderToStaticMarkup(createElement(SearchProgress, { ...defaults, ...change }));
+    const discovery = render({ phase: "filtering", checked: 0, total: null, ebayTotal: null,
+        discoveryProgress: { found: 200, screened: 48 }, ai: { done: 0, target: 0, analyzing: 0, waiting: 0, failed: 0 } });
+    const visibleDiscovery = discovery.slice(0, discovery.indexOf('inert=""'));
+    assert.match(visibleDiscovery, /Checking listings and sold prices/);
+    assert.match(visibleDiscovery, /200 listings found · 48 preliminary checks completed/);
+    assert.match(visibleDiscovery, /aria-label="Stop search"/);
+    assert.doesNotMatch(discovery, /aria-valuenow|\d+%|0 listings loaded|0 of 0 checks/);
+    const announcedBatch = render({ phase: "filtering", checked: 0, total: 50, ebayTotal: 200,
+        discoveryProgress: { found: 200, screened: 128 }, ai: { done: 0, target: 0, analyzing: 0, waiting: 0, failed: 0 } });
+    assert.match(announcedBatch, /200 listings found · 128 preliminary checks completed/);
+    assert.doesNotMatch(announcedBatch, /aria-valuenow|\d+%|0 listings loaded|0 of 50 checks/);
     const status = (markup: string) => markup.match(/<div[^>]+data-ai-state="([^"]+)"[^>]*>([\s\S]*?)<\/div>/)!;
     for (const phase of ["finding", "filtering", "ai"]) {
         const markup = render({ phase });

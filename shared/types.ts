@@ -128,6 +128,11 @@ export interface EbayUsage {
 export interface SearchIntent {
     cardName: string | null;
     sets: string[];
+    minYear?: number;
+    maxYear?: number;
+    // Cached release dates let server and client enforce year preferences
+    // after a photograph identifies a different set from the seller's claim.
+    releaseYears?: Record<string, number>;
     cardNumber: string | null;
     printing: Printing | null;
     graded: boolean | null;
@@ -332,8 +337,21 @@ export interface RawPrice {
     condition: RawCondition | "UNKNOWN";
     price: number;
     updatedAt: string | null;
-    basis?: "EBAY_SOLD";
+    basis?: "EBAY_SOLD" | "TCGPLAYER_OFFERS" | "TCGPLAYER_MARKET";
     comps?: CompSummary;
+    offers?: TcgplayerRawEstimate;
+}
+
+export interface TcgplayerRawOffer {
+    id: string; sellerId: string; sellerName: string; price: number; shipping: number; total: number;
+    quantity: number; snapshotAt: string;
+}
+export interface TcgplayerRawEstimate {
+    source: "TCGPLAYER"; currency: "USD"; condition: RawCondition; printing: string;
+    checkedAt: string; snapshotAt: string; method: "LOWEST_DELIVERED_COMPETITION" | "CONDITION_MARKET";
+    marketCondition: string; marketPrice?: number; marketRecordAt?: string | null;
+    price: number; low: number; median: number; high: number; sellerCount: number;
+    offers: TcgplayerRawOffer[];
 }
 
 // Where a price came from and which database printing it is.
@@ -348,7 +366,7 @@ export interface RawPricing extends PriceSource {
     sellerConditionComps?: CompSummary | null;
     // Nearest cleaner seller-described condition, for context when this condition lacks a photo match.
     cleanerSellerConditionComps?: CompSummary | null;
-    conditionEvidence?: "AI_PHOTOS" | "SELLER_TEXT";
+    conditionEvidence?: "AI_PHOTOS" | "SELLER_TEXT" | "TCGPLAYER";
     reviewedSoldCopies?: number;
     sampledSoldCopies?: number;
     status: PriceStatus;
@@ -407,6 +425,9 @@ export interface CompSummary {
     confidence: Confidence;
     dropped: Record<string, number>;
     sales: CompSale[];
+    // Eligible transaction observations before valuation outlier trimming.
+    // They measure activity and do not set the resale estimate.
+    activitySales?: CompSale[];
     // The AI checked the sales that passed the rules.
     checkedByAI?: boolean;
 }

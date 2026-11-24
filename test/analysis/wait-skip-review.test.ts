@@ -89,7 +89,7 @@ test("every unsorted retained copy with missing sold screening can receive a bou
     const [one, two] = await Promise.all([1, 2].map(() => review(searchId, listingId, targets, true, true, signal())));
     assert.equal(count, 1); assert.deepEqual(one, two);
     assert.equal(one.decision, "BUY", one.reason); assert.equal(one.evidence, "photos");
-    assert.match(one.reason, /3 matched Lightly Played raw sales in the last 30 days/);
+    assert.match(one.reason, /3 observed matching Lightly Played raw sales in the last 60 days/);
 });
 
 test("unsupported stale prices use price-only research under the assessment's original allowance; a replay coalesces unresolved evidence", async () => {
@@ -132,8 +132,75 @@ test("an unavailable sale source yields a concrete Wait and suppresses a second 
     for (let i = 0; i < 2; i++) {
         const result = await review(searchId, listingId, targets, true, true, signal());
         assert.equal(result.decision, "WAIT"); assert.equal(result.unavailable, true); assert.match(result.reason, /matched-sales service timed out/);
+        assert.deepEqual(result.failure, { code: "PROVIDER_TEMPORARY", retryable: true });
+        assert.equal(result.retryAt, now + 10000, "the cached receipt returns the same absolute provider cooldown");
     }
     assert.equal(count, 1);
+});
+
+function neutralRetryFixture() {
+    const f = fixture(15);
+    f.e.identity!.name = "Alakazam";
+    f.e.identity!.cardNumber = "1/102";
+    f.e.listing.title = f.row.title = "Alakazam Base Set 1/102 Unlimited Holo";
+    f.inventory.intent.cardName = "Alakazam";
+    f.inventory.intent.titleWords = ["alakazam"];
+    for (const row of f.e.rawPricing!.prices!) for (const sale of row.comps!.sales) sale.title = f.row.title;
+    return f;
+}
+
+test("temporary buyer-review retry resumes saved Alakazam evidence only after its cooldown under the original account", async () => {
+    const f = neutralRetryFixture(), completed = structuredClone(f.e);
+    f.e.rawPricing = null; delete f.e.pricesCheckedAt;
+    let clock = now, calls = 0;
+    const review = harness(f, { now: () => clock, restoreRaw: async () => null, restoreSales: async () => {}, evaluate: async (_id, options) => {
+        calls++;
+        assert.equal(getAiUsageContext().searchId, searchId);
+        assert.equal(options.priceOnly, true);
+        if (calls === 1) throw new ProviderError("Sold provider temporarily offline", { retryAfterMs: 10000 });
+        return completed;
+    } });
+    const first = await review(searchId, listingId, targets, false, true, signal());
+    assert.equal(first.retryAt, now + 10000);
+    clock += 9999;
+    const held = await review(searchId, listingId, targets, false, true, signal());
+    assert.equal(held.retryAt, first.retryAt); assert.equal(calls, 1);
+    clock++;
+    const recovered = await review(searchId, listingId, targets, false, true, signal());
+    assert.equal(calls, 2); assert.equal(recovered.decision, "BUY", recovered.reason);
+    assert.equal(recovered.failure, undefined); assert.equal(recovered.retryAt, undefined);
+});
+
+test("Alakazam budget and unresolved-charge holds never advertise an automatic retry or re-open an unchanged receipt", async () => {
+    for (const code of ["AI_BUDGET", "AI_EVIDENCE_HELD"] as const) {
+        const f = neutralRetryFixture(); f.e.rawPricing = null; delete f.e.pricesCheckedAt;
+        let calls = 0, clock = now;
+        const review = harness(f, { now: () => clock, restoreRaw: async () => null, evaluate: async () => {
+            calls++; throw new AiSpendingError(code, "The original account cannot authorize this work.");
+        } });
+        const held = await review(searchId, listingId, targets, false, true, signal());
+        assert.deepEqual(held.failure, { code, retryable: false });
+        assert.equal(held.retryAt, undefined); assert.equal(held.unavailable, true);
+        clock += 60_000;
+        const replayed = await review(searchId, listingId, targets, false, true, signal());
+        assert.deepEqual(replayed.failure, held.failure); assert.equal(replayed.retryAt, undefined); assert.equal(calls, 1);
+    }
+});
+
+test("an explicitly repaired Alakazam pause can be rechecked without advertising an automatic retry", async () => {
+    const f = neutralRetryFixture(), completed = structuredClone(f.e);
+    f.e.rawPricing = null; delete f.e.pricesCheckedAt;
+    let calls = 0, clock = now;
+    const review = harness(f, { now: () => clock, restoreRaw: async () => null, restoreSales: async () => {}, evaluate: async () => {
+        assert.equal(getAiUsageContext().searchId, searchId);
+        if (++calls === 1) throw new AiSpendingError("AI_PAUSED", "Research is explicitly paused.");
+        return completed;
+    } });
+    const held = await review(searchId, listingId, targets, false, true, signal());
+    assert.deepEqual(held.failure, { code: "AI_PAUSED", retryable: false }); assert.equal(held.retryAt, undefined);
+    clock += 30000;
+    const resumed = await review(searchId, listingId, targets, false, true, signal());
+    assert.equal(resumed.decision, "BUY", resumed.reason); assert.equal(calls, 2);
 });
 
 test("an allowance exhausted during the first assessment does not dispatch an immediate price-only request", async () => {
@@ -146,6 +213,8 @@ test("an allowance exhausted during the first assessment does not dispatch an im
     for (let i = 0; i < 2; i++) {
         const result = await review(searchId, listingId, targets, true, true, signal());
         assert.equal(result.decision, "WAIT"); assert.equal(result.unavailable, true); assert.match(result.reason, /allowance is exhausted/);
+        assert.deepEqual(result.failure, { code: "PRICE_RESEARCH_BUDGET", retryable: false });
+        assert.equal(result.retryAt, undefined);
     }
     assert.equal(calls, 1);
 });
@@ -244,7 +313,7 @@ test("a realistic Best Offer remains conditional and is priced against matching 
     }
     assert.equal((await review(searchId, listingId, targets, false, true, signal())).offer, undefined);
     f.e.rawPricing!.prices![0].comps!.sales.pop();
-    assert.equal((await review(searchId, listingId, targets, true, true, signal())).offer, undefined, "two distinct sales do not support an offer");
+    assert.ok((await review(searchId, listingId, targets, true, true, signal())).offer, "a supported estimate is not vetoed by a two-sale activity count");
     f.e.listing.termsCheckedAt = new Date(now - 180000).toISOString();
     assert.equal((await review(searchId, listingId, targets, true, false, signal())).offer, undefined);
 });
@@ -276,7 +345,9 @@ test("a newly listed raw copy earns a grading alert through the normal buyer rev
     assert.ok(found.gradingCosts > 0 && found.lower.profit > 0 && found.likely.profit > found.lower.profit);
     assert.match(buy.reason, /One grade lower/);
     byGrade[1].sales[1].url = byGrade[1].sales[0].url;
-    assert.equal((await read()).gradingOpportunity, undefined, "duplicate sold listings cannot demonstrate turnover");
+    const sparse = (await read()).gradingOpportunity;
+    assert.ok(sparse, "sparse activity does not veto supported grading profit");
+    assert.equal(sparse.likely.sales60, 1, "a conflicting duplicate is excluded from the actual activity count");
     byGrade[1].sales[1].url = "https://www.ebay.com/itm/120000010071";
     byGrade[0].median = 15;
     assert.equal((await read()).gradingOpportunity, undefined, "a losing downside cannot raise a grading alert");

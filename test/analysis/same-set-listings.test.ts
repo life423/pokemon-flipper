@@ -41,7 +41,7 @@ test("three same-ceiling searches admit name-free anchored leads, retain overlap
         search: async (query, options) => {
             assert.equal(query, aliases[calls]);
             assert.deepEqual(options, { sort: "newlyListed", filters: { maxPrice: 33.85, typeFilter: "FIXED_PRICE", kindFilter: "raw" },
-                maxResults: 200, keepReserve: true, signal });
+                maxResults: 200, anyCategory: true, keepReserve: true, signal });
             return onPage(pages[calls++]);
         },
     });
@@ -173,7 +173,7 @@ test("a liquid-market search spends a single reserved Browse page under the orig
             assert.match(query, /Dark Gengar 6 Neo Destiny/);
             assert.equal(getAiUsageContext().searchId, source);
             assert.deepEqual(options, { sort: "price", filters: { typeFilter: "FIXED_PRICE", kindFilter: "raw", minPrice: 10, maxPrice: 100 },
-                maxResults: 200, cacheMode: "resume", keepReserve: true, signal });
+                maxResults: 200, cacheMode: "resume", anyCategory: true, keepReserve: true, signal });
             return { listings: [original, ...others, original, numberless], total: 800, skipped: 0 };
         },
     });

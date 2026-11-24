@@ -3,35 +3,9 @@ import { test } from "node:test";
 import type { DealHuntResponse } from "../../shared/deal-hunt.ts";
 import type { ListingSummary } from "../../shared/types.ts";
 import { selectedHuntListing } from "../../client/src/search/hunt-result.ts";
-import { huntGoalPrompt } from "../../client/src/search/hunt-goal.ts";
 import { cardEvaluation } from "../fixtures/card-evaluation.ts";
 
 const searchId = "1a87d6b7-402c-458d-ac49-8b6cf6056dbe";
-
-test("a collector auction goal preserves a delivered budget and edition-specific questions stay in named search", () => {
-    assert.deepEqual(huntGoalPrompt("Find graded holo auctions from 1999 to 2003 for my collection under $150 delivered."), {
-        marketPreferences: { minYear: 1999, maxYear: 2003, finish: "HOLO" }, goal: "collect_slab", maxDelivered: 150,
-    });
-    assert.deepEqual(huntGoalPrompt("Find slabs to collect in auctions"), { marketPreferences: {}, goal: "collect_slab" });
-    for (const query of ["Find PSA 8 auctions for my collection", "Find graded Dark Gengar auctions for my collection",
-        "Find raw holo auctions to collect", "Find graded auctions to collect under $20 profit",
-        "Find graded auctions to collect under $40 delivered in two hours", "Find graded auctions to collect under $30"])
-        assert.equal(huntGoalPrompt(query), null, query);
-});
-
-test("a fresh raw grading goal preserves its constraints and named cards stay in ordinary search", () => {
-    const fresh = { marketPreferences: {}, goal: "grade_raw" };
-    assert.deepEqual(huntGoalPrompt("Find newly listed raw Pokémon cards worth grading"), fresh);
-    assert.deepEqual(huntGoalPrompt("Show me a raw card worth grading"), fresh);
-    assert.deepEqual(huntGoalPrompt("Find just-listed ungraded holos from 1999 through 2003 to grade under $150 delivered with $25 in profit"), {
-        ...fresh, marketPreferences: { minYear: 1999, maxYear: 2003, finish: "HOLO" }, minProfit: 25, maxDelivered: 150,
-    });
-    for (const query of ["newly listed Dark Alakazam worth grading", "Find raw Alakazam worth grading", "Find raw Base Set cards worth grading",
-        "Find raw Japanese cards worth grading", "Find raw cards worth grading ending in under 10 hours", "Find raw auctions worth grading",
-        "Find raw cards worth grading from the last 2 hours", "Find PSA 10 candidates", "Find raw cards worth grading under $100"]) {
-        assert.equal(huntGoalPrompt(query), null, query);
-    }
-});
 
 function discovered() {
     const evaluation = cardEvaluation();

@@ -1,5 +1,5 @@
 import { withinOpportunityWindow } from "../../shared/auction-opportunity.ts";
-import { autoAnalysisBlockReason } from "../../shared/analysis.ts";
+import { buyerReviewBlock } from "../../shared/wait-skip-review.ts";
 import { freshListingTime } from "../../shared/grading-watch.ts";
 import { normalizeCardNumber, sameCardNumber } from "../../shared/card-number.ts";
 import { finishClaim } from "../../shared/finish.ts";
@@ -64,6 +64,8 @@ export interface MarketQueryObservation {
     numberOnlyIds: string[];
     /** Eligible copies first admitted by this query, excluding earlier hunt inventory. */
     newEligibleIds: string[];
+    nextOffset?: number;
+    sourceLimitReached?: boolean;
 }
 
 interface ListingDiscoveryOptions {
@@ -76,6 +78,8 @@ interface ListingDiscoveryOptions {
     knownListingIds?: ReadonlySet<string>;
     isUsable?: (listing: ListingSummary) => boolean;
     onQuery?: (observation: MarketQueryObservation) => void;
+    /** A host-owned cursor per alias. null marks an exhausted query. */
+    queryOffsets?: Map<MarketQueryStrategy, number | null>;
 }
 
 const collectorPart = "[a-z]{0,5}\\d{1,4}[a-z]?";
@@ -136,7 +140,7 @@ async function screenMarketCopy(row: ListingSummary, checks: SearchIntent[], rea
             titleContradiction(title, set, check.cardNumber!) || hasBaseSetFourthPrint(set, title) ||
             jungleNoSymbolReason({ listing: { title }, identity: { set } })) continue;
         const screened = await screenListingWithoutAi(row, check, signal, async () => matchesName ? reading : { ...reading, cardName: null });
-        if (autoAnalysisBlockReason(screened, asOf) === null) return { listing: screened, numberOnly: !matchesName };
+        if (buyerReviewBlock(screened, asOf) === null) return { listing: screened, numberOnly: !matchesName };
     }
     return null;
 }
@@ -145,7 +149,7 @@ async function screenMarketCopy(row: ListingSummary, checks: SearchIntent[], rea
 // Each copy still goes through the normal photo/identity assessment before it can support a buy.
 export async function discoverMarketListings(searchId: string, intent: SearchIntent, filters: ListingFilters, signal: AbortSignal,
     { search = searchListings, knownSets = cachedSetNames, now = Date.now, relatedIntents = [], newlyListedRaw = false,
-        collectorNumberDiscovery, knownListingIds, isUsable, onQuery }: ListingDiscoveryOptions = {}): Promise<ListingSummary[]> {
+        collectorNumberDiscovery, knownListingIds, isUsable, onQuery, queryOffsets }: ListingDiscoveryOptions = {}): Promise<ListingSummary[]> {
     signal.throwIfAborted();
     if (!isSearchDiagnosticId(searchId) || !concreteMarket(intent)) return [];
     const { graded } = intent;
@@ -183,11 +187,14 @@ export async function discoverMarketListings(searchId: string, intent: SearchInt
     const asOf = now();
     for (const { strategy, query } of queries) {
         signal.throwIfAborted();
+        if (queryOffsets?.get(strategy) === null) continue;
+        const offset = queryOffsets?.get(strategy) ?? 0;
         let page: Awaited<ReturnType<typeof search>>;
         try {
             page = await withAiUsageContext({ searchId }, () => search(query, {
                 sort: auction ? "endingSoonest" : newlyListedRaw ? "newlyListed" : "price", filters: bounds, maxResults: SEARCH_SOURCE_PAGE_LIMIT,
-                ...(newlyListedRaw ? {} : { cacheMode: "resume" }), keepReserve: true, signal,
+                ...(offset && { offset }),
+                ...(newlyListedRaw ? {} : { cacheMode: "resume" }), anyCategory: true, keepReserve: true, signal,
             }));
         } catch (error) {
             signal.throwIfAborted();
@@ -212,7 +219,9 @@ export async function discoverMarketListings(searchId: string, intent: SearchInt
                 found: { how: "NUMBER_ONLY", note: `Found by searching ${query}.` } });
             added.push(row.id);
         }
-        onQuery?.({ strategy, query, status: "complete", total: page.total, returnedIds: [...returned], eligibleIds: eligible, numberOnlyIds, newEligibleIds: added });
+        queryOffsets?.set(strategy, page.nextOffset ?? null);
+        onQuery?.({ strategy, query, status: "complete", total: page.total, returnedIds: [...returned], eligibleIds: eligible, numberOnlyIds, newEligibleIds: added,
+            ...(page.nextOffset !== undefined && { nextOffset: page.nextOffset }), ...(page.sourceLimitReached && { sourceLimitReached: true }) });
         if (strategy === "full_name" && collectorNumberDiscovery === "fallback" && candidates.size) break;
     }
     signal.throwIfAborted();

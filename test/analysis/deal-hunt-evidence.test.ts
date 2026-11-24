@@ -7,6 +7,7 @@ import { PRICING_VERSION } from "../../shared/pricing-freshness.ts";
 import { dealHuntCandidate } from "../../server/analysis/deal-hunt-evidence.ts";
 import { rankHuntMarkets } from "../../server/analysis/same-set-markets.ts";
 import { cardEvaluation, salesSummary } from "../fixtures/card-evaluation.ts";
+import { tcgplayerRawEstimate } from "../fixtures/tcgplayer-raw-estimate.ts";
 
 const now = Date.now();
 const stamp = new Date(now).toISOString();
@@ -27,6 +28,32 @@ function rawCard(lowerPrice = 250) {
     e.underwriting = underwrite(e, { ...MONEY_CONFIG, targets: { minProfit: 0, minRoi: 0 } });
     return e;
 }
+
+test("a matched TCGplayer raw estimate supports buying without fabricating completed-sales activity", () => {
+    const e = rawCard();
+    e.gradedPricing = null;
+    e.rawPricing = { status: "PRICED", source: "pkmnprices", printing: "UNLIMITED", variant: "Unlimited Holofoil", finish: "HOLO",
+        conditionEvidence: "TCGPLAYER", prices: [tcgplayerRawEstimate(175, stamp)] };
+    e.underwriting = underwrite(e, { ...MONEY_CONFIG, targets: { minProfit: 0, minRoi: 0 } });
+    assert.equal(e.underwriting.verdict, "BUY_RAW");
+    const result = dealHuntCandidate(e, "resell", now)!.outcome(checked)!;
+    assert.equal(result.decision, "BUY");
+    assert.match(result.reason, /0 observed matching Lightly Played raw sales in the last 60 days/);
+    assert.match(result.reason, /quote alone does not establish sales activity/);
+    assert.match(String(dealHuntCandidate(e, "resell", now)!.read("check_sales")), /TCGplayer estimate/);
+    const [market] = rankHuntMarkets([e], null, "resell", "any_card", now);
+    assert.equal(market.sales60, 0); assert.equal(market.sales30, 0); assert.equal(market.latestSaleAt, "");
+    assert.equal(market.quoteAsOf, stamp); assert.equal(market.valueBasis, "TCGPLAYER_MARKET");
+
+    const sellers = salesSummary("RAW", "LIGHTLY_PLAYED", [160]);
+    Object.assign(sellers.sales[0], { saleType: "fixed_price", soldAt: new Date(now - 45 * 86_400_000).toISOString(),
+        url: "https://www.ebay.com/itm/123111111111", sellerCondition: "LIGHTLY_PLAYED" });
+    e.rawPricing.sellerConditionComps = sellers;
+    const observed = dealHuntCandidate(e, "resell", now)!.outcome(checked)!;
+    assert.equal(observed.decision, "BUY");
+    assert.match(observed.reason, /1 observed matching Lightly Played raw sale in the last 60 days/);
+    assert.equal(rankHuntMarkets([e], null, "resell", "any_card", now)[0].activityScope, "SELLER_CONDITION");
+});
 
 test("grade research uses photo and sales observations and distinguishes likely and lower grade after-cost returns", () => {
     const e = rawCard(), candidate = dealHuntCandidate(e, "grade_raw", now)!;
@@ -126,20 +153,22 @@ test("a loss one grade lower can still leave an independently supported raw resa
     assert.equal(decision?.decision, "BUY");
     assert.equal(decision?.section, "sales");
     assert.equal(decision?.alternateSections, undefined);
-    assert.match(decision!.reason, /3 matched Lightly Played raw sales in the last 30 days/);
+    assert.match(decision!.reason, /3 observed matching Lightly Played raw sales in the last 60 days/);
     const [lead] = rankHuntMarkets([e], null, "resell", "any_card", now);
     // The matching sale histories overlap. A thin copy can reuse the exact
     // market's three distinct sales, but cannot borrow another printing's count.
     sales.sales.splice(1);
     const thin = dealHuntCandidate(e, "resell", now)!.outcome(checked);
-    assert.equal(thin?.decision, "WAIT");
-    assert.match(thin!.reason, /1 matched Lightly Played raw sale/);
+    assert.equal(thin?.decision, "BUY");
+    assert.match(thin!.reason, /1 observed matching Lightly Played raw sale/);
     assert.equal(dealHuntCandidate(e, "resell", now, lead)!.outcome(checked)?.decision, "BUY");
-    assert.equal(dealHuntCandidate(e, "resell", now, { ...lead, printing: "FIRST_EDITION" })!.outcome(checked)?.decision, "WAIT");
-    assert.equal(dealHuntCandidate(e, "resell", now, { ...lead, liquidThrough: now - 1 })!.outcome(checked)?.decision, "WAIT");
+    const wrongPrinting = dealHuntCandidate(e, "resell", now, { ...lead, printing: "FIRST_EDITION" })!.outcome(checked)!;
+    assert.equal(wrongPrinting.decision, "BUY");
+    assert.match(wrongPrinting.reason, /1 observed matching Lightly Played raw sale/, "activity from another printing is never borrowed");
+    assert.equal(dealHuntCandidate(e, "resell", now, { ...lead, liquidThrough: now - 1 })!.outcome(checked)?.decision, "BUY", "a legacy volume deadline is not a purchase veto");
 });
 
-test("slab resale needs liquidity at that holder grade, even when one exact sale meets the collector goal", () => {
+test("slab resale reports activity at that holder grade without a sales quota", () => {
     const e = slabCard();
     e.listing.price = 100;
     const summary = salesSummary("CGC", 8.5, [890, 900, 910]);
@@ -150,13 +179,13 @@ test("slab resale needs liquidity at that holder grade, even when one exact sale
     assert.equal(dealHuntCandidate(e, "resell", now)!.outcome(checked)?.decision, "BUY");
     summary.sales.splice(1);
     assert.equal(dealHuntCandidate(e, "collect_slab", now)!.outcome(checked)?.decision, "BUY");
-    assert.equal(dealHuntCandidate(e, "resell", now, { ...liquid, grade: 9 })!.outcome(checked)?.decision, "WAIT");
-    assert.match(dealHuntCandidate(e, "resell", now, { ...liquid, grader: "PSA" })!.outcome(checked)!.reason, /1 matched CGC 8.5 sale/);
+    assert.equal(dealHuntCandidate(e, "resell", now, { ...liquid, grade: 9 })!.outcome(checked)?.decision, "BUY");
+    assert.match(dealHuntCandidate(e, "resell", now, { ...liquid, grader: "PSA" })!.outcome(checked)!.reason, /1 observed matching CGC 8.5 sale/);
     e.underwriting = underwrite(e, { ...MONEY_CONFIG, targets: { minProfit: 3000, minRoi: 0 } });
     assert.match(dealHuntCandidate(e, "resell", now, liquid)!.outcome(checked)!.reason, /falls short of your profit or ROI target/);
 });
 
-test("a profitable grading exit with sparse sales falls back to an independently liquid raw exit", () => {
+test("a profitable grading exit remains eligible with sparse activity", () => {
     const e = rawCard();
     const sales = salesSummary("RAW", "LIGHTLY_PLAYED", [170, 175, 180]);
     for (const [i, sale] of sales.sales.entries()) {
@@ -168,12 +197,12 @@ test("a profitable grading exit with sparse sales falls back to an independently
     assert.equal(e.underwriting.best?.path, "GRADE");
     const candidate = dealHuntCandidate(e, "resell", now)!;
     assert.equal(candidate.outcome(checked)?.decision, "BUY");
-    assert.equal(candidate.outcome(checked)?.section, "sales");
+    assert.equal(candidate.outcome(checked)?.section, "grading");
     const likely = e.gradedPricing!.PSA!.byGrade!.find(s => Number(s.grade) === 7)!;
     likely.sales.forEach((sale, i) => sale.url = `https://www.ebay.com/itm/${321111000000 + i}`);
     const graded = candidate.outcome(checked);
     assert.equal(graded?.decision, "BUY");
-    assert.match(graded!.reason, /3 matched PSA 7 sales in the last 30 days/);
+    assert.match(graded!.reason, /3 observed matching PSA 7 sales in the last 60 days/);
     assert.equal(graded?.section, "grading");
 });
 
@@ -239,12 +268,12 @@ test("the planner can inspect a raw exit directly on both auctions and Buy It No
         e.underwriting = underwrite(e, { ...MONEY_CONFIG, targets });
         const hunt = dealHuntCandidate(e, "resell", now, undefined, targets)!;
         assert.ok(hunt.available(new Set()).includes("check_raw_resale"));
-        assert.match(String(hunt.read("check_raw_resale")), /Lightly Played estimate of \$175.00.*profit.*3 matched sales/);
+        assert.match(String(hunt.read("check_raw_resale")), /Lightly Played estimate of \$175.00.*profit.*3 observed matching sales/);
         const result = hunt.outcome(choices);
         assert.equal(result?.decision, format === "AUCTION" ? "BID" : "BUY");
         assert.equal(result?.section, "sales");
         assert.ok(!dealHuntCandidate(e, "grade_raw", now)!.available(new Set()).includes("check_raw_resale"));
     }
     comps.sales.splice(1);
-    assert.notEqual(dealHuntCandidate(e, "resell", now)!.outcome(choices)?.decision, "BID");
+    assert.equal(dealHuntCandidate(e, "resell", now)!.outcome(choices)?.decision, "BID", "one exact sale can support value without a three-sale veto");
 });

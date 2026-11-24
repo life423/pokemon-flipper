@@ -5,6 +5,26 @@ resources behind them. [LOCAL_TODO.md](LOCAL_TODO.md) is the single active
 checklist. [AGENTS.md](AGENTS.md) contains the working agreement. Git retains
 earlier versions; obsolete planning reports are deleted rather than archived.
 
+## November 24 pricing and recovery checkpoint
+
+The current implementation adds raw resale estimates from exact TCGplayer
+condition/printing offers after the AI assesses the live copy. Lowest delivered
+competition sets the offer estimate, capped by the exact condition market value
+when available. A condition market value can also supply a labeled fallback.
+Neither source invents sold transactions. The latest user decision removes the
+hard three-sale veto and shows actual rolling 60-day matched sales separately.
+Sale summaries reject isolated high values rather than using an outlier as the
+ordinary copy's resale value.
+
+Unpriced hunt candidates can request the same repair as normal buyer review.
+Eligible temporary browser failures retry up to three attempts, honor cooldowns,
+and retain the original account; accounting/storage/configuration holds do not
+trigger automatic spending retries. Discovery now retains overflow and source
+continuation in batches of 50. Broad hunts still seed their markets from saved
+accepted evaluations. Expanding beyond those seeds, browser acceptance of the
+51st listing, cold latency and a verified live profitable deal remain next work.
+See the stopping checkpoint in [LOCAL_TODO.md](LOCAL_TODO.md).
+
 ## November 24 progress and saved priorities
 
 The [README](README.md) describes the usable app and setup. This plan keeps the
@@ -54,6 +74,64 @@ cancellation. Provider daily quotas and per-search accounting remain separate.
 Measure useful decisions and errors alongside cost.
 
 ## Product goal and next milestone
+
+Andrew reaffirmed the primary goal after the November 24 search failures. Help
+the user find an actual deal. Working research tools, price comparisons and
+avoiding overpayment do not complete that goal. The immediate priority is to
+repair ordinary-language discovery and latency, then demonstrate a specific
+available copy or eligible auction with matched value, sufficient resale activity
+and a supported purchase ceiling. Consistent discovery is still unproven.
+
+### OpenAI interpretation and search speed
+
+The baseline [complete Deal blocker audit](docs/deal-blockers-audit.md) found a
+reproduced integration defect: raw pricing gathers one accepted sold-condition
+comparison, final resale requires three within thirty days, and the reviewer
+never gathers the missing two. It also found inconsistent hunt eligibility and
+permanent browser Waits after temporary failures. Incoming saved price samples
+did not show a general cents/currency/date error. Repair the evidence and
+recovery contracts before claiming the app cannot find deals because inventory
+is fairly priced. The pricing and recovery checkpoint above repairs these
+specific contracts; broad hunts currently use saved markets and do not search
+every Pokémon card. Andrew asked to stop live Venusaur testing.
+
+Andrew also requested a later price comparison that fetches and displays the
+available values from every connected pricing API, including PKMNPrices,
+Pokémon Price Tracker, OpenAI price research and applicable Cardmarket offers.
+Include PriceCharting when its paused integration resumes. Show source, date,
+currency, card identity and condition or certified grade beside each price.
+Finish the active search interpretation and speed fixes before this work.
+
+Andrew's latest direction is to send the search-box text directly to OpenAI to
+interpret its meaning, then pass the refined request into the app. A shopper
+can describe a goal in ordinary language. Required trigger words or a growing
+list of browser phrase patterns cannot define the search interface.
+
+Save and test these reported failures together.
+
+| Buyer request or observation | Required behavior |
+| --- | --- |
+| `1999-2003 pokemon card holo` returned one source row and no visible matches. | Interpret 1999–2003 as a release-year range. Search appropriate cards and filter releases by year. Keep the range out of literal marketplace keywords. |
+| `1999 venusaur` returned 50 candidates and took minutes to finish a small fraction. | Preserve the named card and 1999 release constraint. Exclude known later reprints before photo research. Measure time to listings, first completed decision and first fifteen reviews. |
+| `find me a deal on a pokemon card holo that is liquid from 1999-2003` treated “that is liquid” as the card name. | Return a resale goal, holo finish, year range and recent matched-sales activity requirement. Let the AI choose eligible card markets and research functions. |
+| `find a deal on a holo card form neo revolution` treated the whole clause as a name. | Resolve the intended catalog set, show the interpreted Neo Revelation search, and restrict the hunt to that set. Obvious wording errors must not become required seller-title words. Preserve ambiguity when a correction cannot be established. |
+| Every queued card appeared to be actively checked. | Show queued and active work accurately. Surface completed buyer decisions while the remaining cards continue. |
+| Many serial photo, price and grading checks held only two listing slots. | Increase bounded useful concurrency and overlap independent grading lookups. Preserve exact identity, after-cost calculations, paid-answer reuse, provider limits and cancellation. |
+
+The search interpreter returns one structured plan with the workflow, refined
+query, card or set, collector number, years, finish, raw/graded choice, listing
+format, buying goal and any explicit budget or profit target. The browser shows
+the interpretation, then calls ordinary listing discovery or the market hunt.
+Code validates catalog names and explicit constraints before marketplace work.
+The AI chooses from existing research functions. Financial calculations and
+evidence requirements remain in code.
+
+Keep the original text and the accepted interpretation associated with one
+search account. Find new listings and the active watch reuse that interpretation.
+An interpretation failure must be visible before downstream searching. A
+completed empty search must identify what was actually searched and checked.
+Validate the original examples through the search box as well as offline tests.
+Do not label an inventory miss as a profitable opportunity to make the test pass.
 
 Build a buying guide that Pokémon collectors and resellers find useful enough to
 pay for. The first offer answers a buyer's own question about a specific card:
@@ -143,7 +221,8 @@ Ask a collector for one exact card, condition and all-in budget. Deliver a verif
   PKMNPrices. One valid sale can support sparse pricing with low confidence.
   Recent sales and known BIN cohorts matter more than a stale aggregate;
   the recent four-sale/48-hour rule and format-aware outlier handling exist.
-  TCGplayer estimates do not set final resale prices.
+  Exact condition/printing TCGplayer offers or condition market values can now
+  set labeled raw resale estimates. They do not supply completed-sales activity.
 - Clear slab labels establish the certified grade. Check identity, holder
   condition and authenticity concerns without grading the enclosed card again.
   Raw grades are photo estimates with honest confidence, independent of seller text.
@@ -328,7 +407,7 @@ In the November 24 live collector trial, a seller titled a [2023 Mew PSA 9](http
 
 An opportunity must still be open with strictly less than 10 hours left and a current auction price below its supported market value. Results retain the original ceiling for each actionable alert. Closing checks match the eBay item to a completed USD auction sale. In a retrospective check, a 2000 First Edition Dark Machamp PSA 8 was at $127.50 against a $136.90 ceiling and closed at $274. The next live trial should measure how often alerted auctions close within their original limit and whether prioritizing general-merchandise sellers improves the results.
 
-A resale hunt currently requires at least three distinct matching completed sales in the previous 30 days for its proposed exit. Match the printing and finish, then the assessed raw condition or the actual resale grader and grade. Show the count and window alongside the projected profit after costs. Evaluate this starting threshold against observed sales and time to sell during the buyer pilot.
+A resale hunt shows distinct matching completed sales in the previous 60 days for its proposed exit, without a hard minimum-count purchase veto. Match the printing and finish, then the assessed raw condition or the actual resale grader and grade. Show the count, scope and window separately from a TCGplayer asking-price estimate and projected profit after costs. Evaluate the observed activity against actual sales and time to sell during the buyer pilot.
 
 Let the AI also choose the existing page or panel that best explains its finding. For a newly listed raw Alakazam, it could use the original photos, look up sales at the likely grade and one grade lower, then show the grading costs and profit scenarios beside the search results. For a CGC 8.5 Dark Gengar, it could read the holder, reuse exact-grade sales and open the price comparison for that copy. Neither path requires the buyer to navigate through the intermediate checks.
 

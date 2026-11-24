@@ -1,7 +1,7 @@
 import type { CompSale, CompSummary, GradedPricing, RawPricing } from "../../types";
 import { dollars, name } from "../../format";
 import { RAW_CONDITIONS, CONDITION_NAMES } from "../../../../shared/conditions.ts";
-import { isRawSoldPrice } from "../../../../shared/money/price-evidence.ts";
+import { isUsableRawPrice } from "../../../../shared/money/price-evidence.ts";
 import { Pairs, Section } from "./primitives";
 import styles from "../DetailPanel.module.css";
 
@@ -108,8 +108,9 @@ export function PricesSection({
                     <h4 className={styles.subTitle}>Raw{raw.printingLabel ? `, ${raw.printingLabel}` : ""}</h4>
                     {raw.status === "PRICED" ? (
                         <Pairs rows={RAW_CONDITIONS.map(condition => {
-                            const price = raw.prices?.find(entry => entry.condition === condition && isRawSoldPrice(entry));
+                            const price = raw.prices?.find(entry => entry.condition === condition && isUsableRawPrice(entry));
                             return [CONDITION_NAMES[condition], !price ? "No supported price"
+                                : price.offers ? `${dollars(price.price)} · TCGplayer ${price.basis === "TCGPLAYER_OFFERS" ? `asking-price estimate (${price.offers.offers.length} offers)` : "condition market estimate"}`
                                 : `${dollars(price.price)} · ${soldEstimateBasis(price.comps)}${price.comps ? ` (${price.comps.count} ${raw.conditionEvidence === "AI_PHOTOS" ? "photo-assessed " : ""}${price.comps.count === 1 ? "sale" : "sales"} in sample)` : ""}`];
                         })} />
                     ) : (
@@ -121,6 +122,11 @@ export function PricesSection({
                         <CompsRow summary={raw.sellerConditionComps} />
                     </>}
                     {raw.evidenceNote && <p className={styles.small}>{raw.evidenceNote}</p>}
+                    {raw.prices?.filter(price => price.offers).map(price => <details key={price.condition}>
+                        <summary>TCGplayer {CONDITION_NAMES[price.offers!.condition]} prices</summary>
+                        <p className={styles.small}>Estimated resale value {dollars(price.price)}. {price.offers!.printing}. Checked {price.offers!.checkedAt}; marketplace snapshot {price.offers!.snapshotAt}. Asking prices are active competition.</p>
+                        <ul>{price.offers!.offers.map(offer => <li key={offer.id}>{offer.sellerName || "Seller"}: {dollars(offer.price)} + {dollars(offer.shipping)} shipping = {dollars(offer.total)}</li>)}</ul>
+                    </details>)}
                     {raw.ebayComps?.filter(summary => summary.count > 0).map(summary => <CompsRow key={String(summary.grade)} summary={summary} />)}
                 </>
             )}

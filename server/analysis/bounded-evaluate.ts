@@ -51,6 +51,7 @@ import { assertPriceResearchAvailable, PriceResearchBudgetError, withPriceResear
 import { getAiUsageContext, withAiUsageContext, type AiUsageContext } from "../ai/usage-context.ts";
 import { RejectedPhotoAssessmentError } from "./failure.ts";
 import { supplementalResearch } from "../pricing/supplemental-research.ts";
+import { tcgplayerRawPrice } from "../pricing/tcgplayer-raw.ts";
 import { hasUnlocatedConcern } from "./authenticity.ts";
 
 const CACHE_HOURS = 24 * 365 * 10;
@@ -87,6 +88,7 @@ interface Dependencies {
     soldCondition: typeof createSoldConditionAcquirer;
     frame?: typeof readBaseSetFrame;
     supplemental?: typeof supplementalResearch;
+    tcgplayer?: typeof tcgplayerRawPrice;
     secondOpinion?: typeof reviewListingPhotos;
     stamp: typeof readStampCrop; checkComposite: typeof checkFrontBackComposite;
 }
@@ -556,6 +558,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         };
         const guarded = async <T>(work: () => Promise<T>, markDeferred = true): Promise<T> => {
             signal.throwIfAborted();
+            if (hardFailure) throw hardFailure;
             try { return await withPriceResearchSignal(signal, work); }
             catch (error) {
                 if (options.priceOnly) hardFailure = error instanceof Error ? error : new Error("Price refresh failed.", { cause: error });
@@ -592,6 +595,13 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                 (!verifySoldCondition || frontRawPrices.prices.prices?.some(row => row.condition === requestedCondition))) {
                 prices.rawPricing = frontRawPrices.prices;
             } else if (requestedCondition !== "UNKNOWN") {
+                // The live copy's AI condition chooses the TCGplayer market.
+                // Historical sold photos can add corroboration but are not a
+                // prerequisite for estimating resale from current competition.
+                let tcgPrice: Awaited<ReturnType<typeof tcgplayerRawPrice>> = null;
+                if (deps.tcgplayer) try {
+                    tcgPrice = await inspect(() => deps.tcgplayer!(card, identity, requestedCondition, { signal, now: deps.now() }));
+                } catch (error) { unavailable(error); }
                 const sold = deps.soldCondition({ condition: requestedCondition, loadDetails: (...args) => inspect(() => deps.details(...args)),
                     cached: deps.cached, save: deps.save, now: deps.now });
                 const beforeRaw = priceLimits;
@@ -601,7 +611,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                     fetchRawComps: (...args) => inspect(() => deps.fetchRawComps(...args)), signal, now: deps.now(), requestedCondition,
                     assessCondition: (sale, target) => inspect(() => sold.read(sale, target, signal)),
                     conditionStatus: sold.status,
-                    acquireCondition: allowSoldPhoto || verifySoldCondition ? async sales => {
+                    acquireCondition: !tcgPrice && (allowSoldPhoto || verifySoldCondition) ? async sales => {
                         // Resolving another copy's resale price cannot settle
                         // this copy's suspected structural damage or authenticity.
                         if (condition.creases === "SUSPECTED" || condition.authenticity.concern !== "NONE_SEEN") return null;
@@ -654,16 +664,35 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                     raw.evidenceNote = `${raw.evidenceNote} ${note}`;
                     if (raw.status === "PRICE_UNAVAILABLE") raw.reason = note;
                 }
-                prices.rawPricing = priceLimits > beforeRaw ? { status: "PRICE_UNAVAILABLE", reason: evaluation.pricingDeferred!.note } : raw;
+                prices.rawPricing = tcgPrice ? { ...raw, status: "PRICED", reason: undefined, conditionEvidence: "TCGPLAYER",
+                    prices: [tcgPrice, ...(raw.prices ?? []).filter(row => row.condition !== requestedCondition)],
+                    evidenceNote: `TCGplayer ${tcgPrice.basis === "TCGPLAYER_OFFERS" ? "current asking-price competition" : "condition market estimate"} for ${CONDITION_NAMES[requestedCondition]}. ${tcgPrice.offers?.offers.length ?? 0} current offers; these are not completed sales. ${raw.evidenceNote ?? ""}` }
+                    : priceLimits > beforeRaw ? { status: "PRICE_UNAVAILABLE", reason: evaluation.pricingDeferred!.note } : raw;
             }
             if (hardFailure) throw hardFailure;
             if (!rawOnly && !creaseDisclosed) {
                 prices.gradedPricing = {};
-
-                for (const grader of GRADERS) try {
-                    prices.gradedPricing[grader] = await gradedPricesFor(card, identity, condition.gradeRange, { grader, now: deps.now(),
-                        fetchComps: (...args) => guarded(() => deps.fetchComps(...args)), cachedChecks: (...args) => guarded(() => deps.compChecks(...args)) });
-                } catch (error) { prices.gradedPricing[grader] = unavailable(error); }
+                // Establish that the first grade lookup can proceed before
+                // releasing the independent markets. A budget or storage stop
+                // there must not fan out into more requests.
+                let firstGradeRequest: Promise<Comp[]> | undefined;
+                const fetchGrade: typeof deps.fetchComps = (...args) => {
+                    const work = () => guarded(() => deps.fetchComps(...args));
+                    if (!firstGradeRequest) {
+                        firstGradeRequest = work();
+                        return firstGradeRequest;
+                    }
+                    // A missing market or spent network allowance can still
+                    // leave another grade's cached evidence usable. guarded
+                    // propagates hard stops before that lookup can dispatch.
+                    return firstGradeRequest.then(work, work);
+                };
+                const gradeMarkets = await Promise.allSettled(GRADERS.map(grader =>
+                    gradedPricesFor(card, identity, condition.gradeRange, { grader, now: deps.now(),
+                        fetchComps: fetchGrade, cachedChecks: (...args) => guarded(() => deps.compChecks(...args)) })));
+                for (const [index, result] of gradeMarkets.entries()) {
+                    prices.gradedPricing[GRADERS[index]] = result.status === "fulfilled" ? result.value : unavailable(result.reason);
+                }
                 // An estimated grade can provide a cached slab comparison even
                 // when neither raw condition nor grading upside can be priced.
                 const referenceGrade = !condition.gradeRange && displayedRawGrade({ ...evaluation, identity })?.range.likely;
@@ -1149,8 +1178,8 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                 !evaluation.provisionalGradeRange?.likely) return finish();
             Object.assign(evaluation, await priceRaw(identity, identified.card, { allowSoldPhoto: !options.priceOnly && !options.addedPhotosOnly, verifySoldCondition: isSearchDiagnosticId(searchId) && !options.addedPhotosOnly && (!options.priceOnly || options.verifySoldCondition === true) }));
             // A terms-only refresh cannot complete a legacy gap that still needs a sold photo.
-            if (savedForRefresh?.evaluation.pricingVersion === PREVIOUS_PRICING_VERSION && evaluation.rawPricing?.status === "PRICE_UNAVAILABLE") {
-                evaluation.pricingVersion = PREVIOUS_PRICING_VERSION;
+            if ([PREVIOUS_PRICING_VERSION, "ebay-resale-17"].includes(savedForRefresh?.evaluation.pricingVersion ?? "") && evaluation.rawPricing?.status === "PRICE_UNAVAILABLE") {
+                evaluation.pricingVersion = savedForRefresh!.evaluation.pricingVersion;
             }
         }
         signal.throwIfAborted();
@@ -1158,4 +1187,4 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
         return finish();
     }), options.signal);
 }
-export const evaluateBoundedListing = createBoundedEvaluator({ frame: readBaseSetFrame, secondOpinion: reviewListingPhotos, supplemental: supplementalResearch });
+export const evaluateBoundedListing = createBoundedEvaluator({ frame: readBaseSetFrame, secondOpinion: reviewListingPhotos, supplemental: supplementalResearch, tcgplayer: tcgplayerRawPrice });

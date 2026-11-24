@@ -1,5 +1,5 @@
 import { MODEL } from "./openai.ts";
-import { readCache } from "../lib/cache.ts";
+import { readCache, readCacheMany } from "../lib/cache.ts";
 import { exclusionReason, normalizeText, withoutAccompanyingCustomHolder } from "../ebay/filters.ts";
 import { searchAttributes } from "../../shared/search-criteria.ts";
 import { cardLanguageStatus } from "../../shared/card-language.ts";
@@ -90,10 +90,7 @@ export function readTitleByRules(title: string, knownSetNames: readonly string[]
 }
 
 // Reuse legacy title evidence when available and otherwise read the literal title.
-export async function readTitleWithoutAi(title: string, signal?: AbortSignal): Promise<TitleReading> {
-    signal?.throwIfAborted();
-    const saved = await readCache<TitleReading>(cacheKey(title), MONTH_HOURS);
-    signal?.throwIfAborted();
+function retainedTitleReading(title: string, saved: TitleReading | null): TitleReading | null {
     if (saved) {
         if (typeof saved !== "object" || saved.kind !== null && !LISTING_KINDS.includes(saved.kind) ||
             ["cardName", "set", "cardNumber", "language", "grader", "grade", "condition"].some(field => saved[field as keyof TitleReading] !== null && typeof saved[field as keyof TitleReading] !== "string")) {
@@ -112,7 +109,28 @@ export async function readTitleWithoutAi(title: string, signal?: AbortSignal): P
         }
         return saved;
     }
+    return null;
+}
+
+export async function readTitleWithoutAi(title: string, signal?: AbortSignal): Promise<TitleReading> {
+    signal?.throwIfAborted();
+    const saved = retainedTitleReading(title, await readCache<TitleReading>(cacheKey(title), MONTH_HOURS));
+    signal?.throwIfAborted();
+    if (saved) return saved;
     const knownSetNames = await cachedSetNames();
     signal?.throwIfAborted();
     return readTitleByRules(title, knownSetNames);
+}
+
+// A source page can contain hundreds of distinct titles. Reuse their accepted
+// readings in one storage operation before applying the same literal fallbacks.
+export async function readTitlesWithoutAi(titles: string[], signal?: AbortSignal): Promise<Map<string, TitleReading>> {
+    signal?.throwIfAborted();
+    const distinct = [...new Set(titles)];
+    const saved = await readCacheMany<TitleReading>(distinct.map(cacheKey), MONTH_HOURS);
+    signal?.throwIfAborted();
+    const retained = distinct.map((title, index) => retainedTitleReading(title, saved[index]));
+    const knownSetNames = retained.some(reading => reading === null) ? await cachedSetNames() : [];
+    signal?.throwIfAborted();
+    return new Map(distinct.map((title, index) => [title, retained[index] ?? readTitleByRules(title, knownSetNames)]));
 }
