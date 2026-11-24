@@ -12,6 +12,7 @@ Search for a card or inspect a listing link. The app checks identity, price evid
 
 - [How a search works](#how-a-search-works)
 - [What you get](#what-you-get)
+- [Grade a card](#grade-a-card)
 - [Design principles](#design-principles)
 - [Getting started](#getting-started)
 - [Configuration](#configuration)
@@ -154,6 +155,22 @@ every legacy diagnostic or buy missing evidence solely to fill a UI section.
 - **The exact printing:** 1st Edition, Shadowless, and Unlimited are priced apart. Supported photo/label evidence can resolve a wrong title or item detail; an unresolved material identity problem still blocks purchase advice.
 - **Reprints caught:** Celebrations, Classic Collection (2021 and 2026), Base Set 2, metal cards, and Topps cards don't get priced as vintage originals.
 - **Checked comps:** sold comps pass identity, printing, finish, grader/grade and other eligibility rules. Bounded HTTP research reuses saved AI comp checks and sold-copy condition evidence; it does not purchase new comp-review batches or historical photo assessments. Missing matched sales leave a pricing route unavailable.
+
+## Grade a card
+
+Open [Grade a card](http://localhost:3017/?view=camera). Photograph the entire
+front and back of one card in even light, or choose pictures from your device.
+For a holo card, add a tilted front if reflections hide the surface. Check the
+previews, then choose **Estimate grade** to send the photos for assessment.
+
+The result shows one estimated grade, play condition, confidence and the wear
+visible in the photos. If an area needed to grade the card is hidden, the app
+identifies the view to retake. For a slab it reads the grade on the label.
+
+This installation runs on the Mac. Its camera picker can use a connected
+webcam or an eligible iPhone through Apple's Continuity Camera. You can also
+transfer phone photos to the Mac and use **Choose photo**.
+[Apple's Continuity Camera setup](https://support.apple.com/en-us/102546)
 
 ## Design principles
 

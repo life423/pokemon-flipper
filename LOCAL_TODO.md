@@ -612,6 +612,11 @@ Mew ex replay.
 
 ## UX and product polish
 
+- [x] Add camera capture and photo upload for a whole front, back and optional
+  tilted holo view. Show one estimated grade, play condition, confidence and
+  visible wear, or ask for a specific retake. A readable slab keeps its label grade.
+- [ ] Test the camera workflow with a physical phone and a card-show buyer or
+  owner. Compare the photo estimate to an independent in-hand assessment.
 - [ ] Build the compact always-visible filter workspace, decision-first rows and
   persistent desktop inspector; use full-screen details on phones and a small
   advanced-options popover instead of the overloaded drawer.

@@ -1,6 +1,7 @@
 import type { DeeperPhotoReview, EbayUsage, Evaluation, ListingSummary, SearchIntent, Targets } from "./types";
 import type { ShortlistEntry, RefreshResult } from "../../shared/shortlist.ts";
 import type { PricingRetryResult } from "../../shared/pricing-retries.ts";
+import type { CameraGradeResult } from "../../shared/camera-grade.ts";
 import type { AiUsageDay } from "../../shared/ai-usage.ts";
 import type { ListingFilters, MarketplaceOrder } from "../../shared/listing-filters.ts";
 import type { SearchDiagnosticResult, SearchDiagnosticRow, SearchSourceCoverage } from "../../shared/search-diagnostic.ts";
@@ -22,6 +23,13 @@ function retryDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
     });
 }
 export function fetchAiUsage(searchRunId?: string): Promise<AiUsageDay> { return request(`/api/ai-usage${searchRunId ? `?searchId=${encodeURIComponent(searchRunId)}` : ""}`); }
+
+export function gradeCameraCard(photos: { front: string; back: string; tilted?: string }, signal?: AbortSignal): Promise<CameraGradeResult> {
+    return request("/api/camera/grade", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(photos), signal,
+    });
+}
+
 // One explicit operation keeps one ID through retries and nested analysis.
 // Standalone link/shortlist actions receive their own bounded request group.
 const searchHeaders = (searchRunId: string = crypto.randomUUID()): Record<string, string> => ({ "X-Pokemon-Flipper-Search-Id": searchRunId });

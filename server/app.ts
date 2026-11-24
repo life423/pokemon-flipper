@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { setYears } from "./pricing/price-tracker.ts";
 import { evaluationFailure } from "./analysis/failure.ts";
+import { CameraInputError, gradeCameraCard } from "./analysis/camera-grade.ts";
 import http from "node:http";
 import path from "node:path";
 import express from "express";
@@ -100,6 +101,29 @@ app.use("/api", (req, res, next) => {
     withPriceResearchSignal(AbortSignal.any([stopped.signal, shutdown.signal]), next);
 });
 app.use("/api/listings/:id", (req, _res, next) => withAiUsageContext({ listingId: req.params.id }, next));
+// Only camera uploads need more than Express's default JSON limit.
+app.post("/api/camera/grade", (req, res, next) => {
+    res.set("Cache-Control", "no-store");
+    if (!req.is("application/json")) { res.status(415).json({ error: "Submit front and back photos using Grade a card." }); return; }
+    express.json({ limit: "13mb", inflate: false })(req, res, error => {
+        if (!error) { next(); return; }
+        if (error.type === "entity.too.large") res.status(413).json({ error: "These photos are too large. Choose smaller images and try again." });
+        else res.status(400).json({ error: "The photo upload could not be read. Select the photos again." });
+    });
+}, tracked(async (req, res) => {
+    const signal = requestSignal();
+    try {
+        const result = await gradeCameraCard(req.body, signal);
+        if (!signal.aborted) res.json(result);
+    } catch (error) {
+        if (signal.aborted) return;
+        if (error instanceof CameraInputError) { res.status(400).json({ error: error.message }); return; }
+        const failure = evaluationFailure(error);
+        res.status(failure.status).json(failure.status === 500
+            ? { error: "The photo grade could not finish. Your photos are still available to try again." }
+            : failure);
+    }
+}));
 app.use(express.json());
 app.get("/api/storage", async (_req, res) => {
     try {

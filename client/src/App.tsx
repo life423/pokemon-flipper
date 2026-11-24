@@ -21,6 +21,7 @@ import { retargetEvaluation, retargetScreen } from "../../shared/money/targets.t
 import { evaluateListing, fetchEbayUsage, fetchSetYears, reviewListingPhotos, streamDeals, streamNewDeals, fetchShortlist, saveListing, removeSavedListing, updateSavedListing, refreshSavedListings, resolveListingLink, retryPricingBatch, saveSearchDiagnostic, type DealsMessage } from "./api";
 import type { ShortlistEntry } from "../../shared/shortlist.ts";
 import type { SearchCompetition } from "../../shared/search-diagnostic.ts";
+import { CameraGrade } from "./components/CameraGrade";
 import { ShortlistView } from "./components/ShortlistView";
 import { AiBudgetStatus } from "./components/AiBudgetStatus";
 import { PriceResearchStatus } from "./components/PriceResearchStatus";
@@ -86,9 +87,9 @@ function BuyItNowComparison({ reference }: { reference: SearchCompetition }) {
     </div>;
 }
 
-export function App() {
+export function App({ initialPage = "search" }: { initialPage?: "search" | "camera" } = {}) {
     const now = useNow(30_000);
-    const [page, setPage] = useState<"search" | "shortlist" | "listing">("search");
+    const [page, setPage] = useState<SearchPage>(initialPage);
     const [directListing, setDirectListing] = useState<ListingSummary | null>(null);
     const [linkStatus, setLinkStatus] = useState<"idle" | "loading" | "error">("idle");
     const [linkError, setLinkError] = useState("");
@@ -885,14 +886,14 @@ export function App() {
             if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
                 event.preventDefault();
                 if (drawerOpen || selectedId !== null) return;
-                searchInput.current?.focus();
-                searchInput.current?.select();
+                if (page === "camera") setPage("search");
+                window.requestAnimationFrame(() => { searchInput.current?.focus(); searchInput.current?.select(); });
             }
         };
 
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
-    }, [drawerOpen, selectedId]);
+    }, [drawerOpen, selectedId, page]);
 
     // Where the search is, for the progress panel: the free check, then the
     // AI on the best candidates, up to this search's budget.
@@ -992,7 +993,7 @@ export function App() {
                                 {activeFilters > 0 && <span className={styles.menuBadge}>{activeFilters}</span>}
                             </button>
 
-                            <form className={styles.searchRow} role="search" onSubmit={submitSearch}>
+                            {page !== "camera" && <form className={styles.searchRow} role="search" onSubmit={submitSearch}>
                                 <div className={styles.entryModes} role="group" aria-label="Search cards or evaluate a listing">
                                     <button type="button" aria-pressed={!linkInput} onClick={() => chooseEntry(false)}>Search cards</button>
                                     <button type="button" aria-pressed={linkInput} onClick={() => chooseEntry(true)}>Evaluate eBay link</button>
@@ -1049,13 +1050,14 @@ export function App() {
                                     {linkInput ? linkWorking ? "Evaluating…" : "Evaluate listing · paid" : "Find deals"}
                                 </button>
                                 <p className={styles.inputHint} id="listing-input-hint">{linkInput ? "Paste or drop a link. Uses paid AI." : "Try “Aquapolis PSA 7 or better holo”, or evaluate an eBay link."}</p>
-                            </form>
+                            </form>}
                         </div>
 
                         {/* Before the first search there's nothing to count, so phones skip the tabs. */}
                         <nav className={styles.workspaceNav} aria-label="Workspace">
                             <button type="button" aria-label="Search results" aria-pressed={page === "search"} onClick={() => { cancelLink(); setSelectedId(null); setPage("search"); }}>Results</button>
                             <button type="button" aria-pressed={page === "shortlist"} onClick={() => { cancelLink(); cancelPricing(); setSelectedId(null); setPage("shortlist"); void loadShortlist(); }}>Shortlist ({shortlist.length})</button>
+                            <button type="button" aria-pressed={page === "camera"} onClick={() => { cancelLink(); cancelPricing(); setSelectedId(null); setPage("camera"); }}>Grade a card</button>
                             {(directListing || linkStatus !== "idle") && <button type="button" aria-pressed={page === "listing"} onClick={() => { setSelectedId(null); setPage("listing"); }}>Listing evaluation</button>}
                             {page === "search" && searchStatus !== "idle" && <button type="button" className={styles.findNew} disabled={searchStatus === "checking" || phase === "ai"} onClick={() => void search(undefined, lastQuery.current, true)}>Find new listings</button>}
                         </nav>
@@ -1074,9 +1076,9 @@ export function App() {
                     </header>
 
                     <ProviderUsageNotice usage={aiUsage?.providers} now={now} />
-                    <AiBudgetStatus budget={aiUsage?.budget} calls={aiUsage?.calls ?? 0} />
-                    <PriceResearchStatus usage={aiUsage?.pricing} />
-                    {analysisBlocked && <AnalysisBlockedNotice message={analysisBlocked} code={analysisBlockCode} onRetry={() => {
+                    {page !== "camera" && <AiBudgetStatus budget={aiUsage?.budget} calls={aiUsage?.calls ?? 0} />}
+                    {page !== "camera" && <PriceResearchStatus usage={aiUsage?.pricing} />}
+                    {page !== "camera" && analysisBlocked && <AnalysisBlockedNotice message={analysisBlocked} code={analysisBlockCode} onRetry={() => {
                         if (!analysisBlockPolicy(analysisBlockCode).retryLabel) return;
                         // Reuse this search and its existing server allowance.
                         // Completed cards keep their slot; interrupted ones may retry.
@@ -1089,7 +1091,7 @@ export function App() {
                         <SearchReview key={completedSearchRunId} ready={page === "search" && reviewReady}
                             onReview={(signal) => reviewSearch(completedSearchRunId, signal)} />
                     </div>}
-                    {page === "shortlist" ? <ShortlistView entries={shortlistForDisplay} loading={shortlistLoading} error={shortlistError} refreshing={refreshingSaved} refreshErrors={refreshErrors}
+                    {page === "camera" ? <CameraGrade /> : page === "shortlist" ? <ShortlistView entries={shortlistForDisplay} loading={shortlistLoading} error={shortlistError} refreshing={refreshingSaved} refreshErrors={refreshErrors}
                         onRetry={() => void loadShortlist()} onRefresh={refreshSaved} onRemove={removeSaved} onUpdate={updateSaved} now={now}
                         renderCard={(entry) => <DealCard listing={entry.listing} analysis={analyses[entry.id]} selected={entry.id === selectedId} now={now} years={setYearsByKey} targets={targets} includeOffers={includeOffers} minGrade={minGrade} photoReviewState={photoReviews[entry.id]}
                             onOpen={() => openPanel(entry.id)} />} /> : page === "listing" ? <section className={styles.linkEvaluation} aria-labelledby="link-evaluation-heading">

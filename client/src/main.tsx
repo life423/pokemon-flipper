@@ -6,7 +6,7 @@ import "./styles/base.css";
 
 createRoot(document.getElementById("root")!).render(
     <StrictMode>
-        <App />
+        <App initialPage={new URLSearchParams(location.search).get("view") === "camera" ? "camera" : "search"} />
     </StrictMode>
 );
 

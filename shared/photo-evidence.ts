@@ -114,7 +114,7 @@ export function slabLabelConfidence(evaluation: Evaluation): "HIGH" | null {
 
 // A rough reference for older readings that only described visible wear.
 // These ranges are for display and never enter purchase math or grade filters.
-const gradesFromWear: Record<RawCondition, GradeRange> = {
+export const gradesFromWear: Readonly<Record<RawCondition, GradeRange>> = {
     MINT: { low: 8, likely: 9, high: 10 },
     NEAR_MINT: { low: 7, likely: 8, high: 9 },
     LIGHTLY_PLAYED: { low: 5, likely: 6, high: 7 },
