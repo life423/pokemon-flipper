@@ -1,5 +1,6 @@
 import { underwrite } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
+import { releaseGalleryKey } from "../../shared/base-set-release.ts";
 import type { CompSummary, Evaluation, Targets } from "../../shared/types.ts";
 
 export function salesSummary(grader = "PSA", grade: number | string = 7, prices = [180, 200, 220]): CompSummary {
@@ -19,6 +20,15 @@ export function cardEvaluation(targets: Targets = MONEY_CONFIG.targets): Evaluat
         gradedPricing: { PSA: { status: "PRICED", byGrade: [6, 7, 8].map((g) => salesSummary("PSA", g, [g * 28 - 10, g * 28, g * 28 + 10])) }, CGC: { status: "PRICED", byGrade: [6, 7, 8].map((g) => salesSummary("CGC", g, [g * 20 - 10, g * 20, g * 20 + 10])) } },
         slab: null, slabPricing: null, underwriting: null, rating: null, answeredAt: new Date().toISOString(), reusedSteps: [], usage: [],
     };
+    evaluation.listing.photos = ["fixture-front", "fixture-back", "fixture-front-detail", "fixture-back-detail"];
+    clearReleaseFixture(evaluation);
     evaluation.underwriting = underwrite(evaluation, { ...MONEY_CONFIG, targets });
     return evaluation;
+}
+
+export function clearReleaseFixture(e: Evaluation): Evaluation {
+    const front = e.photoCheck?.images.find(p => p.view === "FRONT" && p.usable && !p.isStockImage && e.listing.photos?.[p.number - 1]);
+    if (front) e.releaseMark = { mark: "CLEAR", observation: "The artwork corner and border are visible without a stamp.",
+        photoNumber: front.number, gallery: releaseGalleryKey(e), sourceSha256: "a".repeat(64) };
+    return e;
 }

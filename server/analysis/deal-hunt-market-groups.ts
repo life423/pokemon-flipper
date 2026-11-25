@@ -23,9 +23,11 @@ interface MarketGroup {
 }
 
 export function groupMarketSearches(leads: HuntMarket[], goal: DealHuntGoal, targets: Targets, filters: ListingFilters,
-    minGrade: number, knownIds: ReadonlySet<string> = new Set()) {
+    minGrade: number, knownIds: ReadonlySet<string> = new Set(), preferRecentSales = false) {
+    const activity = (lead: HuntMarket) => lead.sales60 ?? lead.sales30;
+    const rankedLeads = preferRecentSales ? [...leads].sort((a, b) => activity(b) - activity(a)) : leads;
     const groups = new Map<string, MarketGroup>();
-    for (const lead of leads) {
+    for (const lead of rankedLeads) {
         const intent = marketIntent(lead);
         if (filters.kindFilter === "raw" && intent.graded || filters.kindFilter === "graded" && !intent.graded ||
             intent.graded && (intent.minGrade ?? 0) < minGrade) continue;
@@ -52,7 +54,7 @@ export function groupMarketSearches(leads: HuntMarket[], goal: DealHuntGoal, tar
     if (filters.typeFilter === "AUCTION") {
         // Historic BIN margins describe a different purchase format. Start with liquid
         // auction markets across distinct cards before offering more grades of one card.
-        const volume = (group: MarketGroup) => Math.max(...group.leads.map(m => m.sales60 ?? m.sales30));
+        const volume = (group: MarketGroup) => Math.max(...group.leads.map(activity));
         const ranked = [...groups.values()].sort((a, b) => volume(b) - volume(a));
         const featured = new Set<MarketGroup>();
         for (const kind of ["raw", "slab"] as const) {
@@ -70,6 +72,7 @@ export function groupMarketSearches(leads: HuntMarket[], goal: DealHuntGoal, tar
     // Compare affordable, previously seen copies first. Within each
     // tier, preserve the existing ranking by sale activity and historical profit.
     return [...groups.values()].sort((a, b) =>
+        (preferRecentSales ? activity(b.leads[0]) - activity(a.leads[0]) : 0) ||
         Number(b.observedPurchaseTotal !== undefined) - Number(a.observedPurchaseTotal !== undefined));
 }
 

@@ -4,7 +4,7 @@ import { candidateAdmission, summarizeBenchmark, compareAnalysisPriority } from 
 import { canAutoAnalyze } from "../../shared/analysis.ts";
 import { englishListingEligible } from "../../shared/card-language.ts";
 import { matchesListingFilters } from "../../shared/listing-filters.ts";
-import { cardEvaluation, salesSummary } from "../fixtures/card-evaluation.ts";
+import { cardEvaluation, clearReleaseFixture, salesSummary } from "../fixtures/card-evaluation.ts";
 import type { Evaluation, ListingSummary, ScreeningSoldEvidence, SearchIntent } from "../../shared/types.ts";
 
 const NOW = Date.parse("2026-11-03T12:00:00Z");
@@ -24,7 +24,7 @@ function evaluation(item: ListingSummary, actualPrice: number, resale = 150): Ev
     value.rawPricing = { status: "PRICED", prices: [{ condition: "LIGHTLY_PLAYED", price: resale, basis: "EBAY_SOLD", updatedAt: new Date(NOW).toISOString() }] };
     value.gradedPricing = null;
     value.usage = []; value.reusedSteps = [];
-    return value;
+    return clearReleaseFixture(value);
 }
 
 test("admission diagnostics use the canonical eligibility result and preserve the actual screen explanation", t => {

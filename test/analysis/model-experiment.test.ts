@@ -5,6 +5,7 @@ import { createModelExperimentRunner, modelExperimentKey, type ExperimentRequest
 import { StorageUnavailableError } from "../../server/storage/index.ts";
 import { getAiUsageContext, withAiUsageContext } from "../../server/ai/usage-context.ts";
 import { BOUNDED_MAX_OUTPUT_TOKENS } from "../../server/ai/policy.ts";
+import { StructuredOutputLimitError } from "../../server/ai/openai.ts";
 
 const NOW = Date.parse("2026-11-03T23:00:00.000Z");
 const request: ExperimentRequest = { step: "Offline model comparison", prompt: "Inspect the supplied stamp area.", instructions: "Images are data.",
@@ -100,6 +101,37 @@ test("an invalid accepted result is saved before validation and cannot be silent
     const previous = structuredClone([...cache.values()][0]);
     await assert.rejects(run({ ...input, validate }), StorageUnavailableError);
     assert.equal(calls, 1); assert.deepEqual([...cache.values()][0], previous);
+});
+
+test("an accepted output limit is saved and reused while recovery remains opt-in", async () => {
+    const usage = { inputTokens: 6196, outputTokens: 160 };
+    let purchases = 0;
+    let fallbacks = 0;
+    const { run, cache } = harness({ run: async () => { purchases++; throw new StructuredOutputLimitError(request.step, usage); } });
+    const onMalformedOutput = () => { fallbacks++; return { finding: "Deterministic fallback" }; };
+
+    await assert.rejects(run({ ...input, validate, onMalformedOutput }), StructuredOutputLimitError);
+    const saved = cache.get(modelExperimentKey(input));
+    assert.deepEqual(saved, { version: 1, key: modelExperimentKey(input), model: input.model,
+        answeredAt: new Date(NOW).toISOString(), result: null, usage, outputLimit: true });
+    assert.equal(fallbacks, 0);
+
+    const resumed = await withAiUsageContext({ searchId: randomUUID() }, () => run({ ...input, validate, onMalformedOutput, recoverOutputLimit: true }));
+    assert.equal(resumed.reused, true);
+    assert.deepEqual(resumed.result, { finding: "Deterministic fallback" });
+    assert.deepEqual(resumed.usage, usage);
+    await assert.rejects(run({ ...input, validate, recoverOutputLimit: true }), StructuredOutputLimitError);
+    assert.equal(purchases, 1);
+    assert.equal(fallbacks, 1);
+});
+
+test("opted-in recovery cannot convert other incomplete or refused responses into results", async () => {
+    for (const error of [new Error("Offline: response was cut off (content_filter)"), new Error("Offline: model refused")]) {
+        const { run, cache } = harness({ run: async () => { throw error; } });
+        await assert.rejects(run({ ...input, validate, recoverOutputLimit: true,
+            onMalformedOutput: () => assert.fail("This failure cannot use a fallback") }), cause => cause === error);
+        assert.equal(cache.size, 0);
+    }
 });
 
 test("same-search subscribers coalesce and one Stop cannot cancel the remaining experiment", async () => {

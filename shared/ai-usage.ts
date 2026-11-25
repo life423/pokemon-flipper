@@ -1,5 +1,6 @@
 import type { PricingResearchUsage } from "./pricing-usage.ts";
 import type { ProviderUsageSnapshot } from "./provider-usage.ts";
+import type { DealHuntAction } from "./deal-hunt.ts";
 
 export interface AiUsageStage {
     step: string;
@@ -29,6 +30,27 @@ export interface AiUsageDay {
     budget?: AiSearchBudget;
     pricing?: PricingResearchUsage | null;
     providers?: ProviderUsageSnapshot[];
+    hunt?: HuntProgress;
+}
+
+export interface HuntProgress {
+    searchId: string;
+    phase: "planning" | "discovering" | "pricing" | "reviewing" | "completed" | "stopped" | "failed";
+    startedAt: string;
+    updatedAt: string;
+    completedAt?: string;
+    cohort?: string;
+    guidance?: string;
+    action?: DealHuntAction | "find_listings";
+    /** Listing summaries loaded across queries, before candidate deduplication. */
+    discovered: number;
+    screened: number;
+    retained: number;
+    /** Distinct copies on which an evidence check completed. */
+    reviewed: number;
+    /** Distinct copies whose photo-evidence check completed, including saved evidence. */
+    photos: number;
+    scans: number;
 }
 
 export interface AiSearchBudget {

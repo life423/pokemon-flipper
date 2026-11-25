@@ -7,10 +7,11 @@ import type { ListingSummary, ScreeningSoldEvidence, ScreeningSoldReference, Sea
 import type { CardRecord, Comp, FetchComps, FetchRawComps, FetchSoldPage, LookupCards, SoldPage, SoldStream } from "./types.ts";
 import { compCondition } from "./raw-comps.ts";
 import { compProblem, summarizeComps, readSoldTitleClaims, matchesSoldTarget, uniqueSoldComps, type CompCriteria } from "./sold-comps.ts";
-import { createScreeningPriceSource, ScreeningPriceBudgetError } from "./pkmnprices.ts";
+import { createScreeningPriceSource } from "./pkmnprices.ts";
 import { PriceResearchBudgetError } from "./research-budget.ts";
 import { resolveScreeningName } from "../identity/screening-name.ts";
-import { canonicalCatalogName, sameCatalogName } from "./search-name.ts";
+import { sameNumberedCatalogName } from "../identity/catalog-name.ts";
+import { canonicalCatalogName } from "./search-name.ts";
 import { jungleNoSymbolReason } from "../../shared/jungle-no-symbol.ts";
 import { hasBaseSetFourthPrint } from "../../shared/reprint-release.ts";
 import { usableSoldReference } from "../../shared/sold-evidence.ts";
@@ -34,10 +35,11 @@ const hasMatchedSales = (references: ScreeningSoldReference[]) => references.som
 const ordinarySale = (sale: Comp) => !/\blot\b|\bbundle\b|\bset of\b|\b\d+\s*(?:cards|pcs)\b|\bsigned\b|\bautograph(?:ed)?\b|\baltered\b|\bcustom\b|\bproxy\b|\breplica\b|\bmiscut\b|\bcrimp\b|\bholo\s*bleed\b|\bdouble\s*holo\b/i.test(sale.title);
 function marketSummaries(sales: Comp[], market: Market, grader: string | null, grade: string | null, asOf: number): ScreeningSoldReference[] {
     const { record, printing, finish } = market;
+    const exact = { printing, setName: record.setName, cardName: record.name, cardNumber: record.cardNumber, finish };
     const eligible = uniqueSoldComps(sales).filter(sale => sale.currency === "USD" && ordinarySale(sale) && matchesSoldTarget(sale, record, grader, grade));
     const base = { recordId: record.id, name: record.name, set: record.setName!, cardNumber: record.cardNumber, printing, finish };
     if (grader && grade) {
-        const criteria: CompCriteria = { printing, setName: record.setName, finish, grader, grade, now: asOf };
+        const criteria: CompCriteria = { ...exact, grader, grade, now: asOf };
         const recent = eligible.filter(sale => compProblem(sale, criteria) === null && asOf - Date.parse(sale.sold_at) <= 90 * DAY_MS);
         const summary = summarizeComps(eligible, { ...criteria, windowDays: recent.length ? 90 : 180 });
         return summary.count ? [{ ...base, grader, grade, condition: null, summary }] : [];
@@ -45,12 +47,12 @@ function marketSummaries(sales: Comp[], market: Market, grader: string | null, g
     const raw = eligible.filter(sale => !sale.grader && !sale.grade && !/\b(?:psa|cgc|bgs|sgc|tag)\b/i.test(sale.title));
     const accepted = RAW_CONDITIONS.flatMap<ScreeningSoldReference>(condition => {
         const matching = raw.filter(sale => compCondition(sale.title) === condition).map(sale => ({ ...sale, grader: "RAW", grade: condition }));
-        const summary = summarizeComps(matching, { printing, setName: record.setName, finish, grader: "RAW", grade: condition, now: asOf, windowDays: 90 });
+        const summary = summarizeComps(matching, { ...exact, grader: "RAW", grade: condition, now: asOf, windowDays: 90 });
         return summary.count ? [{ ...base, grader: null, grade: null, condition, summary }] : [];
     });
     // Unstated condition remains market context, never this copy's condition.
     const unspecified = raw.filter(sale => compCondition(sale.title) === null).map(sale => ({ ...sale, grader: "RAW", grade: "UNSPECIFIED" }));
-    const summary = summarizeComps(unspecified, { printing, setName: record.setName, finish, grader: "RAW", grade: "UNSPECIFIED", now: asOf, windowDays: 90 });
+    const summary = summarizeComps(unspecified, { ...exact, grader: "RAW", grade: "UNSPECIFIED", now: asOf, windowDays: 90 });
     if (summary.count) accepted.push({ ...base, grader: null, grade: null, condition: null, summary });
     return accepted;
 }
@@ -87,7 +89,8 @@ export function createSoldScreening({ signal, targets, now = Date.now, source = 
         const key = JSON.stringify([canonicalCatalogName(name), setFamily(set).sort(), normalizeCardNumber(number)]);
         const found = await memo(catalogs, key, () => source.lookupCards({ name, set, cardNumber: number ?? "" }));
         const matches = [...new Map(found.filter(record => record.source === "pkmnprices" && sameSetFamily(record.setName, set) &&
-            (!number || sameCardNumber(record.cardNumber, number)) && sameCatalogName(record.name, name)).map(record => [record.id, record])).values()];
+            (!number || sameCardNumber(record.cardNumber, number)) &&
+            sameNumberedCatalogName(record.name, name, record.setName, record.cardNumber)).map(record => [record.id, record])).values()];
         const identities = new Set(matches.map(record => JSON.stringify([normalizeSetName(record.setName), normalizeCardNumber(record.cardNumber)])));
         return identities.size === matches.length ? matches : [];
     }
@@ -130,7 +133,7 @@ export function createSoldScreening({ signal, targets, now = Date.now, source = 
                 } catch (error) {
                     signal?.throwIfAborted();
                     if (error instanceof StorageUnavailableError || error instanceof PriceResearchBudgetError && error.reason !== "LIMIT") throw error;
-                    issue = error instanceof ScreeningPriceBudgetError || error instanceof PriceResearchBudgetError ? "BUDGET" : "UNAVAILABLE";
+                    issue = error instanceof PriceResearchBudgetError ? "BUDGET" : "UNAVAILABLE";
                     break;
                 }
             }
@@ -140,7 +143,8 @@ export function createSoldScreening({ signal, targets, now = Date.now, source = 
 
     async function gradingReferences(listing: ListingSummary, intent: SearchIntent, market: Market, rawEvidence: ScreeningSoldEvidence) {
         if (listing.isGraded || listing.buyingOption !== "FIXED_PRICE" || !intent.cardName || intent.sets.length !== 1 ||
-            !sameCatalogName(market.record.name, intent.cardName) || !sameSetFamily(market.record.setName, intent.sets[0]) ||
+            !sameNumberedCatalogName(market.record.name, intent.cardName, market.record.setName, market.record.cardNumber) ||
+            !sameSetFamily(market.record.setName, intent.sets[0]) ||
             (intent.cardNumber && !sameCardNumber(market.record.cardNumber, intent.cardNumber)) ||
             market.labels.length !== 1 || availablePhotoCount(listing.images) < 2) return [];
         const condition = sellerConditionClues(listing);
@@ -284,7 +288,7 @@ export function createSoldScreening({ signal, targets, now = Date.now, source = 
         } catch (error) {
             signal?.throwIfAborted();
             if (error instanceof StorageUnavailableError || error instanceof PriceResearchBudgetError && error.reason !== "LIMIT") throw error;
-            return incompleteEvidence(evidence, error instanceof ScreeningPriceBudgetError || error instanceof PriceResearchBudgetError);
+            return incompleteEvidence(evidence, error instanceof PriceResearchBudgetError);
         }
     }
     return Object.assign(screenListing, { exactSlabReference });

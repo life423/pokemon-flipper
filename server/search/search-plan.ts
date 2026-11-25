@@ -1,7 +1,7 @@
 import type { SearchPlan, SearchPlanInput } from "../../shared/search-plan.ts";
 import type { SearchIntent } from "../../shared/types.ts";
 import { explicitCriteria } from "../../shared/search-criteria.ts";
-import { searchYears } from "../../shared/search-years.ts";
+import { readSearchYearConstraint, releaseYearText, searchYears } from "../../shared/search-years.ts";
 import { sameCardNumber } from "../../shared/card-number.ts";
 import { isPrinting } from "../../shared/identity.ts";
 import { TEXT_MODEL } from "../ai/policy.ts";
@@ -10,6 +10,7 @@ import { createModelExperimentRunner } from "../analysis/model-experiment.ts";
 import { normalizeWords, normalizeSetName, printingClaimFromText } from "../identity/card-identity.ts";
 import { sameCatalogName } from "../identity/catalog-name.ts";
 import { storageFailure } from "../lib/storage-failure.ts";
+import { normalizeText } from "../ebay/filters.ts";
 import { readSearchLocally } from "./intent.ts";
 import { cachedSetNames } from "./set-catalog.ts";
 
@@ -78,14 +79,28 @@ function validSetMention(mention: { text: string; name: string }, source: string
         (scores.length === 1 || scores[1].score > scores[0].score);
 }
 
+function withoutSetMentions(source: string, mentions: Reading["setMentions"], keepRelease = false) {
+    let text = normalizeText(source);
+    for (const mention of mentions) {
+        const release = normalizeWords(mention.text).split(" ").join("[^a-z0-9]+");
+        text = text.replace(new RegExp(`\\b(?:set\\s+)?(${release})(?:\\s+set)?\\b`, "g"), keepRelease ? "$1" : " ");
+    }
+    return text;
+}
+
+const LIQUIDITY_WORDING = /\b(?:(not|non|no|without|ignore|ignoring|low|poor)(?:\s+very)?\s+)?(?:liquid|liquidity)(?:\s+((?:doesn t|does not|isn t|is not) matter))?\b/g;
+
 function namedSourceWithoutGoals(source: string, mentions: Reading["setMentions"]) {
-    let text = source;
-    for (const mention of mentions) text = text.replace(new RegExp(mention.text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "ig"), " ");
+    let text = withoutSetMentions(source, mentions);
     const years = searchYears(text);
     if (years) text = text.replace(years.phrase, " ");
-    return normalizeWords(text.replace(/\$\s*\d+(?:,\d{3})*(?:\.\d{1,2})?/g, " ")).replace(/\bno more than\b/g, " ")
+    return normalizeWords(text.replace(/\$\s*\d+(?:,\d{3})*(?:\.\d{1,2})?/g, " ")).replace(LIQUIDITY_WORDING, " ").replace(/\bno more than\b/g, " ")
         .replace(/\b(?:find|show|search|look|looking|for|me|i|my|want|would|like|please|a|an|the|some|any|all|good|great|best|cheap|cheaper|expensive|card|cards|copy|copies|pok[eé]mon|tcg|trading|from|form|in|between|and|to|through|with|of|on|that|which|is|are|can|could|worth|deal|deals|bargain|bargains|opportunity|opportunities|liquid|profitable|profit|flip|flips|flipping|resell|resale|sell|selling|make|earn|at|least|most|minimum|maximum|under|up|budget|delivered|all|dollars|usd|holo|holos|holographic|reverse|non|rare|vintage|modern|raw|ungraded|grade|graded|grading|slab|slabs|collection|collect|auction|auctions|ending|hours|hour|hrs|left|remaining|less|than|buy|it|now|fixed|price|new|newly|fresh|freshly|listed|newest|first|edition|shadowless|unlimited|mint|near|nm|psa|cgc|bgs|sgc|tag|within|around)\b/g, " ")
         .replace(/\b\d+(?:\.\d+)?\b/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function asksForLiquidity(source: string) {
+    return [...normalizeWords(source).matchAll(LIQUIDITY_WORDING)].some(([, negativePrefix, negativeSuffix]) => !negativePrefix && !negativeSuffix);
 }
 
 function amountMentioned(query: string, amount: number, kind: "profit" | "budget") {
@@ -101,7 +116,7 @@ function amountMentioned(query: string, amount: number, kind: "profit" | "budget
 }
 
 function compiledQuery(id: IntentReading): string {
-    const years = id.minYear === null ? null : id.minYear === id.maxYear ? String(id.minYear) : `${id.minYear}-${id.maxYear}`;
+    const years = releaseYearText(id.minYear, id.maxYear, "-");
     const printing = id.printing === "FIRST_EDITION" ? "1st Edition" : id.printing === "SHADOWLESS" ? "Shadowless" : id.printing === "UNLIMITED" ? "Unlimited" : null;
     const finish = id.finish === "HOLO" ? "holo" : id.finish === "REVERSE_HOLO" ? "reverse holo" : id.finish === "NON_HOLO" ? "non holo" : null;
     let holder = id.graded === false ? "raw" : id.graded === true ? "graded" : null;
@@ -121,7 +136,7 @@ export function validateSearchPlan(value: unknown, input: SearchPlanInput, known
         ![null, "resell", "grade_raw", "collect_slab"].includes(r.goal) || !["FIXED_PRICE", "AUCTION"].includes(r.format) ||
         !amountOrNull(r.minProfit) || !amountOrNull(r.maxDelivered) || !Array.isArray(r.setMentions) || r.setMentions.length > 6)
         return invalid("The AI returned an incomplete search plan. Please refine the request and try again.");
-    const id = r.intent;
+    let id = r.intent;
     // Zero-valued UI defaults do not impose a purchase ceiling or profit target.
     // Recover this common null sentinel while still rejecting invented prices.
     if (r.minProfit === 0 && !amountMentioned(source, 0, "profit")) r.minProfit = null;
@@ -130,17 +145,34 @@ export function validateSearchPlan(value: unknown, input: SearchPlanInput, known
         id.sets.some(set => typeof set !== "string" || !set.trim() || set.length > 120) || ![null, true, false].includes(id.graded) ||
         ![null, "PSA", "CGC", "BGS", "SGC", "TAG"].some(value => value === id.grader) || !gradeOrNull(id.minGrade) || !gradeOrNull(id.maxGrade) ||
         ![null, "HOLO", "REVERSE_HOLO", "NON_HOLO"].some(value => value === id.finish) || !(id.printing === null || isPrinting(id.printing)) ||
-        !yearOrNull(id.minYear) || !yearOrNull(id.maxYear) || (id.minYear === null) !== (id.maxYear === null) ||
+        !yearOrNull(id.minYear) || !yearOrNull(id.maxYear) ||
         id.minYear !== null && id.maxYear !== null && id.minYear > id.maxYear || id.minGrade != null && id.maxGrade != null && id.minGrade > id.maxGrade)
         return invalid("The AI returned invalid card or year constraints. Please refine the request and try again.");
     if (r.setMentions.some(mention => !validSetMention(mention, source, knownSets)) ||
         id.sets.length !== r.setMentions.length || new Set(id.sets.map(normalizeSetName)).size !== id.sets.length ||
         id.sets.some(set => !r.setMentions.some(mention => normalizeSetName(mention.name) === normalizeSetName(set))))
         return invalid("The requested set could not be matched safely to the catalog. Please use its printed set name.");
-    const local = readSearchLocally(source, knownSets), criteria = explicitCriteria(source), years = searchYears(source);
+    const years = readSearchYearConstraint(source);
+    if (years === "invalid") return invalid("The requested release years conflict or fall outside the supported range. Please refine the request and try again.");
+    const local = readSearchLocally(source, knownSets), criteria = explicitCriteria(source);
+    const [release] = local.sets;
+    if (release && !local.cardNumber && includesWords(source, release)) {
+        const literal = [{ text: release, name: release }];
+        if (!namedSourceWithoutGoals(source, literal)) {
+            // Exact release-only text can repair a missing or misfiled set in
+            // an accepted model response. A conflicting identity remains invalid.
+            if (id.cardName && normalizeWords(id.cardName) !== normalizeWords(release) ||
+                id.cardNumber || id.sets.some(set => normalizeSetName(set) !== normalizeSetName(release)))
+                return invalid("The AI changed the requested release or card identity. Please refine the request and try again.");
+            id = { ...id, cardName: null, sets: [release] };
+            r.setMentions = literal;
+        }
+    }
     const subject = namedSourceWithoutGoals(source, r.setMentions);
+    const localName = id.cardName && r.setMentions.length
+        ? readSearchLocally(withoutSetMentions(source, r.setMentions, true), knownSets).cardName : local.cardName;
     if (id.cardName && !includesWords(source, id.cardName)) return invalid("The AI changed the requested card name. Please submit the card name again.");
-    if (id.cardName && local.cardName && normalizeWords(local.cardName) === subject && !sameCatalogName(id.cardName, local.cardName))
+    if (id.cardName && localName && normalizeWords(localName) === subject && !sameCatalogName(id.cardName, localName))
         return invalid("The AI omitted part of the requested card name or form. Please submit the complete name again.");
     if (!id.cardName && !id.cardNumber && subject) return invalid("The AI omitted a requested card or variant. Please refine the request and try again.");
     if (local.sets.some(set => includesWords(source, normalizeSetName(set)) && !id.sets.some(proposed => normalizeSetName(set) === normalizeSetName(proposed))))
@@ -187,7 +219,8 @@ export function validateSearchPlan(value: unknown, input: SearchPlanInput, known
     const intent: SearchIntent = { ...id, sets: id.sets.map(set => r.setMentions.find(mention => normalizeSetName(mention.name) === normalizeSetName(set))!.name),
         minYear: id.minYear ?? undefined, maxYear: id.maxYear ?? undefined, source: "ai", titleWords: [], keywords: query };
     return { workflow, query, intent, goal: r.goal, format: r.format,
-        marketPreferences: { ...(id.minYear !== null && { minYear: id.minYear }), ...(id.maxYear !== null && { maxYear: id.maxYear }),
+        marketPreferences: { ...(workflow === "market_hunt" && r.goal === "resell" && asksForLiquidity(source) && { preferRecentSales: true }),
+            ...(id.minYear !== null && { minYear: id.minYear }), ...(id.maxYear !== null && { maxYear: id.maxYear }),
             ...(id.finish && { finish: id.finish }), ...(id.sets.length && { sets: [...intent.sets] }),
             ...(id.printing && { printing: id.printing }), ...(id.grader && { grader: id.grader }),
             ...(id.minGrade !== null && id.minGrade !== undefined && { minGrade: id.minGrade }),

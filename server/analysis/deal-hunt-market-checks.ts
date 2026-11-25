@@ -8,7 +8,7 @@ import type { ListingFilters } from "../../shared/listing-filters.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { acquisitionCost, gradingTier, maxBid, netFromSale } from "../../shared/money/underwriting.ts";
 import { affordableBidLimit } from "../../shared/auction-opportunity.ts";
-import { confirmedPhotoCard, observedCardKind } from "../../shared/photo-evidence.ts";
+import { confirmedPhotoCard, observedCardKind, slabLabelConfidence } from "../../shared/photo-evidence.ts";
 import type { Evaluation, ListingSummary, SearchIntent, Targets } from "../../shared/types.ts";
 import { sameSetFamily } from "../identity/card-identity.ts";
 import { sameCatalogName } from "../identity/catalog-name.ts";
@@ -54,6 +54,29 @@ export function matchesHuntMarket(e: Evaluation, m: HuntMarket, pendingPrinting 
 
 // A collector-number query can retrieve unnamed or unrelated cards. Confirm each
 // alternate-query find from the actual front before crediting it to this market.
+export function huntPhotoIdentityIssue(e: Evaluation): string | null {
+    const id = e.identity, check = e.photoCheck;
+    const photo = confirmedPhotoCard(check);
+    if (!photo?.evidence?.some(note => note.trim()) || !readyForPricing(id) || !id?.set || !id.cardNumber ||
+        check?.cardMatch?.verdict === "MISMATCH" || !observedCardKind(e))
+        return "The listing photos do not establish the identity of this copy.";
+    const names = [photo.name, check?.printedName].filter(Boolean);
+    const numbers = [photo.cardNumber, check?.printedNumber].filter(Boolean);
+    if (!names.length || !names.every(name => sameCatalogName(name, id.name)) ||
+        !numbers.length || !numbers.every(number => sameCardNumber(number, id.cardNumber)))
+        return "The photographed name and collector number do not verify the priced card.";
+    if (!photo.set || !sameSetFamily(photo.set, id.set) && !matchesGallerySubset(photo.set, photo.cardNumber, id.set, id.cardNumber))
+        return "The set in the listing photos could not be matched to the priced release.";
+    if (photo.finish === "UNKNOWN" || photo.finish !== id.finish || cardLanguageStatus("", [photo.language]) !== "ENGLISH")
+        return "The photos do not confirm the finish and language of the priced printing.";
+    const slab = observedCardKind(e) === "graded";
+    if (slab && slabLabelConfidence(e) !== "HIGH") return "The photographed slab label does not confirm the priced holder and grade.";
+    if (id.evidence?.photo !== id.printing && !(slab && id.evidence?.label === id.printing) &&
+        !(id.hasEditions === false && id.printing === "UNLIMITED"))
+        return "The edition marks in the listing photos do not confirm the priced edition.";
+    return null;
+}
+
 export function photoMatchesCollectorMarket(e: Evaluation, m: HuntMarket): boolean {
     const check = e.photoCheck, photo = confirmedPhotoCard(check);
     if (!check || !photo?.evidence?.some(note => note.trim()) || e.identity?.notThisCard ||

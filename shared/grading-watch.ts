@@ -2,6 +2,7 @@ import { availablePhotoCount } from "./analysis-priority.ts";
 import { sellerConditionClues } from "./raw-condition-claim.ts";
 import { usableGradingLead } from "./sold-evidence.ts";
 import type { Grader, ListingSummary } from "./types.ts";
+import type { VerifiedPurchase } from "./money/verified-purchase.ts";
 
 export const GRADING_WATCH_FRESH_MS = 24 * 60 * 60_000;
 export const GRADING_WATCH_INTERVAL_MS = 10 * 60_000;
@@ -14,6 +15,7 @@ export interface GradingOpportunity {
     validUntil: number;
     delivered: number;
     gradingCosts: number;
+    verifiedPurchase?: VerifiedPurchase;
     likely: { grade: number; profit: number; sales30: number; sales60?: number };
     lower: { grade: number; profit: number; sales30: number; sales60?: number };
 }

@@ -13,6 +13,6 @@ export function AiBudgetStatus({ budget, calls }: { budget: AiSearchBudget | und
         <span>Reserved / unresolved <b>{formatAiCost(budget.heldUsd)}</b></span>
         {cap !== null && <span>Available <b>{formatAiCost(budget.remainingUsd ?? 0)}</b></span>}
         <span>{calls} generation {calls === 1 ? "request" : "requests"}</span>
-        <small>Reservations cover maximum output and input charges. Unresolved requests keep their reservation. The app reuses saved assessments.</small>
+        <small>Reservations cover maximum output and input charges. Unresolved requests keep their reservation.</small>
     </aside>;
 }

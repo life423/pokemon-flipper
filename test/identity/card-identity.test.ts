@@ -1156,3 +1156,20 @@ test("unclaimed premium printings require corroboration and conflicting slab/tex
     assert.equal(resolvePrinting({ ...evidence, corroboratedPhoto: "FIRST_EDITION", label: "UNLIMITED" }, { hasEditions: true }).status, "NEEDS_REVIEW");
     assert.equal(resolvePrinting({ ...evidence, corroboratedPhoto: "FIRST_EDITION" }, { hasEditions: false }).status, "NEEDS_REVIEW");
 });
+
+test("a seller repeating the matching collector fraction in Card Name keeps the exact photo identity", async () => {
+    const photos = photoCheck({}, { cardMatch: { verdict: "MATCH", problems: [] }, cardCount: "ONE",
+        images: [{ view: "FRONT", usable: true, isStockImage: false }],
+        cardIdentity: { name: "Lugia", set: "Neo Genesis", cardNumber: "9/111", language: "English",
+            confidence: "HIGH", finish: "HOLO", evidence: ["Front shows Lugia and 9/111."] } });
+    for (const [sellerName, expected] of [["Lugia 09/111", true], ["Lugia 9/112", false], ["Slowking 009/111", false]]) {
+        const listing = { ...LUGIA_LISTING, aspects: { ...LUGIA_LISTING.aspects, "Card Number": "009/111", "Card Name": sellerName } };
+        const result = await identifyCard(listing, photos, { lookupCards: async query => {
+            assert.equal(query.name, "Lugia");
+            return [LUGIA];
+        } });
+        assert.equal(result.identity.status === "IDENTIFIED", expected, sellerName);
+        assert.equal(Boolean(result.identity.notThisCard), !expected, sellerName);
+        assert.equal(listing.aspects["Card Name"], sellerName);
+    }
+});

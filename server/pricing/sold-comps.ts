@@ -13,7 +13,7 @@ import {
 } from "../identity/card-identity.ts";
 import { readTitleByRules } from "../ai/title-reader.ts";
 import { resolveScreeningName } from "../identity/screening-name.ts";
-import { sameCatalogName } from "../identity/catalog-name.ts";
+import { sameNumberedCatalogName } from "../identity/catalog-name.ts";
 import { gradeQualifier, hasParenthesizedGradeQualifier, hasSpecialSlabTitle } from "../../shared/grade-qualifier.ts";
 import type { CompSummary, Confidence } from "../../shared/types.ts";
 import type { Comp, CompDropReason, CompVerdict, PrintingOrUnknown } from "./types.ts";
@@ -68,7 +68,7 @@ export function matchesSoldTarget(sale: Pick<Comp, "title">, target: { name: str
     if (target.requireTitleIdentity && (!reading.cardName || !reading.set && !reading.cardNumber)) return false;
     const name = resolveScreeningName({ title: sale.title, claims: [reading.cardName], candidate: target.name, set: target.setName });
     return !(reading.kind && reading.kind !== "SINGLE_CARD" || reading.language === "Other" ||
-        reading.cardName && (!name || !sameCatalogName(name, target.name)) ||
+        reading.cardName && (!name || !sameNumberedCatalogName(name, target.name, target.setName, target.cardNumber)) ||
         reading.set && !sameSetFamily(reading.set, target.setName) && !sameSetFamily(target.setName, reading.set) ||
         reading.cardNumber && !sameCardNumber(reading.cardNumber, target.cardNumber) ||
         grader && reading.grader && reading.grader !== grader ||
@@ -90,6 +90,8 @@ const AI_DROP_NAMES: Record<CompDropReason, string> = {
 export interface CompCriteria {
     printing: PrintingOrUnknown;
     setName: string | null | undefined;
+    cardName?: string | null;
+    cardNumber?: string | null;
     grader: string;
     grade: number | string;
     now: number;
@@ -147,7 +149,7 @@ function advertisedPrintError(text: string): boolean {
 }
 
 // Why a comp can't price this card, or null when it can.
-export function compProblem(comp: Comp, { printing, setName, grader, grade, now, windowDays = RECENT_DAYS, finish }: CompCriteria): string | null {
+export function compProblem(comp: Comp, { printing, setName, cardName, cardNumber, grader, grade, now, windowDays = RECENT_DAYS, finish }: CompCriteria): string | null {
     if (comp.attribution !== "exact") return "shared with another card";
     if (comp.currency && comp.currency !== "USD") return "not a USD sale";
     if (jungleNoSymbolReason({ listing: { title: `${comp.title} ${comp.variant ?? ""}` }, identity: { set: setName ?? null } })) return "unsupported Jungle No Symbol variant";
@@ -158,7 +160,7 @@ export function compProblem(comp: Comp, { printing, setName, grader, grade, now,
     if (mismatch) return mismatch;
     if (finish && ["HOLO", "NON_HOLO", "REVERSE_HOLO"].includes(finish) && finishOfVariant(comp.variant ?? "") !== finish) return "another finish";
     if (lookAlikeProblem(comp.title, setName)) return "title names another product";
-    if (noveltyIn(comp.title)) return "metal or novelty card";
+    if (noveltyIn(comp.title, { name: cardName, set: setName, cardNumber })) return "metal or novelty card";
     if (comp.grader !== grader || comp.grade !== String(grade)) return "different grade";
     if (gradeQualifier(comp.grade_qualifier, comp.grader, comp.grade) ||
         (grader === "RAW" ? hasParenthesizedGradeQualifier(comp.title ?? "") : hasSpecialSlabTitle(comp.title ?? ""))) return "qualified or special grade";

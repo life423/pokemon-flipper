@@ -5,7 +5,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer } from "vite";
 import { fileURLToPath } from "node:url";
-import { cardEvaluation } from "../fixtures/card-evaluation.ts";
+import { cardEvaluation, clearReleaseFixture } from "../fixtures/card-evaluation.ts";
 
 test("cards and analysis hide refresh timestamps while keeping listing events, auction countdowns and sold dates", async t => {
     const vite = await createServer({ configFile: fileURLToPath(new URL("../../client/vite.config.js", import.meta.url)),
@@ -21,6 +21,7 @@ test("cards and analysis hide refresh timestamps while keeping listing events, a
     evaluation.answeredAt = "2097-06-10T12:34:00.000Z";
     evaluation.pricesCheckedAt = "2100-06-10T12:34:00.000Z";
     evaluation.listing.photos = ["https://i.ebayimg.com/images/g/offline/s-l1600.jpg"];
+    clearReleaseFixture(evaluation);
     evaluation.listing.listedAt = "2026-11-02T16:00:00.000Z";
     evaluation.listing.endTime = "2026-11-03T00:00:00.000Z";
     evaluation.photoReviewKey = "offline-photo-evidence";
@@ -45,8 +46,9 @@ test("cards and analysis hide refresh timestamps while keeping listing events, a
     assert.match(card, /6h/);
     assert.match(panel, /2026-10-30T12:00:00.000Z/);
     assert.match(card, /4 of 4 photos checked/);
-    assert.match(panel, /1 photos examined · saved result/);
-    assert.match(compact, /Deeper AI review saved/);
+    assert.match(panel, /1 photo examined/);
+    assert.match(compact, /Deeper photo review complete/);
+    assert.doesNotMatch(panel, /saved result|reus(?:e|ed|ing)/i);
     for (const html of [card, panel, compact]) {
         assert.doesNotMatch(html, /2097|2098|2099|2100|2101|date unavailable/);
     }

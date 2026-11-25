@@ -23,7 +23,7 @@ export function PricingRetries({ listings, analyzed, reviewCount, busy, note, on
                 <button type="button" onClick={() => onRetry(ready.map((listing) => listing.screen!.pricingRetry!.ticket))} disabled={busy || searching || !ready.length}>{busy ? "Retrying prices…" : searching ? "Retry pricing after search" : ready.length ? `Retry pricing (${ready.length})` : `Retry pricing in ${seconds}s`}</button>
                 {busy && <button type="button" onClick={onCancel}>Cancel pricing retries</button>}
             </div>
-            {!searching && <p className={styles.hint}>Up to five per batch. Uses saved listing terms and your existing AI limit.</p>}
+            {!searching && <p className={styles.hint}>Checks up to five listings per batch within the current AI limit.</p>}
         </>}
         {note && <p key={note} className={styles.feedback} role="status">{note}</p>}
     </section>;

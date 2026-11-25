@@ -1,18 +1,18 @@
 import { cardLanguageStatus } from "../../shared/card-language.ts";
 import { normalizeCardNumber, sameCardNumber } from "../../shared/card-number.ts";
-import { isRawCondition, type RawCondition } from "../../shared/conditions.ts";
+import { conditionGap, isRawCondition, type RawCondition } from "../../shared/conditions.ts";
 import type { DealHuntGoal } from "../../shared/deal-hunt.ts";
 import { finishClaim } from "../../shared/finish.ts";
 import { isPrinting, readyForPricing } from "../../shared/identity.ts";
 import { parseListingLink } from "../../shared/listing-link.ts";
 import { money } from "../../shared/money/cents.ts";
-import { isUsableRawPrice, referencePriceReason, unsupportedVariantReason } from "../../shared/money/price-evidence.ts";
+import { isRawSoldPrice, isUsableRawPrice, rawPriceForPath, referencePriceReason, unsupportedVariantReason } from "../../shared/money/price-evidence.ts";
 import { conflictsWithPhotoFinish, observedCardKind } from "../../shared/photo-evidence.ts";
 import { hasBaseSetFourthPrint } from "../../shared/reprint-release.ts";
 import { setKey } from "../../shared/sets.ts";
 import { verifiedSlabMarketKey } from "../../shared/slab-market.ts";
 import { median, soldMarketPrice } from "../../shared/sold-evidence.ts";
-import { observedSoldSales, SALES_ACTIVITY_MS } from "../../shared/sales-activity.ts";
+import { observedSoldSales, SALES_ACTIVITY_DAYS, SALES_ACTIVITY_MS } from "../../shared/sales-activity.ts";
 import type { CompSale, CompSummary, Evaluation, Grader, PricedPath, Printing } from "../../shared/types.ts";
 import { canonicalCatalogName } from "../identity/catalog-name.ts";
 import { finishOfVariant } from "../identity/card-identity.ts";
@@ -103,7 +103,7 @@ function inHuntScope(set: string, name: string, number: string, scope: Scope, or
 }
 
 export function rankHuntMarkets(evaluations: Evaluation[], origin: HuntOrigin | null, goal: DealHuntGoal, scope: Scope, now: number,
-    _legacyMinimum: 1 | 3 = 1, includeDownside = false): HuntMarket[] {
+    includeDownside = false): HuntMarket[] {
     if (!eligible(scope, origin)) return [];
     type Market = Omit<HuntMarket, "sales30" | "sales60" | "sales90" | "latestSaleAt" | "medianUsd" | "listingIds" | "projectedProfit">;
     type Sale = { at: number; price: number };
@@ -184,9 +184,29 @@ export function rankHuntMarkets(evaluations: Evaluation[], origin: HuntOrigin | 
         (b.sales60 ?? b.sales30) - (a.sales60 ?? a.sales30) || b.sales90 - a.sales90 || b.latestSaleAt.localeCompare(a.latestSaleAt) || a.name.localeCompare(b.name));
 }
 
+export function verifiedRawFloor(value: Evaluation, path: PricedPath, now: number) {
+    const assessed = value.condition?.rawCondition, condition = path.priceCondition;
+    const raw = value.rawPricing, identity = value.identity;
+    if (path.path !== "RAW" || !isRawCondition(assessed) || !isRawCondition(condition) || conditionGap(assessed, condition) <= 0 ||
+        !readyForPricing(identity) || raw?.status !== "PRICED" || raw.printing !== identity?.printing || !(raw.finish || raw.variant) ||
+        raw.finish && raw.finish !== identity?.finish || raw.variant && finishOfVariant(raw.variant) !== identity?.finish) return null;
+    const row = rawPriceForPath(raw, path);
+    if (!row || !isRawSoldPrice(row)) return null;
+    const summary = row.comps ?? raw.ebayComps?.find(entry => entry.grader === "RAW" && entry.grade === condition);
+    if (!summary?.count || summary.grader !== "RAW" || summary.grade !== condition || soldMarketPrice(summary) !== row.price ||
+        !summary.sales.length || summary.sales.some(sale => sale.photoCondition !== condition || !sale.conditionEvidence?.length)) return null;
+    const comparisons = observedSoldSales(summary.sales, now, { maxDays: summary.windowDays === 180 ? 180 : 90 });
+    return comparisons.length === summary.sales.length ? { row, summary } : null;
+}
+
 export function salesForExit(value: Evaluation, path: PricedPath, markets: HuntMarket[], now: number) {
     const id = value.identity;
     if (!id?.name || !id.set || !id.cardNumber) return 0;
+    if (path.path === "RAW" && path.priceCondition !== value.condition?.rawCondition) {
+        const floor = verifiedRawFloor(value, path, now);
+        return observedSoldSales(floor?.summary.activitySales ?? floor?.summary.sales ?? [], now, { maxDays: SALES_ACTIVITY_DAYS })
+            .filter(({ sale }) => sale.photoCondition === path.priceCondition && sale.conditionEvidence?.length).length;
+    }
     const slab = path.path === "GRADED_RESALE";
     const grade = slab ? Number(value.slab?.grade) : value.condition?.gradeRange?.likely;
     const grader = slab ? value.slab?.grader : path.grader;
@@ -232,7 +252,8 @@ export async function restoreSavedHuntSales(evaluations: Evaluation[], goal: Dea
         const raw = !!market.condition;
         if (raw && (native.grader || native.grade)) continue;
         const comp = raw ? { ...native, grader, grade: String(grade) } : native;
-        if (compProblem(comp, { now, windowDays: 90, printing: identity.printing, setName: identity.set, finish: identity.finish, grader, grade }) ||
+        if (compProblem(comp, { now, windowDays: 90, printing: identity.printing, setName: identity.set, cardName: identity.name,
+            cardNumber: identity.cardNumber, finish: identity.finish, grader, grade }) ||
             !matchesSoldTarget(native, { name: identity.name!, setName: identity.set, cardNumber: identity.cardNumber }, raw ? null : grader, raw ? null : String(grade))) continue;
         // These are detached copies of saved evaluations. Persisted research stays intact.
         sale.saleType = native.sale_type;

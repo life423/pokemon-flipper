@@ -2,7 +2,6 @@ import "../fixtures/isolated-data.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createSoldScreening } from "../../server/pricing/screening-sales.ts";
-import { ScreeningPriceBudgetError } from "../../server/pricing/pkmnprices.ts";
 import { PriceResearchBudgetError } from "../../server/pricing/research-budget.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
 import { EbayBudgetError } from "../../server/ebay/daily-budget.ts";
@@ -42,6 +41,37 @@ function harness(options: { cards?: CardRecord[]; raw?: (record: number | string
     } });
     return { run, calls };
 }
+
+test("e-Reader seller titles reach the exact numbered sold market without borrowing other printings", async () => {
+    const results = [
+        { title: "2003 Espeon Aquapolis H9/H32 Unlimited Holo", name: "Espeon", native: "Espeon (H9)", number: "H09/H32",
+            wrong: "Espeon Aquapolis 11/147 Reverse Holo Near Mint" },
+        { title: "Porygon2 28/147 Rare Aquapolis Reverse Holo Near Mint", name: "Porygon2", native: "Porygon2", number: "28/147",
+            wrong: "Porygon Aquapolis 28/147 Reverse Holo Near Mint" },
+    ];
+    for (const { title, name, native, number, wrong } of results) {
+        const rawVariant = name === "Porygon2" ? variant("Reverse Holofoil", "UNLIMITED", "REVERSE_HOLO") : variant();
+        const record = card({ name: native, setName: "Aquapolis", cardNumber: number, variants: [rawVariant] });
+        const { run, calls } = harness({
+            lookup: async query => {
+                assert.equal(query.name.toLowerCase(), name.toLowerCase());
+                return [record];
+            },
+            raw: async () => [sale({ title: title.replace(/ Near Mint$/, "") + " Near Mint", variant: rawVariant.name }),
+                sale({ title: wrong, variant: rawVariant.name, price: 9000 })],
+        });
+        const intent = readSearchLocally("Aquapolis");
+        const row = await screenListingWithoutAi(listing({ title }), intent, undefined, async title => readTitleByRules(title));
+        const result = await run(row, intent);
+        assert.equal(result.status, "AVAILABLE");
+        assert.equal(result.exactScope, true);
+        assert.equal(result.references.length, 1);
+        assert.equal(result.references[0].name, native);
+        assert.equal(result.references[0].summary.count, 1);
+        assert.equal(result.references[0].summary.median, 100);
+        assert.equal(calls.raw.length, 1);
+    }
+});
 
 test("an exact slab BIN search prices the market before Browse and shares that evidence with listing screening", async () => {
     const query = "Charizard Base Set 4/102 Unlimited Holo PSA 8";
@@ -1048,7 +1078,7 @@ test("a completed Shadowless source page survives another label's deferral as in
         const firstPage = three({ title: `Charizard Base Set 4/102 1st Edition Shadowless Holo${graded ? " PSA 8" : " NM"}`,
             variant: "1st Edition Holofoil", grader: graded ? "PSA" : null, grade: graded ? "8" : null });
         const fetched = async (_id: number | string, label: string) => {
-            if (label === "Unlimited Holofoil") throw new ScreeningPriceBudgetError();
+            if (label === "Unlimited Holofoil") throw new PriceResearchBudgetError("Offline legacy research allowance", "LIMIT");
             return firstPage;
         };
         const { run, calls } = harness({ cards: [card({ setName: "Base Set Shadowless", variants: [variant("1st Edition Holofoil", "FIRST_EDITION"), variant("Unlimited Holofoil", "SHADOWLESS")] })],
@@ -1213,7 +1243,7 @@ test("budget deferral in either printing order preserves matched sales as partia
     const unlimited = variant(), firstEdition = variant("1st Edition Holofoil", "FIRST_EDITION");
     for (const variants of [[unlimited, firstEdition], [firstEdition, unlimited]]) {
         const { run, calls } = harness({ cards: [card({ variants })], raw: async (_id, label) => {
-            if (label === firstEdition.name) throw new ScreeningPriceBudgetError();
+            if (label === firstEdition.name) throw new PriceResearchBudgetError("Offline legacy research allowance", "LIMIT");
             return three();
         } });
         const subject = listing({ title: "Charizard Base Set 4/102 Holo" });
@@ -1227,7 +1257,7 @@ test("budget deferral in either printing order preserves matched sales as partia
 });
 
 test("partial slab references survive budget or provider deferral without becoming an exact exclusion scope", async () => {
-    for (const failure of [new ScreeningPriceBudgetError(), new Error("Price service unavailable")]) {
+    for (const failure of [new PriceResearchBudgetError("Offline legacy research allowance", "LIMIT"), new Error("Price service unavailable")]) {
         const { run, calls } = harness({ cards: [card({ variants: [variant(), variant("1st Edition Holofoil", "FIRST_EDITION")] })], graded: async (_id, target) => {
             if (target.variant.startsWith("1st")) throw failure;
             return three({ title: "Charizard Base Set 4/102 Unlimited Holo PSA 8", grader: "PSA", grade: "8" });
@@ -1241,12 +1271,12 @@ test("partial slab references survive budget or provider deferral without becomi
 });
 
 test("missing markets stay deferred while a partial matched sale remains usable context", async () => {
-    const absent = harness({ lookup: async () => { throw new ScreeningPriceBudgetError(); } });
+    const absent = harness({ lookup: async () => { throw new PriceResearchBudgetError("Offline legacy research allowance", "LIMIT"); } });
     assert.equal((await absent.run(listing(), intent)).status, "DEFERRED");
     const failed = harness({ raw: async () => { throw new Error("Provider unavailable"); } });
     assert.equal((await failed.run(listing(), intent)).status, "UNAVAILABLE");
     const sparse = harness({ cards: [card({ variants: [variant(), variant("1st Edition Holofoil", "FIRST_EDITION")] })], raw: async (_id, label) => {
-        if (label.startsWith("1st")) throw new ScreeningPriceBudgetError();
+        if (label.startsWith("1st")) throw new PriceResearchBudgetError("Offline legacy research allowance", "LIMIT");
         return [sale()];
     } });
     const result = await sparse.run(listing({ title: "Charizard Base Set 4/102 Holo" }), intent);
@@ -1366,7 +1396,7 @@ test("a repeating provider cursor cannot buy the same page again", async () => {
 
 test("a request cap between pages retains sparse observations and prevents another row from retrying", async () => {
     const { run, calls } = harness({ page: async (_id, target) => {
-        if (target.cursor) throw new ScreeningPriceBudgetError();
+        if (target.cursor) throw new PriceResearchBudgetError("Offline legacy research allowance", "LIMIT");
         return { sales: [sale({ sale_type: null })], nextCursor: "deferred" };
     } });
     const result = await run(listing(), intent);

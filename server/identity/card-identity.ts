@@ -2,7 +2,7 @@ import { normalizeText, withoutAccompanyingCustomHolder } from "../ebay/filters.
 import { PRINTINGS, isPrinting, readyForPricing, printingName, printingClaimFromText, printingClaimFromAspects, type PrintingClaim } from "../../shared/identity.ts";
 import { finishClaim, type FinishClaim } from "../../shared/finish.ts";
 import { compareCardNumbers, normalizeCardNumber, sameCardNumber } from "../../shared/card-number.ts";
-import { canonicalCatalogName, sameCatalogName } from "./catalog-name.ts";
+import { canonicalCatalogName, numberedCatalogName, sameCatalogName, sameNumberedCatalogName, sellerNameMatchesPrint } from "./catalog-name.ts";
 import { cardLanguageStatus } from "../../shared/card-language.ts";
 import { confirmedPhotoCard, photoFinishConflictReason } from "../../shared/photo-evidence.ts";
 import { BASE_SET_2_TITLE, hasBaseSetFourthPrint, PRISMATIC_EVOLUTIONS_TITLE, withoutReprintRelease, XY_EVOLUTIONS_TITLE } from "../../shared/reprint-release.ts";
@@ -587,8 +587,21 @@ export function reprintMarksRuledOut(mark: string | undefined, set: string): boo
 // cards, reprints, and fakes.
 const NOVELTY = /\b(reprint|replica|jumbo|oversized?|metal(?!\s+energy\b)|topps|custom|proxy|fan ?made|gold (foil|plated)|upc|ultra[\s-]*prem(ium)?)\b/;
 
-export function noveltyIn(text: unknown): string | null {
-    return withoutAccompanyingCustomHolder(String(text ?? "")).match(NOVELTY)?.[0] ?? null;
+export function noveltyIn(text: unknown, exact?: { name?: string | null; set?: string | null; cardNumber?: string | null }): string | null {
+    const title = withoutAccompanyingCustomHolder(String(text ?? ""));
+    return withoutPrintedMetalName(title, exact?.name, exact?.set ?? null, exact?.cardNumber ?? null).match(NOVELTY)?.[0] ?? null;
+}
+
+// Metal can belong to the printed name. Only the exact name span is
+// exempt, and only in a title citing the same written set and full number.
+function withoutPrintedMetalName(title: string, name: string | null | undefined, set: string | null, number: string | null) {
+    const normalized = normalizeWords(name), release = normalizeSetName(set);
+    if (!release || !collectorFraction.test(number?.trim() ?? "") || !/\bmetal\b/.test(normalized) || !normalized.includes(" ") ||
+        /\b(?:gold|solid|plated|stainless)\s+metal\b|\bworld championships?\b/i.test(title) ||
+        !(` ${normalizeWords(title)} `).includes(` ${release} `)) return title;
+    const numbers = [...title.matchAll(fractionsInText)].map(match => match[0]);
+    if (!numbers.length || numbers.some(candidate => !sameCardNumber(candidate, number))) return title;
+    return title.replace(new RegExp(`\\b${normalized.split(" ").join("[\\s-]+")}\\b`, "i"), match => match.replace(/\bmetal\b/i, ""));
 }
 
 // Reprints of vintage cards (Celebrations, Classic Collection, Base Set
@@ -602,7 +615,6 @@ const REPRINT_MARKERS: [RegExp, string[] | null][] = [
     [BASE_SET_2_TITLE, REPRINT_MARKS.BASE_SET_2.sets],
     [/\blegendary collection\b/, ["legendary collection"]],
     [/\bmcdonald'?s\b/, ["mcdonald"]],
-    [NOVELTY, null],
 ];
 
 // "4/102" style numbers in a title. Over 10 only, so "9/10 condition"
@@ -611,7 +623,7 @@ const TITLE_NUMBERS = /\b(\d{1,3})\s*\/\s*(\d{1,3})\b/g;
 
 // The title contradicting the item details: a reprint marker for
 // another set, or a card number that isn't the listed one.
-export function titleContradiction(title: string, setName: string | null, cardNumber: string | null): string | null {
+export function titleContradiction(title: string, setName: string | null, cardNumber: string | null, exactPrintedName?: string | null): string | null {
     const text = withoutAccompanyingCustomHolder(title);
     // The whole set name: normalizeSetName drops prefixes like "Celebrations:".
     const setKey = normalizeWords(setName);
@@ -630,6 +642,8 @@ export function titleContradiction(title: string, setName: string | null, cardNu
             return `The title says "${match[0]}", but the item details say ${setName}.`;
         }
     }
+    const novelty = noveltyIn(text, { name: exactPrintedName, set: setName, cardNumber });
+    if (novelty) return `The title says "${novelty}", but the item details say ${setName}.`;
 
     const numbers = [...withoutReprintRelease(text).matchAll(TITLE_NUMBERS)]
         .filter((match) => Number(match[2]) > 10)
@@ -685,37 +699,93 @@ function corroboratedDateNumber(listing: IdentityListing, photos: IdentityPhotos
     return titleNumbers.length && titleNumbers.every(number => sameCardNumber(number, card.cardNumber)) ? card.cardNumber! : null;
 }
 
-function describesSellerSetConflict(problem: string, observed: string, claimed: string): boolean {
+function describesSellerSetConflict(problem: string, observed: string, claimed: string, number: string): boolean {
     const text = normalizeWords(problem);
     const visible = text.match(/^(?:the )?(?:visible|photographed) (?:card )?set (?:is|reads) (.+?) not (?:the )?(?:seller(?: s)? (?:item )?(?:aspects|details|specifics|metadata|set)|item (?:details|specifics)) (.+)$/);
     const seller = text.match(/^(?:the )?(?:seller(?: s)? (?:item )?(?:aspects|details|specifics|metadata|set)|item (?:details|specifics)) (?:say|says|list|lists) (.+?) but (?:the )?(?:visible|photographed) (?:card )?set (?:is|reads) (.+)$/);
-    return normalizeSetName(visible?.[1] ?? seller?.[2]) === normalizeSetName(observed) &&
-        normalizeSetName(visible?.[2] ?? seller?.[1]) === normalizeSetName(claimed);
+    const numbered = normalizeText(problem).match(/^(?:visible(?:\/provided)?|photographed) evidence identifies the card as (.+?)\s+(#?[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?), while the seller(?:'s)? (?:aspects?|details|specifics) claims? (.+?)\.?$/);
+    return (!numbered || sameCardNumber(numbered[2], number)) &&
+        normalizeSetName(visible?.[1] ?? seller?.[2] ?? numbered?.[1]) === normalizeSetName(observed) &&
+        normalizeSetName(visible?.[2] ?? seller?.[1] ?? numbered?.[3]) === normalizeSetName(claimed);
 }
 
-type SellerFieldCorrections = Partial<Record<"Set" | "Card Number" | "Finish", string>>;
+type SellerFieldCorrections = Partial<Record<"Set" | "Card Name" | "Card Number" | "Finish", string>>;
+
+function titleForSellerNameCorrection(listing: IdentityListing, set: string, shortNumber?: RegExp | null) {
+    const title = normalizeText(listing.title);
+    const anchor = [...title.matchAll(fractionsInText)][0] ?? shortNumber?.exec(title);
+    if (!anchor) return title;
+    // These metadata tokens are corroborated by the same listing's structured
+    // fields. A word inside the name or an unknown suffix remains literal.
+    const rarity = normalizeWords(listing.aspects?.Rarity);
+    const artist = normalizeWords(listing.aspects?.Illustrator).split(" ").at(-1);
+    const offset = anchor.index! + anchor[0].length;
+    const head = title.slice(0, offset);
+    let tail = title.slice(offset);
+    if (["common", "uncommon", "rare"].includes(rarity)) tail = tail.replace(new RegExp(`\\b${rarity}\\b`, "g"), " ");
+    if (artist?.length && artist.length >= 4) tail = tail.replace(new RegExp(`\\s+${artist}\\s*$`), " ");
+    const cleaned = head + tail;
+    return normalizeSetName(set) === "aquapolis" && normalizeSetName(listing.aspects?.Set) === "aquapolis" &&
+        /^\d{1,3}[a-z]?\s*\/\s*147$/.test(anchor[0])
+        ? cleaned.replace(/\bAQ(?=[\s-]+\d{1,3}[a-z]?\s*\/\s*147\b)/gi, "Aquapolis") : cleaned;
+}
+
+function namedShortCollector(name: string, number: string) {
+    const [_, prefix, digits, suffix] = /^#?\s*([a-z]{0,5})0*(\d{1,4})([a-z]?)$/i.exec(number.trim()) ?? [];
+    return digits ? new RegExp(`\\b${normalizeWords(name).split(" ").join("[^a-z0-9]+")}[^a-z0-9]+(?:#\\s*)?${prefix}0*${digits}${suffix}\\b(?!\\s*/)`, "i") : null;
+}
+
+function describesAgreeingShortNumber(problem: string, name: string, set: string, full: string, short: string) {
+    const visible = normalizeText(problem).match(/^(?:the )?photographed card is (.+?)\s+(#?[a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?) from (.+?), while the seller claims card number (#?[a-z]{0,5}\d{1,4}[a-z]?); the set and identity otherwise match\.?$/);
+    return Boolean(visible && sameCatalogName(visible[1], name) && sameCardNumber(visible[2], full) &&
+        normalizeSetName(visible[3]) === normalizeSetName(set) && sameCardNumber(visible[4], short));
+}
 
 function corroboratedSellerClaims(listing: IdentityListing, photos: IdentityPhotos, readTitle?: typeof readTitleByRules): SellerFieldCorrections | null {
     const card = photos.cardIdentity, aspects = listing.aspects ?? {};
     const titleFinish = finishClaim(listing.title);
+    const sellerName = aspects["Card Name"] ?? aspects.Character;
+    const nameConflict = Boolean(card?.name && sellerName && !sameCatalogName(card.name, sellerName));
     const genericFinish = titleFinish === "NOT_STATED" && /^(?:regular|normal)$/i.test(aspects.Finish?.trim() ?? "");
+    const claimedNumber = aspects["Card Number"]?.trim() ?? "";
+    const nameNumber = /\s(0[1-9])$/.exec(normalizeWords(card?.name))?.[1];
+    const copiedNameNumber = Boolean(nameNumber && claimedNumber === nameNumber && !sameCardNumber(claimedNumber, card?.cardNumber));
+    const shortNumber = card?.name && photos.cardMatch?.verdict === "MISMATCH" && sameCardNumber(claimedNumber, card.cardNumber)
+        ? namedShortCollector(card.name, claimedNumber) : null;
+    const numberAlias = copiedNameNumber || Boolean(shortNumber);
+    const unstatedAliasFinish = (nameConflict || numberAlias) && titleFinish === "NOT_STATED" &&
+        ["NOT_STATED", card?.finish].includes(finishClaim(aspectText(aspects, /finish|feature/i)));
     if (!card?.name || !card.set || !aspects.Set || !card.cardNumber || !collectorFraction.test(card.cardNumber.trim()) || card.confidence !== "HIGH" || !card.evidence.length ||
         photos.cardCount !== "ONE" || !["NONE", "SLEEVE", "TOPLOADER"].includes(photos.holder ?? "") || photos.slab?.present ||
         !photos.images?.some(photo => photo.view === "FRONT" && photo.usable && !photo.isStockImage) ||
-        !sameCatalogName(card.name, photos.printedName) || !sameCatalogName(card.name, aspects["Card Name"] ?? aspects.Character) ||
+        !sameCatalogName(card.name, photos.printedName) ||
         !collectorFraction.test(photos.printedNumber?.trim() ?? "") || !sameCardNumber(card.cardNumber, photos.printedNumber) ||
         cardLanguageStatus("", [card.language]) !== "ENGLISH" || cardLanguageStatus(listing.title, [aspects.Language, card.language]) !== "ENGLISH" ||
-        !["HOLO", "NON_HOLO", "REVERSE_HOLO"].includes(card.finish) || (!genericFinish && titleFinish !== card.finish) ||
-        titleContradiction(listing.title, card.set, card.cardNumber)) return null;
+        !["HOLO", "NON_HOLO", "REVERSE_HOLO"].includes(card.finish) || (!genericFinish && !unstatedAliasFinish && titleFinish !== card.finish) ||
+        titleContradiction(listing.title, card.set, card.cardNumber, printedMetalContext(listing, photos)?.titleName ?? card.name)) return null;
     const setConflict = !sameSetFamily(card.set, aspects.Set);
-    if (genericFinish && (setConflict || !sameCardNumber(aspects["Card Number"], card.cardNumber) ||
+    if (nameConflict && (!sellerNameMatchesPrint(sellerName, card.name, card.cardNumber) || setConflict ||
+        !collectorFraction.test(aspects["Card Number"]?.trim() ?? "") || !sameCardNumber(aspects["Card Number"], card.cardNumber) ||
+        !reprintMarksRuledOut(photos.printingMarks?.reprintMark, normalizeSetName(card.set))) ||
+        !sellerName && !setConflict) return null;
+    if (numberAlias && (setConflict || nameConflict || !sellerName ||
+        !reprintMarksRuledOut(photos.printingMarks?.reprintMark, normalizeSetName(card.set)))) return null;
+    if (genericFinish && !unstatedAliasFinish && (setConflict || !sameCardNumber(aspects["Card Number"], card.cardNumber) ||
         photos.cardMatch?.verdict !== "MATCH" || photos.cardMatch.problems.length ||
         !["NOT_STATED", card.finish].includes(finishClaim(aspectText(aspects, /feature/i))))) return null;
     const title = setConflict ? withoutReprintRelease(listing.title) : listing.title;
     const numbers = [...title.matchAll(fractionsInText)].map(match => match[0]);
-    if (!numbers.length || numbers.some(number => !sameCardNumber(number, card.cardNumber))) return null;
+    if (numbers.some(number => !sameCardNumber(number, card.cardNumber)) || !numbers.length && !shortNumber?.test(normalizeText(title))) return null;
     const changes: SellerFieldCorrections = {};
-    if (setConflict) {
+    if (nameConflict || numberAlias) {
+        const namedTitle = readTitle?.(titleForSellerNameCorrection(listing, card.set, shortNumber), [card.set]);
+        if (!namedTitle || !sellerNameMatchesPrint(namedTitle.cardName, card.name, card.cardNumber) || !sameSetFamily(namedTitle.set, card.set) ||
+            (numbers.length ? !sameCardNumber(namedTitle.cardNumber, card.cardNumber) : namedTitle.cardNumber && !sameCardNumber(namedTitle.cardNumber, card.cardNumber))) return null;
+        if (nameConflict) {
+            if (photos.cardMatch?.verdict !== "MATCH" || photos.cardMatch.problems.length) return null;
+            changes["Card Name"] = card.name;
+        } else changes["Card Number"] = card.cardNumber;
+    } else if (setConflict) {
         const literal = readTitle?.(listing.title, [card.set, aspects.Set]);
         const mark = photos.printingMarks?.reprintMark;
         const reprintSettled = reprintMarksRuledOut(mark, normalizeSetName(card.set)) ||
@@ -723,6 +793,7 @@ function corroboratedSellerClaims(listing: IdentityListing, photos: IdentityPhot
         if (!literal || !sameCatalogName(literal.cardName, card.name) || !sameSetFamily(literal.set, card.set) ||
             !sameCardNumber(literal.cardNumber, card.cardNumber) || !reprintSettled) return null;
         changes.Set = card.set;
+        if (!sellerName) changes["Card Name"] = card.name;
     } else {
         let words = ` ${normalizeWords(title.replace(fractionsInText, " "))} `;
         for (const claim of [card.name, card.set]) {
@@ -738,10 +809,18 @@ function corroboratedSellerClaims(listing: IdentityListing, photos: IdentityPhot
     if (aspects.Finish && finishClaim(aspects.Finish) !== card.finish) changes.Finish = card.finish;
     if (!Object.keys(changes).length) return null;
     const risk = /\b(?:authenticity|counterfeit|fake|forged|tamper(?:ed|ing)?|reprint|replica|stock|multiple|slab|holder|case|cert(?:ificate|ification)?|edition|shadowless|stamp)\b|\b(?:different|wrong|another)\s+(?:card(?!\s+number)|set|printing|language)\b/i;
-    if ([...(photos.problems ?? []), ...(photos.cardMatch?.problems ?? [])].some(problem => risk.test(problem))) return null;
+    const excludedStock = nameConflict && photos.images?.some(image => !image.usable && image.isStockImage) &&
+        photos.images.some(image => image.view === "BACK" && image.usable && !image.isStockImage);
+    // An explicit note about excluded promotional images does not contradict
+    // a clear original front and back. A stock concern about the copy still does.
+    const allProblems = [...(photos.problems ?? []), ...(photos.cardMatch?.problems ?? [])];
+    const conditionOnly = /\bholder limits (?:complete )?edge(?:\/| and )corner inspection\b/i;
+    if (allProblems.some(problem => risk.test(setConflict ? problem.replace(conditionOnly, "") : problem) && !(excludedStock &&
+        /^only the prior front photo and new photo \d+ provide card evidence; new photos? [\d–—-]+ (?:is|are) stock\/promotional images?\.$/i.test(problem)))) return null;
     if (photos.cardMatch?.verdict === "MISMATCH") {
         if (!photos.cardMatch.problems.length || photos.cardMatch.problems.some(problem => {
-            if (changes.Set && describesSellerSetConflict(problem, changes.Set, aspects.Set)) return false;
+            if (shortNumber && describesAgreeingShortNumber(problem, card.name!, card.set!, card.cardNumber!, claimedNumber)) return false;
+            if (changes.Set && describesSellerSetConflict(problem, changes.Set, aspects.Set, card.cardNumber!)) return false;
             if (!/\b(?:seller|aspects?|specifics?|details?|metadata)\b/i.test(problem) || /\b(?:name|set|language|printing|grade|unclear|uncertain|unknown|unreadable|unresolved)\b/i.test(problem)) return true;
             const mentioned = [...problem.matchAll(fractionsInText)].map(match => match[0]);
             const numberIssue = changes["Card Number"] && mentioned.some(number => sameCardNumber(number, card.cardNumber)) &&
@@ -754,8 +833,33 @@ function corroboratedSellerClaims(listing: IdentityListing, photos: IdentityPhot
     return changes;
 }
 
+function printedMetalContext(listing: IdentityListing, photos: IdentityPhotos) {
+    const card = confirmedPhotoCard(photos);
+    if (!card?.name || !card.set || !card.cardNumber || !card.evidence.length || !sameCatalogName(card.name, photos.printedName) ||
+        !collectorFraction.test(photos.printedNumber?.trim() ?? "") || !sameCardNumber(card.cardNumber, photos.printedNumber) ||
+        photos.cardMatch?.verdict !== "MATCH" || photos.cardMatch.problems.length ||
+        !reprintMarksRuledOut(photos.printingMarks?.reprintMark, normalizeSetName(card.set))) return null;
+    if (noveltyIn(listing.title) !== "metal") return null;
+    const exact = { set: card.set, cardNumber: card.cardNumber };
+    const listed = listing.aspects?.["Card Name"] ?? listing.aspects?.Character;
+    const short = /^(.+) 0[1-9]$/.exec(canonicalCatalogName(card.name))?.[1];
+    const titleName = !noveltyIn(listing.title, { ...exact, name: card.name }) ? card.name
+        : short && sameCatalogName(listed, short) && sameCardNumber(listing.aspects?.["Card Number"], card.cardNumber) &&
+            normalizeSetName(listing.aspects?.Set) === normalizeSetName(card.set) &&
+            !noveltyIn(listing.title, { ...exact, name: short }) ? short : null;
+    return titleName ? { ...card, titleName } : null;
+}
+
+export function canRecheckCatalogIdentity(listing: IdentityListing, photos: IdentityPhotos, readTitle: typeof readTitleByRules) {
+    const card = confirmedPhotoCard(photos);
+    const suffix = card?.cardNumber?.split("/")[0];
+    return Boolean(confirmedNumberedSellerName(listing, photos) || printedMetalContext(listing, photos) || corroboratedSellerClaims(listing, photos, readTitle) ||
+        card?.name && suffix && card.evidence.length && photos.cardMatch?.verdict === "MATCH" &&
+        numberedCatalogName(`${card.name} (${suffix})`, card.set, card.cardNumber) === card.name);
+}
+
 function slabSellerNameConflict(listing: IdentityListing, photos: IdentityPhotos): boolean {
-    const listedName = listing.aspects?.["Card Name"];
+    const listedName = nameWithoutMatchingFraction(listing.aspects?.["Card Name"], listing.aspects?.["Card Number"]);
     const card = photos.cardIdentity;
     return Boolean(listedName && photos.holder === "GRADED_SLAB" && photos.slab?.present &&
         card?.confidence === "HIGH" && card.name && !sameCatalogName(listedName, card.name));
@@ -832,11 +936,29 @@ function listedPlasmaStormPalkia(listing: IdentityListing, readTitle?: typeof re
         isPalkiaFullArtNumber(title.cardNumber) && literalCollectorNumbers(listing.title).every(isPalkiaFullArtNumber);
 }
 
+// Sellers sometimes repeat the full collector number inside the Card Name field.
+function nameWithoutMatchingFraction(name: string | null | undefined, number: string | null | undefined) {
+    if (!name || !number || !collectorFraction.test(number.trim())) return name;
+    const suffix = /^(.*?)\s+#?([a-z]{0,5}\d{1,4}[a-z]?\s*\/\s*[a-z]{0,5}\d{1,4}[a-z]?)$/i.exec(name.trim());
+    return suffix && sameCardNumber(suffix[2], number) ? suffix[1] : name;
+}
+
+export function confirmedNumberedSellerName(listing: IdentityListing, photos: IdentityPhotos) {
+    const card = confirmedPhotoCard(photos);
+    const name = listing.aspects?.["Card Name"], number = listing.aspects?.["Card Number"];
+    const normalized = nameWithoutMatchingFraction(name, number);
+    return Boolean(card?.evidence?.length && card.name && card.set && card.cardNumber && name && name !== normalized &&
+        photos.cardMatch?.verdict === "MATCH" && sameCatalogName(normalized, card.name) && sameCardNumber(number, card.cardNumber) &&
+        normalizeSetName(listing.aspects?.Set) === normalizeSetName(card.set));
+}
+
 export function structuredPhotoIdentityConflict(photos: IdentityPhotos | null, claims: Partial<Pick<Identity, "name" | "set" | "cardNumber">>): string | null {
     const card = confirmedPhotoCard(photos);
     if (!card?.name || !card.set || !card.cardNumber || !card.evidence?.length) return null;
-    const nameDiffers = claims.name && !sameCatalogName(card.name, claims.name);
     const set = photographedPlasmaBlastPalkia(photos) ? "Plasma Blast" : card.set;
+    const knownNumberedRelease = normalizeSetName(claims.set) === normalizeSetName(set) && sameCardNumber(claims.cardNumber, card.cardNumber);
+    const nameDiffers = claims.name && !(knownNumberedRelease
+        ? sameNumberedCatalogName(card.name, nameWithoutMatchingFraction(claims.name, claims.cardNumber), set, card.cardNumber) : sameCatalogName(card.name, claims.name));
     const setDiffers = claims.set && !sameSetFamily(set, claims.set) && !sameSetFamily(claims.set, set);
     const numberDiffers = compareCardNumbers(card.cardNumber, claims.cardNumber) === false;
     return nameDiffers || setDiffers || numberDiffers
@@ -850,7 +972,7 @@ export async function identifyCard(
     listing: IdentityListing,
     photoCheck: IdentityPhotos,
     { lookupCards, photoIdentity, readTitle }: { lookupCards: LookupCards; photoIdentity?: PhotoConfirmation; readTitle?: typeof readTitleByRules }
-): Promise<{ identity: IdentityDraft; card: PricedCard | null; lookupFailed?: boolean; sellerClaimsCorrected?: boolean }> {
+): Promise<{ identity: IdentityDraft; card: PricedCard | null; lookupFailed?: boolean; sellerClaimsCorrected?: boolean; corroboratedClaimsAwaitCatalog?: boolean }> {
     const sellerListing = listing;
     if (photoIdentity) {
         listing = {
@@ -866,7 +988,8 @@ export async function identifyCard(
     const aspects = correctedNumber || correctedClaims || correctedSlabName ? { ...listing.aspects,
         ...(correctedNumber ? { "Card Number": correctedNumber } : {}), ...correctedClaims,
         ...(correctedSlabName ? { "Card Name": correctedSlabName } : {}) } : listing.aspects ?? {};
-    const listedName = aspects["Card Name"] ?? aspects.Character ?? photoCheck.printedName ?? null;
+    const sellerName = aspects["Card Name"] ?? aspects.Character;
+    const listedName = nameWithoutMatchingFraction(sellerName, aspects["Card Number"]) ?? photoCheck.printedName ?? null;
     const language = aspects.Language ?? (/\b(japanese|jpn|japan)\b/i.test(listing.title) ? "Japanese" : "English");
 
     const identity: IdentityDraft = {
@@ -907,7 +1030,8 @@ export async function identifyCard(
         return needsReview(`The card doesn't match the listing: ${photoConflict}.`);
     }
 
-    const contradiction = titleContradiction(listing.title, identity.set, identity.listedCardNumber);
+    const printedMetal = printedMetalContext(sellerListing, photoCheck);
+    const contradiction = titleContradiction(listing.title, identity.set, identity.listedCardNumber, printedMetal?.titleName);
 
     if (contradiction) {
         return needsReview(contradiction);
@@ -948,9 +1072,13 @@ export async function identifyCard(
     const matchingCards = candidates.filter(card =>
         sameSetFamily(card.setName, identity.set) &&
         sameCardNumber(card.cardNumber, identity.listedCardNumber) &&
-        (!correctedClaims?.Set || normalizeCardNumber(card.cardNumber)?.total != null) &&
-        (correctedSlabName || certifiedFinish ? sameCatalogName(card.name, listedName) : sameName(card.name, listedName)) &&
-        (!correctedClaims || sameCatalogName(card.name, photoCheck.cardIdentity?.name))
+        (!correctedClaims?.Set && !correctedClaims?.["Card Name"] && !correctedClaims?.["Card Number"] || normalizeCardNumber(card.cardNumber)?.total != null) &&
+        (sameNumberedCatalogName(card.name, listedName, card.setName, card.cardNumber) ||
+            !(correctedSlabName || certifiedFinish || correctedClaims?.["Card Name"]) && sameName(card.name, listedName)) &&
+        (!correctedClaims || sameNumberedCatalogName(card.name, photoCheck.cardIdentity?.name, card.setName, card.cardNumber)) &&
+        (!printedMetal || sameCatalogName(card.name, printedMetal.name) &&
+            normalizeSetName(card.setName) === normalizeSetName(printedMetal.set) &&
+            collectorFraction.test(card.cardNumber.trim()) && sameCardNumber(card.cardNumber, printedMetal.cardNumber))
     );
     const labelMatches = certifiedFinish
         ? matchingCards.filter(card => card.variants.some(v => v.finish === certifiedFinish && v.printing === "UNLIMITED"))
@@ -961,7 +1089,7 @@ export async function identifyCard(
         // Independently corroborated physical identity does not disappear just
         // because a pricing catalog lacks this card. Alternative price sources
         // still have to match that identity; no nearby record is substituted.
-        if (photoIdentity?.printing && photoIdentity.finish) {
+        if (!printedMetal && photoIdentity?.printing && photoIdentity.finish) {
             if (photoIdentity.printing === "SHADOWLESS" && !SHADOWLESS_SETS.has(normalizeSetName(photoIdentity.set))) {
                 return needsReview(`The reported Shadowless printing is unavailable for ${photoIdentity.set}.`);
             }
@@ -977,9 +1105,8 @@ export async function identifyCard(
             identity.reasons.push("Photos establish the identity; this exact card has no matching price-catalog record.");
             return { identity, card: null };
         }
-        return needsReview(
-            `No card in the price database matches ${identity.set} #${identity.listedCardNumber}.`
-        );
+        return { ...needsReview(`No card in the price database matches ${identity.set} #${identity.listedCardNumber}.`),
+            ...(correctedClaims && { corroboratedClaimsAwaitCatalog: true }) };
     }
 
     // A family holds at most one record per set. Two in one set is ambiguous.
@@ -1014,8 +1141,9 @@ export async function identifyCard(
     const labelText = slab?.labelText ?? "";
     let label = printingClaimFromText(labelText);
     // A grade or certificate can be readable while the card-description line is cropped.
-    const labelNamesNone = label === "NOT_STATED" && Boolean(labelText && card.name &&
-        (` ${normalizeWords(labelText)} `).includes(` ${normalizeWords(card.name)} `) &&
+    const labelName = numberedCatalogName(card.name, card.records[0]?.setName, card.cardNumber);
+    const labelNamesNone = label === "NOT_STATED" && Boolean(labelText && labelName &&
+        (` ${normalizeWords(labelText)} `).includes(` ${normalizeWords(labelName)} `) &&
         sameCardNumber(cardNumberIn(labelText), card.cardNumber));
 
     if (labelNamesNone && !shadowMatters) {
@@ -1107,7 +1235,12 @@ export async function identifyCard(
     });
 
     if (printing.status !== "ACCEPTED") {
-        return needsReview(printing.reason ?? "The printing couldn't be settled.", card);
+        // The card-number field can be settled while a separate printing
+        // claim remains an unresolved purchase blocker.
+        const shortNumberCorrected = correctedClaims?.["Card Number"] &&
+            namedShortCollector(card.name, sellerListing.aspects?.["Card Number"] ?? "") !== null;
+        return { ...needsReview(printing.reason ?? "The printing couldn't be settled.", card),
+            ...(shortNumberCorrected && { sellerClaimsCorrected: true }) };
     }
 
     // Priced as a cheaper printing than the seller claims: say so.

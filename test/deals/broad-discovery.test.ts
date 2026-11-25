@@ -1,0 +1,93 @@
+import "../fixtures/isolated-data.ts";
+import assert from "node:assert/strict";
+import test from "node:test";
+import { randomUUID } from "node:crypto";
+import { findDeals } from "../../server/deals/find-deals.ts";
+import { freshResaleCandidates, orderBroadDiscovery } from "../../server/deals/discovery-order.ts";
+import { withAiUsageContext } from "../../server/ai/usage-context.ts";
+import { buyerReviewBlock } from "../../shared/wait-skip-review.ts";
+import { createScreeningPriceSource } from "../../server/pricing/pkmnprices.ts";
+import { offlineSearchSteps } from "../fixtures/search-steps.ts";
+import type { ListingSummary } from "../../shared/types.ts";
+
+const listing = (id: string, title: string, isGraded = false): ListingSummary => ({
+    id, title, currentPrice: 35, shipping: 5, bids: 0, isGraded, buyingOption: "FIXED_PRICE", endTime: null,
+    images: ["offline-front", "offline-back"], url: "#", seller: null,
+});
+
+test("within a broad research kind, a later copy with quoted shipping leads its market", () => {
+    const row = (id: string, name: string, number: string, shipping: number | null) => ({
+        ...listing(id, name), shipping, screen: { status: "UNSCREENED" as const, reason: null, bestCase: null, assumed: null,
+            card: { name, set: "Aquapolis", cardNumber: number, printing: "UNKNOWN" as const, printingLabel: null } },
+    });
+    const rows = [row("unknown-copy", "Slowpoke", "108/147", null), row("quoted-copy", "Slowpoke", "108/147", 2),
+        row("unquoted-market", "Nidoking", "24/147", null), row("quoted-market", "Espeon", "11/147", 5)];
+    assert.deepEqual(orderBroadDiscovery(rows, undefined, Date.now()).map(listing => listing.id),
+        ["quoted-copy", "quoted-market", "unquoted-market", "unknown-copy"]);
+});
+
+test("broad discovery advances distinct raw and slab markets without exhausting the fetched page", async () => {
+    const rows = [
+        ...Array.from({ length: 100 }, (_, i) => listing(`raw-${i}`, "Forest Guardian 123/147 Aquapolis Uncommon")),
+        ...Array.from({ length: 30 }, (_, i) => listing(`slab-${i}`, "Espeon 11/147 Aquapolis PSA 8", true)),
+        ...Array.from({ length: 70 }, (_, i) => listing(`other-${i}`, "Nidoking 24/147 Aquapolis Holo")),
+    ];
+    const checked: string[] = [];
+    let token = "";
+    let continuationId = "";
+    const first = await withAiUsageContext({ searchId: randomUUID() }, () => findDeals("Aquapolis", {
+        automaticPhotos: true,
+        onStart: summary => { if (summary.continuation) { token = summary.continuation.token; continuationId = summary.continuation.searchId; } },
+    }, offlineSearchSteps(rows, {
+        soldScreening: () => async row => { checked.push(row.id); return { status: "UNAVAILABLE", exactScope: false, references: [], note: "No saved sales." }; },
+    })));
+    assert.equal(first.length, 50);
+    assert.equal(checked.length, 50, "one complete review batch releases discovery instead of screening 200 missing markets");
+    assert.ok(first.slice(0, 3).some(row => row.isGraded), "slabs with missing prices remain equally reviewable");
+    assert.equal(new Set(first.slice(0, 3).map(row => row.screen?.card?.name)).size, 3, "compare distinct provisional markets before repeat copies");
+    assert.ok(first.every(row => buyerReviewBlock(row) === null));
+    assert.ok(token);
+    // Real continuation storage retains every unreached copy and its original
+    // allowance, rather than turning the faster first batch into a smaller hunt.
+    const allIds = new Set(first.map(row => row.id));
+    while (token) {
+        let next = "";
+        let nextId = "";
+        const batch = await withAiUsageContext({ searchId: continuationId }, () => findDeals("Aquapolis", {
+            automaticPhotos: true, continuation: token,
+            onStart: summary => { next = summary.continuation?.token ?? ""; nextId = summary.continuation?.searchId ?? ""; },
+        }, offlineSearchSteps([], {
+            soldScreening: () => async row => { checked.push(row.id); return { status: "UNAVAILABLE", exactScope: false, references: [], note: "No saved sales." }; },
+        })));
+        assert.equal(batch.length, 50);
+        for (const row of batch) { assert.ok(!allIds.has(row.id)); allIds.add(row.id); }
+        token = next;
+        continuationId = nextId;
+    }
+    assert.equal(allIds.size, 200);
+    assert.equal(checked.length, 200, "later batches complete all deferred research without a silent candidate cap");
+});
+
+test("broad and named discovery both pass their cancellation signal into shared pricing", async () => {
+    const optionsPassed: string[][] = [];
+    const source = (options: Parameters<typeof createScreeningPriceSource>[0]) => {
+        assert.ok(options?.signal instanceof AbortSignal);
+        optionsPassed.push(Object.keys(options));
+        return { ...createScreeningPriceSource(options), lookupQueryCards: async () => ({ cards: [], complete: true }) };
+    };
+    // These injected screens use saved evidence and do not call the provider.
+    await findDeals("Aquapolis", { automaticPhotos: true }, offlineSearchSteps([], { priceSource: source }));
+    await findDeals("Espeon Aquapolis", { automaticPhotos: true }, offlineSearchSteps([], { priceSource: source }));
+    assert.deepEqual(optionsPassed, [["signal"], ["signal"]]);
+});
+
+test("fresh resale samples rough titles across printings and bounds speculative photo checks", () => {
+    const unclear = (id: string, name: string, number: string) => ({ ...listing(id, number + " shiny card"),
+        screen: { status: "UNSCREENED" as const, incomplete: true, reason: null, assumed: null, bestCase: null,
+            card: { name, set: "Aquapolis", cardNumber: number, printing: "UNKNOWN" as const, printingLabel: null } } });
+    const rows = [unclear("one", "Nidoking", "24/147"), unclear("same", "Nidoking", "24/147"),
+        unclear("another", "Espeon", "11/147"), listing("other", "Unknown holo"),
+        { ...listing("no-photo", "Missing photo"), images: [] }];
+    assert.deepEqual(freshResaleCandidates(rows, { minProfit: 0, minRoi: 0 }, Date.now()).map(r => r.id),
+        ["one", "another", "other"]);
+});

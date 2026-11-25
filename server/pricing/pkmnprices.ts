@@ -1,7 +1,8 @@
+import { marketDataPath, readMarketData, saveMarketData } from "./market-cache.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { sameCardNumber, sameSetFamily, setFamily, setSearchTerm } from "../identity/card-identity.ts";
-import { catalogPrintedName } from "../identity/catalog-name.ts";
-import { canonicalCatalogName, pricingSearchName, sameCatalogName } from "./search-name.ts";
+import { catalogPrintedName, catalogQueryAlias, numberedCatalogName, sameNumberedCatalogName } from "../identity/catalog-name.ts";
+import { canonicalCatalogName, pricingSearchName } from "./search-name.ts";
 import { cardNumberOf, cardVariants } from "./records.ts";
 import { CONFIRMED_SALE_TYPES, uniqueSoldComps } from "./sold-comps.ts";
 import type { CardRecord, Comp, FetchComps, FetchRawComps, FetchSoldPage, LookupCards, LookupQueryCards, QueryCatalogResult, SoldPage, SoldPageSelection, SoldStream } from "./types.ts";
@@ -11,8 +12,8 @@ import { fetchJson, ProviderError } from "../lib/http.ts";
 import { PricingProviderError, retryAfterMs } from "./errors.ts";
 import type { PricingIssue } from "../../shared/pricing-retries.ts";
 import { getAiUsageContext, withAiUsageContext } from "../ai/usage-context.ts";
-import { getPriceResearchSignal, reservePriceRequest, PriceResearchBudgetError } from "./research-budget.ts";
-import { PRICE_SCREEN_REQUEST_LIMIT, SOLD_MARKET_PAGE_LIMIT } from "../../shared/research-policy.ts";
+import { getPriceResearchSignal, reservePriceRequest } from "./research-budget.ts";
+import { SOLD_MARKET_PAGE_LIMIT } from "../../shared/research-policy.ts";
 
 // pkmnprices.com: native catalog identity, variant labels and individual eBay
 // sold comps. Provider credits describe returned-item quota,
@@ -58,9 +59,9 @@ interface RequestSponsor {
     dispatch(): void;
     reserve(path: string, signal: AbortSignal): Promise<RequestReservation>;
 }
-function requestSponsor(signal?: AbortSignal, allowance = () => true, dispatch = () => {}): RequestSponsor {
+function requestSponsor(signal?: AbortSignal, dispatch = () => {}): RequestSponsor {
     const owner = { ...getAiUsageContext() };
-    return { signal, available: () => !signal?.aborted && allowance(), dispatch,
+    return { signal, available: () => !signal?.aborted, dispatch,
         reserve: (path, workSignal) => withAiUsageContext(owner, () => reservePriceRequest(path, workSignal)),
     };
 }
@@ -71,7 +72,6 @@ function attachSponsor(sponsors: Map<string, Set<RequestSponsor>>, key: string, 
 }
 async function reserveSponsored(path: string, sponsors: Map<string, Set<RequestSponsor>>, key: string, signal: AbortSignal): Promise<SponsoredReservation> {
     signal.throwIfAborted();
-    let exhausted: PriceResearchBudgetError | undefined;
     for (const sponsor of [...(sponsors.get(key) ?? [])]) {
         if (!sponsor.available()) continue;
         const dispatchSignal = combinedSignal(signal, sponsor.signal)!;
@@ -80,7 +80,6 @@ async function reserveSponsored(path: string, sponsors: Map<string, Set<RequestS
         catch (error) {
             signal.throwIfAborted();
             if (sponsor.signal?.aborted) continue;
-            if (error instanceof PriceResearchBudgetError && error.reason === "LIMIT") { exhausted = error; continue; }
             throw error;
         }
         if (signal.aborted || !sponsor.available()) {
@@ -90,7 +89,7 @@ async function reserveSponsored(path: string, sponsors: Map<string, Set<RequestS
         }
         return { ...reservation, available: () => !signal.aborted && sponsor.available(), dispatch: sponsor.dispatch };
     }
-    throw exhausted ?? new ScreeningPriceBudgetError();
+    throw new DOMException("Price research stopped.", "AbortError");
 }
 
 // Reservation is immediately before actual transport. Accepted responses are
@@ -102,7 +101,7 @@ async function request(path: string, apiKey: string, signal: AbortSignal, sponso
         signal.throwIfAborted();
         reservation = await reserveSponsored(path, sponsors, key, signal);
     }
-    // No await between this final cancellation/allowance check and fetch.
+    // No await between this final cancellation check and fetch.
     signal.throwIfAborted();
     reservation.dispatch();
     let result: Awaited<ReturnType<typeof fetchJson>>;
@@ -164,6 +163,7 @@ async function apiGet(path: string, maxAgeHours = DAY): Promise<ApiBody> {
 }
 
 async function readApiCache(path: string, maxAgeHours: number): Promise<ApiBody | null> {
+    if (marketDataPath(path)) return readMarketData(`pkmnprices:${path}`, maxAgeHours);
     let cached = await readCache(`pkmnprices:${path}`, maxAgeHours);
     // A successful but empty name search should not hide a newly available
     // record all day. Positive metadata and priced responses keep their TTLs.
@@ -183,7 +183,7 @@ async function cachedApiGet(path: string, maxAgeHours: number): Promise<ApiBody 
 function creditLimitError(response: Response): PricingProviderError {
     coolingKind = "CREDITS";
     coolingUntil = Math.max(coolingUntil, Date.now() + retryAfterMs(response.headers.get("retry-after"), Date.now(), 60 * 60_000));
-    return new PricingProviderError("Price-service credits are unavailable. Check the provider account; cached prices still work.", "CREDITS", coolingUntil);
+    return new PricingProviderError("Price-service credits are unavailable. Check the provider account.", "CREDITS", coolingUntil);
 }
 
 // Share one transport attempt across every stage. Retries belong to normal
@@ -194,14 +194,14 @@ async function loadAttempt(path: string, maxAgeHours: number, signal: AbortSigna
     signal.throwIfAborted();
     if (cached) return { response: null, body: cached };
     const available = () => [...(requestSponsors.get(key) ?? [])].some(sponsor => sponsor.available());
-    if (!available()) throw new ScreeningPriceBudgetError();
+    if (!available()) throw new DOMException("Price research stopped.", "AbortError");
     const apiKey = process.env.PKMNPRICES_API_KEY;
     if (!apiKey) throw new PricingProviderError("PKMNPRICES_API_KEY is not set", "CONFIG");
     return limit(async () => {
         signal.throwIfAborted();
-        if (!available()) throw new ScreeningPriceBudgetError();
+        if (!available()) throw new DOMException("Price research stopped.", "AbortError");
         if (Date.now() < coolingUntil) {
-            throw new PricingProviderError(coolingKind === "CREDITS" ? "Price-service credits are unavailable. Check the provider account; cached prices still work." : "Price service is cooling down. Cached prices still work; retry missing prices after the cooldown.", coolingKind, coolingUntil);
+            throw new PricingProviderError(coolingKind === "CREDITS" ? "Price-service credits are unavailable. Check the provider account." : "Price service is cooling down. Retry missing prices after the cooldown.", coolingKind, coolingUntil);
         }
         const slot = Math.max(Date.now(), lastRequestAt + 1000);
         lastRequestAt = slot;
@@ -226,6 +226,7 @@ async function loadAttempt(path: string, maxAgeHours: number, signal: AbortSigna
 async function finish(path: string, response: Response, body: ApiBody): Promise<ApiBody> {
     if (!response.ok) {
         const message = `pkmnprices request failed (${response.status}): ${body.error?.message ?? "unknown error"}`;
+        if ([402, 403].includes(response.status) && marketDataPath(path)) throw new PricingProviderError("This PKMNPrices account cannot access that market series.", "CONFIG");
         if ([402, 403].includes(response.status) && path.includes("/listings/cardmarket?")) {
             throw new PricingProviderError("PKMNPrices denied access to Cardmarket offers for this account.", "CONFIG");
         }
@@ -237,9 +238,20 @@ async function finish(path: string, response: Response, body: ApiBody): Promise<
         throw new Error(message);
     }
 
-    await writeCache(`pkmnprices:${path}`, body);
+    await (marketDataPath(path) ? saveMarketData : writeCache)(`pkmnprices:${path}`, body);
 
     return body;
+}
+
+export function catalogSample(params: URLSearchParams) { return apiGet("/cards?" + params, 24); }
+export function recentVolume(id: number, kind?: boolean) {
+    const query = new URLSearchParams({ currency: "usd", period: "7d", limit: "56" });
+    if (kind !== undefined) query.set("graded", String(kind));
+    return apiGet("/cards/" + id + "/sales/volume?" + query, 6);
+}
+export function dailyRawHistory(id: string, variant: string, condition: string) {
+    const query = new URLSearchParams({ currency: "usd", period: "90d", variant, condition, limit: "90" });
+    return apiGet("/cards/" + id + "/prices/history?" + query, 12);
 }
 
 interface PkmnVariantEntry {
@@ -260,6 +272,10 @@ interface PkmnCard {
 
 function nativeCardName(card: PkmnCard): string {
     return catalogPrintedName(card.name, card.set?.name, card.number);
+}
+
+function nativeCardMatchesName(card: PkmnCard, name: string, catalogSet?: string): boolean {
+    return sameNumberedCatalogName(nativeCardName(card), name, card.set?.name ?? catalogSet, cardNumberOf(card));
 }
 
 // A pkmnprices card in the shape identity and pricing expect.
@@ -314,7 +330,7 @@ async function lookupQueryCardsFrom({ set, name }: Parameters<LookupQueryCards>[
     for (const entry of family.values()) {
         const items = await pages("/cards", new URLSearchParams({ set_id: String(entry.id), name: nameTerm, per_page: "20" }), 20);
         if (!items) return incomplete;
-        for (const item of items.filter(item => item && sameCatalogName(nativeCardName(item), name))) {
+        for (const item of items.filter(item => item && nativeCardMatchesName(item, name, entry.name))) {
             if (!Number.isSafeInteger(item.id) || item.id < 1 || item.set?.name && !sameSetFamily(item.set.name, set)) return incomplete;
             const previous = candidates.get(item.id);
             if (previous && !sameCardNumber(cardNumberOf(previous), cardNumberOf(item))) return incomplete;
@@ -325,7 +341,7 @@ async function lookupQueryCardsFrom({ set, name }: Parameters<LookupQueryCards>[
     const cards: CardRecord[] = [];
     for (const item of candidates.values()) {
         const detail = await get(`/cards/${item.id}?currency=usd`);
-        if (detail?.id !== item.id || !sameCatalogName(nativeCardName(detail), name) || !sameSetFamily(detail.set?.name, set) ||
+        if (detail?.id !== item.id || !nativeCardMatchesName(detail, name) || !sameSetFamily(detail.set?.name, set) ||
             !sameCardNumber(cardNumberOf(detail), cardNumberOf(item))) return incomplete;
         cards.push(toCardRecord(detail));
     }
@@ -345,17 +361,20 @@ function completeCatalogPage(page: ApiBody, size: number): boolean {
 // Candidate cards for a listing: every set in the listing's set family,
 // narrowed by name and number before the per-card price lookups.
 async function lookupCardsFrom({ set, name, cardNumber }: Parameters<LookupCards>[0],
-    get: typeof apiGet, cached: typeof readApiCache,
-    screening?: { maxCards: number }): ReturnType<LookupCards> {
+    get: (path: string, maxAgeHours?: number) => Promise<ApiBody | null>, cached: typeof readApiCache,
+    screening?: { maxCards: number }, allowCatalogOnly = false): ReturnType<LookupCards> {
 
-    const nameTerm = pricingSearchName(name);
+    const nativeTerm = pricingSearchName(name);
+    const printedName = numberedCatalogName(name, set, cardNumber);
+    const nameTerm = pricingSearchName(printedName);
+    const alias = catalogQueryAlias(printedName);
     if (!nameTerm) return [];
     const sets = await get(
         `/sets?${new URLSearchParams({ name: setSearchTerm(set), language: "English", per_page: "50" })}`,
         DAY * 7
     );
 
-    const familySets: { id: number; name: string }[] = (sets.data ?? []).filter((s: { name: string }) =>
+    const familySets: { id: number; name: string }[] = (sets?.data ?? []).filter((s: { name: string }) =>
         sameSetFamily(s.name, set)
     );
     const cards: CardRecord[] = [];
@@ -374,6 +393,22 @@ async function lookupCardsFrom({ set, name, cardNumber }: Parameters<LookupCards
             params.set("number", numeric[1]!.replace(/^0+(?=\d)/, ""));
             if (!completeCatalogPage(list, 20)) list = null;
         }
+        if (!list && nativeTerm !== nameTerm) {
+            const previousParams = new URLSearchParams(params);
+            previousParams.set("name", nativeTerm);
+            const previous = await cached(`/cards?${previousParams}`, DAY);
+            if (Array.isArray(previous?.data) && previous.data.some((item: PkmnCard) => item &&
+                sameCardNumber(cardNumberOf(item), cardNumber) && nativeCardMatchesName(item, name, familySet.name))) list = previous;
+        }
+        if (!list && alias) {
+            const alternate = new URLSearchParams(params);
+            alternate.set("name", alias);
+            const numbered = await cached(`/cards?${alternate}`, DAY);
+            alternate.delete("number");
+            const prior = numbered ?? await cached(`/cards?${alternate}`, DAY);
+            if (Array.isArray(prior?.data) && prior.data.some((item: PkmnCard) => item &&
+                sameCardNumber(cardNumberOf(item), cardNumber) && nativeCardMatchesName(item, name, familySet.name))) list = prior;
+        }
         // Earlier provider queries split owner apostrophes into spaces. Reuse
         // their positive exact matches from cache, but an empty malformed
         // query must never prevent the corrected spelling from being tried.
@@ -387,7 +422,7 @@ async function lookupCardsFrom({ set, name, cardNumber }: Parameters<LookupCards
             }
             for (const previousPath of previousPaths) {
                 const previous = await cached(previousPath, DAY);
-                if (completeCatalogPage(previous, 20) && previous.data.some((item: PkmnCard) => sameCatalogName(nativeCardName(item), name) &&
+                if (completeCatalogPage(previous, 20) && previous.data.some((item: PkmnCard) => item && nativeCardMatchesName(item, name, familySet.name) &&
                     (!item.set?.name || sameSetFamily(item.set.name, set)) &&
                     (!cardNumber || sameCardNumber(cardNumberOf(item), cardNumber)))) {
                     list = previous;
@@ -395,14 +430,20 @@ async function lookupCardsFrom({ set, name, cardNumber }: Parameters<LookupCards
                 }
             }
         }
+        if (!list && alias && /[♀♂]\s*$/.test(printedName)) params.set("name", alias);
         list ??= await get(`/cards?${params}`);
 
-        for (const item of list.data ?? []) {
+        for (const item of list?.data ?? []) {
+            if (!item || item.set?.name && !sameSetFamily(item.set.name, set)) continue;
             if (cardNumber ? !sameCardNumber(cardNumberOf(item), cardNumber) : !screening) continue;
-            if (!sameCatalogName(nativeCardName(item), name)) continue;
+            if (!nativeCardMatchesName(item, name, familySet.name)) continue;
 
             const detail = await get(`/cards/${item.id}?currency=usd`);
-            if (detail.id !== item.id || !sameCatalogName(nativeCardName(detail), name) || !sameSetFamily(detail.set?.name, set) ||
+            if (!detail && allowCatalogOnly && item.set?.name) {
+                cards.push(toCardRecord(item));
+                continue;
+            }
+            if (detail?.id !== item.id || !nativeCardMatchesName(detail, name) || !sameSetFamily(detail.set?.name, set) ||
                 cardNumber && !sameCardNumber(cardNumberOf(detail), cardNumber) ||
                 !sameCardNumber(cardNumberOf(detail), cardNumberOf(item))) continue;
             cards.push(toCardRecord(detail));
@@ -429,6 +470,12 @@ export async function cardmarketOfferPage(recordId: string, params: URLSearchPar
 }
 
 export const lookupCards: LookupCards = query => lookupCardsFrom(query, apiGet, cachedApiGet);
+export const lookupCachedCards: LookupCards = query => {
+    // Reconsider physical identity, which can reuse exact catalog records after
+    // their narrower live pricing TTL. toCardRecord never retains amounts.
+    const saved = (path: string) => cachedApiGet(path, DAY * 30);
+    return lookupCardsFrom(query, saved, saved, undefined, true);
+};
 
 // Currencies belong to individual rows. Keep all revisions until the result
 // pages have been reconciled so a corrected EUR row can retire an old USD row.
@@ -561,14 +608,8 @@ export async function fetchTcgplayerMarketData(recordId: CardRecord["id"]) {
     return apiGet(`/cards/${recordId}`, DAY);
 }
 
-export class ScreeningPriceBudgetError extends Error {
-    constructor() { super("The search's price-screening request allowance is exhausted. Saved price evidence remains available."); }
-}
-
-export function createScreeningPriceSource({ signal: sourceSignal, maxRequests = PRICE_SCREEN_REQUEST_LIMIT }: { signal?: AbortSignal; maxRequests?: number } = {}) {
+export function createScreeningPriceSource({ signal: sourceSignal }: { signal?: AbortSignal } = {}) {
     const signal = combinedSignal(sourceSignal, getPriceResearchSignal());
-    if (!Number.isSafeInteger(maxRequests) || maxRequests < 0) throw new RangeError("The price-screening request allowance must be a nonnegative integer.");
-    const requestLimit = maxRequests;
     let requests = 0;
     const queryCatalogs = new Map<string, CardRecord[]>();
     // One source session reads the same set/catalog and legacy sold paths for
@@ -593,7 +634,7 @@ export function createScreeningPriceSource({ signal: sourceSignal, maxRequests =
         const saved = await cached(path, maxAgeHours);
         if (saved) return saved;
         const key = `${path}:${maxAgeHours}`;
-        const sponsor = requestSponsor(signal, () => requests < requestLimit, () => { requests += 1; });
+        const sponsor = requestSponsor(signal, () => { requests += 1; });
         const detach = attachSponsor(requestSponsors, key, sponsor);
         try {
             const { response, body } = await share(key, workSignal => loadAttempt(path, maxAgeHours, workSignal, key), signal);
@@ -618,7 +659,7 @@ export function createScreeningPriceSource({ signal: sourceSignal, maxRequests =
             : new URLSearchParams({ graded: "false", period: "90d", sort: "date_desc", limit: "20", variant });
         return readSoldPage(recordId, params, { cursor, stream, stopWhen }, get, cached, signal);
     };
-    const source: { lookupCards: LookupCards; lookupQueryCards: LookupQueryCards; fetchComps: FetchComps; fetchRawComps: FetchRawComps; fetchSoldPage: FetchSoldPage; stats(): { requests: number; limit: number } } = {
+    const source: { lookupCards: LookupCards; lookupQueryCards: LookupQueryCards; fetchComps: FetchComps; fetchRawComps: FetchRawComps; fetchSoldPage: FetchSoldPage; stats(): { requests: number } } = {
         lookupCards: query => {
             signal?.throwIfAborted();
             const complete = queryCatalogs.get(queryKey(query));
@@ -638,7 +679,7 @@ export function createScreeningPriceSource({ signal: sourceSignal, maxRequests =
         },
         fetchRawComps: async (recordId, variant, selection) => usdSales((await fetchSoldPage(recordId, { grader: null, grade: null, variant, ...selection })).sales),
         fetchSoldPage,
-        stats: () => ({ requests, limit: requestLimit }),
+        stats: () => ({ requests }),
     };
     return source;
 }

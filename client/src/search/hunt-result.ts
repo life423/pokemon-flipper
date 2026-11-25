@@ -5,9 +5,10 @@ import { BEST_BUY_TERMS_MAX_AGE_MS } from "../../../shared/search-diagnostic.ts"
 import { observedCardKind } from "../../../shared/photo-evidence.ts";
 import { collectorAuction } from "../../../shared/collector-auction.ts";
 import type { DealHuntGoal, DealHuntReport, DealHuntResponse, DealHuntScope, DealHuntSection } from "../../../shared/deal-hunt.ts";
-import { searchPhotosFitDetails } from "../../../shared/listing-evidence.ts";
+import { listingEvidenceKey, searchPhotosFitDetails } from "../../../shared/listing-evidence.ts";
 import { parseListingLink } from "../../../shared/listing-link.ts";
 import type { ListingSummary } from "../../../shared/types.ts";
+import { withFreshListing } from "../../../shared/fresh-listing.ts";
 
 export const expiredGradingReason = "This grading quote has expired. Run the hunt again for current listings and resale evidence.";
 
@@ -29,11 +30,32 @@ export function currentHuntBid(goal: DealHuntGoal, evaluation: Evaluation, targe
         : auctionOpportunity(evaluation, targets, now, maxDelivered);
 }
 
+export function reconcileHuntListing(original: ListingSummary, evaluation: Evaluation, current = original) {
+    const reviewed = evaluation.listing;
+    const updated = withFreshListing(original, evaluation);
+    const matchesSnapshot = (snapshot: ListingSummary) => listingEvidenceKey(snapshot) === listingEvidenceKey(current) &&
+        snapshot.currentPrice === current.currentPrice && snapshot.shipping === current.shipping;
+    const compatible = original.id === reviewed.id && current.id === reviewed.id &&
+        (matchesSnapshot(original) || matchesSnapshot(updated));
+    const checked = Date.parse(reviewed.termsCheckedAt ?? "");
+    const currentChecked = Date.parse(current.termsCheckedAt ?? "");
+    // Keep an explicit unavailable update even if it carries no comparable timestamp.
+    const unavailable = current.availability === "UNAVAILABLE" && !(currentChecked < checked);
+    const listing = compatible && !unavailable ? withFreshListing(current, evaluation) : current;
+    const currentTerms = compatible && listing.availability === "ACTIVE" && reviewed.availability === "ACTIVE" &&
+        listing.currentPrice === reviewed.price && listing.shipping === reviewed.shipping &&
+        (listing.shippingDestination ?? null) === (reviewed.shippingDestination ?? null) &&
+        listing.termsCheckedAt === reviewed.termsCheckedAt && listing.endTime === reviewed.endTime &&
+        listing.buyingOption === reviewed.buyingOption && listing.bids === reviewed.bids;
+    return { compatible, currentTerms, listing };
+}
+
 export function selectedHuntListing(response: DealHuntResponse, searchId: string, goal: DealHuntGoal, scope: DealHuntScope, listings: ListingSummary[], format: BuyingOption = "FIXED_PRICE") {
     const { report, evaluation, alternative } = response;
     const destination = report.destination;
     const mismatch = "The returned evidence does not match this hunt. Run it again on the current results.";
     if (report.searchId !== searchId || report.goal !== goal || !["WAIT", format === "AUCTION" ? "BID" : "BUY"].includes(report.decision)) throw new Error(mismatch);
+    if (scope === "search" && response.candidates?.some(row => !listings.some(match => match.id === row.id))) throw new Error(mismatch);
     if (!destination) {
         if (report.decision !== "WAIT" || alternative || evaluation) throw new Error(mismatch);
         return undefined;

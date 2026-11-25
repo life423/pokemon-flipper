@@ -5,7 +5,7 @@ import { DATA_DIR } from "./paths.ts";
 import { writeJsonAtomic } from "./atomic-json.ts";
 import { withFileLease } from "./file-lease.ts";
 import { createKeyedLock } from "./keyed-lock.ts";
-import type { ProviderUsageProvider, ProviderUsageSnapshot } from "../../shared/provider-usage.ts";
+import { shouldPaceBrowse, type ProviderUsageProvider, type ProviderUsageSnapshot } from "../../shared/provider-usage.ts";
 
 export interface ProviderUsageObservation {
     limit: number;
@@ -103,6 +103,12 @@ export function createProviderUsageMonitor({ directory, now = Date.now }: { dire
 
 const monitor = createProviderUsageMonitor({ directory: path.join(DATA_DIR, "provider-usage") });
 export const recordProviderUsage = monitor.record;
+export async function browsePressure() {
+    const key = process.env.EBAY_CLIENT_ID?.trim();
+    if (!key) return null;
+    const usage = await monitor.read("EBAY", key);
+    return usage && shouldPaceBrowse(usage) ? usage : null;
+}
 // Local disk only: no Analytics, pricing, OAuth or other provider polling.
 export async function dailyProviderUsage(): Promise<ProviderUsageSnapshot[]> {
     const configured: [ProviderUsageProvider, string | undefined][] = [["EBAY", process.env.EBAY_CLIENT_ID], ["PKMNPRICES", process.env.PKMNPRICES_API_KEY]];

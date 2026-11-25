@@ -73,7 +73,7 @@ function evidenceFor(discovery: SearchDiagnosticDiscovery, rows: readonly Search
                 priced: rows.filter(row => row.priced).length,
                 buyerDecisions: {
                     buy: rows.filter(row => row.reason === "BUYER_BUY").length,
-                    wait: rows.filter(row => row.reason === "BUYER_WAIT").length,
+                    wait: rows.filter(row => row.outcome === "WAIT").length,
                     skip: rows.filter(row => row.reason === "BUYER_SKIP").length,
                     unavailable: rows.filter(row => row.reason === "BUYER_CHECK_UNAVAILABLE").length,
                 },
@@ -98,13 +98,19 @@ const store = createSearchDiagnosticStore<SearchUsage>();
 const share = createSharedWork();
 export const saveDiagnosticDiscovery = store.saveDiscovery;
 export const loadDiagnosticDiscovery = store.loadDiscovery;
-export const loadDiagnosticResult = store.loadResult;
+export async function loadDiagnosticResult(searchId: string) {
+    const result = await store.loadResult(searchId);
+    if (!result?.message) return result;
+    // Older reports also included a storage notice after the failure reason.
+    const message = result.message.replace(/ (?:The search decisions were saved|Your listing decisions are saved)\.$/, "");
+    return { ...result, message };
+}
 
 // The scan has finished before it submits these decisions. Save the review
 // even when the browser navigates away while its text request is in flight.
 export function completeSearchDiagnostic(searchId: string, rows: unknown, signal?: AbortSignal): Promise<SearchDiagnosticResult | null> {
     return share(searchId, async workSignal => {
-        const previous = await store.loadResult(searchId);
+        const previous = await loadDiagnosticResult(searchId);
         if (previous) return previous;
         const snapshot = await store.loadSnapshot(searchId) ?? await store.saveSnapshot(searchId, rows, await usageFor(getAiUsageContext().watchBudgetId ?? searchId));
         if (!snapshot) return null;
@@ -123,10 +129,10 @@ export function completeSearchDiagnostic(searchId: string, rows: unknown, signal
         } catch (error) {
             workSignal.throwIfAborted();
             const reviewBudget = await aiSpending.summary(budgetSearchId).catch(() => undefined);
-            const message = reviewBudget?.paused ? "AI reviews are paused. The search decisions were saved."
+            const message = reviewBudget?.paused ? "AI reviews are paused."
                 : error instanceof Error && error.message === "Search diagnostic review: response was cut off (max_output_tokens)"
-                    ? "The review reached its response length limit. Your listing decisions are saved."
-                    : "The automatic review could not finish. The search decisions were saved.";
+                    ? "The review reached its response length limit."
+                    : "The automatic review could not finish.";
             return save({ searchId, savedAt, status: "unavailable", message, reviewBudget });
         }
     }, signal);

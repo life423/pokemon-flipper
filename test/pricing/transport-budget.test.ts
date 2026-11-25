@@ -4,10 +4,9 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import { cardmarketRecord, cardmarketOfferPage, createScreeningPriceSource, fetchComps, fetchRawComps, pricingCooldown } from "../../server/pricing/pkmnprices.ts";
-import { priceResearchSummary, reservePriceRequest, withPriceResearchSignal, PriceResearchBudgetError, PRICE_RESEARCH_LIMIT } from "../../server/pricing/research-budget.ts";
+import { priceResearchSummary, reservePriceRequest, withPriceResearchSignal, PriceResearchBudgetError } from "../../server/pricing/research-budget.ts";
 import { getAiUsageContext, withAiUsageContext } from "../../server/ai/usage-context.ts";
 import { readCache } from "../../server/lib/cache.ts";
-import { PRICE_SCREEN_REQUEST_LIMIT } from "../../shared/research-policy.ts";
 import { withSavedProviderEvidence } from "../../server/lib/saved-provider-evidence.ts";
 
 let clock = Date.now();
@@ -46,7 +45,7 @@ test("catalog, screening and final raw/slab requests share one ledger while cach
     const usage = await priceResearchSummary();
     assert.equal(paths.length, 5); assert.equal(usage?.used, 5); assert.equal(usage?.completed, 5);
     assert.equal(usage?.reportedCredits, 8); assert.equal(usage?.returnedRows, 8);
-    assert.deepEqual(source.stats(), { requests: 4, limit: PRICE_SCREEN_REQUEST_LIMIT });
+    assert.deepEqual(source.stats(), { requests: 4 });
 });
 
 test("saved replay uses cached sales and stops cache misses before the request ledger", async t => {
@@ -67,12 +66,12 @@ test("saved replay uses cached sales and stops cache misses before the request l
     assert.equal((await priceResearchSummary())?.used, 2);
 });
 
-test("simultaneous preliminary and final reads share one exact sold-page attempt even with no preliminary allowance", async t => {
+test("simultaneous preliminary and final reads share one exact sold-page attempt in either order", async t => {
     offline(t); let calls = 0, started = deferred<void>(), answer = deferred<Response>();
     t.mock.method(globalThis, "fetch", async () => { calls++; started.resolve(); return answer.promise; });
-    for (const [index, [screeningFirst, maximum]] of ([[true, 1], [false, 1], [false, 0]] as const).entries()) {
+    for (const [index, screeningFirst] of [true, false].entries()) {
         started = deferred<void>(); answer = deferred<Response>();
-        const source = createScreeningPriceSource({ maxRequests: maximum });
+        const source = createScreeningPriceSource();
         const id = 91100 + index;
         const preliminary = () => source.fetchRawComps(id, "Unlimited Holofoil");
         const final = () => fetchRawComps(id, "Unlimited Holofoil");
@@ -83,27 +82,25 @@ test("simultaneous preliminary and final reads share one exact sold-page attempt
         answer.resolve(response({ data: [sold(1)] }));
         assert.deepEqual((await work).map(sales => sales.length), [1, 1]);
         assert.equal(calls, index + 1, "overlapping stages may not purchase the same page twice");
-        assert.ok(source.stats().requests <= maximum);
-        if (maximum === 0) assert.equal(source.stats().requests, 0);
+        assert.equal(source.stats().requests, screeningFirst ? 1 : 0);
     }
     const usage = await priceResearchSummary();
-    assert.equal(usage?.used, 3); assert.equal(usage?.completed, 3);
+    assert.equal(usage?.used, 2); assert.equal(usage?.completed, 2);
 });
 
-test("screening stops at its own allowance while preserving the larger all-stage request total", async t => {
+test("screening continues beyond the old preliminary allowance and shares the search ledger", async t => {
     offline(t); let calls = 0;
     t.mock.method(globalThis, "fetch", async () => { calls++; return response({ data: [sold(calls)] }); });
     const source = createScreeningPriceSource();
-    for (let index = 0; index < PRICE_SCREEN_REQUEST_LIMIT; index++) await source.fetchRawComps(91500 + index, "Unlimited Holofoil");
-    await assert.rejects(source.fetchRawComps(91500 + PRICE_SCREEN_REQUEST_LIMIT, "Unlimited Holofoil"), /price-screening request allowance is exhausted/);
-    assert.equal(calls, PRICE_SCREEN_REQUEST_LIMIT);
-    assert.equal((await source.fetchRawComps(91500, "Unlimited Holofoil")).length, 1, "screening cache hits stay usable at its limit");
-    assert.deepEqual(source.stats(), { requests: PRICE_SCREEN_REQUEST_LIMIT, limit: PRICE_SCREEN_REQUEST_LIMIT });
+    for (let index = 0; index < 129; index++) await source.fetchRawComps(91500 + index, "Unlimited Holofoil");
+    assert.equal(calls, 129);
+    assert.equal((await source.fetchRawComps(91500, "Unlimited Holofoil")).length, 1);
+    assert.deepEqual(source.stats(), { requests: 129 });
     const beforeFinal = await priceResearchSummary();
-    assert.equal(beforeFinal?.limit, PRICE_RESEARCH_LIMIT); assert.equal(beforeFinal?.used, PRICE_SCREEN_REQUEST_LIMIT);
+    assert.equal(beforeFinal?.limit, null); assert.equal(beforeFinal?.used, 129);
     await fetchComps(91600, { grader: "PSA", grade: 8, variant: "Unlimited Holofoil" });
-    assert.equal(calls, PRICE_SCREEN_REQUEST_LIMIT + 1, "final research can still use the shared total's remaining requests");
-    assert.equal((await priceResearchSummary())?.remaining, PRICE_RESEARCH_LIMIT - PRICE_SCREEN_REQUEST_LIMIT - 1);
+    assert.equal(calls, 130);
+    assert.equal((await priceResearchSummary())?.used, 130);
 });
 
 test("sharing the first page retains final pagination without extending preliminary screening", async t => {
@@ -132,7 +129,7 @@ test("a shared throttle lets normal pricing retry without retrying its prelimina
         if (++calls === 1) { started.resolve(); return first.promise; }
         return response({ data: [sold(2)] });
     });
-    const source = createScreeningPriceSource({ maxRequests: 1 });
+    const source = createScreeningPriceSource();
     const preliminary = assert.rejects(source.fetchRawComps(91200, "Unlimited Holofoil"), /screening will not retry/);
     const final = fetchRawComps(91200, "Unlimited Holofoil");
     await started.promise;
@@ -171,16 +168,17 @@ test("an accepted daily throttle still records its cooldown after every subscrib
     assert.equal((await priceResearchSummary())?.completed, 1);
 });
 
-test("the total allowance applies after screening and still permits a cached page at exhaustion", async t => {
+test("screening and final research both dispatch past the former total cap and reuse exact pages", async t => {
     offline(t);
-    for (let i = 0; i < PRICE_RESEARCH_LIMIT - 1; i++) await (await reservePriceRequest(`/cards/prior-${i}?currency=usd`)).unresolved();
+    for (let i = 0; i < 256; i++) await (await reservePriceRequest(`/cards/prior-${i}?currency=usd`)).unresolved();
     let calls = 0;
     t.mock.method(globalThis, "fetch", async () => { calls++; return response({ data: [sold(1)] }, 3); });
     const source = createScreeningPriceSource();
     await source.fetchRawComps(92001, "Unlimited Holofoil");
-    await assert.rejects(fetchComps(92001, { grader: "PSA", grade: "9" }), error => error instanceof PriceResearchBudgetError && error.reason === "LIMIT");
+    assert.equal((await fetchComps(92001, { grader: "PSA", grade: "9" })).length, 1);
     assert.equal((await fetchRawComps(92001, "Unlimited Holofoil")).length, 1);
-    assert.equal(calls, 1); assert.equal((await priceResearchSummary())?.used, PRICE_RESEARCH_LIMIT);
+    const summary = await priceResearchSummary();
+    assert.equal(calls, 2); assert.equal(summary?.used, 258); assert.equal(summary?.unresolved, 256); assert.equal(summary?.reportedCredits, 6);
 });
 
 test("unscoped uncached normal and screening requests fail closed before transport", async t => {

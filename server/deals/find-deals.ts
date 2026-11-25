@@ -2,6 +2,7 @@ import { researchAuctionSellers } from "./auction-seller-research.ts";
 import { freshListingTime } from "../../shared/grading-watch.ts";
 import { addBinMarketComparisons } from "../../shared/bin-market-comparison.ts";
 import { searchListings } from "../ebay/listings.ts";
+import { isSportsTradingCardListing } from "../ebay/filters.ts";
 import { readSearchWithAi } from "../search/query-assistance.ts";
 import { cardMismatch, gradingMatches, titleMatches, setMatches } from "../search/relevance.ts";
 import { readTitleByRules, readTitleWithoutAi, readTitlesWithoutAi } from "../ai/title-reader.ts";
@@ -32,6 +33,8 @@ import { outsideSearchYears } from "../../shared/search-years.ts";
 import type { SearchContinuation } from "../../shared/search-continuation.ts";
 import { discoveryContinuations, type DiscoveryBacklog, type DiscoverySourceCursor, type DiscoveryBatchReceipt } from "./search-continuation.ts";
 import { getAiUsageContext, getBudgetContext, withAiUsageContext } from "../ai/usage-context.ts";
+import { browsePressure } from "../lib/provider-usage.ts";
+import { orderBroadDiscovery } from "./discovery-order.ts";
 
 const MIN_NEWEST_CANDIDATES = 3;
 const REFILL_BATCH_SIZE = 4;
@@ -46,6 +49,7 @@ function literalTitleBlock(listing: ListingSummary, intent: SearchIntent): Sourc
 }
 
 interface FindSteps {
+    browsePressure?: typeof browsePressure;
     readIntent: typeof readSearchWithAi;
     search: typeof searchListings;
     readTitle: typeof readTitleWithoutAi;
@@ -58,6 +62,11 @@ interface FindSteps {
     researchAuctionSellers?: typeof researchAuctionSellers;
     competition?: typeof findBinCompetition;
 }
+
+const defaultSteps: FindSteps = {
+    browsePressure, readIntent: readSearchWithAi, search: searchListings, readTitle: readTitleWithoutAi, readTitles: readTitlesWithoutAi, releaseYears: cachedSetYears,
+    priceSource: createScreeningPriceSource, prioritizeText: prioritizeListingText, researchAuctionSellers, selectReviews: chooseReviewSelection, competition: findBinCompetition,
+};
 
 export interface SearchSummary {
     continuation?: SearchContinuation;
@@ -103,18 +112,27 @@ export interface SearchOptions {
     asOf?: number;
 }
 
+interface InventoryScan {
+    excludeIds: ReadonlySet<string>;
+    previouslyChecked?: (row: ListingSummary) => boolean;
+    freshGrading: boolean;
+    freshListings?: true;
+    offset?: number;
+    onNextPage?: (offset: number | undefined) => void;
+    onProgress?: SearchOptions["onProgress"];
+    onStage?: (stage: "discovering" | "pricing") => void;
+}
+
 // Screen one page in the requested marketplace order. When the newest BIN page
 // yields few candidates, a second pass can check cheaper inventory.
 async function findDealsBatch(search: string, {
     onProgress = () => {}, onStart = () => {}, onListing = () => {}, onPriceExcluded = () => {}, onScreenedOverflow = () => {}, onSourceDisposition = () => {}, onCompetition, onCollectorEvidence, minPrice = 0, signal, targets,
     includeOffers = false, automaticPhotos = false, marketplaceOrder, newOnly, filters, asOf = Date.now(), continuation: continuationToken,
-}: SearchOptions = {}, dependencies: FindSteps = {
-    readIntent: readSearchWithAi, search: searchListings, readTitle: readTitleWithoutAi, readTitles: readTitlesWithoutAi, releaseYears: cachedSetYears,
-    priceSource: createScreeningPriceSource, prioritizeText: prioritizeListingText, researchAuctionSellers, selectReviews: chooseReviewSelection, competition: findBinCompetition,
-}, resume?: DiscoveryBacklog): Promise<ListingSummary[]> {
+}: SearchOptions = {}, dependencies = defaultSteps, resume?: DiscoveryBacklog, inventoryScan?: InventoryScan): Promise<ListingSummary[]> {
     if (signal?.aborted) return [];
     if (cardLanguageStatus(search) === "OTHER") throw new EnglishOnlyError();
     let intent = await dependencies.readIntent(search, signal);
+    const broadSearch = !intent.cardName;
     if (signal?.aborted) return [];
     if (intent.minYear !== undefined || intent.maxYear !== undefined) {
         const releaseYears = await dependencies.releaseYears?.();
@@ -150,7 +168,9 @@ async function findDealsBatch(search: string, {
     const query = marketCeiling !== null ? [intent.cardName, typedCollectorNumber ?? intent.sets[0], intent.grader, intent.minGrade].join(" ")
         : exactRawBin ? rawBuyItNowQuery(keywords, intent) : keywords;
     const sourceOptions = {
-        maxResults: SEARCH_SOURCE_PAGE_LIMIT, signal, filters: firstFilters, anyCategory: true,
+        maxResults: SEARCH_SOURCE_PAGE_LIMIT, signal, filters: firstFilters,
+        ...(inventoryScan ? { ccgInventory: true } : { anyCategory: true }),
+        ...(inventoryScan?.freshListings || inventoryScan?.previouslyChecked ? { cacheMode: "refresh" as const, offset: inventoryScan.offset } : {}),
     };
     // Browse can ignore itemEndDate ranges. Bring soon-ending auctions into
     // the bounded page, then validate their actual end dates against the search start.
@@ -164,9 +184,10 @@ async function findDealsBatch(search: string, {
     else if (resume && !cursor || marketCeiling === 0 || firstFilters.maxPrice !== undefined && firstFilters.minPrice > firstFilters.maxPrice)
         firstPage = { listings: [], total: resume?.total ?? 0, skipped: 0, rejections: [] };
     else {
+        inventoryScan?.onStage?.("discovering");
         try { firstPage = await dependencies.search(cursor?.query ?? query, {
             ...sourceOptions, sort: cursor?.sort ?? sourceSort[sourceOrder], ...(cursor && { offset: cursor.offset, filters: cursor.filters }),
-            ...(newOnly || resume ? { keepReserve: true } : {}),
+            ...(newOnly || resume || inventoryScan ? { keepReserve: true } : {}),
         }); }
         catch (error) {
             signal?.throwIfAborted();
@@ -175,6 +196,7 @@ async function findDealsBatch(search: string, {
             firstPage = { listings: [], total: resume.total, skipped: 0, rejections: [] };
         }
     }
+    inventoryScan?.onNextPage?.(firstPage.nextOffset);
     let sourceLimitReached = resume?.sourceLimitReached === true || firstPage.sourceLimitReached === true;
     function retainCursor(page: typeof firstPage, sourceQuery: string, sourceFilters: ListingFilters, sort: DiscoverySourceCursor["sort"]) {
         sourceLimitReached ||= page.sourceLimitReached === true;
@@ -189,7 +211,7 @@ async function findDealsBatch(search: string, {
     const loaded = new Map<string, ListingSummary>();
     const considered = new Set<string>();
     const deferred = new Set<string>();
-    const excluded = new Set([...(newOnly?.excludeIds ?? []), ...(resume?.seenIds ?? [])]);
+    const excluded = new Set([...(newOnly?.excludeIds ?? []), ...(resume?.seenIds ?? []), ...(inventoryScan?.excludeIds ?? [])]);
     const rejections = new Map<string, SourceRejectionReason>();
     const excludedByPrice: ListingSummary[] = [];
     let completeCoverage = true;
@@ -206,12 +228,13 @@ async function findDealsBatch(search: string, {
         marketplaceOrder: sourceOrder, ...(continuation && { continuation }), ...(sourceLimitReached && { sourceLimitReached: true }),
     });
 
-    const canAssess = (listing: ListingSummary) => autoAnalysisBlockReason(listing, asOf) === null;
+    const canAssess = (listing: ListingSummary) => buyerReviewBlock(listing, asOf) === null;
     const admissionPriority = (listing: ListingSummary) => !canAssess(listing) ? 0
         : analysisPriority(listing, targets, asOf).band > 0 ? 2 : 1;
 
     function preliminaryBlock(listing: ListingSummary, pageFilters: ListingFilters): SourceRejectionReason | null {
-        if (newOnly?.gradingWatch && freshListingTime(listing, asOf) === null) return "OUTSIDE_GRADING_WATCH";
+        if (inventoryScan && isSportsTradingCardListing(listing)) return "OTHER_CARD";
+        if ((newOnly?.gradingWatch || inventoryScan?.freshGrading) && freshListingTime(listing, asOf) === null) return "OUTSIDE_GRADING_WATCH";
         if (marketCeiling !== null && !listing.bestOffer && listing.currentPrice !== null && listing.currentPrice > marketCeiling) return "ABOVE_SOLD_CEILING";
         const filtered = screeningBlock(listing, pageFilters, asOf);
         if (filtered) return filtered;
@@ -242,7 +265,7 @@ async function findDealsBatch(search: string, {
                 if (excluded.has(row.id)) previouslySeen++;
             }
             if (considered.has(row.id) || eligible.has(row.id)) continue;
-            const reason = excluded.has(row.id) ? "ALREADY_SEEN" : preliminaryBlock(listing, pageFilters);
+            const reason = excluded.has(row.id) || inventoryScan?.previouslyChecked?.(listing) ? "ALREADY_SEEN" : preliminaryBlock(listing, pageFilters);
             if (reason) {
                 if (!deferred.has(row.id)) rejections.set(row.id, reason);
                 continue;
@@ -260,6 +283,7 @@ async function findDealsBatch(search: string, {
         async function priceBatch() {
             if (!started) { onStart(summary(batch.length)); started = true; }
             signal?.throwIfAborted();
+            inventoryScan?.onStage?.("pricing");
             const priced = await screenPrices(batch);
             // Confident price exclusions do not consume display slots.
             for (const listing of priced) {
@@ -276,7 +300,24 @@ async function findDealsBatch(search: string, {
             }
             batch = [];
         }
+        const prepared: ListingSummary[] = [];
         for (const listing of eligible.values()) {
+            signal?.throwIfAborted();
+            const screened = await screenListingWithoutAi(listing, intent, signal,
+                titleReadings ? async title => titleReadings.get(title)! : dependencies.readTitle);
+            const mismatch = screened.match ?? cardMismatch(screened.screen, intent);
+            const reason = mismatch && mismatch !== "UNCONFIRMED_CRITERIA" ? mismatch : screeningBlock(screened, pageFilters, asOf);
+            if (reason) {
+                considered.add(listing.id); deferred.delete(listing.id);
+                rejections.set(listing.id, reason);
+            } else prepared.push(mismatch ? { ...screened, match: mismatch } : screened);
+        }
+        const ordered = broadSearch ? orderBroadDiscovery(prepared, targets, asOf) : prepared;
+        for (const listing of ordered) {
+            // Broad inventory should reach photo review after one useful batch,
+            // rather than exhaust pricing on hundreds of weak or repeated rows.
+            // The remainder stays server-owned and is screened in later batches.
+            if (broadSearch && matching.length >= DEVELOPMENT_SEARCH_LIMIT) break;
             if (matching.length >= DEVELOPMENT_SEARCH_LIMIT && promising >= minPromising) {
                 // Other raw copies of this exact card share the market lookup.
                 // Compare them before filling the display with the first 50.
@@ -286,15 +327,7 @@ async function findDealsBatch(search: string, {
             signal?.throwIfAborted();
             considered.add(listing.id);
             deferred.delete(listing.id);
-            const screened = await screenListingWithoutAi(listing, intent, signal,
-                titleReadings ? async title => titleReadings.get(title)! : dependencies.readTitle);
-            const mismatch = screened.match ?? cardMismatch(screened.screen, intent);
-            const reason = mismatch && mismatch !== "UNCONFIRMED_CRITERIA" ? mismatch : screeningBlock(screened, pageFilters, asOf);
-            if (reason) {
-                rejections.set(listing.id, reason);
-                continue;
-            }
-            batch.push(mismatch ? { ...screened, match: mismatch } : screened);
+            batch.push(listing);
             // Once display is full, keep looking in the already-fetched page
             // for supported candidates. Price work still shares one allowance.
             const remainingSlots = DEVELOPMENT_SEARCH_LIMIT - matching.length;
@@ -313,11 +346,12 @@ async function findDealsBatch(search: string, {
         const widenForOffers = !moreDirectListings && soldPurchaseCeiling !== undefined && offerCeiling !== null &&
             offerCeiling > soldPurchaseCeiling && offerCeiling >= firstFilters.minPrice;
         let cheaper: { matching: ListingSummary[]; newListings: number } | undefined;
-        if (!resume && filters?.typeFilter === "FIXED_PRICE" && (widenForOffers || moreDirectListings) && promising < MIN_NEWEST_CANDIDATES) {
+        if (!resume && !inventoryScan?.freshGrading && !inventoryScan?.freshListings && filters?.typeFilter === "FIXED_PRICE" && (widenForOffers || moreDirectListings) && promising < MIN_NEWEST_CANDIDATES && !await dependencies.browsePressure?.()) {
             const nextFilters = widenForOffers ? {
                 ...firstFilters, minPrice: Math.max(firstFilters.minPrice, (cents(soldPurchaseCeiling) + 1) / 100), maxPrice: offerCeiling,
             } : firstFilters;
             let cheaperPage: typeof firstPage | undefined;
+            inventoryScan?.onStage?.("discovering");
             try { cheaperPage = await dependencies.search(query, { ...sourceOptions, filters: nextFilters, sort: newOnly ? "newlyListed" : "price", keepReserve: true }); }
             catch (error) {
                 signal?.throwIfAborted();
@@ -342,10 +376,10 @@ async function findDealsBatch(search: string, {
             // candidates. Equal ranks preserve the first page's order.
             const ranked = matching.map(listing => ({ listing, priority: admissionPriority(listing) }));
             ranked.sort((a, b) => b.priority - a.priority || compareAnalysisPriority(a.listing, b.listing, targets, asOf));
-            for (const { listing, priority } of ranked.slice(DEVELOPMENT_SEARCH_LIMIT)) {
+            for (const { listing } of ranked.slice(DEVELOPMENT_SEARCH_LIMIT)) {
                 pending.push(listing);
                 if (!getBudgetContext().searchId) {
-                    if (priority === 0) unresolvedOverflow++;
+                    if (autoAnalysisBlockReason(listing, asOf) !== null) unresolvedOverflow++;
                     onScreenedOverflow({ id: listing.id, reason: autoAnalysisBlockReason(listing, asOf) ?? "DISPLAY_LIMIT" });
                 }
             }
@@ -353,7 +387,8 @@ async function findDealsBatch(search: string, {
         }
         for (const id of deferred) { const listing = loaded.get(id); if (listing) pending.push(listing); }
         const rootSearchId = resume?.rootSearchId ?? getBudgetContext().searchId;
-        if ((pending.length || sources.length || sourceLimitReached) && rootSearchId && /^[0-9a-f-]{36}$/i.test(rootSearchId)) {
+        if (inventoryScan && (pending.length || sources.length || sourceLimitReached)) completeCoverage = false;
+        if (!inventoryScan && (pending.length || sources.length || sourceLimitReached) && rootSearchId && /^[0-9a-f-]{36}$/i.test(rootSearchId)) {
             completeCoverage = false;
             if (sourceBlocked && continuationToken) continuation = { token: continuationToken, searchId: getAiUsageContext().searchId!,
                 pending: pending.length, moreSource: sources.length > 0, blocked: "QUOTA" };
@@ -451,11 +486,31 @@ async function findDealsBatch(search: string, {
     return results;
 }
 
+// The caller's validated hunt already supplies the intent and owns the budget.
+// Independent release scans in that hunt share one price-screening allowance.
+export function createHuntInventoryScanner(signal: AbortSignal, dependencies = defaultSteps) {
+    const createSource = dependencies.priceSource;
+    const stopped = new AbortController();
+    const active = AbortSignal.any([signal, stopped.signal]);
+    let source: ReturnType<typeof createScreeningPriceSource> | undefined;
+    return async (query: string, intent: SearchIntent, filters: ListingFilters, targets: Targets, asOf: number, scan: InventoryScan) => {
+        active.throwIfAborted();
+        let summary: SearchSummary | undefined;
+        const listings = await findDealsBatch(query, { signal: active, filters, targets, asOf, onProgress: scan.onProgress,
+            onStart: value => { summary = value; } }, {
+            ...dependencies, readIntent: async () => intent, releaseYears: async () => intent.releaseYears ?? null,
+            ...(createSource && { priceSource: () => source ??= createSource({ signal: active }) }),
+        }, undefined, scan).catch(error => { stopped.abort(error); throw error; });
+        active.throwIfAborted();
+        if (!summary) throw new Error("The inventory scan stopped before the listing summary finished.");
+        return { listings, summary };
+    };
+}
+
 /** Continuations reuse their original request and allowance; caller-supplied filters cannot widen one. */
 export async function findDeals(search: string, options: SearchOptions = {}, dependencies?: FindSteps): Promise<ListingSummary[]> {
     if (!options.continuation) return findDealsBatch(search, options, dependencies);
-    const { receipt, reused } = await discoveryContinuations.run(options.continuation, getAiUsageContext().searchId, async (state, signal) => {
-        if (search.trim() !== state.request.search.trim()) throw new Error("The saved continuation belongs to a different search.");
+    const { receipt, reused } = await discoveryContinuations.run(options.continuation, getAiUsageContext().searchId, search, async (state, signal) => {
         let summary: SearchSummary | undefined;
         const dispositions: SourceDispositionRow[] = [], overflow: ScreenedOverflowRow[] = [];
         const listings = await withAiUsageContext({ watchBudgetId: state.rootSearchId }, () => findDealsBatch(state.request.search, {

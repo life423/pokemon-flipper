@@ -50,8 +50,12 @@ test("authorizes the requested eBay environment and persists only an encrypted r
     assert.equal(f.requests.length, 1);
     const blob = path.join(f.directory, "sandbox.enc");
     assert.equal((await fs.readFile(blob)).includes(Buffer.from("test-refresh")), false);
-    assert.equal((await fs.stat(blob)).mode & 0o777, 0o600);
-    assert.equal((await fs.stat(f.keyFile)).mode & 0o777, 0o600);
+    // Windows does not expose POSIX owner-only mode bits through stat/chmod.
+    // Credential encryption and restart/recovery are checked on every platform.
+    if (process.platform !== "win32") {
+        assert.equal((await fs.stat(blob)).mode & 0o777, 0o600);
+        assert.equal((await fs.stat(f.keyFile)).mode & 0o777, 0o600);
+    }
     assert.deepEqual(await f.service.status("production"), { configured: true, connected: false, missing: [] });
     const restarted = createBuyerConnection(f.options);
     assert.equal(await restarted.connectionId("sandbox"), id);

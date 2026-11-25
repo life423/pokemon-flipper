@@ -74,17 +74,19 @@ export function readTitleByRules(title: string, knownSetNames: readonly string[]
     // does not claim that an unknown phrase is a canonical Pokemon identity.
     const name = withoutAccompanyingCustomHolder(stripListingNameBoilerplate(withoutRelease, title, set))
         .replace(matchedSet?.pattern ?? /$^/, " ")
-        .replace(number ? new RegExp(number.split("/").map(escapePattern).join("\\s*/\\s*"), "ig") : /$^/, " ")
+        .replace(number ? new RegExp(`\\b${number.split("/").map(escapePattern).join("\\s*/\\s*")}\\b`, "ig") : /$^/, " ")
         .replace(/\b(?:psa|cgc|bgs|sgc|tag)\s*(?:[-–—]\s*)?(?:(?:gem|mint|mt|nm|near|ex|excellent|vg|very|good|poor|fair|pristine|black|label)[ -]+){0,5}(?:10|[1-9](?:\.5)?)?\b/ig, " ")
         .replace(/\b(?:pokemon|pok[eé]mon|tcg|cards?|english|eng|en|holo(?:graphic)?|non[ -]?holo|reverse|rare|ultra|secret|unlimited|shadowless|first edition|1st edition|wotc|vintage|raw|ungraded|graded|near mint|lightly played|moderately played|heavily played|damaged|mint|nm|lp|mp|hp|dmg|excellent|condition|collection|collectible|collectibles|promos?|with|from|the|for|please|show me|find me|looking for|i want|some|any|all)\b/ig, " ")
-        .replace(/\b(?:19|20)\d{2}\b|\b\d+(?:\.\d+)?\b|[#|,;:()[\]]/g, " ")
+        .replace(/\b(?:19|20)\d{2}\b|\b\d+(?:\.\d+)?\b|[#|,;:()[\]]/g,
+            token => number?.includes("/") && set && /^0[1-9]$/.test(token) ? token : " ")
         .replace(/(?:^|\s)[-–—/]+(?=\s|$)/g, " ")
         .replace(/\s+/g, " ").trim();
     const nameWords = name.split(" ");
     // Numbered printed names such as Origin Forme Dialga VSTAR need four
-    // words. Keep unnumbered prose conservative; the catalog still decides
-    // whether this complete literal name and number identify a market.
-    const cardName = !excluded && name && (nameWords.length <= 3 || nameWords.length === 4 && number !== null) && /^[a-z][a-z '.-]*$/i.test(name) && !/\b(?:would|like|best|better|higher|above|below|under|over|between|holos|deals?|search|selling|sale|lot|lots)\b/i.test(name) ? name : null;
+    // words. Porygon2's digit is part of its printed name. Keep this exception
+    // narrow and preserve the literal name for the exact catalog check.
+    const nameShape = name.replace(/\b(porygon)2\b/gi, "$1").replace(/ 0[1-9]$/, "");
+    const cardName = !excluded && name && (nameWords.length <= 3 || nameWords.length === 4 && number !== null) && /^[a-z][a-z '.-]*$/i.test(nameShape) && !/\b(?:would|like|best|better|higher|above|below|under|over|between|holos|deals?|search|selling|sale|lot|lots)\b/i.test(name) ? name : null;
     return { kind: excluded ? "NOT_A_CARD" : null, cardName, set, cardNumber: number, language: language === "OTHER" ? "Other" : language === "ENGLISH" ? "English" : null,
         grader: attributes.grader, grade: attributes.grade === null ? null : String(attributes.grade), condition };
 }

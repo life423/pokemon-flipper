@@ -9,13 +9,13 @@ import { aiInputHash, aiSpending, aiSpendingFailure, AiSpendingError, createAiSp
 import { withAiDispatchSignal, withAiUsageContext } from "../../server/ai/usage-context.ts";
 import { evaluationFailure } from "../../server/analysis/failure.ts";
 import { searchFailureMessage } from "../../server/deals/errors.ts";
-import { runStructured } from "../../server/ai/openai.ts";
+import { runStructured, StructuredOutputLimitError } from "../../server/ai/openai.ts";
 
 const body = { model: "gpt-5.6-luna", service_tier: "default", prompt_cache_options: { mode: "explicit", ttl: "30m" }, max_output_tokens: 100,
     input: [{ role: "user", content: [{ type: "input_text", text: "Offline bounded fixture" }] }] };
 const proof = async (request: unknown) => ({ inputHash: aiInputHash(request), inputTokens: 100 });
 const book = async (directory: string) => JSON.parse(await fs.readFile(path.join(directory, "ai-spending-ledger.json"), "utf8"));
-async function fixture(cap = 0.001) {
+async function fixture(cap: number | null = 0.001) {
     const directory = await fs.mkdtemp(path.join(isolatedDataDir, "budget-"));
     const guard = createAiSpendingGuard({ directory, preflight: proof });
     await guard.configure({ paused: false, perSearchCapUsd: cap });
@@ -131,7 +131,7 @@ test("newer Luna support retains the exact model, tier and two-cent input/output
     const request = { ...body, model: "gpt-6-luna" };
     for (const invalid of [{ ...request, model: "gpt-6-luna-preview" }, { ...request, service_tier: "priority" },
         { ...request, prompt_cache_options: { mode: "explicit", ttl: "12h" } }]) {
-        await assert.rejects(guard.reserve(invalid, context), denied("AI_BUDGET"));
+        await assert.rejects(guard.reserve(invalid, context), denied("AI_INPUT_PREFLIGHT"));
     }
     await assert.rejects(guard.reserve({ ...request, max_output_tokens: 40000 }, context), /would exceed the search's remaining AI budget/,
         "the maximum output plus exact input must fit, even when output alone equals two cents");
@@ -147,7 +147,7 @@ test("unattributed, unknown model/tier/cache, tool charges and unproven inputs f
     await assert.rejects(guard.reserve(body, {}), /valid search ID/);
     for (const request of [{ ...body, model: "unknown" }, { ...body, service_tier: "priority" }, { ...body, prompt_cache_retention: "12h" },
         { ...body, max_output_tokens: undefined }, { ...body, tools: [{ type: "web_search" }] }, { ...body, previous_response_id: "resp_old" }]) {
-        await assert.rejects(guard.reserve(request, context), denied("AI_BUDGET"));
+        await assert.rejects(guard.reserve(request, context), denied("AI_INPUT_PREFLIGHT"));
     }
     const wrongProof = createAiSpendingGuard({ directory, preflight: async () => ({ inputHash: "unrelated request", inputTokens: 1 }) });
     await assert.rejects(wrongProof.reserve(body, context), /does not match/);
@@ -167,7 +167,7 @@ test("only verified 30-minute cache policies are admitted without retention or b
         { ...body, prompt_cache_retention: "24h" },
         { ...body, input: [{ role: "user", content: [{ type: "input_text", text: "Offline", cache_control: { ttl: "12h" } }] }] },
         { ...body, input: [{ role: "user", content: "Offline", cache_control: { ttl: "12h" } }] },
-    ]) await assert.rejects(guard.reserve(request, context), denied("AI_BUDGET"));
+    ]) await assert.rejects(guard.reserve(request, context), denied("AI_INPUT_PREFLIGHT"));
     assert.deepEqual((await book(directory)).searches, {});
     assert.ok(await guard.reserve({ ...body, prompt_cache_options: { mode: "implicit", ttl: "30m" } }, context));
 });
@@ -239,6 +239,56 @@ test("the real SDK sends zero requests when persistent pause/budget blocks, with
     assert.equal(searchFailureMessage(wrapped), "Offline capped search");
 });
 
+test("the SDK distinguishes an output limit from filtering or refusal after settling each paid response", async t => {
+    const previous = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = "offline-structured-limit-test";
+    t.after(() => { if (previous === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = previous; });
+    await aiSpending.configure({ paused: false, perSearchCapUsd: null });
+
+    const context = { searchId: randomUUID() };
+    const variants = [
+        { reason: "max_output_tokens", output: [{ type: "output_text", text: '{"partial":' }] },
+        { reason: "content_filter", output: [] },
+        { reason: "max_output_tokens", output: [{ type: "refusal", refusal: "Offline refusal fixture" }] },
+    ];
+    let counts = 0;
+    let requests = 0;
+    t.mock.method(globalThis, "fetch", async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : input.toString());
+        assert.equal(url.origin, "https://api.openai.com");
+        if (url.pathname === "/v1/responses/input_tokens") {
+            counts++;
+            return Response.json({ object: "response.input_tokens", input_tokens: 6196 });
+        }
+        assert.equal(url.pathname, "/v1/responses");
+        const body = JSON.parse(String(init?.body));
+        assert.equal(body.max_output_tokens, 160);
+        const variant = variants[requests++];
+        assert.ok(variant, "structured failures never authorize a generation retry");
+        return Response.json({ id: `offline-output-limit-${requests}`, object: "response", model: body.model,
+            status: "incomplete", incomplete_details: { reason: variant.reason }, service_tier: "default",
+            output: [{ type: "message", role: "assistant", content: variant.output }],
+            usage: { input_tokens: 6196, output_tokens: 160, input_tokens_details: { cached_tokens: 0, cache_write_tokens: 0 } } });
+    });
+    const request = (example: number) => withAiUsageContext(context, () => runStructured({ step: "Offline output limit",
+        prompt: `Offline case ${example}`, photos: [], schemaName: "offline_output_limit", bounded: true, maxOutputTokens: 160, model: "gpt-6-luna",
+        schema: { type: "object", properties: {}, additionalProperties: false } }));
+
+    await assert.rejects(request(0), error => {
+        assert.ok(error instanceof StructuredOutputLimitError);
+        assert.deepEqual(error.usage, { inputTokens: 6196, outputTokens: 160 });
+        return true;
+    });
+    await assert.rejects(request(1), error => error instanceof Error && !(error instanceof StructuredOutputLimitError) && /content_filter/.test(error.message));
+    await assert.rejects(request(2), error => error instanceof Error && !(error instanceof StructuredOutputLimitError));
+    assert.equal(counts, 3);
+    assert.equal(requests, 3);
+    const settled = await aiSpending.summary(context.searchId);
+    assert.equal(settled.settledUsd, 0.0020988);
+    assert.equal(settled.heldUsd, 0);
+    assert.equal(settled.unsettledAttempts, 0);
+});
+
 
 test("the confirmed two-cent cap rejects current full-photo output before any preflight", async () => {
     const { directory, context } = await fixture(0.02); let counts = 0;
@@ -253,12 +303,38 @@ test("corrupt and missing initialized ledgers are retained and never recreated t
     const { directory, guard, context } = await fixture();
     const file = path.join(directory, "ai-spending-ledger.json");
     await fs.writeFile(file, "corrupt ledger");
-    await assert.rejects(guard.reserve(body, context), denied("AI_BUDGET"));
+    await assert.rejects(guard.reserve(body, context), denied("AI_ACCOUNTING"));
     assert.equal(await fs.readFile(file, "utf8"), "corrupt ledger");
     await fs.unlink(file);
     await assert.rejects(guard.reserve(body, context), /missing or invalid/);
     await assert.rejects(guard.configure({ paused: false, perSearchCapUsd: 0.02 }), /missing or invalid/);
     await assert.rejects(fs.access(file));
+});
+
+test("an uncapped ledger write outage reports accounting, preserves reservations and accepts a later same-search retry", async t => {
+    const { directory, guard, context } = await fixture(null);
+    await guard.reserve(body, context);
+    const ledger = path.join(directory, "ai-spending-ledger.json");
+    const before = await fs.readFile(ledger, "utf8");
+    const rename = fs.rename;
+    const fault = t.mock.method(fs, "rename", async (source, destination) => {
+        if (destination === ledger) throw Object.assign(new Error("Temporary Windows write error"), { code: "EIO" });
+        return rename(source, destination);
+    });
+    await assert.rejects(guard.reserve(body, context), error => {
+        const failure = evaluationFailure(error);
+        assert.deepEqual(failure, { status: 503, code: "AI_ACCOUNTING", scope: "search", retryable: false,
+            error: "Paid AI could not durably update its spending ledger. No new work is authorized." });
+        return true;
+    });
+    assert.equal(await fs.readFile(ledger, "utf8"), before);
+    assert.equal((await guard.status()).perSearchCapUsd, null);
+    fault.mock.restore();
+    await guard.reserve(body, context);
+    const original = JSON.parse(before).searches[context.searchId].attempts;
+    const resumed = (await book(directory)).searches[context.searchId].attempts;
+    assert.equal(resumed.length, 2);
+    assert.deepEqual(resumed.slice(0, 1), original);
 });
 
 
@@ -358,6 +434,6 @@ test("one bounded web search reserves retrieved context and the tool fee, then s
     const { guard: low, context: small } = await fixture(0.012);
     await assert.rejects(low.reserve(request, small), denied("AI_BUDGET"));
     for (const override of [{ max_tool_calls: 2 }, { tool_choice: "auto" }, { tools: [{ type: "web_search" }] }]) {
-        await assert.rejects(guard.reserve({ ...request, ...override }, context), denied("AI_BUDGET"));
+        await assert.rejects(guard.reserve({ ...request, ...override }, context), denied("AI_INPUT_PREFLIGHT"));
     }
 });

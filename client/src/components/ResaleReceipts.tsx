@@ -59,7 +59,7 @@ export function ResaleReceiptPanel({ listing, state, now }: { listing: ListingSu
     return <details className={styles.panel}>
         <summary>Compare with your sales on another marketplace</summary>
         {failed ? <p role="alert">Saved sales could not be read in this browser.</p> : <>
-            <p>Record a settled US-dollar fixed-price sale of this exact English slab. Matching listings can reuse it in this browser.</p>
+            <p>Record a settled US-dollar fixed-price sale of this exact English slab.</p>
             <strong>{identity.name} {identity.cardNumber} · {identity.set} · {identity.printingLabel || identity.printing} · {identity.finish.replaceAll("_", " ")} · {evaluation.slab?.grader} {evaluation.slab?.grade}</strong>
             {comparisons.map(({ receipt, cost, proceeds, margin }) => <p key={receipt.venue}>
                 {receipt.venue} · {dollars(proceeds)} net on {receipt.soldOn} · {dollars(cost)} to buy here · <strong>{dollars(margin)} if repeated</strong>

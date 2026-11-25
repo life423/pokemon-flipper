@@ -6,7 +6,7 @@ import styles from "./DecisionSummary.module.css";
 import { priceEvidenceGap } from "../../../shared/money/price-evidence.ts";
 import { gradeProbabilities } from "../../../shared/money/underwriting.ts";
 
-export function GradingComparison({ evaluation, expanded = false }: { evaluation: Evaluation; expanded?: boolean }) {
+export function GradingComparison({ evaluation, expanded = false, verifiedPurchase = false }: { evaluation: Evaluation; expanded?: boolean; verifiedPurchase?: boolean }) {
     const routes = gradingRoutes(evaluation);
     if (!routes.length) return null;
     const estimate = displayedRawGrade(evaluation);
@@ -30,7 +30,9 @@ export function GradingComparison({ evaluation, expanded = false }: { evaluation
             <p className={styles.note}>{range?.likely != null ? `Estimated grade ${range.likely}` : range ? "Likely grade unknown" : "Awaiting usable photo evidence"}</p>
             <p className={styles.routeValue}>{priced ? `Graded sale estimate ${dollars(priced.expectedSale)}` : "Price unavailable"}</p>
             {priced && <p className={`${styles.note} ${shippingPending ? "" : priced.profit < 0 ? styles.loss : styles.gain}`}>{shippingPending ? "Modeled" : "Estimated"} {priced.profit < 0 ? "loss" : "net profit"} {dollars(Math.abs(priced.profit))} {evaluation.listing.buyingOption === "AUCTION" ? "at current bid" : "at asking price"}</p>}
-            {expanded && <p className={styles.note}>{priced ? `Grading + shipping ${dollars(priced.fixedCosts)} · ${shippingPending ? "provisional " : ""}item limit ${dollars(priced.maxBid)}` : referenceOnly ? "The photos need to support a grade before it can be used for pricing." : reason}</p>}
+            {expanded && <p className={styles.note}>{priced ? <>Grading + shipping {dollars(priced.fixedCosts)}
+                {(!verifiedPurchase || evaluation.underwriting?.best?.grader === grader) && ` · ${shippingPending ? "provisional " : ""}item limit ${dollars(priced.maxBid)}`}</>
+                : referenceOnly ? "The photos need to support a grade before it can be used for pricing." : reason}</p>}
         </div>)}</div>
         {evaluation.underwriting?.best?.path === "RAW" && <p className={styles.note}>Separate grading scenarios. {shippingPending ? "Raw resale assumes purchase shipping." : priceEvidenceGap(evaluation) ? "Raw resale reference shown; a purchase strategy is not confirmed." : "Selected strategy: sell raw."}</p>}
     </section>;

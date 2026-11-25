@@ -13,3 +13,9 @@ export interface ProviderUsageSnapshot {
     windowMinutes: number;
     warning: "LOW" | "FAST" | "LOW_AND_FAST" | null;
 }
+
+// Begin pacing before the 5% burst warning. A day has 96 fifteen-minute windows.
+export function shouldPaceBrowse(usage: ProviderUsageSnapshot): boolean {
+    return usage.provider === "EBAY" && (usage.warning !== null ||
+        (usage.usedInWindow ?? 0) >= Math.ceil(usage.limit / 96));
+}

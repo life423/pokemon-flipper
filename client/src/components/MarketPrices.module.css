@@ -1,0 +1,11 @@
+.prices {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(105px, 100%), 1fr));
+    gap: var(--space-2);
+    padding-block: var(--space-2);
+    border-block: 1px solid var(--border);
+    margin-block: var(--space-2);
+}
+.prices dt, .prices .detail, .empty { color: var(--text-muted); font-size: var(--text-xs); }
+.prices dd { margin: 0; font-weight: 650; font-variant-numeric: tabular-nums; }
+.prices .detail { font-weight: 400; }

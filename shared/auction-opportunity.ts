@@ -1,4 +1,5 @@
 import { withinOpportunityWindow } from "./auction-window.ts";
+import { releaseIssue } from "./base-set-release.ts";
 import { cardLanguageStatus } from "./card-language.ts";
 import { CONDITION_NAMES, isRawCondition, sellerCreaseOverridesCondition, type RawCondition } from "./conditions.ts";
 import { finishClaim } from "./finish.ts";
@@ -16,7 +17,7 @@ import { BEST_BUY_TERMS_MAX_AGE_MS } from "./search-diagnostic.ts";
 import { verifiedSlabMarketKey } from "./slab-market.ts";
 import { soldMarketPrice } from "./sold-evidence.ts";
 import { observedSalesActivity, SALES_ACTIVITY_MS } from "./sales-activity.ts";
-import type { CompSummary, Evaluation, Grader, PathKind, Targets } from "./types.ts";
+import type { CompSummary, Evaluation, Grader, PathKind, RawPrice, Targets } from "./types.ts";
 
 const day = 86_400_000;
 export { withinOpportunityWindow, AUCTION_OPPORTUNITY_HOURS } from "./auction-window.ts";
@@ -40,7 +41,7 @@ interface GradeOutcome { grader: Grader; likelyGrade: number; lowerGrade: number
 export interface AuctionOpportunity {
     listingId: string; endsAt: string; checkedAt: string; validUntil: number;
     status: "BID" | "PASS" | "WATCH"; currentPrice: number; marketValue: number; sales30: number; sales60?: number; sampleSize: number;
-    marketLabel: string; nextBid: number | null; nextTotal: number | null; maxBid: number | null; profitAtNext: number | null;
+    marketLabel: string; marketBasis?: RawPrice["basis"]; nextBid: number | null; nextTotal: number | null; maxBid: number | null; profitAtNext: number | null;
     route: string | null; routeKind: PathKind | null; exitSales30: number; exitSales60?: number; grading: GradeOutcome | null; reason: string;
 }
 
@@ -70,7 +71,7 @@ function marketSales(summary: CompSummary | undefined, now: number, condition?: 
         sale.photoCondition === condition && Boolean(sale.conditionEvidence?.length)), now,
         { maxDays: summary.windowDays === 180 ? 180 : 90, slab: !condition });
     const recent = activity.observations.map(s => s.at).filter(at => now - at <= SALES_ACTIVITY_MS);
-    return distinct.size ? { price, count: distinct.size, recent, sales30: recent.filter(at => now - at <= 30 * day).length,
+    return distinct.size ? { price, basis: "EBAY_SOLD" as const, count: distinct.size, recent, sales30: recent.filter(at => now - at <= 30 * day).length,
         saleIds: new Set(distinct.keys()) } : null;
 }
 
@@ -93,14 +94,14 @@ function asListedMarket(e: Evaluation, now: number) {
         p?.status !== "PRICED" ||
         !matchesFinish(p.variant, id.finish) || p.finish && p.finish !== id.finish) return null;
     const row = p.prices?.find(row => row.condition === wear && isUsableRawPrice(row));
-    if (row?.basis?.startsWith("TCGPLAYER_")) {
+    if (row?.basis === "TCGPLAYER_OFFERS" || row?.basis === "TCGPLAYER_MARKET") {
         const physical = row.comps ?? p.ebayComps?.find(s => s.grader === "RAW" && s.grade === wear && s.count > 0);
         const seller = p.sellerConditionComps;
         const summary = seller?.grader === "RAW" && seller.grade === wear && seller.count > 0 ? seller
             : physical?.grader === "RAW" && physical.grade === wear ? physical : undefined;
         const activity = observedSalesActivity((summary?.activitySales ?? summary?.sales)?.filter(sale => summary !== physical ||
             sale.photoCondition === wear && Boolean(sale.conditionEvidence?.length)) ?? [], now);
-        return { price: row.price, count: activity.observations.length, recent: activity.observations
+        return { price: row.price, basis: row.basis, count: activity.observations.length, recent: activity.observations
             .filter(sale => now - sale.at <= SALES_ACTIVITY_MS).map(sale => sale.at), sales30: activity.sales30,
             saleIds: new Set(activity.observations.map(sale => sale.id)), label: CONDITION_NAMES[wear] + " raw", kind: "RAW" as const };
     }
@@ -160,6 +161,7 @@ export function affordableBidLimit(limit: number, shipping: number, budget: numb
 }
 
 export function currentAuctionMarket(e: Evaluation, now: number) {
+    if (e.identity?.notThisCard || releaseIssue(e)) return null;
     const l = e.listing, price = l.price;
     if (l.buyingOption !== "AUCTION" || l.availability !== "ACTIVE" || !withinOpportunityWindow(l.endTime, now) ||
         !currentQuote(l.termsCheckedAt, now) || price == null || !Number.isFinite(price) || price <= 0 || !currentPriceEvidence(e, now) ||
@@ -190,13 +192,13 @@ export function auctionOpportunity(e: Evaluation, targets: Targets, now = Date.n
         "Watch for a fresh minimum bid from eBay before bidding.";
     else if (total === null) reason = "Wait for a destination shipping quote to calculate the delivered cost.";
     else if (route) reason = "Wait. The condition or resale checks for this copy do not support a bid.";
-    else reason = "Wait. The sale comparisons establish the card’s market value, but the available evidence does not support a profitable bid limit.";
+    else reason = "Wait. The matched market estimate is available. The evidence does not support a profitable bid limit.";
     const validity = [Date.parse(l.endTime!), Date.parse(l.termsCheckedAt!) + BEST_BUY_TERMS_MAX_AGE_MS,
         Date.parse(e.pricesCheckedAt!) + maxPriceEvidenceAge(e)];
     if (next !== null) validity.push(Date.parse(l.auctionQuote!.checkedAt) + BEST_BUY_TERMS_MAX_AGE_MS);
     if (status === "BID") validity.push(route.expires);
     return { listingId: l.id, endsAt: l.endTime!, checkedAt: l.termsCheckedAt!, validUntil: Math.min(...validity), status, currentPrice: price,
-        marketValue: market.price, marketLabel: market.label, sampleSize: market.count, sales30: market.sales30, sales60: market.recent.length,
+        marketValue: market.price, marketLabel: market.label, marketBasis: market.basis, sampleSize: market.count, sales30: market.sales30, sales60: market.recent.length,
         nextBid: next, nextTotal: total, maxBid: route?.max ?? null, profitAtNext: total == null ? null : route?.profit ?? null,
         route: route?.label ?? null, routeKind: route?.kind ?? null,
         exitSales30: route?.recent.filter(at => now - at <= 30 * day).length ?? 0, exitSales60: route?.recent.length ?? 0,

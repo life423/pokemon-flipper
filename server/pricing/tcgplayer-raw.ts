@@ -4,7 +4,7 @@ import { readyForPricing } from '../../shared/identity.ts';
 import { money } from '../../shared/money/cents.ts';
 import { median } from '../../shared/sold-evidence.ts';
 import type { Identity, RawPrice, TcgplayerRawOffer } from '../../shared/types.ts';
-import { sameCatalogName } from '../identity/catalog-name.ts';
+import { sameNumberedCatalogName } from '../identity/catalog-name.ts';
 import { finishOfVariant, mapVariantPrintings, sameSetFamily } from '../identity/card-identity.ts';
 import { storageFailure } from '../lib/storage-failure.ts';
 import { PriceResearchBudgetError } from './research-budget.ts';
@@ -25,7 +25,9 @@ export async function tcgplayerRawPrice(card: PricedCard | null, identity: Ident
     signal?.throwIfAborted();
     if (!readyForPricing(identity) || !identity.name || !isRawCondition(condition) || !card) return null;
     const selected = variantFor(card, identity).variant;
-    if (!selected) return null;
+    if (!selected || !sameSetFamily(selected.setName, identity.set) || !sameCardNumber(card.cardNumber, identity.cardNumber) ||
+        !sameNumberedCatalogName(card.name, identity.name, selected.setName, card.cardNumber) ||
+        identity.recordId != null && String(identity.recordId) !== String(selected.recordId)) return null;
     // TCGplayer has no separate Mint bucket. Use its Near Mint competition for
     // an observed Mint card rather than inventing a higher market.
     const marketCondition = condition === 'MINT' ? 'Near Mint' : CONDITION_NAMES[condition];
@@ -36,8 +38,9 @@ export async function tcgplayerRawPrice(card: PricedCard | null, identity: Ident
         const detail = await fetchMarket(selected.recordId);
         signal?.throwIfAborted();
         const body = detail?.data && !Array.isArray(detail.data) ? detail.data : detail;
-        if (String(body?.id) === String(selected.recordId) && sameCatalogName(body?.name, identity.name) &&
-            sameSetFamily(body?.set?.name, identity.set) && sameCardNumber(body?.total_set_number ? `${body.number}/${body.total_set_number}` : body?.number, identity.cardNumber)) {
+        const number = body?.total_set_number ? `${body.number}/${body.total_set_number}` : body?.number;
+        if (String(body?.id) === String(selected.recordId) && sameSetFamily(body?.set?.name, identity.set) && sameCardNumber(number, identity.cardNumber) &&
+            sameNumberedCatalogName(body?.name, identity.name, body?.set?.name, number)) {
             const values = (Array.isArray(body.prices) ? body.prices : []).filter((row: any) =>
                 row?.source === 'tcgplayer' && row.currency === 'USD' && key(text(row.condition)) === key(marketCondition) &&
                 labelMatches(text(row.variant)) && positive(row.market_price));

@@ -55,7 +55,7 @@ export function runCollectorGuide(id: string, signal: AbortSignal): Promise<Coll
         const risk = Boolean(listing.concerns?.length || seller?.feedbackScore != null && seller.feedbackScore < 10 ||
             seller?.feedbackPercentage != null && seller.feedbackPercentage < 98);
         const decision = compared && premium <= 0 && checked.has("check_label") && !risk ? "BUY" : "WAIT";
-        let reason = "The saved checks did not establish both the purchase total and a matching resale market.";
+        let reason = "The checks did not establish both the purchase total and a matching resale market.";
         if (compared) {
             if (premium > 0) reason = `The purchase total is ${dollars(premium)} above the matched sold estimate. Look for a copy at ${dollars(estimate)} or less including shipping and tax.`;
             else if (risk) reason = "The saved seller or holder concerns warrant another look before buying this copy.";

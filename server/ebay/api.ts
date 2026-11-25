@@ -3,16 +3,15 @@
 import { createHash } from "node:crypto";
 import { fetchJson, ProviderError } from "../lib/http.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
+import { browsePressure } from "../lib/provider-usage.ts";
+import { paceCurrentBrowse } from "./daily-budget.ts";
 import { reserveBrowseRequest } from "./usage.ts";
 import { requireBrowseSearchId, reserveSearchBrowseRequest } from "./search-budget.ts";
 import { requireLiveProvider } from "../lib/saved-provider-evidence.ts";
+import { configuredShippingZip } from "./shipping-destination.ts";
+export { configuredShippingZip } from "./shipping-destination.ts";
 
 const EBAY_API = "https://api.ebay.com";
-
-export function configuredShippingZip(): string | null {
-    const zip = process.env.EBAY_SHIP_TO_ZIP?.trim();
-    return zip && /^\d{5}(?:-\d{4})?$/.test(zip) ? zip : null;
-}
 
 type EbayEnvironment = "production" | "sandbox";
 const cachedTokens = new Map<EbayEnvironment, { token: string; expiresAt: number; fingerprint: string }>();
@@ -87,7 +86,7 @@ async function requestApplicationToken(environment: EbayEnvironment, credentials
     return token;
 }
 
-export async function ebayGet<T>(path: string, { signal, keepReserve = false }: { signal?: AbortSignal; keepReserve?: boolean } = {}): Promise<T> {
+export async function ebayGet<T>(path: string, { signal }: { signal?: AbortSignal; keepReserve?: boolean } = {}): Promise<T> {
     signal?.throwIfAborted();
     requireLiveProvider("EBAY");
     if (path.startsWith("/buy/browse/")) requireBrowseSearchId();
@@ -105,7 +104,11 @@ export async function ebayGet<T>(path: string, { signal, keepReserve = false }: 
     const zip = configuredShippingZip();
     if (zip) headers["X-EBAY-C-ENDUSERCTX"] = `contextualLocation=${encodeURIComponent(`country=US,zip=${zip}`)}`;
 
-    if (path.startsWith("/buy/browse/")) await reserveSearchBrowseRequest(() => reserveBrowseRequest(keepReserve), signal);
+    if (path.startsWith("/buy/browse/")) {
+        const pressure = await browsePressure();
+        if (pressure) await paceCurrentBrowse(pressure, signal);
+        await reserveSearchBrowseRequest(() => reserveBrowseRequest(signal), signal);
+    }
     signal?.throwIfAborted();
     const { response, body: data } = await fetchJson(`${EBAY_API}${path}`, { headers, signal }, { service: "eBay" });
 

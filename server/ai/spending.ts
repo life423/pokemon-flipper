@@ -1,16 +1,24 @@
 import { isBoundedPriceSearch, WEB_SEARCH_CONTEXT_BOUND, WEB_SEARCH_FEE_NANO_USD } from "./web-search-policy.ts";
 import fs from "node:fs/promises";
+import { fileLeaseBusy } from "../lib/file-lease.ts";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { DATA_DIR } from "../lib/paths.ts";
+import { replaceAtomic, syncDirectory } from "../lib/atomic-json.ts";
 import { getAiDispatchSignal, type AiUsageContext } from "./usage-context.ts";
 import { aiInputHash, createAiInputPreflight, verifiedCacheOptions, type AiInputProof } from "./input-preflight.ts";
 export { aiInputHash } from "./input-preflight.ts";
 export type { AiInputProof } from "./input-preflight.ts";
 
+const AI_GUARD_CODES = ["AI_PAUSED", "AI_BUDGET", "AI_EVIDENCE_HELD", "AI_ACCOUNTING", "AI_INPUT_PREFLIGHT"] as const;
+type AiGuardCode = typeof AI_GUARD_CODES[number];
 export class AiSpendingError extends Error {
-    constructor(readonly code: "AI_PAUSED" | "AI_BUDGET" | "AI_EVIDENCE_HELD", message: string, options?: ErrorOptions) { super(message, options); }
+    readonly scope?: "search" | "listing";
+    constructor(readonly code: AiGuardCode, message: string, options?: ErrorOptions & { scope?: "search" | "listing" }) {
+        super(message, options);
+        this.scope = options?.scope;
+    }
 }
 export class AiSearchAllowanceError extends AiSpendingError {
     constructor(message: string) { super("AI_BUDGET", message); }
@@ -19,10 +27,12 @@ export function aiSpendingFailure(error: unknown): AiSpendingError | null {
     const seen = new Set<unknown>();
     for (let current = error; current && typeof current === "object" && !seen.has(current);) {
         seen.add(current);
-        const value = current as { code?: unknown; message?: unknown; cause?: unknown };
-        if (value.code === "AI_PAUSED" || value.code === "AI_BUDGET" || value.code === "AI_EVIDENCE_HELD") return current instanceof AiSpendingError ? current
-            : new AiSpendingError(value.code, typeof value.message === "string" ? value.message : value.code === "AI_EVIDENCE_HELD"
-                ? "A previous AI assessment for this evidence is still unresolved." : "Paid AI is paused by the local spending guard.");
+        const value = current as { code?: unknown; message?: unknown; cause?: unknown; scope?: unknown };
+        const code = AI_GUARD_CODES.find(code => code === value.code);
+        if (code) return current instanceof AiSpendingError ? current
+            : new AiSpendingError(code, typeof value.message === "string" ? value.message : code === "AI_EVIDENCE_HELD"
+                ? "A previous AI assessment for this evidence is still unresolved." : "The local AI guard stopped this request.",
+                { scope: value.scope === "listing" || value.scope === "search" ? value.scope : undefined });
         current = value.cause;
     }
     return null;
@@ -54,8 +64,12 @@ const RATES: Record<string, { input: number; cached: number; write: number; outp
     "gpt-6-luna": { input: 100, cached: 10, write: 125, output: 500 },
 };
 const count = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-const budgetMessage = (message: string) => `${message} Cached results and screened candidates remain available.`;
-const fail = (message: string, cause?: unknown): never => { throw new AiSpendingError("AI_BUDGET", budgetMessage(message), cause === undefined ? undefined : { cause }); };
+const fail = (message: string, cause?: unknown): never => {
+    throw new AiSpendingError("AI_ACCOUNTING", message, { cause, scope: "search" });
+};
+const inputFailure = (message: string, scope: "search" | "listing" = "listing"): never => {
+    throw new AiSpendingError("AI_INPUT_PREFLIGHT", message, { scope });
+};
 
 async function readJson(file: string): Promise<any | null> {
     try { return JSON.parse(await fs.readFile(file, "utf8")); }
@@ -67,9 +81,8 @@ async function durableJson(file: string, value: unknown) {
     try {
         handle = await fs.open(temporary, "wx"); await handle.writeFile(JSON.stringify(value) + "\n", "utf8");
         await handle.sync(); await handle.close(); handle = undefined;
-        await fs.rename(temporary, file);
-        const directory = await fs.open(path.dirname(file), "r");
-        try { await directory.sync(); } finally { await directory.close(); }
+        await replaceAtomic(temporary, file);
+        await syncDirectory(path.dirname(file));
     } finally { await handle?.close().catch(() => {}); await fs.rm(temporary, { force: true }).catch(() => {}); }
 }
 function capInNanoUsd(value: unknown): number {
@@ -111,7 +124,7 @@ export function createAiSpendingGuard({ directory = DATA_DIR, preflight }: Optio
         for (let attempt = 0; ; attempt++) {
             try { lock = await fs.open(lockFile, "wx"); break; }
             catch (error) {
-                if ((error as NodeJS.ErrnoException).code !== "EEXIST") return fail("Paid AI cannot secure its spending ledger.", error);
+                if (!fileLeaseBusy(error)) return fail("Paid AI cannot secure its spending ledger.", error);
                 // Never steal a possibly-live lock. A crash while holding the
                 // lock fails closed for inspection instead of resetting spend.
                 if (attempt >= 80) return fail("Paid AI spending is locked or was interrupted. No paid request was sent; inspect the retained ledger and lock.");
@@ -138,7 +151,7 @@ export function createAiSpendingGuard({ directory = DATA_DIR, preflight }: Optio
             if (!value && await readJson(ledgerFile) !== null) return { enabled: true, configured: false, paused: true, perSearchCapUsd: null,
                 pauseReason: "The initialized AI spending control is missing; paid work remains blocked and its ledger was kept." };
             if (!value) return { enabled: true, configured: false, paused: true, perSearchCapUsd: AI_SEARCH_HARD_CAP_USD,
-                pauseReason: "Paid AI is paused because its persistent spending guard is not configured. Cached results and screened candidates remain available." };
+                pauseReason: "Paid AI is paused because its persistent spending guard is not configured." };
             return { enabled: true, configured: true, paused: value.paused, perSearchCapUsd: value.perSearchCapUsd, pauseReason: value.pauseReason ?? null };
         },
         async summary(searchId?: string) {
@@ -179,12 +192,12 @@ export function createAiSpendingGuard({ directory = DATA_DIR, preflight }: Optio
             // A missing initialized control must not reset its ledger or spend.
             if (initial === null) {
                 if (await readJson(ledgerFile) !== null) return fail("The initialized AI spending control is missing; paid work remains blocked.");
-                throw new AiSpendingError("AI_PAUSED", "Paid AI is paused because its persistent spending guard is not configured. Cached results and screened candidates remain available.");
+                throw new AiSpendingError("AI_PAUSED", "Paid AI is paused because its persistent spending guard is not configured.");
             }
             const validateRequest = (settings: Control, book: Ledger) => {
-                if (settings.paused) throw new AiSpendingError("AI_PAUSED", settings.pauseReason ?? "Paid AI is paused locally. Saved results remain available.");
+                if (settings.paused) throw new AiSpendingError("AI_PAUSED", settings.pauseReason ?? "Paid AI is paused locally.");
                 const cap = settings.perSearchCapUsd === null ? null : capInNanoUsd(settings.perSearchCapUsd);
-                if (!context.searchId || !UUID.test(context.searchId)) return fail("Paid AI needs a valid search ID so every request is recorded against its search.");
+                if (!context.searchId || !UUID.test(context.searchId)) return inputFailure("Paid AI needs a valid search ID so every request is recorded against its search.", "search");
                 // Keep the original ceiling so restoring a cap never resets prior spend.
                 const account = book.searches[context.searchId] ?? {
                     capNanoUsd: cap ?? capInNanoUsd(AI_SEARCH_HARD_CAP_USD), heldNanoUsd: 0, attempts: [],
@@ -192,20 +205,20 @@ export function createAiSpendingGuard({ directory = DATA_DIR, preflight }: Optio
                 if (cap !== null) account.capNanoUsd = Math.min(account.capNanoUsd, cap);
                 const remaining = cap === null ? Infinity : account.capNanoUsd - account.heldNanoUsd;
                 const rates = typeof body?.model === "string" && Object.hasOwn(RATES, body.model) ? RATES[body.model] : null;
-                if (!rates || body.service_tier !== "default") return fail("Paid AI is blocked because the requested model or service tier has no verified spending bound.");
-                if (!verifiedCacheOptions(body)) return fail("Paid AI requires verified 30-minute cache options with no legacy retention or policy overrides.");
+                if (!rates || body.service_tier !== "default") return inputFailure("Paid AI is blocked because the requested model or service tier has no verified spending bound.", "search");
+                if (!verifiedCacheOptions(body)) return inputFailure("Paid AI requires verified 30-minute cache options with no legacy retention or policy overrides.", "search");
                 const webSearch = isBoundedPriceSearch(body);
-                if ((body.tools?.length || body.tool_choice && body.tool_choice !== "none" || body.max_tool_calls !== undefined || body.include !== undefined) && !webSearch || body.previous_response_id || body.conversation || body.stream || body.background) return fail("Paid AI cannot bound tool, conversation or streaming charges for this request.");
-                if (!count(body.max_output_tokens) || body.max_output_tokens === 0) return fail("Paid AI needs a bounded maximum output before dispatch.");
+                if ((body.tools?.length || body.tool_choice && body.tool_choice !== "none" || body.max_tool_calls !== undefined || body.include !== undefined) && !webSearch || body.previous_response_id || body.conversation || body.stream || body.background) return inputFailure("Paid AI cannot bound tool, conversation or streaming charges for this request.");
+                if (!count(body.max_output_tokens) || body.max_output_tokens === 0) return inputFailure("Paid AI needs a bounded maximum output before dispatch.");
                 const minimum = body.max_output_tokens * rates.output + (webSearch ? WEB_SEARCH_FEE_NANO_USD : 0);
-                if (!count(minimum)) return fail("Paid AI cannot record the maximum output cost. No paid request was sent.");
-                if (minimum > remaining) throw new AiSearchAllowanceError(budgetMessage("This request's maximum output alone exceeds the search's remaining AI budget. No paid request was sent."));
+                if (!count(minimum)) return inputFailure("Paid AI cannot record the maximum output cost. No paid request was sent.");
+                if (minimum > remaining) throw new AiSearchAllowanceError("This request's maximum output alone exceeds the search's remaining AI budget. No paid request was sent.");
                 const immutableInput = typeof body.input === "string" || Array.isArray(body.input) && body.input.every((item: any) =>
                     item && (!item.type || item.type === "message") && Object.keys(item).every(key => ["type", "role", "content"].includes(key)) &&
                     (typeof item.content === "string" || Array.isArray(item.content) && item.content.every((part: any) =>
                         part?.type === "input_text" && typeof part.text === "string" && Object.keys(part).every(key => ["type", "text"].includes(key)) ||
                         part?.type === "input_image" && typeof part.image_url === "string" && part.image_url.startsWith("data:image/") && Object.keys(part).every(key => ["type", "image_url", "detail"].includes(key)))));
-                if (!immutableInput) return fail("Paid AI cannot prove an input bound for mutable image URLs or unsupported input items. Exact immutable-input preflight is required.");
+                if (!immutableInput) return inputFailure("Paid AI cannot prove an input bound for mutable image URLs or unsupported input items. Exact immutable-input preflight is required.");
                 if (webSearch && Object.values(book.searches).some(saved => saved.attempts.some(attempt => attempt.webSearch && attempt.inputHash === aiInputHash(body)))) {
                     throw new AiSpendingError("AI_EVIDENCE_HELD", "This web price search already has a spending record. No replacement request was sent.");
                 }
@@ -214,31 +227,33 @@ export function createAiSpendingGuard({ directory = DATA_DIR, preflight }: Optio
             // Validate cheap rejection rules before counting. The remote count
             // never holds the local spending lock; independent searches continue.
             validateRequest(initial, await ledger(initial));
-            if (!preflight) return fail("Paid AI is blocked because an exact input-token preflight is not configured. Image URLs and text length are not a safe token bound.");
+            if (!preflight) return inputFailure("Paid AI is blocked because an exact input-token preflight is not configured. Image URLs and text length are not a safe token bound.", "search");
             const inputHash = aiInputHash(body);
             const proof = await preflight(body);
             signal?.throwIfAborted();
-            if (proof.inputHash !== inputHash || aiInputHash(body) !== inputHash || !count(proof.inputTokens)) return fail("The exact AI input bound does not match this request. No paid request was sent.");
+            if (proof.inputHash !== inputHash || aiInputHash(body) !== inputHash || !count(proof.inputTokens)) return inputFailure("The exact AI input bound does not match this request. No paid request was sent.");
             const maxInputTokens = proof.inputTokens + (isBoundedPriceSearch(body) ? WEB_SEARCH_CONTEXT_BOUND : 0);
-            if (maxInputTokens > MAX_STANDARD_INPUT_TOKENS) return fail("This request crosses the verified standard-context price boundary.");
+            if (maxInputTokens > MAX_STANDARD_INPUT_TOKENS) return inputFailure("This request crosses the verified standard-context price boundary.");
             return locked(async () => {
                 signal?.throwIfAborted();
                 const settings = await control();
                 if (!settings) return fail("The active AI spending control disappeared; no paid request was sent.");
-                if (settings.ledgerId !== initial.ledgerId || aiInputHash(body) !== inputHash) return fail("The AI request or spending ledger changed during input counting.");
+                if (settings.ledgerId !== initial.ledgerId) return fail("The AI spending ledger changed during input counting.");
+                if (aiInputHash(body) !== inputHash) return inputFailure("The AI request changed during input counting.");
                 const book = await ledger(settings);
                 // Re-read all concurrent reservations, lower caps and pauses.
                 const { account, rates, minimum, remaining, webSearch } = validateRequest(settings, book);
                 const amount = maxInputTokens * Math.max(rates.input, rates.write) + minimum;
                 if (!count(account.heldNanoUsd + amount)) return fail("Paid AI cannot record the cost of this request. No paid request was sent.");
-                if (amount > remaining) throw new AiSearchAllowanceError(budgetMessage("This request would exceed the search's remaining AI budget. No paid request was sent."));
+                if (amount > remaining) throw new AiSearchAllowanceError("This request would exceed the search's remaining AI budget. No paid request was sent.");
                 const attempt: Attempt = { id: randomUUID(), inputHash, model: body.model, createdAt: new Date().toISOString(),
                     maxInputTokens, ...(webSearch ? { webSearch: true } : {}), maxOutputTokens: body.max_output_tokens, reservedNanoUsd: amount, heldNanoUsd: amount, state: "RESERVED" };
                 account.heldNanoUsd += amount; account.attempts.push(attempt); book.searches[context.searchId!] = account;
                 await durableJson(ledgerFile, book);
                 const latest = await control();
                 if (!latest || latest.paused) throw new AiSpendingError("AI_PAUSED", "Paid AI was paused before dispatch. The conservative reservation was retained.");
-                if (latest.perSearchCapUsd !== null && capInNanoUsd(latest.perSearchCapUsd) < account.heldNanoUsd) return fail("The search cap was lowered before dispatch. Its conservative reservation was retained.");
+                if (latest.perSearchCapUsd !== null && capInNanoUsd(latest.perSearchCapUsd) < account.heldNanoUsd)
+                    throw new AiSearchAllowanceError("The search cap was lowered before dispatch. Its conservative reservation was retained.");
                 signal?.throwIfAborted();
                 return { ledgerId: book.id, searchId: context.searchId!, attemptId: attempt.id };
             });

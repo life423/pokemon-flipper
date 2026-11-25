@@ -5,7 +5,7 @@ import type { BoundedAssessmentMode } from "./bounded-plan.ts";
 import { applyConditionRules } from "./rules.ts";
 
 const hasStrings = (value: unknown): value is string[] => Array.isArray(value) && value.length <= 8 && value.every(note => typeof note === "string" && note.length <= 1200);
-export const invalidReadingMessage = "The bounded photo assessment is incomplete or invalid. Saved evidence was kept; no automatic replacement assessment was authorized.";
+export const invalidReadingMessage = "The bounded photo assessment is incomplete or invalid.";
 export class InvalidBoundedReading extends StorageUnavailableError {
     constructor(readonly reason?: string) { super(invalidReadingMessage); }
 }

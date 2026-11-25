@@ -1,3 +1,4 @@
+import "../fixtures/isolated-data.ts";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buyerReviewBlock } from "../../shared/wait-skip-review.ts";
@@ -8,7 +9,7 @@ import { getAiUsageContext } from "../../server/ai/usage-context.ts";
 import { AiSpendingError } from "../../server/ai/spending.ts";
 import { ProviderError } from "../../server/lib/http.ts";
 import { createBuyerListingReviewer } from "../../server/analysis/wait-skip-review.ts";
-import { cardEvaluation, salesSummary } from "../fixtures/card-evaluation.ts";
+import { cardEvaluation, clearReleaseFixture, salesSummary } from "../fixtures/card-evaluation.ts";
 
 const searchId = "e94a7e8a-2f78-40e8-afc8-941d0aab6803";
 const otherSearch = "348cae85-377d-44a4-9436-25a311eb2d4c";
@@ -26,6 +27,7 @@ function fixture(price = 200) {
     Object.assign(e, { answeredAt: stamp, pricesCheckedAt: stamp, pricingVersion: PRICING_VERSION, assessmentVersion: "vendor/bounded-prompts-4",
         conditionVersion: "provider/bounded-condition-1/prompts-1", gradedPricing: null });
     e.photoCheck!.cardCount = "ONE";
+    clearReleaseFixture(e);
     const sales = salesSummary("RAW", "LIGHTLY_PLAYED", [70, 75, 80]);
     for (const [i, sale] of sales.sales.entries()) {
         Object.assign(sale, { title: e.listing.title, saleType: "fixed_price", url: `https://www.ebay.com/itm/${120000001000 + i}`,
@@ -187,6 +189,35 @@ test("Alakazam budget and unresolved-charge holds never advertise an automatic r
     }
 });
 
+test("historical ledger-write receipts and current search-wide AI authority failures do not poison a later manual retry", async () => {
+    for (const code of ["AI_ACCOUNTING", "AI_INPUT_PREFLIGHT"] as const) {
+        const f = neutralRetryFixture(), completed = structuredClone(f.e);
+        f.e.rawPricing = null; delete f.e.pricesCheckedAt;
+        const legacy = { listingId, decision: "WAIT", evidence: "listing", unavailable: true, failure: { code: "AI_BUDGET", retryable: false },
+            reason: "Paid AI could not durably update its spending ledger. No new work is authorized. Cached results and screened candidates remain available." };
+        let attempts = 0, saves = 0;
+        const review = harness(f, {
+            restoreRaw: async () => null, restoreSales: async () => {},
+            cached: async <T>() => legacy as T,
+            save: async () => { saves++; },
+            evaluate: async (_id, options) => {
+                assert.equal(getAiUsageContext().searchId, searchId);
+                assert.equal(options.priceOnly, true, "verify missing prices using the accepted photos");
+                if (++attempts === 1) throw new AiSpendingError(code, "The authority for this check is unavailable.", { scope: "search" });
+                return completed;
+            },
+        });
+        const stopped = await review(searchId, listingId, targets, false, true, signal());
+        assert.deepEqual(stopped.failure, { code, retryable: false, scope: "search" });
+        assert.equal(stopped.retryAt, undefined);
+        assert.equal(saves, 0, "a search-wide denial is never a per-copy receipt");
+        const recovered = await review(searchId, listingId, targets, false, true, signal());
+        assert.equal(recovered.decision, "BUY", recovered.reason);
+        assert.equal(attempts, 2);
+        assert.ok(saves > 0, "the resumed review still writes accepted evidence");
+    }
+});
+
 test("an explicitly repaired Alakazam pause can be rechecked without advertising an automatic retry", async () => {
     const f = neutralRetryFixture(), completed = structuredClone(f.e);
     f.e.rawPricing = null; delete f.e.pricesCheckedAt;
@@ -203,20 +234,23 @@ test("an explicitly repaired Alakazam pause can be rechecked without advertising
     assert.equal(resumed.decision, "BUY", resumed.reason); assert.equal(calls, 2);
 });
 
-test("an allowance exhausted during the first assessment does not dispatch an immediate price-only request", async () => {
+test("a historical request ceiling stops its current assessment but explicit retry can reprice without new photos", async () => {
     const f = fixture(30); f.e.rawPricing = null;
+    const priced = fixture(30).e;
     f.e.pricingDeferred = { provider: "PKMNPRICES", note: "The original price-research allowance is exhausted." };
     let snapshot: typeof f.snapshot | null = null, calls = 0;
     const review = harness(f, { snapshot: async () => snapshot, evaluate: async (_id, options) => {
-        assert.equal(options?.priceOnly, false); calls++; snapshot = f.snapshot; return f.e;
+        assert.equal(options?.priceOnly, calls > 0); calls++;
+        const evaluation = calls === 1 ? f.e : priced;
+        snapshot = { ...f.snapshot, evaluation }; return evaluation;
     } });
-    for (let i = 0; i < 2; i++) {
-        const result = await review(searchId, listingId, targets, true, true, signal());
-        assert.equal(result.decision, "WAIT"); assert.equal(result.unavailable, true); assert.match(result.reason, /allowance is exhausted/);
-        assert.deepEqual(result.failure, { code: "PRICE_RESEARCH_BUDGET", retryable: false });
-        assert.equal(result.retryAt, undefined);
-    }
-    assert.equal(calls, 1);
+    const stopped = await review(searchId, listingId, targets, true, true, signal());
+    assert.equal(stopped.decision, "WAIT"); assert.equal(stopped.unavailable, true); assert.match(stopped.reason, /allowance is exhausted/);
+    assert.deepEqual(stopped.failure, { code: "PRICE_RESEARCH_BUDGET", retryable: false, scope: "search" });
+    assert.equal(stopped.retryAt, undefined); assert.equal(calls, 1);
+    const resumed = await review(searchId, listingId, targets, true, true, signal());
+    assert.equal(resumed.decision, "BUY", resumed.reason);
+    assert.equal(calls, 2, "the second explicit check refreshes prices, never repeats the photo assessment");
 });
 
 test("an Unlimited seller claim and assessed wear explain why a buyer should wait when no matched raw resale is established", async () => {
@@ -227,6 +261,7 @@ test("an Unlimited seller claim and assessed wear explain why a buyer should wai
     f.e.rawPricing = null;
     const result = await harness(f)(searchId, listingId, targets, true, false, signal());
     assert.equal(result.decision, "WAIT"); assert.match(result.reason, /\$71.65/);
+    assert.equal(result.waitReason, "IDENTITY_UNRESOLVED");
     assert.match(result.reason, /seller lists Unlimited/); assert.match(result.reason, /Lightly Played/);
     assert.match(result.reason, /resale value after fees/); assert.doesNotMatch(result.reason, /don't clearly show|first edition/i);
 });
@@ -266,9 +301,11 @@ test("a paper profit without photos or a shipping quote cannot become a Buy", as
     f.e.photoCheck = null; f.e.listing.photosAnalyzed = 0;
     const paused = await harness(f)(searchId, listingId, targets, true, false, signal());
     assert.equal(paused.decision, "WAIT"); assert.match(paused.reason, /0 of 4 listing photos/);
+    assert.equal(paused.waitReason, "PHOTO_EVIDENCE_INCONSISTENT");
     const g = fixture(15); g.e.listing.shipping = null; g.row.shipping = null;
     const shipping = await harness(g)(searchId, listingId, targets, true, false, signal());
     assert.equal(shipping.decision, "WAIT"); assert.match(shipping.reason, /\$15.00 before shipping and tax/); assert.match(shipping.reason, /no shipping quote/);
+    assert.equal(shipping.waitReason, "SHIPPING_UNCONFIRMED");
 });
 
 test("materially changed seller disclosures cannot inherit an old buy, even with the same gallery", async () => {
@@ -307,6 +344,8 @@ test("a realistic Best Offer remains conditional and is priced against matching 
     assert.doesNotMatch(answer.reason, /offer|highest supported/i, "controls use only the separately verified offer amounts");
     assert.ok(answer.offer.opening < f.row.currentPrice && answer.offer.opening <= answer.offer.maxItemPrice && answer.offer.maxItemPrice <= walkAway);
     assert.equal(answer.evaluation?.listing.price, f.row.currentPrice, "the actual asking price remains on the card");
+    assert.equal(answer.offer.verifiedPurchase.itemPrice, answer.offer.opening);
+    assert.equal(answer.offer.verifiedPurchase.maxItemPrice, answer.offer.maxItemPrice);
     for (const price of [answer.offer.opening, answer.offer.maxItemPrice]) {
         const profitable = retargetEvaluation({ ...f.e, listing: { ...f.e.listing, price } }, targets);
         assert.ok(profitable.underwriting!.best!.profit > 0);
@@ -316,6 +355,30 @@ test("a realistic Best Offer remains conditional and is priced against matching 
     assert.ok((await review(searchId, listingId, targets, true, true, signal())).offer, "a supported estimate is not vetoed by a two-sale activity count");
     f.e.listing.termsCheckedAt = new Date(now - 180000).toISOString();
     assert.equal((await review(searchId, listingId, targets, true, false, signal())).offer, undefined);
+});
+
+test("a verified grading offer carries its own route when the asking-price model selected raw resale", async () => {
+    const f = fixture(42);
+    const offerTargets = { minProfit: 0, minRoi: 0.30 };
+    f.row.bestOffer = f.e.listing.bestOffer = true;
+    // A retained raw estimate can participate in the model without an
+    // observed completed transaction sufficient to verify the offer.
+    f.e.rawPricing!.prices![0].comps!.sales.forEach(sale => { delete sale.saleType; });
+    const byGrade = [6, 7, 8].map(grade => {
+        const summary = salesSummary("CGC", grade, [126, 126, 126]);
+        summary.sales.forEach((sale, i) => Object.assign(sale, { saleType: "fixed_price",
+            title: `Venusaur Base Set 15/102 Holo Unlimited CGC ${grade}`, url: `https://www.ebay.com/itm/${120000010000 + 10 * grade + i}` }));
+        return summary;
+    });
+    f.e.gradedPricing = { CGC: { status: "PRICED", printing: "UNLIMITED", source: "pkmnprices", variant: "holo", byGrade } };
+    const answer = await harness(f, { restoreSales: async () => {} })(searchId, listingId, offerTargets, true, false, signal());
+    assert.equal(answer.decision, "WAIT");
+    assert.equal(answer.evaluation?.underwriting?.best?.path, "RAW");
+    assert.equal(answer.offer?.opening, 36);
+    assert.equal(answer.offer?.maxItemPrice, 38.08);
+    assert.equal(answer.offer?.verifiedPurchase.path.path, "GRADE");
+    assert.equal(answer.offer?.verifiedPurchase.path.grader, "CGC");
+    assert.equal(answer.offer?.verifiedPurchase.path.profit, 25.12);
 });
 
 test("a newly listed raw copy earns a grading alert through the normal buyer review using existing paid evidence", async () => {
@@ -330,6 +393,7 @@ test("a newly listed raw copy earns a grading alert through the normal buyer rev
         });
         return summary;
     });
+    byGrade[1].sales[2].soldAt = new Date(now - 45 * 86_400_000).toISOString();
     e.gradedPricing = { PSA: { status: "PRICED", printing: "UNLIMITED", source: "pkmnprices", variant: "holo", byGrade } };
     e.rawPricing = null;
     const read = () => harness(f, { restoreSales: async () => {} })(searchId, listingId, targets, false, false, signal());
@@ -340,10 +404,11 @@ test("a newly listed raw copy earns a grading alert through the normal buyer rev
     assert.equal(found.delivered, 59.54);
     assert.equal(found.likely.grade, 7);
     assert.equal(found.lower.grade, 6);
-    assert.equal(found.likely.sales30, 3);
+    assert.equal(found.likely.sales30, 2);
+    assert.equal(found.likely.sales60, 3);
     assert.equal(found.lower.sales30, 3);
     assert.ok(found.gradingCosts > 0 && found.lower.profit > 0 && found.likely.profit > found.lower.profit);
-    assert.match(buy.reason, /One grade lower/);
+    assert.match(buy.reason, /3 matching sales in the last 60 days\. One grade lower/);
     byGrade[1].sales[1].url = byGrade[1].sales[0].url;
     const sparse = (await read()).gradingOpportunity;
     assert.ok(sparse, "sparse activity does not veto supported grading profit");

@@ -68,11 +68,11 @@ export function createPricingRetries({
                     if (pause) {
                         job.screen = { ...job.screen, pricingIssue: pause };
                         job.nextAt = Math.max(job.nextAt, Date.parse(pause.retryAt ?? "") || now() + 60_000);
-                        note = pause.kind === "CREDITS" || pause.kind === "CONFIG" ? "Check the price-provider account or configuration. Cached results remain available." : "The price provider needs more time. Remaining lookups were deferred without sending requests.";
+                        note = pause.kind === "CREDITS" || pause.kind === "CONFIG" ? "Check the price-provider account or configuration." : "The price provider needs more time. Remaining lookups were deferred without sending requests.";
                         results.push(result(job)); continue;
                     }
                     if (job.attempts >= MAX_ATTEMPTS || job.nextAt > now()) {
-                        note ??= job.attempts >= MAX_ATTEMPTS ? "The retry limit for these results was reached. Your earlier results are kept." : "These prices are still cooling down. No early requests were sent.";
+                        note ??= job.attempts >= MAX_ATTEMPTS ? "The retry limit for these results was reached." : "These prices are still cooling down. No early requests were sent.";
                         results.push(result(job)); continue;
                     }
                     const delay = Math.max(0, lastRunAt + 1500 - now());

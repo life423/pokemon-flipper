@@ -1,6 +1,6 @@
 export class AiCreditsError extends Error {
     readonly code = "AI_CREDITS";
-    constructor(options?: ErrorOptions) { super("OpenAI credits are exhausted. Add credits to resume new AI analysis. Saved assessments remain available.", options); }
+    constructor(options?: ErrorOptions) { super("OpenAI credits are exhausted. Add credits to resume new AI analysis.", options); }
 }
 export function isAiCreditFailure(error: unknown): boolean {
     const seen = new Set<unknown>();

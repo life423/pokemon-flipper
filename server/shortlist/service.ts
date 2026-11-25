@@ -9,7 +9,9 @@ import { needsAddedBackPhoto } from "../../shared/photo-evidence.ts";
 import { retargetEvaluation } from "../../shared/money/targets.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import type { Evaluation, ListingSummary, DeeperPhotoReview } from "../../shared/types.ts";
-import type { RefreshResult } from "../../shared/shortlist.ts";
+import type { RefreshResult, ShortlistEntry } from "../../shared/shortlist.ts";
+import { baseSetLookalike } from "../../shared/base-set-release.ts";
+import { checkBaseSetRelease } from "../analysis/base-set-release.ts";
 import { shortlistStore, ShortlistError } from "./store.ts";
 import { readCache } from "../lib/cache.ts";
 import { withFreshListing } from "../../shared/fresh-listing.ts";
@@ -21,6 +23,12 @@ export function createShortlistService({ store = shortlistStore, details = getLi
     const limit = createLimiter(2);
     const share = createSingleFlight();
     const failures = new Map<string, { until: number; message: string }>();
+    const present = async (entry: ShortlistEntry): Promise<ShortlistEntry> => {
+        if (!entry.evaluation || !baseSetLookalike(entry.evaluation)) return entry;
+        const checked = await checkBaseSetRelease(entry.evaluation);
+        return { ...entry, evaluation: retargetEvaluation(checked, MONEY_CONFIG.targets, entry.listing) };
+    };
+    const list = async () => Promise.all((await store.list()).map(entry => limit(() => present(entry))));
     const save = async (listing: ListingSummary) => {
         const record = await load(listing.id);
         const currentDetails = await cached(listing.id);
@@ -47,7 +55,7 @@ export function createShortlistService({ store = shortlistStore, details = getLi
                 cardCondition: currentDetails.cardCondition, conditionNotes: currentDetails.conditionNotes } };
         }
         const review = record?.deeperPhotoReview;
-        const evaluation = snapshot ? retargetEvaluation({ ...snapshot, ...(review?.inputKey === snapshot.photoReviewKey ? { deeperPhotoReview: review } : {}) }, MONEY_CONFIG.targets, listing) : null;
+        const evaluation = snapshot ? retargetEvaluation({ ...await checkBaseSetRelease(snapshot), ...(review?.inputKey === snapshot.photoReviewKey ? { deeperPhotoReview: review } : {}) }, MONEY_CONFIG.targets, listing) : null;
         return store.save(evaluation ? withFreshListing(listing, evaluation) : listing, evaluation, new Date(now()).toISOString());
     };
     const remember = async (evaluation: Evaluation, evidenceKey: string) => store.update(evaluation.listing.id, (entry) => {
@@ -115,10 +123,10 @@ export function createShortlistService({ store = shortlistStore, details = getLi
             throw error;
         }
     }));
-    return { save, remember, rememberReview, async refresh(ids: string[]): Promise<RefreshResult> {
+    return { list, present, save, remember, rememberReview, async refresh(ids: string[]): Promise<RefreshResult> {
         const errors: RefreshResult["errors"] = [];
         await Promise.all(ids.map(async (id) => { try { await refreshOne(id); } catch (error) { errors.push({ id, message: (error as Error).message }); } }));
-        return { entries: await store.list(), errors };
+        return { entries: await list(), errors };
     } };
 }
 export const shortlistService = createShortlistService();

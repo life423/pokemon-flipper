@@ -10,10 +10,6 @@ import { outsideSearchYears } from "../../shared/search-years.ts";
 
 export type Match = NonNullable<ListingSummary["match"]>;
 
-export function isEnglish(language: string | null | undefined): boolean {
-    return cardLanguageStatus("", [language]) !== "OTHER";
-}
-
 export function titleMatches(title: string, intent: SearchIntent): boolean {
     const text = normalizeWords(title);
 

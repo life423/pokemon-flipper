@@ -61,6 +61,7 @@ test("continued discovery preserves all 240 copies, source offsets and the origi
     assert.deepEqual(replay.map(value => value.id), output.slice(50, 100).map(value => value.id));
     assert.equal(offsets.length, before);
     await assert.rejects(withAiUsageContext({ searchId: randomUUID() }, () => findDeals(query, { continuation: firstNext.token }, steps)), /different discovery/);
+    await assert.rejects(withAiUsageContext({ searchId: firstNext.searchId }, () => findDeals("Alakazam", { continuation: firstNext.token }, steps)), /different search/);
 });
 
 test("a saved continuation shares simultaneous work, survives reload and cannot be attached to another discovery UUID", async () => {
@@ -74,11 +75,29 @@ test("a saved continuation shares simultaneous work, survives reload and cannot 
         return { listings: [row(1)], summary: { mode: "development" as const, deferred: 0, total: 1, found: 1, count: 1, skipped: 0,
             intent: readSearchLocally(query) }, dispositions: [], overflow: [] };
     };
-    await assert.rejects(store.run(next.token, randomUUID(), work), /different discovery/);
-    const pair = await Promise.all([store.run(next.token, next.searchId, work), store.run(next.token, next.searchId, work)]);
+    await assert.rejects(store.run(next.token, randomUUID(), query, work), /different discovery/);
+    const pair = await Promise.all([store.run(next.token, next.searchId, query, work), store.run(next.token, next.searchId, query, work)]);
     assert.equal(runs, 1); assert.deepEqual(pair[0].receipt, pair[1].receipt);
     const reloaded = createDiscoveryContinuationStore(directory);
     assert.equal(await reloaded.budgetOwner(next.searchId), root);
-    const replay = await reloaded.run(next.token, next.searchId, work);
+    const replay = await reloaded.run(next.token, next.searchId, query, work);
     assert.equal(replay.reused, true); assert.equal(runs, 1);
+});
+
+test("a cancelled worker cannot save an incomplete continuation receipt", async () => {
+    const directory = `${isolatedDataDir}/cancelled-continuation`, store = createDiscoveryContinuationStore(directory);
+    const next = await store.create({ rootSearchId: randomUUID(), request: { search: query }, pending: [row(1)], sources: [], seenIds: [], total: 1 });
+    const summary = { mode: "development" as const, deferred: 0, total: 1, found: 1, count: 1, skipped: 0, intent: readSearchLocally(query) };
+    const controller = new AbortController();
+    const partial = store.run(next.token, next.searchId, query, async (_state, signal) => {
+        controller.abort();
+        assert.equal(signal.aborted, true);
+        return { listings: [], summary, dispositions: [], overflow: [] };
+    }, controller.signal);
+    await assert.rejects(partial, { name: "AbortError" });
+    const complete = await store.run(next.token, next.searchId, query, async () => ({
+        listings: [row(1)], summary, dispositions: [], overflow: [],
+    }));
+    assert.equal(complete.reused, false);
+    assert.deepEqual(complete.receipt.listings, [row(1)]);
 });

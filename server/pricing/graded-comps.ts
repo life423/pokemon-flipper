@@ -129,7 +129,8 @@ export async function gradedPricesFor(
     // Await accepted sibling work before returning an error to the evaluator.
     const summaries = await Promise.allSettled(grades.map(async grade => {
         getPriceResearchSignal()?.throwIfAborted();
-        const criteria: CompCriteria = { printing: identity.printing, setName: variant.setName, finish: variant.finish, grader, grade, now };
+        const criteria: CompCriteria = { printing: identity.printing, setName: variant.setName, cardName: identity.name,
+            cardNumber: identity.cardNumber, finish: variant.finish, grader, grade, now };
         const target = compTarget(card, identity, variant, grader, grade);
         const comps = await fetchVariantComps(card, variant, { grader, grade, fetchComps, criteria, target, cachedChecks });
         return checkedSummary(comps, criteria, target, checkComps ?? cachedChecks);
@@ -176,7 +177,8 @@ export async function compsForGrade(
     if (!variant || !card) return unavailable(reason ?? "There is no card to price.");
 
     const label = printingLabel(identity.printing, identity.set);
-    const criteria: CompCriteria = { printing: identity.printing, setName: variant.setName, finish: variant.finish, grader, grade, now };
+    const criteria: CompCriteria = { printing: identity.printing, setName: variant.setName, cardName: identity.name,
+        cardNumber: identity.cardNumber, finish: variant.finish, grader, grade, now };
     const target = compTarget(card, identity, variant, grader, grade);
     const comps = await fetchVariantComps(card, variant, { grader, grade, fetchComps, criteria, target, cachedChecks });
 

@@ -12,8 +12,9 @@ import type { AnalysisState } from "../../client/src/analysis-state.ts";
 import type { Evaluation, ListingSummary, RatingLevel, Screen, SearchIntent } from "../../shared/types.ts";
 import { acquisitionCost, underwrite } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
+import { verifiedPurchase } from "../../shared/money/verified-purchase.ts";
 import { canAutoAnalyze } from "../../shared/analysis.ts";
-import { salesSummary } from "../fixtures/card-evaluation.ts";
+import { clearReleaseFixture, salesSummary } from "../fixtures/card-evaluation.ts";
 import { PRICING_VERSION } from "../../shared/pricing-freshness.ts";
 import { BEST_BUY_TERMS_MAX_AGE_MS } from "../../shared/search-diagnostic.ts";
 import type { SearchCompetition } from "../../shared/search-diagnostic.ts";
@@ -45,6 +46,7 @@ function evaluation(item: ListingSummary, resale = 250, level?: RatingLevel): Ev
         gradedPricing: null, slab: null, slabPricing: null, underwriting: null, rating: null,
         answeredAt: new Date(NOW).toISOString(), reusedSteps: [], usage: [],
     };
+    clearReleaseFixture(value);
     value.underwriting = underwrite(value, { ...MONEY_CONFIG, targets });
     if (level) value.rating = { level, room: null, strengths: [], concerns: [], notes: [], auction: null };
     return value;
@@ -419,8 +421,13 @@ test("best order favors stronger verified deals over a much larger thin-profit e
 
 test("finished buying decisions surface while the rest of a search is still queued", () => {
     const queued = listing("queued", { currentPrice: 10 }), checked = listing("checked"), buy = listing("buy");
-    const analyses = { [buy.id]: done(evaluation(buy, 250, "STRONG")) };
-    const decisions = { [checked.id]: { decision: "WAIT" as const }, [buy.id]: { decision: "BUY" as const } };
+    const value = evaluation(buy, 250, "STRONG"), stamp = new Date(NOW).toISOString();
+    value.listing.termsCheckedAt = stamp;
+    Object.assign(value, { pricesCheckedAt: stamp, pricingVersion: PRICING_VERSION, assessmentVersion: "fixture/bounded-prompts-4",
+        conditionVersion: "fixture/bounded-condition-1/prompts-1" });
+    const analyses = { [buy.id]: done(value) };
+    const decisions = { [checked.id]: { decision: "WAIT" as const }, [buy.id]: { decision: "BUY" as const,
+        verifiedPurchase: verifiedPurchase(value, value.underwriting!.best!, targets) } };
     assert.deepEqual(ids(sortSearchResults([queued, checked, buy], analyses, "best", targets, NOW, decisions)), [buy.id, checked.id, queued.id]);
     assert.deepEqual(ids(sortSearchResults([queued, checked, buy], analyses, "priceLow", targets, NOW, decisions)), [queued.id, checked.id, buy.id],
         "an explicit price order remains available");

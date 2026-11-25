@@ -9,7 +9,7 @@ import { ANALYSIS_VERSION } from "../../server/analysis/legacy-evidence.ts";
 import { EbayError } from "../../server/ebay/api.ts";
 import type { ListingDetails } from "../../server/ebay/listings.ts";
 import type { SavedRecord } from "../../server/analysis/types.ts";
-import { cardEvaluation } from "../fixtures/card-evaluation.ts";
+import { cardEvaluation, clearReleaseFixture } from "../fixtures/card-evaluation.ts";
 import { listingEvidenceKey } from "../../shared/listing-evidence.ts";
 import { retargetEvaluation } from "../../shared/money/targets.ts";
 import { evaluationContextKey } from "../../server/analysis/private-evaluation.ts";
@@ -20,6 +20,7 @@ async function fixture(t: TestContext) {
 }
 function snapshot(): SavedRecord {
     const e=cardEvaluation();Object.assign(e.listing,{id:listing().id,title:listing().title,photos:details().images,shipping:0,price:10});
+    clearReleaseFixture(e);
     return {itemId:listing().id,version:ANALYSIS_VERSION,photoFingerprint:"fixture",answeredAt:e.answeredAt,photoCheck:null,assessment:null,latestEvaluation:{evidenceKey:listingEvidenceKey(listing()),evaluation:e}};
 }
 test("save uses the local assessment; refresh reuses it, honors a fresh unknown shipping quote and has a durable cooldown",async t=>{

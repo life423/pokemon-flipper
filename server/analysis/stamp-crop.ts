@@ -81,7 +81,7 @@ function findCard(mask: Uint8Array, width: number, height: number): Box | null {
     return card;
 }
 
-export async function cropStampFromImage(source: Buffer, area: "STAMP" | "ARTWORK" = "STAMP"): Promise<Omit<StampCrop, "photoNumber"> | null> {
+export async function cropStampFromImage(source: Buffer, area: "STAMP" | "ARTWORK" | "REPRINT" = "STAMP"): Promise<Omit<StampCrop, "photoNumber"> | null> {
     const image = sharp(source, { autoOrient: true, limitInputPixels: INPUT_LIMIT });
     const metadata = await image.metadata();
     if ((metadata.pages ?? 1) !== 1) return null;
@@ -94,9 +94,9 @@ export async function cropStampFromImage(source: Buffer, area: "STAMP" | "ARTWOR
     // The stamp is under the left edge of the art on this card layout.
     // Include that edge and the species strip so the model can verify placement.
     const scaleX = original.width / info.width, scaleY = original.height / info.height;
-    const left = Math.floor((card.left + card.width * 0.025) * scaleX);
-    const top = Math.floor((card.top + card.height * (area === "ARTWORK" ? 0.075 : 0.46)) * scaleY);
-    const right = Math.ceil((card.left + card.width * (area === "ARTWORK" ? 0.985 : 0.31)) * scaleX);
+    const left = Math.floor((card.left + card.width * (area === "REPRINT" ? 0.53 : 0.025)) * scaleX);
+    const top = Math.floor((card.top + card.height * (area === "REPRINT" ? 0.27 : area === "ARTWORK" ? 0.075 : 0.46)) * scaleY);
+    const right = Math.ceil((card.left + card.width * (area === "STAMP" ? 0.31 : area === "REPRINT" ? 1 : 0.985)) * scaleX);
     const bottom = Math.ceil((card.top + card.height * 0.64) * scaleY);
     const box = { left, top, width: right - left, height: bottom - top };
     const crop = await image.extract(box).png().toBuffer();

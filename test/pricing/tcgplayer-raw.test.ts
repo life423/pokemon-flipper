@@ -81,3 +81,25 @@ test('a returned product with wrong identity cannot supply a condition-market es
         fetchMarket: async () => ({ ...detail([marketRow]), number: '2' }), fetchOffers: async () => ({ data: [] }) });
     assert.equal(quote, null);
 });
+
+test('native numbered holo names supply TCGplayer market prices only for the same set and number', async () => {
+    const target: Identity = { ...identity, name: 'Espeon', set: 'Aquapolis', cardNumber: 'H9/H32' };
+    const product: PricedCard = { ...card, name: 'Espeon (H9)', cardNumber: 'H09/H32',
+        variants: card.variants.map(variant => ({ ...variant, setName: 'Aquapolis' })) };
+    const market = { ...detail([marketRow]), name: 'Espeon (H9)', set: { name: 'Aquapolis' }, number: 'H09', total_set_number: 'H32' };
+    const quote = (record: typeof market) => tcgplayerRawPrice(product, target, 'LIGHTLY_PLAYED', {
+        now, fetchMarket: async () => record, fetchOffers: async () => ({ data: [] }),
+    });
+    assert.equal((await quote(market))?.price, 75);
+    for (const wrong of [{ name: 'Espeon (H9) (Jumbo)' }, { name: 'Espeon (H6)' }, { number: '011', total_set_number: '147' },
+        { total_set_number: '147' }, { set: { name: 'Skyridge' } }]) assert.equal(await quote({ ...market, ...wrong }), null);
+    let requests = 0;
+    const unexpectedQuote = async () => { requests++; return { data: [] }; };
+    for (const wrong of [{ name: 'Espeon (H9) (Jumbo)' }, { cardNumber: '011/147' },
+        { variants: product.variants.map(variant => ({ ...variant, setName: 'Skyridge' })) }]) {
+        assert.equal(await tcgplayerRawPrice({ ...product, ...wrong }, target, 'LIGHTLY_PLAYED', {
+            now, fetchMarket: unexpectedQuote, fetchOffers: unexpectedQuote,
+        }), null);
+    }
+    assert.equal(requests, 0, 'An incompatible catalog record cannot authorize a market or offer request.');
+});

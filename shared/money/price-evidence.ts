@@ -64,6 +64,12 @@ export function isUsableRawPrice(price: RawPrice): boolean {
         price.price <= Math.min(...quote.offers.map(offer => offer.total));
 }
 
+export function rawPriceForPath(pricing: RawPricing | null | undefined, path: PricedPath): RawPrice | undefined {
+    if (path.path !== "RAW") return;
+    return pricing?.prices?.find(price => price.condition === path.priceCondition &&
+        price.price === path.salePrice && isUsableRawPrice(price));
+}
+
 export function withoutUnsupportedRawPrices(evaluation: Evaluation): Evaluation {
     const raw = evaluation.rawPricing;
     if (!raw?.prices?.some(price => !isUsableRawPrice(price))) return evaluation;
@@ -80,11 +86,7 @@ export function referencePriceReason(evaluation: PriceEvidence, path: PricedPath
     const pricing = path.path === "RAW" ? evaluation.rawPricing : path.path === "GRADED_RESALE" ? evaluation.slabPricing
         : path.grader ? evaluation.gradedPricing?.[path.grader] : undefined;
     if (pricePrintingMismatch(pricing?.printing, evaluation.identity?.printing)) return PRICE_PRINTING_MISMATCH;
-    if (path.path === "RAW") {
-        const sold = evaluation.rawPricing?.prices?.some(price => price.condition === path.priceCondition &&
-            price.price === path.salePrice && isUsableRawPrice(price));
-        if (!sold) return "Raw resale needs a matched condition price.";
-    }
+    if (path.path === "RAW" && !rawPriceForPath(evaluation.rawPricing, path)) return "Raw resale needs a matched condition price.";
     if (path.path === "GRADED_RESALE" && evaluation.slabPricing?.activeReference && !evaluation.slabPricing.summary?.count) {
         return "Slab resale has only current Buy It Now asking references; matched sales for the photographed grader and grade are still needed.";
     }

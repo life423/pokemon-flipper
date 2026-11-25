@@ -6,7 +6,7 @@ import { cardEvaluation } from "./fixtures/card-evaluation.ts";
 test("upper-end potential is distinguished from the likely grade and photo confidence", () => {
     const evaluation = {
         condition: { confidence: "MEDIUM", gradeRange: { low: 4, likely: 5, high: 7 } },
-        photoCheck: { images: [
+        photoCheck: { holder: "NONE", cardCount: "ONE", images: [
             { view: "FRONT", usable: true, isStockImage: false, issues: ["White background obscures edge contrast"], obscuresCondition: true },
             { view: "BACK", usable: true, isStockImage: false, issues: [] },
             { view: "BACK", usable: false, isStockImage: true, issues: [] },
@@ -43,6 +43,9 @@ test("a saved raw estimate in a nonstandard holder stays visible only with usabl
     const evaluation = cardEvaluation();
     evaluation.photoCheck!.cardCount = "ONE";
     evaluation.photoCheck!.holder = "OTHER";
+    const uncertain = photoEvidence(evaluation, evaluation.condition!.gradeRange!.high);
+    assert.equal(uncertain.optimistic, false);
+    assert.equal(uncertain.target, "The checked photos leave the holder type unconfirmed.");
     evaluation.condition!.gradeRange = null;
     evaluation.provisionalGradeRange = { low: 3, likely: 4, high: 5 };
     assert.deepEqual(displayedRawGrade(evaluation), { range: evaluation.provisionalGradeRange, confidence: "LOW", source: "PROVISIONAL" });

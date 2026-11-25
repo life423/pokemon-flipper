@@ -5,7 +5,10 @@ import { PricingProviderError, pricingIssue, retryAfterMs } from "../../server/p
 import { applyPricingRetry, canRetryPricing, pricingSnapshotKey } from "../../shared/pricing-retries.ts";
 import { prescreen } from "../../server/deals/prescreen.ts";
 import { cardDetails } from "../../shared/card-details.ts";
+import { observedCardKind, photoEvidence } from "../../shared/photo-evidence.ts";
 import { withFreshListing } from "../../shared/fresh-listing.ts";
+import { retargetEvaluation } from "../../shared/money/targets.ts";
+import { cardEvaluation } from "../fixtures/card-evaluation.ts";
 
 const TIME = Date.parse("2026-10-30T12:00:00Z");
 const targets = { minProfit: 50, minRoi: .25 };
@@ -142,14 +145,40 @@ test("card headers distinguish listed, checked, raw, unknown and qualified grade
     assert.deepEqual(cardDetails(listing(),null),{source:"Listed",grade:"PSA 9",finish:"Holo"});
     assert.deepEqual(cardDetails({...listing(),isGraded:false},null),{source:"Listed",grade:"Raw",finish:"Holo"});
     assert.equal(cardDetails({...listing(),listedAttributes:undefined,title:"1999 card 9/102"},null).grade,"Grade unknown");
-    const evaluation={slab:{status:"OK",grader:"CGC",grade:"8.5"},identity:{finish:"REVERSE_HOLO"},photoCheck:{slab:{present:true,grader:"CGC",grade:"8.5"}}};
+    const photos = { cardCount: "ONE", images: [{ view: "FRONT", usable: true, isStockImage: false, issues: [] }] };
+    const evaluation={slab:{status:"OK",grader:"CGC",grade:"8.5"},identity:{finish:"REVERSE_HOLO"},photoCheck:{...photos, holder:"GRADED_SLAB",slab:{present:true,grader:"CGC",grade:"8.5"}}};
     assert.deepEqual(cardDetails(listing(),evaluation),{source:"Label checked",grade:"CGC 8.5",finish:"Reverse holo"});
-    assert.deepEqual(cardDetails({...listing(),isGraded:false},{identity:{finish:"HOLO"},condition:{gradeRange:{high:10}}}),{source:"Photo assessed",grade:"Raw",finish:"Holo"});
+    const raw = { identity: { finish: "HOLO" }, condition: { gradeRange: { high: 10 } }, photoCheck: { ...photos, holder: "SLEEVE" } };
+    assert.deepEqual(cardDetails({...listing(),isGraded:false},raw),{source:"Photo assessed",grade:"Raw",finish:"Holo"});
     assert.equal(cardDetails(listing(),{photoCheck:{slab:{present:false}},identity:{finish:"UNKNOWN"}}).finish,"Finish unknown");
     assert.deepEqual(cardDetails(listing(),{photoCheck:{slab:{present:true,grader:"PSA",grade:"9",gradeQualifier:"OC"}}}),{source:"Slab label unverified",grade:"PSA 9 (OC)",finish:"Finish unknown"});
+    for (const isGraded of [true, false]) for (const check of [
+        { ...photos, holder: "OTHER" },
+        { ...photos, holder: "NONE", cardCount: "MULTIPLE" },
+        { ...photos, holder: "SLEEVE", images: photos.images.map(photo => ({ ...photo, isStockImage: true })) },
+    ]) {
+        const uncertain = { ...raw, photoCheck: check };
+        assert.equal(observedCardKind(uncertain), null);
+        assert.deepEqual(cardDetails({ ...listing(), isGraded }, uncertain), { source: "Photos checked", grade: "Holder unconfirmed", finish: "Holo" });
+        assert.equal(photoEvidence(uncertain, 9).target, "The checked photos leave the holder type unconfirmed.");
+    }
 });
 
 test("fresh server snapshots replace old header attributes and discard old retry hints",()=>{
     const evaluation={listing:{title:"Changed card",url:"url",price:200,shipping:5,bids:0,endTime:null,buyingOption:"FIXED_PRICE",seller:null,availability:"ACTIVE",termsCheckedAt:new Date(TIME).toISOString(),aspects:{"Professional Grader":"CGC",Grade:"8.5",Finish:"Reverse Holo"}}};
     const fresh=withFreshListing(listing(),evaluation);assert.deepEqual(fresh.listedAttributes,{grader:"CGC",grade:8.5,finish:"REVERSE_HOLO"});assert.equal(fresh.screen,undefined);
+});
+
+test("retargeting never dates shipping with a quote from a different destination", () => {
+    const original = cardEvaluation(targets);
+    const checked = new Date(TIME).toISOString();
+    Object.assign(original.listing, { shipping: 8, shippingDestination: "60601", termsCheckedAt: checked });
+    const changed = { ...listing(), shippingDestination: "90210", shipping: 3 };
+    const result = retargetEvaluation(original, targets, changed);
+    assert.deepEqual([result.listing.shipping, result.listing.shippingDestination, result.listing.termsCheckedAt], [3, "90210", undefined]);
+    const current = new Date(TIME + 1234).toISOString();
+    const quoted = retargetEvaluation(original, targets, { ...changed, termsCheckedAt: current });
+    assert.deepEqual([quoted.listing.shipping, quoted.listing.shippingDestination, quoted.listing.termsCheckedAt], [3, "90210", current]);
+    const same = retargetEvaluation(original, targets, { ...changed, shippingDestination: "60601", shipping: null });
+    assert.deepEqual([same.listing.shipping, same.listing.shippingDestination, same.listing.termsCheckedAt], [8, "60601", checked]);
 });

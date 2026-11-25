@@ -204,9 +204,12 @@ export function photoEvidence(evaluation: Evaluation, requestedGrade = 0) {
     const coverage = `${photos.usable} usable photos: ${photos.fronts} front, ${photos.backs} back, ${photos.closeUps} close-ups`;
     const issues = photoIssueNotes(evaluation.photoCheck);
     const range = evaluation.condition?.gradeRange;
-    const optimistic = Boolean(range && requestedGrade > 0 && requestedGrade <= range.high &&
+    const holderUnconfirmed = Boolean(evaluation.photoCheck && observedCardKind(evaluation) === null && !hasSlabEvidence(evaluation));
+    const optimistic = !holderUnconfirmed && Boolean(range && requestedGrade > 0 && requestedGrade <= range.high &&
         (range.likely === null || requestedGrade > range.likely));
-    const target = requestedGrade > 0 && range
+    const target = holderUnconfirmed
+        ? "The checked photos leave the holder type unconfirmed."
+        : requestedGrade > 0 && range
         ? requestedGrade > range.high
           ? `The upper estimate ${range.high} does not meet your potential ${requestedGrade} target.`
           : optimistic

@@ -7,6 +7,7 @@ import { withFreshListing } from "../fresh-listing.ts";
 import { applySoldPriceScreen } from "./sold-screen.ts";
 import { withoutUnsupportedRawPrices, withoutUnsupportedVariantPrices } from "./price-evidence.ts";
 import { withoutRawSlabAssessment } from "../photo-evidence.ts";
+import { withReleaseEvidence } from "../base-set-release.ts";
 
 // Your profit and return targets change by card, so the page re-prices
 // everything for the targets you set. The same money math runs on the
@@ -25,15 +26,18 @@ export function retargetEvaluation(evaluation: Evaluation, targets: Targets, cur
     // Keep the saved photo assessment, but use the latest search's purchase
     // terms. A missing shipping quote falls back to the listing details,
     // just as it does when the server evaluates a search result.
+    const destinationChanged = current?.shippingDestination !== undefined &&
+        (current.shippingDestination ?? null) !== (evaluation.listing.shippingDestination ?? null);
     const updated = current
         ? {
               ...evaluation,
               listing: {
                   ...evaluation.listing,
                   availability: current.availability ?? evaluation.listing.availability,
-                  termsCheckedAt: current.termsCheckedAt ?? evaluation.listing.termsCheckedAt,
+                  termsCheckedAt: current.termsCheckedAt ?? (destinationChanged ? undefined : evaluation.listing.termsCheckedAt),
+                  shippingDestination: current.shippingDestination !== undefined ? current.shippingDestination : evaluation.listing.shippingDestination,
                   price: current.currentPrice,
-                  shipping: current.termsCheckedAt ? current.shipping : current.shipping ?? evaluation.listing.shipping,
+                  shipping: current.termsCheckedAt || destinationChanged ? current.shipping : current.shipping ?? evaluation.listing.shipping,
                   bids: current.bids,
                   endTime: current.endTime,
                   buyingOption: current.buyingOption,
@@ -44,7 +48,7 @@ export function retargetEvaluation(evaluation: Evaluation, targets: Targets, cur
               },
           }
         : evaluation;
-    const scoped = withoutUnsupportedRawPrices(withoutUnsupportedVariantPrices(withoutRawSlabAssessment(updated)));
+    const scoped = withoutUnsupportedRawPrices(withoutUnsupportedVariantPrices(withoutRawSlabAssessment(withReleaseEvidence(updated))));
     const underwriting = underwrite(scoped, withTargets(targets));
     const repriced = { ...scoped, underwriting };
 

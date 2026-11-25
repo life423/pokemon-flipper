@@ -1,4 +1,5 @@
 import type { Evaluation, ListingSummary, PhotoCheck } from "./types.ts";
+import { isPendingReleaseReason } from "./base-set-release.ts";
 import { hasSlabEvidence, missingGalleryViews, obscuredDisclosedWear, photoAssessmentConfidence, photoCoverage, photoIssueNotes } from "./photo-evidence.ts";
 import { isRawCondition } from "./conditions.ts";
 import { priceEvidenceGap } from "./money/price-evidence.ts";
@@ -139,10 +140,11 @@ export function photoReviewStatus(evaluation: Evaluation | null, listing?: Listi
         photoNotes.push(...missingGalleryViews(check).map(view => `Additional view requested by AI: ${view}`));
         photoNotes.push(...evaluation.modeReasons.map(reason => `Assessment note: ${reason}`));
     }
-    const concerns = reasons.length > 0;
+    // A missing verification is a pricing limitation, not a flaw visible in a photo.
+    const findings = printingReviewReasons(evaluation, reasons.filter(reason => !isPendingReleaseReason(reason)));
     return { title: evaluation.frontPhotoStop ? "Front photo checked" : deferred && !evaluation.condition ? "AI identity check complete" : "AI photo review complete", confidence, checked: check.images.length,
         total: evaluation.listing.photosInListing, reviewedAt: evaluation.answeredAt,
-        reasons: printingReviewReasons(evaluation, reasons), photoNotes: [...new Set(photoNotes)], needsYourReview: concerns };
+        reasons: findings, photoNotes: [...new Set(photoNotes)], needsYourReview: findings.length > 0 };
 }
 
 export function isResearchDeferred(evaluation: Evaluation | null): boolean {

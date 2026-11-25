@@ -36,9 +36,10 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
     const market = { source: card.source, printing: variant.printing, printingLabel: printingLabel(variant.printing, identity.set),
         finish: variant.finish, variant: variant.name };
     try {
+        const exact = { printing: identity.printing, setName: variant.setName, cardName: identity.name, cardNumber: identity.cardNumber, finish: variant.finish };
         const eligibleSale = (sale: Comp) => sale.currency === "USD" && sale.sale_type && !sale.grader && !sale.grade &&
             !/\b(psa|cgc|bgs|sgc|tag|lot|bundle)\b/i.test(sale.title) && compProblem({ ...sale, grader: "RAW", grade: "ANY" },
-                { printing: identity.printing, setName: variant.setName, finish: variant.finish, grader: "RAW", grade: "ANY", now, windowDays: 90 }) === null;
+                { ...exact, grader: "RAW", grade: "ANY", now, windowDays: 90 }) === null;
         const target = { name: identity.name!, setName: variant.setName, cardNumber: identity.cardNumber };
         const titleMatches = (sale: Comp) => matchesSoldTarget(sale, target);
         const claimedCondition = (sale: Comp) => {
@@ -113,8 +114,7 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
                         const status = conditionStatus?.(sale, identity);
                         return (!observed || observed.condition === condition) && status !== "SELLER_CONFLICT" && status !== "OTHER_CARD";
                     }).map(({ sale }) => ({ ...sale, grader: "RAW", grade: condition, sellerCondition: condition }));
-                    const summary = summarizeComps(comparable, { printing: identity.printing, setName: variant.setName,
-                        finish: variant.finish, grader: "RAW", grade: condition, now, windowDays: 90 });
+                    const summary = summarizeComps(comparable, { ...exact, grader: "RAW", grade: condition, now, windowDays: 90 });
                     if (claimed.length > comparable.length) summary.dropped["photos contradict the sold title"] = claimed.length - comparable.length;
                     return summary.count ? summary : undefined;
                 };
@@ -139,7 +139,7 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
         const summaries: CompSummary[] = [];
         for (const condition of RAW_CONDITIONS) {
             signal?.throwIfAborted();
-            const criteria = { printing: identity.printing, setName: variant.setName, finish: variant.finish, grader: "RAW", grade: condition, now, windowDays: 90 as const };
+            const criteria = { ...exact, grader: "RAW", grade: condition, now, windowDays: 90 as const };
             const normalized = sales.map(sale => ({ ...sale, grader: "RAW", grade: condition }));
             const passing: Comp[] = [];
             const rejected: Record<string, number> = {};

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cardMismatch, gradingMatches, isEnglish, setMatches, titleMatches } from "../../server/search/relevance.ts";
+import { cardMismatch, gradingMatches, setMatches, titleMatches } from "../../server/search/relevance.ts";
 import { readSearchByRules } from "../../server/search/intent.ts";
 
 // "base set 1999 charizard", as the AI reads it.
@@ -60,11 +60,6 @@ test("non-English cards are skipped", () => {
     assert.equal(titleMatches("Charizard Japanese Base Set No Rarity Holo", INTENT), false);
     assert.equal(titleMatches("Pokemon Charizard JPN Expansion Pack Holo", INTENT), false);
     assert.equal(titleMatches("Charizard 4/102 Base Set Holo English WOTC", INTENT), true);
-    assert.equal(isEnglish("Japanese"), false);
-    assert.equal(isEnglish("English"), true);
-    assert.equal(isEnglish("EN"), true);
-    assert.equal(isEnglish("ENG"), true);
-    assert.equal(isEnglish(undefined), true);
 });
 
 test("a set fits the search when it's in the family, or unknown", () => {

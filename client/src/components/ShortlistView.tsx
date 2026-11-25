@@ -54,7 +54,7 @@ export function ShortlistView({ entries, loading, error, refreshing, refreshErro
         <header className={styles.head}><div><h2 id="shortlist-heading" tabIndex={-1}>Your shortlist</h2><p>English cards only. Saved in this app. Refresh selected listings to check their current terms.</p></div>
             <button type="button" disabled={refreshing || !selection.length} onClick={() => void onRefresh(selection)}>{refreshing ? "Refreshing…" : `Refresh selected${selection.length ? ` (${selection.length})` : ""}`}</button>
         </header>
-        <p className={styles.small}>Select up to {REFRESH_LIMIT}. Refresh checks eBay terms and photos. “Check for a new back photo” also runs AI if the gallery gains photos. Successful checks are reused for one minute.</p>
+        <p className={styles.small}>Select up to {REFRESH_LIMIT}. Refresh checks eBay terms and photos. “Check for a new back photo” also runs AI if the gallery gains photos.</p>
         {error && <p role="alert" className={styles.error}>{error} <button type="button" onClick={onRetry}>Retry loading shortlist</button></p>}
         {loading ? <p role="status">Loading saved listings…</p> : !entries.length && !error ? <div className={styles.empty}><h3>Keep promising cards here</h3><p>Use Save on a search result or inside its analysis. Add notes and your own bid ceiling here.</p></div> : null}
         {excluded.length > 0 && <details className={styles.notes}>
@@ -88,7 +88,7 @@ export function ShortlistView({ entries, loading, error, refreshing, refreshErro
                         entry.needsAnalysis && changed.neededBack ? " The previous assessment was missing a whole back view." : ""}
                 </p>}
                 {!ended && !added.length && entry.needsAnalysis && <p className={styles.warning}>A current photo assessment is needed. Open analysis to review the listing.</p>}
-                {!ended && entry.evaluation && !currentPriceEvidence(entry.evaluation, now) && <p className={styles.warning}>Prices need an update. Open analysis to refresh; unchanged photo assessments can be reused.</p>}
+                {!ended && entry.evaluation && !currentPriceEvidence(entry.evaluation, now) && <p className={styles.warning}>Prices need an update. Open analysis to refresh prices.</p>}
                 {entry.checkedAt && entry.listing.availability === "UNKNOWN" && !ended && <p className={styles.small}>Availability was not confirmed. Check the listing on eBay.</p>}
                 {entry.ceiling !== null && entry.listing.currentPrice !== null && entry.listing.currentPrice > entry.ceiling && <p className={styles.warning}>Above your {dollars(entry.ceiling)} ceiling.</p>}
                 {refreshErrors[entry.id] && <p role="alert" className={styles.error}>{refreshErrors[entry.id]} Previous snapshot kept.</p>}

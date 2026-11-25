@@ -1,20 +1,16 @@
 import { ebayGet } from "./api.ts";
 import type { EbayUsage } from "../../shared/types.ts";
 import { createSingleFlight } from "../lib/single-flight.ts";
-import { reserveDailyBrowseCall } from "./daily-budget.ts";
+import { dailyBrowseReserve, reserveDailyBrowseCall } from "./daily-budget.ts";
 import { browseSearchAllowance } from "./search-budget.ts";
 import { recordProviderUsage } from "../lib/provider-usage.ts";
-export { EbayBudgetError } from "./daily-budget.ts";
+export { EbayBudgetError, ebayBudgetFailure } from "./daily-budget.ts";
 const share = createSingleFlight();
 
 // How much of today's eBay Browse allowance is left, from eBay's own count.
 // Asking uses eBay's Analytics API, which doesn't use up the allowance.
 
 const MAX_AGE_MS = 60 * 1000;
-
-// The last share of the day's allowance is kept in reserve: past it, the
-// free check stops fetching listing details and works from titles.
-const RESERVE_SHARE = 0.1;
 
 interface RateLimits {
     rateLimits?: {
@@ -57,12 +53,12 @@ export async function ebayUsage({ fresh = false }: { fresh?: boolean } = {}): Pr
             limit: rate.limit,
             remaining: rate.remaining,
             resetsAt: rate.reset ?? null,
-            braking: rate.remaining <= rate.limit * RESERVE_SHARE,
+            braking: rate.remaining <= dailyBrowseReserve(rate.limit),
         };
         // An expired Analytics period is not evidence that today's allowance
         // refilled. Keep its expiry so the next read discards it normally.
         const expired = usage.resetsAt && Date.parse(usage.resetsAt) <= Date.now();
-        const reconciled = expired ? usage : await reserveDailyBrowseCall(usage, false, false);
+        const reconciled = expired ? usage : await reserveDailyBrowseCall(usage, { consume: false });
         saved = { usage: reconciled, at: Date.now() };
         await observeQuota(reconciled);
 
@@ -77,9 +73,9 @@ export async function ebayUsage({ fresh = false }: { fresh?: boolean } = {}): Pr
 
 // Called at the actual Browse transport boundary, including nested historical
 // photos and comparisons. Cached reads and Analytics do not spend Browse calls.
-export async function reserveBrowseRequest(keepReserve = false): Promise<void> {
+export async function reserveBrowseRequest(signal?: AbortSignal): Promise<void> {
     const snapshot = saved?.usage.resetsAt && Date.parse(saved.usage.resetsAt) <= Date.now() ? null : saved?.usage ?? null;
-    const usage = await reserveDailyBrowseCall(snapshot, keepReserve);
+    const usage = await reserveDailyBrowseCall(snapshot, { signal });
     saved = { usage, at: saved?.at ?? 0 };
     await observeQuota(usage);
 }

@@ -3,10 +3,13 @@ import type { DealHuntSection } from "../../../../shared/deal-hunt.ts";
 import { name } from "../../format";
 import { hasSlabEvidence, photoEvidence, slabLabelConfidence } from "../../../../shared/photo-evidence.ts";
 import { resaleActivity, matchedSoldActivity } from "../../../../shared/liquidity.ts";
+import { SALES_ACTIVITY_DAYS } from "../../../../shared/sales-activity.ts";
 import { printingReviewReasons } from "../../../../shared/photo-review.ts";
 import { GradingComparison } from "../GradingComparison";
 import { PathCard } from "./FinancialDecision";
 import { ListingEvidenceSection, ListingSection, IdentitySection, SlabSection, ConditionSection, PhotosSection } from "./EvidenceSections";
+import { PriceHistory } from "./PriceHistory";
+import { cardmarketComparisonKey } from "../../../../shared/cardmarket.ts";
 import { PricesSection } from "./PricingSections";
 import { Notes, Pairs, Section } from "./primitives";
 import styles from "../DetailPanel.module.css";
@@ -21,6 +24,7 @@ export function AnalysisDetails({
     reviewing,
     promoted,
     showPurchaseScenarios = true,
+    verifiedPurchase = false,
 }: {
     listing: ListingSummary;
     evaluation: Evaluation;
@@ -30,6 +34,7 @@ export function AnalysisDetails({
     reviewing: boolean;
     promoted?: DealHuntSection | null;
     showPurchaseScenarios?: boolean;
+    verifiedPurchase?: boolean;
 }) {
     const tokens = evaluation.usage.reduce(
         (total, step) => total + (step.inputTokens ?? 0) + (step.outputTokens ?? 0),
@@ -43,7 +48,7 @@ export function AnalysisDetails({
 
     return (
         <>
-            {showPurchaseScenarios && !slab && evaluation.condition && promoted !== "grading" && <Section title="PSA and CGC comparison"><GradingComparison evaluation={evaluation} expanded /></Section>}
+            {showPurchaseScenarios && !slab && evaluation.condition && promoted !== "grading" && <Section title="PSA and CGC comparison"><GradingComparison evaluation={evaluation} expanded verifiedPurchase={verifiedPurchase} /></Section>}
             <Section title="Photo evidence and grading confidence">
                 <p>{slab ? "Photo confidence" : "Assessment confidence"}: {name(evidence.confidence)}. {evidence.coverage}.</p>
                 {labelConfidence && <p>Slab label confidence: {name(labelConfidence)}.</p>}
@@ -56,6 +61,7 @@ export function AnalysisDetails({
                     <div className={styles.paths}>
                         {evaluation.underwriting.paths.filter(path => path.path !== "RAW" || path.status !== "PRICED" || !referencePriceReason(evaluation, path)).map((path) => (
                             <PathCard key={path.label} path={path} auction={evaluation.listing.buyingOption === "AUCTION"}
+                                modeledAlternative={verifiedPurchase && path !== evaluation.underwriting?.best}
                                 shippingPending={evaluation.underwriting?.shippingUnconfirmed} referenceReason={path.status === "PRICED" ? referencePriceReason(evaluation, path) : null} />
                         ))}
                     </div>
@@ -67,7 +73,8 @@ export function AnalysisDetails({
                 <p>{activity.label}</p>
                 <p className={styles.small}>{activity.detail}</p>
                 {matched && <><h4 className={styles.subTitle}>Matched sold listings · {matched.scope}</h4><Pairs rows={[
-                    ["Observed / 7 days", String(matched.last7)], ["Observed / 30 days", String(matched.last30)], ["Observed / 90 days", String(matched.last90)],
+                    ["Observed / 7 days", String(matched.last7)], ["Observed / 30 days", String(matched.last30)],
+                    [`Observed / ${SALES_ACTIVITY_DAYS} days`, String(matched.last60)], ["Observed / 90 days", String(matched.last90)],
                     ["Matching sample", `${matched.returned} sales / ${matched.windowDays}-day lookup`], ["Latest matching sale", matched.newest ?? "None in returned sample"],
                 ]} /></>}
                 {evaluation.marketActivity?.status === "AVAILABLE" && <h4 className={styles.subTitle}>Broader activity · {evaluation.marketActivity.scope === "RAW" ? "all raw conditions" : "all graders and grades"}</h4>}
@@ -79,6 +86,7 @@ export function AnalysisDetails({
                 ]} />}
                 {evaluation.marketActivity?.status === "UNAVAILABLE" && <p className={styles.small}>{evaluation.marketActivity.reason}</p>}
             </Section>
+            <PriceHistory key={cardmarketComparisonKey(evaluation)} id={listing.id} market={cardmarketComparisonKey(evaluation)} />
             <ListingSection listing={listing} evaluation={evaluation} />
             {evaluation.identity && <IdentitySection identity={evaluation.identity} reasons={printingReviewReasons(evaluation, evaluation.identity.reasons)} isSlab={Boolean(evaluation.slab)} />}
             {evaluation.slab && promoted !== "sales" && <SlabSection slab={evaluation.slab} pricing={evaluation.slabPricing} />}
@@ -91,15 +99,11 @@ export function AnalysisDetails({
             {evaluation.photoCheck && <PhotosSection evaluation={evaluation} photoCheck={evaluation.photoCheck} />}
 
             <footer className={styles.footer}>
-                <p className={styles.small}>
-                    {evaluation.usage.length > 0
-                        ? `The initial analysis used ${tokens.toLocaleString()} tokens.`
-                        : "The initial analysis reused saved AI assessments."}
-                </p>
-                {priceEvidenceGap(evaluation) && <p className={styles.small}>Price evidence is incomplete. Saved photo findings can be reused when matched sales become available.</p>}
+                {evaluation.usage.length > 0 && <p className={styles.small}>The initial analysis used {tokens.toLocaleString()} tokens.</p>}
+                {priceEvidenceGap(evaluation) && <p className={styles.small}>Price evidence is incomplete.</p>}
                 {onReanalyze && <button type="button" className={styles.secondary} onClick={onReanalyze} disabled={reviewing}>
                     {(evaluation.frontPhotoStop === "SLAB_PRICE" || evaluation.frontPhotoStop === "RAW_PRICE") && evaluation.underwriting?.verdict === "CANT_PRICE" ? "Check remaining photos (paid)"
-                        : evaluation.researchMode && evaluation.researchMode !== "FULL" ? "Run full research (paid; reuse photos)" : "Reanalyze full listing (paid)"}
+                        : evaluation.researchMode && evaluation.researchMode !== "FULL" ? "Run full research (paid)" : "Reanalyze full listing (paid)"}
                 </button>}
             </footer>
         </>

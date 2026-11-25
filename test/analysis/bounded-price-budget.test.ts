@@ -5,7 +5,7 @@ import { PriceResearchBudgetError, getPriceResearchSignal } from "../../server/p
 import { getAiUsageContext, withAiUsageContext } from "../../server/ai/usage-context.ts";
 import { resultGroup } from "../../shared/analysis.ts";
 import { retargetEvaluation } from "../../shared/money/targets.ts";
-import { cardEvaluation } from "../fixtures/card-evaluation.ts";
+import { cardEvaluation, clearReleaseFixture } from "../fixtures/card-evaluation.ts";
 import { seedRawSoldCopies } from "../fixtures/raw-sold-copies.ts";
 import type { ListingDetails } from "../../server/ebay/listings.ts";
 import type { CardRecord, Comp } from "../../server/pricing/types.ts";
@@ -35,7 +35,7 @@ function subject() {
 function harness(changes: Parameters<typeof createBoundedEvaluator>[0] = {}, values = subject()) {
     const cache = new Map<string, unknown>();
     const calls = { available: 0, assessed: 0, lookup: 0, raw: 0, graded: [] as string[] };
-    const evaluate = createBoundedEvaluator({ now: () => NOW,
+    const evaluate = createBoundedEvaluator({ release: async e => clearReleaseFixture(e), now: () => NOW,
         details: async () => structuredClone(values.listing), saved: async () => null,
         cached: async key => structuredClone(cache.get(key) ?? null) as any,
         save: async (key, value) => { cache.set(key, structuredClone(value)); },

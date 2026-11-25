@@ -1,10 +1,12 @@
 export interface PricingResearchUsage {
     searchId: string;
-    limit: number;
+    // Null under the current accounting policy. Older usage snapshots can
+    // still contain the local request ceiling that applied when recorded.
+    limit: number | null;
     // Durable reservations, including failed/unknown transports. Cache hits
     // consume nothing; a repeated ID or later day does not reset this count.
     used: number;
-    remaining: number;
+    remaining: number | null;
     completed: number;
     pending: number;
     unresolved: number;

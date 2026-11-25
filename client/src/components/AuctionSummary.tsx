@@ -1,8 +1,9 @@
 import { MONEY_CONFIG } from "../../../shared/money/config.ts";
-import type { Evaluation, Targets } from "../types";
+import type { Evaluation, PricedPath, Targets } from "../types";
 import { dollars, timeLeft } from "../format";
 import { auctionDecision, returnText } from "../../../shared/card-presentation.ts";
-import { priceEvidenceGap } from "../../../shared/money/price-evidence.ts";
+import { priceEvidenceGap, rawPriceForPath } from "../../../shared/money/price-evidence.ts";
+import { tcgplayerEstimateLabel } from "./analysis/PricingSections";
 import styles from "./DecisionSummary.module.css";
 
 export function AuctionSummary({ evaluation, targets, now }: { evaluation: Evaluation; targets: Targets; now: number }) {
@@ -12,6 +13,9 @@ export function AuctionSummary({ evaluation, targets, now }: { evaluation: Evalu
     const showCurrent = decision.overLimit || noProfitableBid;
     const result = showCurrent ? decision.atCurrent : decision.atCeiling;
     const cautious = decision.provisional || decision.anyTargets || decision.ended || decision.overLimit;
+    const rawPath = evaluation.underwriting?.paths.find((path): path is PricedPath => path.path === "RAW" && path.status === "PRICED");
+    const quoteSource = decision.benchmark && !evaluation.slab && rawPath
+        ? tcgplayerEstimateLabel(rawPriceForPath(evaluation.rawPricing, rawPath)?.basis) : null;
     return <div className={styles.auction}>
         <div className={styles.amounts}>
             <div><span className={styles.label}>Current bid</span><strong>{dollars(evaluation.listing.price)}</strong></div>
@@ -29,7 +33,7 @@ export function AuctionSummary({ evaluation, targets, now }: { evaluation: Evalu
             </dl>
         </div>}
         <div className={styles.market}>
-            <span className={styles.label}>{evaluation.slabPricing?.activeReference && !evaluation.slabPricing.summary?.count ? "Current Buy It Now competition" : "Closing price guide"}</span>
+            <span className={styles.label}>{quoteSource ?? (evaluation.slabPricing?.activeReference && !evaluation.slabPricing.summary?.count ? "Current Buy It Now competition" : "Closing price guide")}</span>
             <strong>{decision.benchmark ? dollars(decision.benchmark.price) : "Unavailable"}</strong>
             <p>{decision.benchmark ? `${decision.benchmark.source}${decision.benchmark.count !== null ? ` · ${decision.benchmark.count} sales` : ""}.` : "No condition-matched closing-price reference available."}</p>
             {decision.benchmark?.low !== null && decision.benchmark?.low !== undefined && <p>Observed sales: {dollars(decision.benchmark.low)}–{dollars(decision.benchmark.high)}</p>}

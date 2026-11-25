@@ -10,6 +10,7 @@ import { searchDeals } from "./deals/search.ts";
 import { discoveryContinuations } from "./deals/search-continuation.ts";
 import { evaluateBoundedListing, PriceOnlyEvidenceError } from "./analysis/bounded-evaluate.ts";
 import { EbayError } from "./ebay/api.ts";
+import { shippingDestinationRoutes, validShippingZip, withShippingDestination } from "./ebay/shipping-destination.ts";
 import { ebayUsage, EbayBudgetError } from "./ebay/usage.ts";
 import type { CurrentState } from "./analysis/types.ts";
 import { MONEY_CONFIG } from "../shared/money/config.ts";
@@ -39,6 +40,7 @@ import { completeSearchDiagnostic, loadDiagnosticDiscovery, loadDiagnosticResult
 import { isSearchDiagnosticId, SearchDiagnosticInputError } from "./analysis/search-diagnostic-store.ts";
 import { interpretSearchRequest, SearchPlanInputError } from "./search/search-plan.ts";
 import { drainSharedWork, trackSharedWork } from "./lib/shared-work.ts";
+import { marketHistory } from "./pricing/price-history.ts";
 import { compareCardmarket } from "./pricing/cardmarket.ts";
 import { cardmarketComparisonKey } from "../shared/cardmarket.ts";
 import { loadPrivateEvaluation } from "./analysis/private-evaluation.ts";
@@ -47,6 +49,7 @@ import { latestLiveCollector, LiveCollectorInputError, runLiveCollector } from "
 import { saveCollectorStrategyEvidence } from "./analysis/collector-strategy-evidence.ts";
 import { BuyerReviewInputError, reviewBuyerListing } from "./analysis/wait-skip-review.ts";
 import { DealHuntInputError, runSearchDealHunt, saveDealHuntInventory } from "./analysis/deal-hunt-service.ts";
+import { huntProgress } from "./analysis/deal-hunt-progress.ts";
 import type { ListingSummary } from "../shared/types.ts";
 import { readSniperQuote, sandboxBuyerId, sniperCapabilities, submitSandboxBid } from "./ebay/sniper.ts";
 import { auctionTracker } from "./auction-tracking/service.ts";
@@ -71,6 +74,7 @@ function currentState(body: unknown): CurrentState | null {
             ? value.images as string[] : undefined,
         price: number(value.price),
         shipping: number(value.shipping),
+        shippingDestination: value.shippingDestination === null || validShippingZip(value.shippingDestination) ? value.shippingDestination : undefined,
         bids: number(value.bids) ?? 0,
         endTime: typeof value.endTime === "string" ? value.endTime : null,
         termsCheckedAt: typeof value.termsCheckedAt === "string" && Number.isFinite(Date.parse(value.termsCheckedAt)) ? value.termsCheckedAt : undefined,
@@ -152,6 +156,14 @@ app.post("/api/camera/grade", (req, res, next) => {
     }
 }));
 app.use(express.json());
+app.use("/api/shipping-destination", shippingDestinationRoutes());
+app.use("/api", (_req, res, next) => {
+    try { withShippingDestination(next); }
+    catch {
+        res.status(503).json({ error: "Your shipping destination could not be read. Save your ZIP code in Settings.",
+            code: "STORAGE_UNAVAILABLE", retryable: false, scope: "search" });
+    }
+});
 const auctionSniper = createSniperScheduler({
     sandboxBuyerId,
     readQuote: readSniperQuote,
@@ -193,7 +205,8 @@ app.get("/api/ai-usage", async (req, res) => {
     try {
         const id = searchId(req.query.searchId);
         const [usage, budget, pricing, providers] = await Promise.all([aiUsageToday(id), aiSpending.summary(id), priceResearchSummary(id), dailyProviderUsage()]);
-        res.json({ ...usage, budget, pricing, providers });
+        const hunt = huntProgress.read(id, searchId(req.query.huntId) ?? id);
+        res.set("Cache-Control", "no-store").json({ ...usage, budget, pricing, providers, ...(hunt && { hunt }) });
     }
     catch { res.status(500).json({ error: "Search usage could not be read. Provider operations are unchanged." }); }
 });
@@ -207,11 +220,12 @@ function searchCoverage(summary: SearchSummary | undefined, sourceDispositions: 
 
 async function recordDiagnosticDiscovery(req: express.Request, summary: SearchSummary | undefined, listings: Map<string, ListingSummary>, coverage: SearchSourceCoverage) {
     const id = req.get("X-Pokemon-Flipper-Search-Id");
-    if (!summary || !isSearchDiagnosticId(id)) return;
-    await saveDiagnosticDiscovery(id, { ...summary, ...coverage, retainedIds: [...listings.keys()] }).catch(error => {
+    if (!summary || summary.continuation?.blocked || !isSearchDiagnosticId(id)) return;
+    const continued = typeof req.query.continuation === "string" ? await discoveryContinuations.completedRequest(req.query.continuation, id) : undefined;
+    await saveDiagnosticDiscovery(id, { ...summary, ...coverage, retainedIds: [...listings.keys()] }, continued !== undefined).catch(error => {
         console.error("Completed search diagnostic could not be saved", error);
     });
-    await saveDealHuntInventory(id, summary.intent, readListingFilters(req.query), [...listings.values()]).catch(error => {
+    await saveDealHuntInventory(id, summary.intent, continued ? continued.filters ?? {} : readListingFilters(req.query), [...listings.values()]).catch(error => {
         console.error("Deal hunt inventory could not be saved", error instanceof Error ? error.name : "unknown error");
     });
 }
@@ -227,7 +241,7 @@ app.post("/api/search-plan", tracked(async (req, res) => {
         if (signal.aborted) return;
         if (error instanceof SearchPlanInputError) { res.status(error.status).json({ error: error.message }); return; }
         const failure = evaluationFailure(error);
-        res.status(failure.status).json(failure.status === 500 ? { error: "Your search could not be interpreted. Please try again. Saved research was kept." } : failure);
+        res.status(failure.status).json(failure.status === 500 ? { error: "Your search could not be interpreted. Please try again." } : failure);
     }
 }));
 
@@ -236,7 +250,12 @@ app.post("/api/deal-hunt", tracked(async (req, res) => {
     if (!isSearchDiagnosticId(id)) { res.status(400).json({ error: "A valid completed search is required." }); return; }
     const signal = requestSignal();
     try {
-        const result = await runSearchDealHunt(id, req.body, signal);
+        // An already-open tab may still submit the older standalone request shape.
+        const body = req.body;
+        const fresh = body?.standalone === true && body.scope === "any_card" && body.goal === "resell" &&
+            (body.filters?.typeFilter ?? "FIXED_PRICE") === "FIXED_PRICE";
+        const result = await runSearchDealHunt(id, fresh ? { ...body, freshListings: true,
+            filters: { ...body.filters, typeFilter: "FIXED_PRICE" } } : body, signal);
         if (result.auctionOpportunity && result.report.goal !== "collect_slab" && result.report.decision === "BID" && !signal.aborted)
             await auctionTracker.remember(result.auctionOpportunity, result.evaluation, getBudgetContext().searchId ?? id);
         if (!signal.aborted) res.set("Cache-Control", "no-store").json(result);
@@ -244,7 +263,7 @@ app.post("/api/deal-hunt", tracked(async (req, res) => {
         if (signal.aborted) return;
         if (error instanceof DealHuntInputError) { res.status(error.status).json({ error: error.message }); return; }
         const failure = evaluationFailure(error);
-        res.status(failure.status).json(failure.status === 500 ? { error: "The hunt could not complete. Completed research was saved." } : failure);
+        res.status(failure.status).json(failure.status === 500 ? { error: "The hunt could not complete." } : failure);
     }
 }));
 
@@ -287,7 +306,7 @@ app.post("/api/collector-strategy", tracked(async (req, res) => {
         const report = await runCollectorGuide(id, signal);
         if (signal.aborted) return;
         if (report) res.json({ available: true, report });
-        else res.status(404).json({ error: "No saved exact-slab comparison is available for this search." });
+        else res.status(404).json({ error: "No exact-slab comparison is available for this search." });
     } catch (error) {
         if (!signal.aborted) res.status(503).json({ error: storageFailure(error)?.message ?? "The collector strategy could not finish its saved checks." });
         console.error("Collector strategy could not complete", error instanceof Error ? error.message : "unknown error");
@@ -336,16 +355,17 @@ app.post("/api/listings/resolve", tracked(async (req, res) => {
     }
     catch (error) {
         if (signal.aborted) return;
+        if (error instanceof EbayBudgetError) { res.status(503).json(evaluationFailure(error)); return; }
         const missing = error instanceof EbayError && [404, 410].includes(error.status);
         res.status(error instanceof ListingLinkError ? error.status : missing ? 404 : error instanceof ProviderError || error instanceof EbayBudgetError ? 503 : 502).json({
             error: error instanceof ListingLinkError || error instanceof ProviderError || error instanceof EbayBudgetError ? error.message
                 : missing ? "Listing not found or no longer available. No AI analysis was started." : "Could not load this listing from eBay. Please try again.",
-            ...(error instanceof EbayBudgetError ? { retryable: false, code: "EBAY_BUDGET" } : {}) });
+        });
     }
 }));
 
 app.get("/api/shortlist", async (_req, res) => {
-    try { res.json({ entries: await shortlistStore.list() }); }
+    try { res.json({ entries: await shortlistService.list() }); }
     catch (error) { res.status(500).json({ error: (error as Error).message }); }
 });
 app.post("/api/shortlist", async (req, res) => {
@@ -359,7 +379,7 @@ app.patch("/api/shortlist/:id", async (req, res) => {
     }
     try {
         const entry = await shortlistStore.update(req.params.id, (entry) => ({ ...entry, notes, ceiling }));
-        res.status(entry ? 200 : 404).json(entry ?? { error: "This saved listing was removed." });
+        res.status(entry ? 200 : 404).json(entry ? await shortlistService.present(entry) : { error: "This saved listing was removed." });
     } catch (error) { res.status(500).json({ error: (error as Error).message }); }
 });
 app.delete("/api/shortlist/:id", async (req, res) => {
@@ -448,7 +468,11 @@ app.get("/api/deals", tracked(async (req, res) => {
     } catch (error) {
         await searchHistory.remember(searchText(req), Math.max(0, Number(req.query.min) || 0), [...seen.keys()], readListingFilters(req.query)).catch((failure) => console.error("Partial search history was not saved", failure));
         console.error(error);
-        if (!signal.aborted) send({ type: "error", error: searchFailureMessage(error) });
+        if (!signal.aborted) {
+            const failure = evaluationFailure(error);
+            send({ type: "error", error: searchFailureMessage(error), ...(failure.code && { code: failure.code }),
+                retryable: failure.retryable, ...(failure.scope && { scope: failure.scope }) });
+        }
     }
 
     res.end();
@@ -495,7 +519,7 @@ app.post("/api/listings/:id/evaluate", tracked(async (req, res) => {
             const saved = await loadPrivateEvaluation(req.params.id);
             account = await originalListingSearch(req.params.id, saved, account);
             if (!account) {
-                res.status(409).json({ error: "The original search account could not be found for this saved assessment. Its prior results are still available.", retryable: false });
+                res.status(409).json({ error: "The original search account could not be found for this saved assessment.", retryable: false });
                 return;
             }
         }
@@ -526,6 +550,25 @@ app.post("/api/listings/:id/evaluate", tracked(async (req, res) => {
         }
         console.error(error);
 
+        const failure = evaluationFailure(error);
+        res.status(failure.status).json(failure);
+    }
+}));
+
+app.post("/api/listings/:id/price-history", tracked(async (req, res) => {
+    const signal = requestSignal();
+    try {
+        const saved = await loadPrivateEvaluation(req.params.id);
+        const account = await originalListingSearch(req.params.id, saved, req.get("X-Pokemon-Flipper-Search-Id"));
+        if (!saved || !account || req.body?.market !== cardmarketComparisonKey(saved.evaluation)) {
+            res.status(409).json({ error: "Open the current photo assessment to check price history." });
+            return;
+        }
+        signal.throwIfAborted();
+        const result = await withAiUsageContext({ searchId: account, listingId: req.params.id }, () => marketHistory(saved.evaluation));
+        if (!signal.aborted) res.json(result);
+    } catch (error) {
+        if (signal.aborted) return;
         const failure = evaluationFailure(error);
         res.status(failure.status).json(failure);
     }

@@ -4,6 +4,7 @@ import test from "node:test";
 import { type DealHuntAction } from "../../shared/deal-hunt.ts";
 import { AiSearchAllowanceError, aiSpending } from "../../server/ai/spending.ts";
 import { getAiUsageContext } from "../../server/ai/usage-context.ts";
+import { aiUsageToday } from "../../server/ai/usage.ts";
 import { type DealHuntCandidate, runDealHunt } from "../../server/analysis/deal-hunt.ts";
 import { createModelExperimentRunner } from "../../server/analysis/model-experiment.ts";
 
@@ -228,7 +229,7 @@ test("AI spending limits and cancellation preserve the caller's search boundary"
     const result = await runDealHunt(input, undefined, model.choose);
     assert.equal(result.decision, "WAIT");
     assert.equal(result.destination, null);
-    assert.match(result.reason, /allowance/);
+    assert.equal(result.reason, "limit reached");
     await assert.rejects(runDealHunt(input, AbortSignal.abort(), model.choose), { name: "AbortError" });
     assert.equal(model.dispatches(), 1);
 });
@@ -325,6 +326,84 @@ test("malformed paid output selects a host check, preserves its usage and replay
     assert.equal(calls, 1);
 });
 
+test("an output-limited planning response after broad discovery uses one permissible evidence check and replays without repurchasing the response", async t => {
+    const previous = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = "offline-capped-hunt";
+    t.after(() => { if (previous === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = previous; });
+    t.mock.method(aiSpending, "reserve", async () => null);
+    const root = "6ed21122-5b63-4630-abad-3b90a4d3ef7a";
+    let requests = 0;
+    t.mock.method(globalThis, "fetch", async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : input.toString());
+        assert.equal(url.origin + url.pathname, "https://api.openai.com/v1/responses");
+        assert.equal(getAiUsageContext().searchId, root);
+        const body = JSON.parse(String(init?.body));
+        assert.equal(body.max_output_tokens, 160);
+        const { inventory, menu, observed } = JSON.parse(body.input[0].content[0].text) as Prompt;
+        const at = requests++;
+        const allowed = menu.map(entry => entry.key);
+        const response = { id: `offline-capped-${at}`, object: "response", model: body.model, service_tier: "default" };
+        const message = (text: string) => [{ type: "message", role: "assistant",
+            content: [{ type: "output_text", text, annotations: [] }] }];
+        if (at === 3) {
+            assert.equal(inventory.length, 50);
+            assert.deepEqual(observed.map(step => step.action), ["find_listings", "find_listings", "find_listings"]);
+            assert.equal(allowed.length, 50);
+            assert.ok(allowed.every(choice => choice.endsWith("/inspect_photos")));
+            return Response.json({ ...response, status: "incomplete", incomplete_details: { reason: "max_output_tokens" },
+                output: message('{"choice":"market-0/find_listings","reason":"This partial answer is never used'),
+                usage: { input_tokens: 6196, output_tokens: 160 } });
+        }
+        const choice = ["market-0/find_listings", "market-2/find_listings", "market-4/find_listings",
+            null, "0/check_listing", "0/check_sales"][at];
+        assert.ok(choice && allowed.includes(choice), JSON.stringify({ choice, allowed }));
+        return Response.json({ ...response, status: "completed", output: message(JSON.stringify({ choice, reason: "Check the next valid option." })),
+            usage: { input_tokens: 100, output_tokens: 31 } });
+    });
+
+    const checked: string[] = [], marketsVisited: number[] = [];
+    const candidates: DealHuntCandidate[] = Array.from({ length: 50 }, (_, index) => ({
+        listingId: `copy-${index}`, title: `Broad inventory copy ${index}`, summary: "Screened copy from the requested release.",
+        available: done => done.has("check_listing") ? ["check_sales"] : done.has("inspect_photos") ? ["check_listing"] : ["inspect_photos"],
+        read(action) {
+            assert.equal(getAiUsageContext().listingId, `copy-${index}`);
+            checked.push(`${index}/${action}`);
+            return `Evidence checked for ${action}.`;
+        },
+        outcome: done => done.has("inspect_photos") && done.has("check_listing") && done.has("check_sales")
+            ? { decision: "BUY", section: "sales", reason: "The fixture purchase has matching prices, verified photos and current terms." } : null,
+    }));
+    const markets = Array.from({ length: 5 }, (_, index) => ({
+        title: `Market ${index}`, summary: "A permitted market under the original account.",
+        ...(index === 4 && { source: "inventory" as const }),
+        async discover() {
+            assert.equal(getAiUsageContext().searchId, root);
+            marketsVisited.push(index);
+            return index === 4 ? candidates : [];
+        },
+    }));
+    const cache = new Map<string, any>();
+    const makeRunner = () => createModelExperimentRunner({ cached: async key => cache.get(key) ?? null,
+        save: async (key, value) => { cache.set(key, value); } });
+    const input = { searchId: root, goal: "resell" as const, candidates: [], markets, preferRecentSales: true };
+    const first = await runDealHunt(input, undefined, makeRunner());
+    assert.deepEqual(marketsVisited, [0, 2, 4]);
+    assert.deepEqual(checked, ["0/inspect_photos", "0/check_listing", "0/check_sales"]);
+    assert.deepEqual(first.destination, { listingId: "copy-0", section: "sales" });
+    assert.equal(first.steps[3].selectedBy, "app");
+    assert.equal(first.steps[3].reused, false);
+    const retained = [...cache.values()].find(value => value.outputLimit === true);
+    assert.equal(retained?.result, null, "partial text cannot be a valid decision");
+    assert.deepEqual(retained?.usage, { inputTokens: 6196, outputTokens: 160 });
+
+    const replay = await runDealHunt(input, undefined, makeRunner());
+    assert.deepEqual(replay.destination, first.destination);
+    assert.equal(replay.steps[3].selectedBy, "app");
+    assert.equal(replay.steps[3].reused, true);
+    assert.equal(requests, 6, "the accepted capped response and every prior choice cost one request even across runner restart");
+    assert.equal((await aiUsageToday(root)).stages.find(stage => stage.step === "Choose deal research")?.failed, 1);
+});
+
 test("an unrelated transport parse exception is never treated as a planner choice", async () => {
     const broken = new SyntaxError("Upstream transport envelope was corrupt");
     const model = planner(() => { throw broken; });
@@ -411,4 +490,27 @@ test("a verified auction survives a simultaneous check exhausting its research a
     assert.equal(result.destination?.listingId, "B");
     assert.deepEqual(result.steps.map(s => s.listingId), ["B"]);
     assert.equal(result.steps[0].parallelGroup, undefined);
+});
+
+test("guided fresh resale uses the failed copy to choose the next copy and finishes its checks", async () => {
+    const seen: string[] = [], guidance: string[] = [];
+    const make = (listingId: string): DealHuntCandidate => ({
+        listingId, title: listingId, summary: "Fresh fixed-price copy",
+        available: checked => checked.has("inspect_photos") ? ["check_sales"] : ["inspect_photos"],
+        read(action) { seen.push(listingId + " " + action); return listingId === "first" ? "Front is too blurry." : "Matching front and number."; },
+        outcome: checked => checked.has(listingId === "first" ? "inspect_photos" : "check_sales") ?
+            { decision: listingId === "third" ? "BUY" : "WAIT", section: "sales", reason: "Checked photos and matched prices." } : null,
+    });
+    const model = planner(prompt => {
+        assert.ok(prompt.observed.some(step => step.observation.includes("too blurry")));
+        return { choice: "2/inspect_photos", reason: "Check the third copy because its front is readable." };
+    });
+    const report = await runDealHunt({ searchId, goal: "resell", candidates: [], freshListings: true, guidedResale: true,
+        progress: { stage() {}, checked() {}, guidance: reason => guidance.push(reason) },
+        markets: [{ title:"Ampharos", summary:"Current copies", discover: async () => ["first","second","third"].map(make) }] }, undefined, model.choose);
+    assert.deepEqual(seen, ["first inspect_photos", "third inspect_photos", "third check_sales"]);
+    assert.equal(model.dispatches(), 1);
+    assert.match(guidance[0], /third copy/);
+    assert.equal(report.destination?.listingId, "third");
+    assert.equal(report.decision, "BUY");
 });

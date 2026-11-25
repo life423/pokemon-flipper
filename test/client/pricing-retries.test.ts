@@ -25,7 +25,7 @@ test("manual pricing retries retain cooldown, search waiting and cancellation wi
         onRetry: () => {}, onCancel: () => {} };
     const render = (change = {}) => renderToStaticMarkup(createElement(PricingRetries, { ...defaults, ...change }));
     assert.match(render(), />Retry pricing \(1\)<\/button>/);
-    assert.match(render(), /Up to five per batch/);
+    assert.match(render(), /up to five listings per batch/);
     assert.doesNotMatch(render(), /automatic recovery/);
     const searching = render({ searching: true });
     assert.match(searching, /waiting for this search to finish/);

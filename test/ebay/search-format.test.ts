@@ -4,11 +4,72 @@ import { searchListings } from "../../server/ebay/listings.ts";
 import { offlineEbayCredentials } from "../fixtures/ebay-credentials.ts";
 import { offlineSearchSteps } from "../fixtures/search-steps.ts";
 import { EnglishOnlyError } from "../../shared/card-language.ts";
-import { findDeals } from "../../server/deals/find-deals.ts";
+import { createHuntInventoryScanner, findDeals } from "../../server/deals/find-deals.ts";
 import { readSearchLocally } from "../../server/search/intent.ts";
 import { readTitleByRules } from "../../server/ai/title-reader.ts";
 import { sellerConditionClues } from "../../shared/raw-condition-claim.ts";
 import type { MarketplaceOrder } from "../../shared/listing-filters.ts";
+
+test("broad hunt inventory searches the CCG category without requiring seller language or spending on sports noise", async t => {
+    offlineEbayCredentials(t);
+    const source = "base set";
+    const intent = { ...readSearchLocally(source, ["Base Set"]), finish: "HOLO" as const, minYear: 1999, maxYear: 2003,
+        releaseYears: { "base set": 1999 } };
+    const item = (id: string, title: string, categoryId?: string) => ({
+        itemId: `v1|${id}|0`, title, buyingOptions: ["FIXED_PRICE"], conditionId: "4000", price: { value: "15", currency: "USD" },
+        shippingOptions: [{ shippingCost: { value: "2", currency: "USD" } }],
+        image: { imageUrl: "https://i.ebayimg.com/images/g/fixture/s-l225.jpg" },
+        ...(categoryId && { categories: [{ categoryId }] }),
+    });
+    const fullCardQuery = "Charizard Base Set 4/102";
+    const inventory = [
+        item("gretzky", "1999-00 Upper Deck Wayne Gretzky #86 HOF 02v3"),
+        item("brodeur", "1999-00 Upper Deck MVP Martin Brodeur #115 HOF 07pa", "183454"),
+        item("sports-category", "1999 Rookie Single Card #1 Base Set", "261328"),
+        item("sports-year", "Panini 2025 Donruss Optic Tyrone Tracy Jr. New York Giants #6 Base Set", "183454"),
+        item("sports-league", "1999 NHL 25 Holo", "183454"),
+        item("generic", "Charizard 4/102 Holo", "183454"),
+        item("misfiled", "Base Set Holo Venusaur 15/102", "261328"),
+        item("relevant", "Base Set Holo Blastoise 2/102", "183454"),
+        item("sports-holder", "Pokémon Base Set Alakazam 1/102 Holo with Upper Deck holder", "183454"),
+        item("foreign", "Japanese Charizard Base Set Holo", "183454"),
+    ];
+    const browse: URLSearchParams[] = [];
+    t.mock.method(globalThis, "fetch", async input => {
+        const url = new URL(String(input));
+        if (url.pathname.includes("oauth2/token")) return Response.json({ access_token: "offline", expires_in: 3600 });
+        if (url.pathname.includes("rate_limit")) return Response.json({ rateLimits: [{ apiName: "Browse", resources: [{ name: "buy.browse", rates: [{ count: 0, limit: 5000, remaining: 5000 }] }] }] });
+        assert.match(url.pathname, /item_summary\/search$/);
+        browse.push(url.searchParams);
+        if (url.searchParams.get("q") === fullCardQuery) {
+            const alias = item("exact-alias", "Charizard Base Set Holo 4/102", "261328");
+            return Response.json({ total: 1, itemSummaries: [alias] });
+        }
+        assert.equal(url.searchParams.get("q"), "pokemon base set");
+        return Response.json({ total: inventory.length, itemSummaries: inventory });
+    });
+    const screened: string[] = [];
+    const scan = createHuntInventoryScanner(new AbortController().signal, offlineSearchSteps([], {
+        search: searchListings,
+        soldScreening: () => async listing => {
+            screened.push(listing.id);
+            return { status: "UNAVAILABLE", exactScope: false, references: [], note: "Offline fixture." };
+        },
+    }));
+    const { listings } = await scan(source, intent, { typeFilter: "FIXED_PRICE", kindFilter: "all" },
+        { minProfit: 0, minRoi: 0 }, Date.now(), { excludeIds: new Set(), freshGrading: false });
+    const expected = ["generic", "misfiled", "relevant", "sports-holder"].map(id => `v1|${id}|0`).sort();
+    assert.deepEqual(listings.map(listing => listing.id).sort(), expected, "unknown language and generic Pokémon copy titles remain eligible");
+    assert.deepEqual(screened.sort(), expected, "sports rows cannot start pricing or become photo candidates");
+    assert.equal(browse[0].get("category_ids"), "183454");
+    assert.equal(browse[0].get("aspect_filter"), null);
+    assert.equal(browse.length, 1);
+
+    const alias = await searchListings(fullCardQuery, { anyCategory: true });
+    assert.equal(alias.listings[0]?.id, "v1|exact-alias|0", "exact card queries still recover a card filed in the wrong category");
+    assert.equal(browse[1].get("category_ids"), null);
+    assert.equal(browse[1].get("aspect_filter"), null);
+});
 
 test("Browse structured condition and wear notes reach seller clues", async t => {
     offlineEbayCredentials(t);

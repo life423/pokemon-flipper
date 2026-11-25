@@ -13,6 +13,7 @@ const COLLAPSED_KEY = "searchProgressCollapsed";
 
 interface Props {
     phase: SearchPhase;
+    discoveryPaused?: boolean;
     query: string;
     error: string | null;
     // eBay's total results for the search.
@@ -43,14 +44,14 @@ function readCollapsed(): boolean {
 
 // The search's progress, expanded with every step and count, or collapsed
 // to one line to leave room for results.
-export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal, checked, total, discoveryProgress, ai, buyerProgress, stats, usage, onStop, canStopAssessment, actions, details }: Props) {
+export function SearchProgress({ phase: requestedPhase, discoveryPaused, query, error, ebayTotal, checked, total, discoveryProgress, ai, buyerProgress, stats, usage, onStop, canStopAssessment, actions, details }: Props) {
     const [collapsed, setCollapsed] = useState(readCollapsed);
     const listingWork = requestedPhase === "finding" || requestedPhase === "filtering";
     // A paid-AI pause does not stop the independently bounded metadata stream.
     // Keep its progress and Stop action while the photo status reports the pause.
     const buyerWork = buyerProgress && buyerProgress.finished + buyerProgress.unavailable < buyerProgress.total;
     const phase = requestedPhase === "stopped" || requestedPhase === "error" ? requestedPhase
-        : requestedPhase === "paused" || ai.paused && !listingWork ? "paused"
+        : requestedPhase === "paused" || discoveryPaused || ai.paused && !listingWork ? "paused"
         : requestedPhase === "done" && buyerWork && buyerProgress.active > 0 ? "ai" : requestedPhase;
 
     const toggle = () => {
@@ -68,7 +69,7 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
     const halted = phase === "paused" || phase === "stopped" || phase === "error";
     const step = STEP_OF[phase];
     const analyzing = phase === "error" && !canStopAssessment ? 0 : ai.analyzing;
-    const aiState = phase === "stopped" ? "stopped" : phase === "paused" || ai.paused ? "paused" : analyzing > 0 ? "working" : "idle";
+    const aiState = phase === "stopped" ? "stopped" : ai.paused || phase === "paused" && !discoveryPaused ? "paused" : analyzing > 0 ? "working" : "idle";
     const inconclusive = ai.inconclusive ?? 0;
     const held = ai.held ?? 0;
     const completed = Math.max(0, ai.done - ai.failed - inconclusive - held);
@@ -109,7 +110,7 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
         filtering: "Checking listings and sold prices",
         ai: buyerTask || "Reviewing photos",
         done: "Search complete",
-        paused: buyerProgress ? "Listing checks paused" : "Photo reviews paused",
+        paused: discoveryPaused ? "Discovery paused" : buyerProgress ? "Listing checks paused" : "Photo reviews paused",
         stopped: "Search stopped",
         error: "Search incomplete",
     }[phase];
@@ -121,8 +122,8 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
               ? `${loaded} · ${assessed} for “${query}”`
               : phase === "stopped"
                 ? discoveryProgress ? `Stopped after ${discoveryProgress.screened.toLocaleString()} preliminary listing checks.`
-                    : `Stopped after ${checked.toLocaleString()} of ${(total ?? checked).toLocaleString()} checks. Saved results remain available.`
-                : phase === "paused" ? `New photo checks are paused for “${query}”. Saved results remain available.`
+                    : `Stopped after ${checked.toLocaleString()} of ${(total ?? checked).toLocaleString()} checks.`
+                : phase === "paused" ? discoveryPaused ? loaded : `New photo checks are paused for “${query}”.`
                 : phase === "ai"
                   ? `Checking the best candidates for \u201c${query}\u201d`
                   : `Scanning listings for \u201c${query}\u201d`;
@@ -141,7 +142,8 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
     // What's happening right now, in a few words.
     const activity =
             phase === "stopped" ? "New checks are stopped. Already accepted answers can still finish and save."
-            : phase === "paused" ? `New photo assessments are paused. ${awaiting ? `${awaiting} These listings have not failed verification. ` : ""}Completed assessments and search results remain available.`
+            : phase === "paused" ? discoveryPaused ? "More marketplace results are available when the original eBay allowance permits." :
+                `New photo assessments are paused. ${awaiting ? `${awaiting} These listings have not failed verification. ` : ""}Completed assessments and search results remain available.`
             : phase === "error" ? "The search ended early. Automatic assessments stopped, and results checked so far are kept."
             : ai.paused && listingWork ? "Listing checks are still running. New photo assessments are paused; unassessed listings remain preliminary."
             : ai.analyzing > 0 ? `${aiStatus}. Results appear as each assessment finishes.`
@@ -161,7 +163,7 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
     const showAssessmentStatus = phase !== "done" || analyzing > 0 || ai.waiting > 0 || ai.failed > 0 || inconclusive > 0 || held > 0;
 
     const buyerLabel = buyerProgress && (phase === "stopped" ? "Listing checks stopped" : phase === "error" ? "Search ended early"
-        : phase === "paused" ? "Listing checks paused" : buyerProgress.active > 0 ? `Checking ${buyerProgress.active} ${buyerProgress.active === 1 ? "listing" : "listings"}`
+        : phase === "paused" && !discoveryPaused ? "Listing checks paused" : buyerProgress.active > 0 ? `Checking ${buyerProgress.active} ${buyerProgress.active === 1 ? "listing" : "listings"}`
         : listingWork ? "Checking listing matches and prices" : null);
     const unavailableLabel = buyerProgress?.unavailable
         ? `${buyerProgress.unavailable.toLocaleString()} ${buyerProgress.unavailable === 1 ? "check" : "checks"} unavailable` : null;
@@ -231,7 +233,7 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
                 {ai.failed > 0 && <span className={styles.aiStatusCount}>{ai.failed.toLocaleString()} failed</span>}
                 {ai.paused && listingWork && <span>Listing checks are still running.</span>}
             </div>}
-            {phase === "error" && <p className={styles.error} role="alert">{error ?? "The search ended early. Saved results remain available."}</p>}
+            {phase === "error" && <p className={styles.error} role="alert">{error ?? "The search ended early."}</p>}
 
             {/* Expands and collapses smoothly; hidden from tabbing when collapsed. */}
             <div className={styles.body} inert={collapsed}>
@@ -334,12 +336,12 @@ export function SearchProgress({ phase: requestedPhase, query, error, ebayTotal,
 }
 
 // A bar that fills to the percent; with no percent yet, a moving shimmer.
-function ProgressBar({ percent, thin = false }: { percent: number | null; thin?: boolean }) {
+export function ProgressBar({ percent, thin = false, label = "Search completion" }: { percent: number | null; thin?: boolean; label?: string }) {
     return (
         <div
             className={`${styles.bar} ${thin ? styles.thin : ""}`}
             role="progressbar"
-            aria-label="Search completion"
+            aria-label={label}
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={percent === null ? undefined : Math.round(percent * 100)}

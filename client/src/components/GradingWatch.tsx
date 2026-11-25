@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { GRADING_WATCH_DURATION_MS, GRADING_WATCH_INTERVAL_MS, type GradingOpportunity } from "../../../shared/grading-watch.ts";
 import type { ListingSummary } from "../../../shared/types.ts";
 import type { BuyerListingReview } from "../../../shared/wait-skip-review.ts";
+import { SALES_ACTIVITY_DAYS } from "../../../shared/sales-activity.ts";
 import { dollars } from "../format";
 import styles from "./ResaleReceipts.module.css";
 
@@ -37,10 +38,13 @@ interface Props {
 
 function Opportunity({ value }: { value: GradingOpportunity }) {
     const { grader, likely, lower } = value;
+    const [likelySales, lowerSales, days] = likely.sales60 !== undefined && lower.sales60 !== undefined
+        ? [likely.sales60, lower.sales60, SALES_ACTIVITY_DAYS]
+        : [likely.sales30, lower.sales30, 30];
     const date = new Date(value.listingDate).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
     return <p>{value.dateSource === "listed" ? "Listed" : "Listing created"} {date}. Buy for {dollars(value.delivered)} delivered. Grading and submission shipping add {dollars(value.gradingCosts)}.
         {" "}Estimated profit after selling costs is <strong>{dollars(likely.profit)} at {grader} {likely.grade}</strong> and {dollars(lower.profit)} at {grader} {lower.grade}.
-        {" "}In the last 30 days, {likely.sales30} matched sales closed at {grader} {likely.grade} and {lower.sales30} at {grader} {lower.grade}.</p>;
+        {" "}In the last {days} days, {likelySales} matching {likelySales === 1 ? "sale closed" : "sales closed"} at {grader} {likely.grade} and {lowerSales} at {grader} {lower.grade}.</p>;
 }
 
 export function GradingWatch({ listings, decisions, now, canScan, onScan, onOpen, onRecheck }: Props) {

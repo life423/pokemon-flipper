@@ -42,7 +42,7 @@ export function stampCandidate(evaluation: Evaluation) {
     const card = photoCheck?.cardIdentity;
     const marks = photoCheck?.printingMarks;
     const set = normalizeSetName(card?.set);
-    const number = card?.cardNumber?.match(/^0*([1-9][0-9]?)\s*\/\s*(82|75|105)$/);
+    const number = card?.cardNumber?.match(/^0*([1-9][0-9]?)\s*\/\s*(82|75|105|111)$/);
     const collector = Number(number?.[1]);
     // The other sets are limited to their ordinary Pokémon holos, which
     // share the same artwork and stamp layout.
@@ -50,7 +50,8 @@ export function stampCandidate(evaluation: Evaluation) {
     const rocket = set === "team rocket" && number?.[2] === "82" && collector <= 14 && card?.finish === "HOLO";
     const discovery = set === "neo discovery" && number?.[2] === "75" && collector <= 17 && card?.finish === "HOLO";
     const destiny = set === "neo destiny" && number?.[2] === "105" && collector <= 15 && card?.finish === "HOLO";
-    if ((!base && !rocket && !discovery && !destiny) || !photoCheck || photoCheck.cardCount !== "ONE" ||
+    const genesis = set === "neo genesis" && number?.[2] === "111" && collector <= 18 && card?.finish === "HOLO";
+    if ((!base && !rocket && !discovery && !destiny && !genesis) || !photoCheck || photoCheck.cardCount !== "ONE" ||
         !["NONE", "SLEEVE", "TOPLOADER"].includes(photoCheck.holder) || photoCheck.slab?.present || evaluation.slab ||
         photoCheck.cardMatch?.verdict === "MISMATCH" || marks?.firstEditionStamp !== "CANT_TELL" || marks.conflicts?.includes("firstEditionStamp") ||
         !reprintMarksRuledOut(marks.reprintMark, set) || card?.confidence !== "HIGH" || !card.name || !card.evidence.length ||
@@ -66,11 +67,12 @@ export function stampCandidate(evaluation: Evaluation) {
     return { photoCheck, marks, card, absentPrinting };
 }
 
-// For an ordinary Neo Destiny listing, a clearly blank stamp area can confirm
+// For these ordinary Neo Pokémon holos, a clearly blank stamp area can confirm
 // Unlimited. A visible stamp still needs the normal independent corroboration.
-export function ordinaryNeoDestinyStamp(evaluation: Evaluation, candidate: NonNullable<ReturnType<typeof stampCandidate>>): boolean {
+export function ordinaryNeoStamp(evaluation: Evaluation, candidate: NonNullable<ReturnType<typeof stampCandidate>>): boolean {
     const ordinary = (claim: string) => claim === "NOT_STATED" || claim === "UNLIMITED";
-    return normalizeSetName(candidate.card.set) === "neo destiny" && candidate.photoCheck.cardMatch?.verdict === "MATCH" &&
+    const set = normalizeSetName(candidate.card.set);
+    return (set === "neo destiny" || set === "neo genesis") && candidate.photoCheck.cardMatch?.verdict === "MATCH" &&
         !candidate.marks.conflicts?.includes("reprintMark") && ordinary(printingClaimFromText(evaluation.listing.title)) &&
         ordinary(printingClaimFromAspects(evaluation.listing.aspects ?? {})) &&
         candidate.photoCheck.images.some(image => image.view === "FRONT" && image.usable && !image.isStockImage);
@@ -100,7 +102,7 @@ export async function findStampDecision(evaluation: Evaluation, { targets, now, 
         const underwriting = underwrite({ ...evaluation, ...prices, identity: candidate, photoCheck: check }, config);
         return underwriting.best ? { ...prices, check, identity: candidate, underwriting } : null;
     };
-    if (ordinaryNeoDestinyStamp(evaluation, candidate)) {
+    if (ordinaryNeoStamp(evaluation, candidate)) {
         const absent = await scenario("NOT_PRESENT", "UNLIMITED");
         return absent?.underwriting.verdict.startsWith("BUY") ? { NOT_PRESENT: absent, VISIBLE: null } : null;
     }

@@ -11,9 +11,11 @@ import { withViewTransition } from "../motion";
 import { Drawer } from "../components/Drawer";
 import { ClockIcon, CloseIcon, DollarIcon, GridIcon, ReviewIcon, SparkleIcon, TagIcon, TrendDownIcon } from "../components/Icons";
 import { TargetFields, type TargetInputProps } from "./TargetFields";
+import { ShippingDestination, type ShippingDestinationProps } from "../components/ShippingDestination";
 import styles from "../App.module.css";
 
 interface SearchControlsProps {
+    shipping?: ShippingDestinationProps;
     searchPage?: boolean;
     hidden: boolean;
     idle: boolean;
@@ -129,13 +131,14 @@ function PurchaseFields({ filters }: Pick<SearchControlsProps, "filters">) {
     </>;
 }
 
-export function SearchOptions({ filters, target }: Pick<SearchControlsProps, "filters" | "target">) {
+export function SearchOptions({ filters, target, shipping }: Pick<SearchControlsProps, "filters" | "target" | "shipping">) {
     return <section className={styles.searchOptions} data-marketplace-order={filters.typeFilter !== "AUCTION" || undefined} aria-label="Search options">
         <PurchaseFields filters={filters} />
         <div className={styles.searchTargets}>
             <span>Profit &amp; return targets</span>
             <div className={styles.targets}><TargetFields targetInputs={target.targetInputs} changeTarget={target.changeTarget} /></div>
         </div>
+        <ShippingDestination {...shipping} />
         <details className={styles.searchHelp}>
             <summary>How this search works</summary>
             <p>English cards only. Each discovery pass fetches up to {SEARCH_SOURCE_PAGE_LIMIT} listing summaries; the app keeps up to {DEVELOPMENT_SEARCH_LIMIT} results for display and assessment. Screening can continue past {DEVELOPMENT_SEARCH_LIMIT} unresolved rows, and a thin newest-first Buy It Now search can add a lower-price pass. Listing coverage below records exclusions and rows not reached. Identity and condition remain preliminary until photo assessment. All prices by default. The minimum applies to Buy It Now and the maximum to both formats.</p>
@@ -143,7 +146,7 @@ export function SearchOptions({ filters, target }: Pick<SearchControlsProps, "fi
     </section>;
 }
 
-export function SearchControls({ searchPage = false, hidden, idle, views, filters, target, settings, drawer, usage, aiUsage }: SearchControlsProps) {
+export function SearchControls({ searchPage = false, hidden, idle, views, filters, target, settings, drawer, usage, aiUsage, shipping }: SearchControlsProps) {
     const { view, availableViews, groups, allTab, setView } = views;
     const { typeFilter, kindFilter, sort, minPrice, maxPrice, minGrade, setTypeFilter, setKindFilter, setSort, changeMinPrice, setMaxPrice, changeMinGrade } = filters;
     const { targets, targetInputs, changeTarget } = target;
@@ -282,6 +285,10 @@ export function SearchControls({ searchPage = false, hidden, idle, views, filter
 
             <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} title="Views and filters">
                 <section className={styles.drawerSection}>
+                    <h3>Delivery destination</h3>
+                    <ShippingDestination {...shipping} />
+                </section>
+                <section className={styles.drawerSection}>
                     <h3>Show</h3>
                     <div className={styles.viewList}>
                         {availableViews.map((key) => (
@@ -352,14 +359,14 @@ export function SearchControls({ searchPage = false, hidden, idle, views, filter
                             ))}
                         </select>
                     </label>
-                    <p className={styles.usage}>Saved evidence is reused first. New photo work checks identity and either raw condition or the slab label using up to 6 photos. The app tracks confirmed charges and pending reservations for each search. Saved evidence stays available during a pause.</p>
+                    <p className={styles.usage}>New photo work checks identity and either raw condition or the slab label using up to 6 photos. The app tracks confirmed charges and pending reservations for each search.</p>
                     {usage && <p className={styles.usage}>{describeUsage(usage)}</p>}
                 </section>
                 <section className={styles.drawerSection}>
                     <h3>AI usage</h3>
                     <p className={styles.usage}>{aiUsage ? `${aiUsage.calls} generation requests recorded ${aiUsage.searchId ? "for this search" : "today"}` : "Usage will appear after the local log is available."}</p>
                     {aiUsage && <details className={styles.aiUsage}><summary>View calls by task and model</summary><ul>{aiUsage.stages.map(stage => <li key={`${stage.step}:${stage.model}:${stage.serviceTier ?? "unknown"}`}><strong>{stage.step}</strong><br />{stage.model} · {stage.calls} calls{stage.failed ? ` · ${stage.failed} failed` : ""}<br />{(stage.inputTokens + stage.outputTokens).toLocaleString()} tokens · {stage.images} image inputs</li>)}</ul></details>}
-                    <p className={styles.usage}>Local server totals since logging began. Retries count separately; reused answers add no request. This is usage telemetry, not a billing statement.</p>
+                    <p className={styles.usage}>Local server totals since logging began. Each retry counts as a request. This is usage telemetry, not a billing statement.</p>
                 </section>
             </Drawer>
         </>
