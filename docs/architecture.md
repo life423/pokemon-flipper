@@ -12,8 +12,27 @@ activity in `shared/sales-activity.ts`, and bounded cooldown-aware browser
 recovery in `client/src/search/useBuyerReviews.ts`. Active asks never become
 completed-sales volume. There is no hard three-sale purchase veto. Retained
 overflow and source pagination use `server/deals/search-continuation.ts` under
-the original search account; browser acceptance beyond the first 50 remains
-pending. Broad hunts still seed from saved accepted markets.
+the original search account. November 25 local repairs add real-validator browser
+acceptance beyond listing 50, per-batch diagnostics, root-wide hunt ownership,
+single-batch refresh and global hold propagation. Broad hunts may also scan
+unseeded inventory; live market coverage remains unproven.
+
+Fixed-price Buy receipts carry a verified purchase route and ceiling through
+`shared/money/verified-purchase.ts`. Cards, inspectors, sorting and hunt results
+use that route. Quote age, terms, targets, destination and price evidence bind
+the approval; alternative modeled paths cannot supply an actionable limit.
+`server/ebay/shipping-destination.ts` stores the local buyer ZIP, snapshots it per
+request and provides the protected settings API. Changed destinations preserve
+photo evidence and invalidate old delivery advice.
+
+Four raw English Base Set cards share their collector numbers with the 2021
+Celebrations Classic Collection. Before valuing those originals, the evaluator
+checks the release mark on the listing front. It includes a native-resolution
+detail when the card edges can be located. The reading is tied to the gallery,
+source photo and image digest. Saved-result reads can reuse this evidence
+without a provider request. A visible anniversary mark withdraws the original
+market, including an earlier purchase ceiling. An unreadable area keeps the
+release unresolved. The underlying gallery assessment remains available.
 
 ## Follow one listing
 
@@ -85,8 +104,9 @@ flowchart TD
    Automatic auctions require more than zero and strictly less than ten hours
    remaining at search start.
 2. Before candidates are emitted to the browser, `price-first.ts` runs shared
-   sold research with at most four candidates in flight. Its source permits
-   128 uncached PKMNPrices requests including catalog work, and adaptive reads of
+   sold research with at most four candidates in flight. Its source shares
+   cached catalog and market work, provider pacing and durable accounting,
+   with no per-search request ceiling. It uses adaptive reads of
    up to four 20-sale pages per requested market when the preceding pages lack
    one eligible matched sale. It stops once a scope has usable
    observations; cached pages from final valuation can satisfy follow-up reads.
@@ -238,7 +258,7 @@ All paths below are relative to the repository root.
 | Query interpretation and criteria | `server/search/intent.ts`, `server/search/relevance.ts`, `shared/search-criteria.ts` | Seller keywords and requested slab grades are not verified photo evidence. |
 | Local metadata screening | `server/deals/screen-listing.ts` | Saved/local readings only, without new AI or listing-detail calls. `prescreen.ts` remains behind the compatibility pricing-retry endpoint, not normal admission. |
 | Sold-price-first admission | `server/deals/price-first.ts`, `server/pricing/screening-sales.ts`, `shared/money/sold-screen.ts` | Shared matched sold references precede browser emission; public observations stay separate from private fee/target calculations and verified photo identity. |
-| Screening price transport | `server/pricing/pkmnprices.ts` (`createScreeningPriceSource`) | Cache first, 128 uncached requests including catalog work within the all-stage 256-request new-search allowance, adaptive sparse-market recovery up to four 20-sale pages; no AI/Browse calls or automatic retry loop. |
+| Screening price transport | `server/pricing/pkmnprices.ts` (`createScreeningPriceSource`) | Cache first, durable usage accounting without per-search ceilings, adaptive sparse-market recovery up to four 20-sale pages; no AI/Browse calls or automatic retry loop. |
 | All-stage price accounting | `server/pricing/research-budget.ts`, `shared/pricing-usage.ts` | Per-search durable reservations before transport; actual credits from provider headers, cached responses remain in SQL/file storage. |
 | Direct links and shortlist | `server/listings/resolve.ts`, `server/shortlist/service.ts`, `server/shortlist/store.ts` | Isolated listing lookup, durable snapshots and targeted refresh. |
 | Advisory assessment planning | `server/analysis/bounded-plan.ts` | Stable original RAW selection/key plus compact SLAB_LABEL plan; seller metadata chooses request scope, never the physical holder or final certified grade. |
@@ -326,22 +346,39 @@ normal searches now offer working retries or automatic price recovery.
   stays short and keeps the buyer’s private numbers out of the message.
   [Harvard Program on Negotiation](https://www.pon.harvard.edu/daily/negotiation-skills-daily/top-10-negotiation-skills/)
   [eBay Best Offer](https://www.ebay.com/help/buying/bidding-buying-help/making-best-offer?id=4019)
-- **Requests stay bounded:** the sold-screen source's 128-request sublimit
-  includes uncached catalog calls; final valuation and retries share one durable
-  256-request allowance per new search UUID. Old 64/128-request price ledgers and
-  25/50-request Browse ledgers preserve their original limits and counters.
+- **Research preserves accounting and daily capacity:** per-search Browse and
+  PKMNPrices request ceilings were removed on November 25. New and historical
+  accounts expose null active limits while preserving recorded historical limits,
+  counters and attempts. Catalog, final valuation and retries share durable
+  accounting under the original search UUID. Page walks and concurrency remain bounded.
   Failed/unknown attempts remain counted;
   credits come from provider response headers, independently of request counts.
   Cached response reads consume neither. The ledger is local to the configured
   key and does not establish provider-wide accounting across key rotation or
-  independent replicas. AI accounting and the 100 actual Browse requests per
-  new search are tracked separately. `server/ebay/api.ts` reserves
-  Browse calls through `usage.ts` and `daily-budget.ts`; optional work preserves
-  the daily reserve. Cached reads do not consume Browse calls. Cancellation
+  independent replicas. AI and Browse accounting are tracked separately.
+  `server/ebay/api.ts` reserves Browse calls through `usage.ts` and
+  `daily-budget.ts`; all production Browse work preserves the 10% daily reserve.
+  A typed shared hold cancels further browser research while keeping accepted
+  results. Explicit retry uses the same account and continuation after recovery.
+  Cached reads do not consume Browse calls. Cancellation
   blocks later dispatch while accepted responses finish saving for reuse.
+- **Hunt progress uses existing polling:** `server/analysis/deal-hunt-progress.ts`
+  retains bounded, transient activity under the exact budget owner and hunt
+  UUID. Engine actions and source callbacks supply real counts and phases.
+  The existing `/api/ai-usage` poll optionally returns that snapshot; polling
+  calls no provider. Generation checks prevent a stopped attempt overwriting
+  its replacement. These records are telemetry, not durable search workers or
+  accepted financial evidence. The client uses scoped usage counts when a
+  snapshot is unavailable and never labels model calls as completed copies.
+  Open-ended hunts use the search activity bar alongside the observed counts.
+  Reduced-motion mode keeps the indicator stationary.
 - **Quota warnings use existing observations:** `server/lib/provider-usage.ts`
   stores account-hashed first/last minute samples for a fifteen-minute window.
-  The UI warns below 20% remaining or after a 5% observed daily-allowance burst.
+  The UI warns at 20% remaining or after a 5% observed daily-allowance burst.
+  Browse begins pacing sooner if consumption in the last 15 minutes reaches
+  one ninety-sixth of the daily quota. A per-account file lease shares dispatch
+  times across local processes. Optional expansion pauses under that pressure.
+  The hard reserve still protects the last 10% on every actual Browse call.
   Completed PKMN response headers and existing eBay reconciliation/reservations
   supply samples. PKMN countdown resets are anchored to response completion,
   not UI polling. Local `/api/ai-usage` reads expose warnings while discovery or

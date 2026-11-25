@@ -2,7 +2,7 @@ import '../fixtures/isolated-data.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createBoundedEvaluator, type BoundedReading } from '../../server/analysis/bounded-evaluate.ts';
-import { cardEvaluation } from '../fixtures/card-evaluation.ts';
+import { cardEvaluation, clearReleaseFixture } from '../fixtures/card-evaluation.ts';
 import { tcgplayerRawPrice } from '../../server/pricing/tcgplayer-raw.ts';
 import type { ListingDetails } from '../../server/ebay/listings.ts';
 import type { CardRecord, PricedCard } from '../../server/pricing/types.ts';
@@ -33,7 +33,7 @@ test('bounded evaluation uses AI wear with TCGplayer pricing and does not acquir
         fetchMarket: async () => ({ id: 123, name: 'Alakazam', number: '1', total_set_number: '102', set: { name: 'Base Set' }, prices: [] }),
         fetchOffers: async () => ({ data: [{ listing_id: 1, seller_id: 'one', seller_name: 'One', price: 70, shipping_price: 0, quantity: 1,
             condition: 'Lightly Played', printing: 'Unlimited Holofoil', language: 'English', snapshot_at: new Date(now).toISOString() }] }) });
-    const evaluate = createBoundedEvaluator({ now: () => now, details: async () => listing, saved: async () => null,
+    const evaluate = createBoundedEvaluator({ release: async e => clearReleaseFixture(e), now: () => now, details: async () => listing, saved: async () => null,
         cached: async key => saved.get(key) ?? null, save: async (key,value) => { saved.set(key, structuredClone(value)); }, assertPriceAvailable: async () => {},
         assess: async (_listing,selected) => ({ result: { ...reading, photoCheck: { ...reading.photoCheck, images: selected.map((photo,i) => ({ ...reading.photoCheck.images[photos.indexOf(photo.url)], number: i+1 })) } }, usage: { inputTokens: 1, outputTokens: 1 } }), identify: async () => ({ identity: structuredClone(identity), card }),
         lookup: async () => [record], fetchRawComps: async () => [], fetchComps: async () => [], fetchCachedComps: async () => [], compChecks: async () => new Map(),

@@ -74,11 +74,11 @@ function LiveListings({ sourceSearchId, target, query, children }: { sourceSearc
             {live.steps.length > 0 && <details><summary>Which listings were checked?</summary><ol className={styles.steps}>
                 {live.steps.map(step => <li key={step.listingId}><strong>{step.title}</strong><p>{step.reason}</p><p>{step.outcome}</p></li>)}
             </ol></details>}
-            <details><summary>Original saved comparison</summary>{children}</details>
+            <details><summary>Original comparison</summary>{children}</details>
         </div>
     </> : children}
         <div className={styles.footer}>
-            <p role="status">{busy ? "Checking current Buy It Now listings…" : `Search for a copy at ${dollars(target)} or less after shipping and tax, using the saved sales.`}</p>
+            <p role="status">{busy ? "Checking current Buy It Now listings…" : `Search for a copy at ${dollars(target)} or less after shipping and tax.`}</p>
             <div className={styles.actions}><button type="button" disabled={!ready || busy} onClick={() => void checkListings()}>
                 {busy ? "Checking listings…" : runId.current ? "Resume listing check" : "Check live listings"}
             </button></div>
@@ -116,8 +116,8 @@ export function CollectorStrategy({ searchId, standalone = false }: { searchId: 
     const withinRecentSales = asking != null && binSales.length === 2 &&
         asking >= Math.min(binSales[0].price, binSales[1].price) && asking <= Math.max(binSales[0].price, binSales[1].price);
     const savedComparison = report && <>
-            <div className={styles.heading}><h2>{report.decision === "WAIT" ? "Wait" : "Buy at the saved price"}</h2>
-                <span className={styles.source}>Saved comparison · {new Date(report.asOf).toLocaleString()}</span></div>
+            <div className={styles.heading}><h2>{report.decision === "WAIT" ? "Wait" : "Buy at the price shown"}</h2>
+                <span className={styles.source}>Prices checked · {new Date(report.asOf).toLocaleString()}</span></div>
             <div className={styles.details}>
                 <h3>{report.query}</h3>
                 <p>{report.reason}</p>
@@ -136,7 +136,7 @@ export function CollectorStrategy({ searchId, standalone = false }: { searchId: 
                     <li key={step.action}><strong>{checkNames[step.action]}</strong><p>{step.reason}</p></li>)}</ol></details>
                 <div className={styles.actions}>
                     {report.listing && <a href={report.listing.url} target="_blank" rel="noreferrer">View listing on eBay ↗</a>}
-                    {!standalone && <a href={`?strategy=${encodeURIComponent(searchId)}`}>Open saved guide</a>}
+                    {!standalone && <a href={`?strategy=${encodeURIComponent(searchId)}`}>Open guide</a>}
                 </div>
             </div>
     </>;
@@ -146,9 +146,9 @@ export function CollectorStrategy({ searchId, standalone = false }: { searchId: 
             {savedComparison}
         </LiveListings> : report ? savedComparison : <>
             <h2>Collector strategy</h2>
-            {state?.available ? <><p>Let AI choose which saved checks can settle whether to buy this copy.</p>
-                <div className={styles.actions}><button type="button" disabled={busy} onClick={() => void run()}>{busy ? "Checking saved evidence…" : "Run collector strategy"}</button></div></>
-                : <p>{state ? "This search has no saved exact-slab comparison." : error ? null : "Loading the saved comparison…"}</p>}
+            {state?.available ? <><p>Compare the asking price with sales of the same slab.</p>
+                <div className={styles.actions}><button type="button" disabled={busy} onClick={() => void run()}>{busy ? "Comparing sales…" : "Run collector strategy"}</button></div></>
+                : <p>{state ? "This search has no exact-slab comparison." : error ? null : "Loading the comparison…"}</p>}
         </>}
         {error && <p role="alert" className={styles.caution}>{error}</p>}
     </section>;

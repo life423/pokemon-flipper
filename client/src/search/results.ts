@@ -5,6 +5,7 @@ import { canAutoAnalyze, meetsMinimumGrade, resultGroup, type ResultGroup } from
 import { compareAnalysisPriority } from "../../../shared/analysis-priority.ts";
 import { evaluatedCriteriaMismatch } from "../../../shared/search-criteria.ts";
 import { rateDeal } from "../../../shared/money/rating.ts";
+import { applyVerifiedPurchase } from "../../../shared/money/verified-purchase.ts";
 import { compareListingEvidence, listingSignals } from "../../../shared/signals.ts";
 import { matchesListingFilters, withinAutomaticAuctionWindow } from "../../../shared/listing-filters.ts";
 import { cardLanguageStatus, englishListingEligible } from "../../../shared/card-language.ts";
@@ -108,10 +109,16 @@ export function groupSearchResults(filtered: ListingSummary[], analyses: Record<
 }
 
 export function sortSearchResults(listings: ListingSummary[], analyses: Record<string, AnalysisState>, sort: SortKey, targets: Targets, now: number,
-    decisions: Readonly<Record<string, Pick<BuyerListingReview, "decision">>> = {}): ListingSummary[] {
+    decisions: Readonly<Record<string, Pick<BuyerListingReview, "decision" | "verifiedPurchase">>> = {}): ListingSummary[] {
+    if (sort !== "best" && sort !== "overlooked") return [...listings].sort(SORTS[sort]);
+    const evaluated = new Map(listings.map(({ id }) => {
+        const evaluation = evaluationOf(analyses[id]);
+        const review = decisions[id];
+        return [id, review?.decision === "BUY" ? applyVerifiedPurchase(evaluation, review.verifiedPurchase, targets, now) : evaluation] as const;
+    }));
     const compareBest = (a: ListingSummary, b: ListingSummary) => {
-        const ea = evaluationOf(analyses[a.id]);
-        const eb = evaluationOf(analyses[b.id]);
+        const ea = evaluated.get(a.id) ?? null;
+        const eb = evaluated.get(b.id) ?? null;
         const ra = isDeal(ea) ? currentRating(ea) : null;
         const rb = isDeal(eb) ? currentRating(eb) : null;
 
@@ -130,11 +137,12 @@ export function sortSearchResults(listings: ListingSummary[], analyses: Record<s
 
     // The listings with the strongest signs of being overlooked first.
     const compareOverlooked = (a: ListingSummary, b: ListingSummary) => {
-        const verified = Number(isDeal(evaluationOf(analyses[b.id]))) - Number(isDeal(evaluationOf(analyses[a.id])));
-        return verified || compareListingEvidence(listingSignals(a, evaluationOf(analyses[a.id]), now), listingSignals(b, evaluationOf(analyses[b.id]), now)) || compareBest(a, b);
+        const ea = evaluated.get(a.id) ?? null, eb = evaluated.get(b.id) ?? null;
+        const verified = Number(isDeal(eb)) - Number(isDeal(ea));
+        return verified || compareListingEvidence(listingSignals(a, ea, now), listingSignals(b, eb, now)) || compareBest(a, b);
     };
 
-    return [...listings].sort(sort === "best" ? compareBest : sort === "overlooked" ? compareOverlooked : SORTS[sort]);
+    return [...listings].sort(sort === "best" ? compareBest : compareOverlooked);
 }
 
 export interface DealAlternative {

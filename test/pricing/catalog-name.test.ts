@@ -2,7 +2,7 @@ import "../fixtures/isolated-data.ts";
 import { test } from "../fixtures/search-context.ts";
 import assert from "node:assert/strict";
 import { writeCache } from "../../server/lib/cache.ts";
-import { catalogPrintedName } from "../../server/identity/catalog-name.ts";
+import { catalogPrintedName, sameCatalogName, sameNumberedCatalogName } from "../../server/identity/catalog-name.ts";
 import { setSearchTerm } from "../../server/identity/card-identity.ts";
 import { createScreeningPriceSource, lookupCards } from "../../server/pricing/pkmnprices.ts";
 
@@ -31,18 +31,18 @@ test("saved real-shape catalog records survive descriptor-only differences in bo
         await writeCache(`pkmnprices:/cards/${item.id}?currency=usd`, item);
     }
     t.mock.method(globalThis, "fetch", async () => { throw new Error("Saved catalog matches must require no provider requests"); });
-    const source = createScreeningPriceSource({ maxRequests: 0 });
+    const source = createScreeningPriceSource();
     for (const { set, querySet, query: name, item } of fixtures) {
         const query = { set: querySet ?? set, name, cardNumber: `${item.number}/${item.total_set_number}` };
         assert.deepEqual((await source.lookupCards(query)).map(card => card.id), [item.id]);
         assert.deepEqual((await lookupCards(query)).map(card => card.id), [item.id]);
     }
-    assert.deepEqual(source.stats(), { requests: 0, limit: 0 });
+    assert.deepEqual(source.stats(), { requests: 0 });
 });
 
 test("descriptor-only names do not dispatch an empty provider query", async t => {
     t.mock.method(globalThis, "fetch", async () => { throw new Error("Empty research names must not dispatch provider work"); });
-    assert.deepEqual(await createScreeningPriceSource({ maxRequests: 0 }).lookupCards({ set: "Jungle", name: "Holofoil", cardNumber: "11/64" }), []);
+    assert.deepEqual(await createScreeningPriceSource().lookupCards({ set: "Jungle", name: "Holofoil", cardNumber: "11/64" }), []);
     assert.deepEqual(await lookupCards({ set: "Jungle", name: "Holofoil", cardNumber: "11/64" }), []);
 });
 
@@ -91,7 +91,7 @@ test("positive legacy owner catalog lists remain reusable without dispatching th
         ] });
         await writeCache(`pkmnprices:/cards/${item.id}?currency=usd`, item);
         const query = { set, name, cardNumber: `${item.number}/${item.total_set_number}` };
-        assert.deepEqual((await createScreeningPriceSource({ maxRequests: 0 }).lookupCards(query)).map(card => card.id), [item.id]);
+        assert.deepEqual((await createScreeningPriceSource().lookupCards(query)).map(card => card.id), [item.id]);
         assert.deepEqual((await lookupCards(query)).map(card => card.id), [item.id]);
     }
 });
@@ -107,7 +107,7 @@ test("detail responses must retain the requested catalog name, set family and co
         { name: "Unown [R]" }, { set: { name: "Neo Revelation" } }, { number: "40" }, { total_set_number: "111" },
     ]) {
         await writeCache(`pkmnprices:/cards/${item.id}?currency=usd`, { ...item, ...mismatch });
-        assert.deepEqual(await createScreeningPriceSource({ maxRequests: 0 }).lookupCards(query), []);
+        assert.deepEqual(await createScreeningPriceSource().lookupCards(query), []);
         assert.deepEqual(await lookupCards(query), []);
     }
 });
@@ -122,4 +122,37 @@ test("a Plasma Blast catalog annotation binds to the printed number and preserve
         assert.equal(catalogPrintedName(name, "Plasma Blast", "100/101"), name);
     }
     assert.equal(catalogPrintedName("Dark " + label, "Plasma Blast", "100/101"), "Dark Palkia EX");
+});
+
+test("numbered e-Reader holo records resolve without renaming accepted evidence or merging ordinary cards", async t => {
+    t.mock.method(globalThis, "fetch", async () => assert.fail("The catalog cache should supply each fixture."));
+    for (const [name, set, setId, alias, number, ordinaryNumber, ordinaryTotal] of [
+        ["Espeon", "Aquapolis", 491, "Espeon (H9)", "H09", "011", "147"],
+        ["Dewgong", "Skyridge", 600, "Dewgong (H6)", "H06", "007", "144"],
+        ["Blissey", "Aquapolis", 491, "Blissey (H6)", "H06", "006", "147"],
+    ] as const) {
+        const item = detail(setId + 1000, alias, number, "H32", set);
+        const ordinary = detail(setId + 2000, name, ordinaryNumber, ordinaryTotal, set);
+        await writeCache(`pkmnprices:${setsPath(set)}`, { data: [{ id: setId, name: set }] });
+        await writeCache(`pkmnprices:${listPath(setId, name.toLowerCase())}`, { data: [
+            { ...item, id: item.id + 1, name: `${alias} (Jumbo)` },
+            { ...item, id: item.id + 2, name: `Dark ${alias}` },
+            { ...item, id: item.id + 3, set: { name: "Expedition" } }, item, ordinary,
+        ] });
+        for (const record of [item, ordinary]) await writeCache(`pkmnprices:/cards/${record.id}?currency=usd`, record);
+        const cardNumber = `${number}/H32`;
+        assert.equal(sameCatalogName(name, alias), false, "outside a verified market the names stay distinct");
+        assert.equal(sameNumberedCatalogName(name, alias, set, cardNumber), true);
+        assert.equal(sameNumberedCatalogName(name, alias, set, `${number}/147`), false);
+        assert.equal(sameNumberedCatalogName(name, alias, set, `${ordinaryNumber}/${ordinaryTotal}`), false);
+        assert.equal(sameNumberedCatalogName(name, alias, `${set} (World Championships)`, cardNumber), false);
+        assert.equal(sameNumberedCatalogName(name, alias, set, `${number}/H31`), false);
+        assert.equal(sameNumberedCatalogName(name, `${alias} (Unknown)`, set, cardNumber), false);
+        const source = createScreeningPriceSource();
+        for (const lookup of [lookupCards, source.lookupCards]) {
+            assert.deepEqual((await lookup({ name, set, cardNumber })).map(card => [card.id, card.name]), [[item.id, alias]]);
+            assert.deepEqual((await lookup({ name: alias, set, cardNumber })).map(card => card.id), [item.id]);
+            assert.deepEqual((await lookup({ name, set, cardNumber: `${ordinaryNumber}/${ordinaryTotal}` })).map(card => card.id), [ordinary.id]);
+        }
+    }
 });

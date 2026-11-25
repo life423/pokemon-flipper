@@ -2,19 +2,32 @@ import type { EbayUsage, SearchIntent } from "../types";
 import { describeSearchCriteria } from "../../../shared/search-criteria.ts";
 import { name } from "../format";
 
-export type AnalysisBlockCode = "AI_CREDITS" | "AI_PAUSED" | "AI_BUDGET" | "STORAGE_UNAVAILABLE" | "PRICE_RESEARCH_BUDGET" | "PRICE_RESEARCH_UNAVAILABLE";
+export type AnalysisBlockCode = "AI_CREDITS" | "AI_PAUSED" | "AI_BUDGET" | "STORAGE_UNAVAILABLE" | "PRICE_RESEARCH_BUDGET" | "PRICE_RESEARCH_UNAVAILABLE" |
+    "EBAY_DAILY_BUDGET" | "EBAY_BUDGET_ACCOUNTING" | "EBAY_AUTH" | "AI_ACCOUNTING" | "AI_INPUT_PREFLIGHT";
 export function analysisBlockPolicy(code: AnalysisBlockCode | null) {
     switch (code) {
-        case "PRICE_RESEARCH_BUDGET": return { title: "Price research limit reached", retryLabel: null,
-            stopListingStream: false, detail: "New assessments are paused because this search's price-research allowance is used. Saved evidence remains available; retrying does not reset the allowance." };
+        case "EBAY_DAILY_BUDGET": return { title: "eBay daily reserve protected", retryLabel: "Retry after quota resets",
+            stopListingStream: true, detail: "New research is paused to keep eBay's daily reserve available." };
+        case "EBAY_BUDGET_ACCOUNTING": return { title: "eBay usage accounting unavailable", retryLabel: "Retry when accounting is available",
+            stopListingStream: true, detail: "New research is paused until eBay usage accounting is available." };
+        case "EBAY_AUTH": return { title: "eBay access unavailable", retryLabel: "Retry after fixing eBay access",
+            stopListingStream: true, detail: "New research is paused until eBay access is restored." };
+        case "PRICE_RESEARCH_BUDGET": return { title: "Previous price request limit", retryLabel: "Retry with current request policy",
+            stopListingStream: true, detail: "This search stopped under the previous price request limit." };
         case "PRICE_RESEARCH_UNAVAILABLE": return { title: "Price research accounting unavailable", retryLabel: "Retry when accounting is available",
-            stopListingStream: true, detail: "New analysis is stopped until price-request accounting is available. Saved photo findings and results remain available." };
+            stopListingStream: true, detail: "New analysis is stopped until price-request accounting is available." };
         case "AI_CREDITS": return { title: "AI credits unavailable", retryLabel: "Retry after adding credits",
-            stopListingStream: true, detail: "New analysis is stopped. Retry the remaining saved candidates after credits are available." };
-        case "STORAGE_UNAVAILABLE": return { title: "Saved evidence unavailable", retryLabel: "Retry when storage is available",
-            stopListingStream: true, detail: "New analysis is stopped to avoid buying replacement evidence. Saved results stay visible." };
-        case "AI_BUDGET": return { title: "AI spending guard blocked this search", retryLabel: null,
-            stopListingStream: false, detail: "New analysis is stopped. Matching listings can still finish loading; retrying cannot increase this search's AI allowance." };
+            stopListingStream: true, detail: "New analysis is stopped. Retry the remaining candidates after credits are available." };
+        case "AI_PAUSED": return { title: "Paid AI is paused", retryLabel: "Retry after AI is resumed",
+            stopListingStream: false, detail: "New checks are paused. Resume paid AI in its existing spending configuration to continue under this search’s allowance." };
+        case "STORAGE_UNAVAILABLE": return { title: "Research storage unavailable", retryLabel: "Retry when storage is available",
+            stopListingStream: true, detail: "New checks can resume when storage is available." };
+        case "AI_ACCOUNTING": return { title: "AI spending records unavailable", retryLabel: "Retry when accounting is available",
+            stopListingStream: true, detail: "New AI checks need durable spending records." };
+        case "AI_INPUT_PREFLIGHT": return { title: "AI input check unavailable", retryLabel: "Retry AI input check",
+            stopListingStream: true, detail: "The app needs an exact input check before starting new AI analysis." };
+        case "AI_BUDGET": return { title: "AI spending guard blocked this search", retryLabel: "Retry AI checks",
+            stopListingStream: false, detail: "New analysis is paused under the current spending limit." };
         default: return { title: "Paid AI unavailable", retryLabel: null,
             stopListingStream: false, detail: "New analysis is stopped. Matching listings can still load; the server's spending configuration must be ready before paid work can resume." };
     }
@@ -36,8 +49,10 @@ export function describeIntent(intent: SearchIntent): string {
 
 export function describeUsage(usage: EbayUsage): string {
     const left = `eBay today: ${usage.remaining.toLocaleString()} of ${usage.limit.toLocaleString()} requests left`;
-    const search = usage.searchBudget ? ` This search: ${usage.searchBudget.remaining} of ${usage.searchBudget.limit} requests left.` : "";
+    const search = usage.searchBudget ? usage.searchBudget.limit === null
+        ? ` This search used ${usage.searchBudget.used.toLocaleString()} Browse requests.`
+        : ` This search: ${usage.searchBudget.remaining} of ${usage.searchBudget.limit} requests left.` : "";
     return usage.braking
-        ? `${left}. New optional lookups are paused to preserve the daily reserve.${search}`
+        ? `${left}. New Browse requests are paused to protect the daily reserve.${search}`
         : `${left}.${search}`;
 }

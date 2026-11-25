@@ -2,6 +2,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
+// Windows can report access or sharing errors while another owner releases an exclusive file.
+export function fileLeaseBusy(error: unknown): boolean {
+    return ["EEXIST", "EPERM", "EACCES", "EBUSY"].includes((error as NodeJS.ErrnoException)?.code ?? "");
+}
+
 // A suspended owner may still be alive: never steal an old accounting lease.
 // Only local bookkeeping belongs inside this lease, never a provider request.
 export async function withFileLease<T>(file: string, run: () => Promise<T>, options: {
@@ -14,7 +19,7 @@ export async function withFileLease<T>(file: string, run: () => Promise<T>, opti
         options.signal?.throwIfAborted();
         try { await fs.writeFile(lock, nonce, { flag: "wx" }); break; }
         catch (error) {
-            if (!["EEXIST", "EPERM", "EACCES", "EBUSY"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
+            if (!fileLeaseBusy(error)) throw error;
             if (Date.now() >= deadline) throw options.timeoutError();
             await new Promise(resolve => setTimeout(resolve, 10));
         }

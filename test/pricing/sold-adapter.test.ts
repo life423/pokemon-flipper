@@ -78,8 +78,8 @@ test("an exact raw card with no matching seller condition keeps sparse-page reco
     assert.deepEqual(price.sellerConditionComps?.sales.map(row => row.price), [200]);
     assert.equal(price.prices, undefined);
 });
-function screening(kind: "graded" | "raw", id: string, maxRequests = 0) {
-    const source = createScreeningPriceSource({ maxRequests });
+function screening(kind: "graded" | "raw", id: string) {
+    const source = createScreeningPriceSource();
     const run = createSoldScreening({ now: () => now, source: { ...source, lookupCards: async () => [card(id)] } });
     const listing: ListingSummary = { id: `screen-${kind}`, title: scopedSale(kind, "title").title, currentPrice: 100, shipping: 0, bids: 0,
         isGraded: kind === "graded", buyingOption: "FIXED_PRICE", endTime: null, images: [], url: "https://www.ebay.com/itm/123456789012", seller: null };
@@ -150,7 +150,7 @@ test("useful third-page legacy sales retain original cache chains for screening 
             assert.equal(final.prices?.find(quote => quote.condition === "LIGHTLY_PLAYED")?.price, 200);
             assert.equal(final.prices?.find(quote => quote.condition === "LIGHTLY_PLAYED")?.basis, "EBAY_SOLD");
         }
-        assert.deepEqual(market.source.stats(), { requests: 0, limit: 0 });
+        assert.deepEqual(market.source.stats(), { requests: 0 });
         assert.equal(await readCache(`pkmnprices:${soldPath(kind, id, true)}`, 6), null, "legacy pages must not be relabeled as a filtered pagination stream");
     }
 });
@@ -171,7 +171,7 @@ test("legacy selection stays printing-specific while shared native pages are fet
             title: "Venusaur Base Set 15/102 Shadowless no 1st Edition Holo PSA 8", price: 200,
         })] });
     });
-    const source = createScreeningPriceSource({ maxRequests: 1 });
+    const source = createScreeningPriceSource();
     const run = createSoldScreening({ now: () => now, source: { ...source, lookupCards: async () => [record] } });
     const subject: ListingSummary = { id: "separate-printings", title: "Venusaur Base Set 15/102 Holo PSA 8", currentPrice: 100,
         shipping: 0, bids: 0, isGraded: true, buyingOption: "FIXED_PRICE", endTime: null, images: [], seller: null,
@@ -199,7 +199,7 @@ test("all-null legacy pages recover a confirmed root and follow only that stream
         for (let page = 1; page <= 4; page++) await writeCache(`pkmnprices:${soldPath(kind, id, false, page === 1 ? undefined : `legacy-${page}`)}`, {
             data: [scopedSale(kind, "corrected", { price: 9999, sale_type: null })], pagination: { has_more: true, next_cursor: `legacy-${page + 1}` },
         });
-        const source = createScreeningPriceSource({ maxRequests: 2 });
+        const source = createScreeningPriceSource();
         const first = await source.fetchSoldPage(id, target(kind));
         assert.equal(first.stream, "CONFIRMED"); assert.equal(first.nextCursor, "confirmed-next"); assert.equal(first.sales[0].price, 175);
         const next = await source.fetchSoldPage(id, { ...target(kind), cursor: first.nextCursor!, stream: first.stream });
@@ -223,7 +223,7 @@ test("a missing legacy continuation restarts the confirmed root and its correcte
         assert.equal(url.searchParams.get("cursor"), null, "missing legacy continuation must restart filtered acquisition at page one");
         return Response.json({ data: [sale("corrected", { price: 175, sale_type: "auction" })] });
     });
-    const source = createScreeningPriceSource({ maxRequests: 1 });
+    const source = createScreeningPriceSource();
     const first = await source.fetchSoldPage(id, target("raw"));
     assert.equal(first.stream, "LEGACY"); assert.equal(first.nextCursor, "missing-old-page");
     const raw = await rawPricesWithSales(pricedCard(id), identity, { fetchRawComps, now, requestedCondition: "LIGHTLY_PLAYED",
@@ -243,7 +243,7 @@ test("a fresh empty filtered cache takes precedence over positive legacy pages w
         const id = randomUUID(), legacy = { data: [scopedSale(kind, "legacy-positive")] };
         await writeCache(`pkmnprices:${soldPath(kind, id)}`, legacy);
         await writeCache(`pkmnprices:${soldPath(kind, id, true)}`, { data: [] });
-        const source = createScreeningPriceSource({ maxRequests: 0 });
+        const source = createScreeningPriceSource();
         const page = await source.fetchSoldPage(id, target(kind));
         assert.equal(page.stream, "CONFIRMED"); assert.deepEqual(page.sales, []); assert.equal(page.nextCursor, null);
         assert.deepEqual(await adapted(kind, id, {}), []);
@@ -251,7 +251,7 @@ test("a fresh empty filtered cache takes precedence over positive legacy pages w
         const emptyId = randomUUID();
         await writeCache(`pkmnprices:${soldPath(kind, emptyId)}`, { data: [] });
         assert.deepEqual((await source.fetchSoldPage(emptyId, target(kind))).sales, []);
-        assert.deepEqual(source.stats(), { requests: 0, limit: 0 });
+        assert.deepEqual(source.stats(), { requests: 0 });
     }
 });
 
@@ -270,7 +270,7 @@ test("filtered pages still require a confirmed exact card and grade before scree
                 pagination: { has_more: true, next_cursor: "valid-page" } });
     });
     for (const kind of ["graded", "raw"] as const) {
-        const id = randomUUID(), before = calls.length, market = screening(kind, id, 2);
+        const id = randomUUID(), before = calls.length, market = screening(kind, id);
         const screened = await market.run();
         assert.equal(screened.status, "AVAILABLE"); assert.equal(screened.references[0].summary.count, 1);
         assert.equal(screened.references[0].summary.median, 200); assert.equal(screened.references[0].summary.confidence, "LOW");

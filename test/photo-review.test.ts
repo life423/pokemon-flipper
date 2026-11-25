@@ -17,6 +17,7 @@ const any = { minProfit: 0, minRoi: 0 };
 test("disclosed corner and edge wear hidden by a holder is a terminal pass", () => {
     const e = cardEvaluation(any);
     e.listing.conditionNotes = ["Minor corner and edge wear"];
+    Object.assign(e.identity!, { name: "Alakazam", cardNumber: "1/102" });
     e.photoCheck!.holder = "TOPLOADER";
     e.photoCheck!.cardCount = "ONE";
     e.condition!.corners.visibility = "PARTIAL";

@@ -79,7 +79,7 @@ export function createCacheStore({ directory = CACHE_DIR, backend = storageBacke
                 try { saved = JSON.parse(await fs.readFile(cacheFile(key), "utf8")); }
                 catch (error) {
                     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-                    throw new StorageUnavailableError("Saved API or AI evidence could not be read. No replacement provider request is authorized.", { cause: error });
+                    throw new StorageUnavailableError("Saved API or AI evidence could not be read. No replacement provider request is authorized.", { cause: error, ...(error instanceof SyntaxError && { scope: "listing" as const }) });
                 }
             }
             if (saved === null && selected === "azure-sql") return null;

@@ -7,7 +7,10 @@ import { createServer } from "vite";
 import type { ListingSummary } from "../../shared/types.ts";
 import { underwrite } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
-import { cardEvaluation } from "../fixtures/card-evaluation.ts";
+import { verifiedPurchase } from "../../shared/money/verified-purchase.ts";
+import { retargetEvaluation } from "../../shared/money/targets.ts";
+import { PRICING_VERSION } from "../../shared/pricing-freshness.ts";
+import { cardEvaluation, salesSummary } from "../fixtures/card-evaluation.ts";
 import { mixedCoverageEvaluation } from "../fixtures/photo-coverage.ts";
 
 test("raw-condition facts are absent for listed and photographed slabs while actual raw cards retain them", async t => {
@@ -31,11 +34,15 @@ test("raw-condition facts are absent for listed and photographed slabs while act
     assert.match(overview({ status: "error", message: "Provider offline" }), />Wait<[\s\S]*before the app could verify/);
     assert.doesNotMatch(overview(undefined, { automaticDecision: { decision: "BUY", reason: "Unsupported promotion" } }), />Buy<|Unsupported promotion/);
     const priced = cardEvaluation();
-    Object.assign(priced.listing, { buyingOption: "FIXED_PRICE", shipping: 0, availability: "ACTIVE" });
+    const checkedAt = new Date().toISOString();
+    Object.assign(priced.listing, { id: item.id, buyingOption: "FIXED_PRICE", shipping: 0, availability: "ACTIVE", termsCheckedAt: checkedAt });
+    Object.assign(priced, { pricesCheckedAt: checkedAt, pricingVersion: PRICING_VERSION, assessmentVersion: "fixture/bounded-prompts-4",
+        conditionVersion: "fixture/bounded-condition-1/prompts-1" });
     priced.underwriting = underwrite(priced, MONEY_CONFIG);
     assert.ok(priced.underwriting.verdict.startsWith("BUY"));
     const assessed = { status: "done", evaluation: priced };
-    assert.match(overview(assessed, { automaticDecision: { decision: "BUY", reason: "Checked sales support the margin." } }), />Buy[^<]*<[\s\S]*Checked sales support the margin/);
+    assert.match(overview(assessed, { automaticDecision: { decision: "BUY", reason: "Checked sales support the margin.",
+        verifiedPurchase: verifiedPurchase(priced, priced.underwriting.best!, MONEY_CONFIG.targets) } }), />Buy[^<]*<[\s\S]*Checked sales support the margin/);
     const now = Date.now();
     const auction = { ...item, buyingOption: "AUCTION", currentPrice: 12, bids: 1, endTime: new Date(now + 60_000).toISOString(),
         auctionResearch: { cardListings: 1, otherListings: 16, categories: ["CCG singles", "clothing", "home and garden"], sampledAt: new Date(now).toISOString() } };
@@ -82,17 +89,43 @@ test("raw-condition facts are absent for listed and photographed slabs while act
     offerEval.underwriting = underwrite(offerEval, MONEY_CONFIG);
     const offerListing = { ...item, currentPrice: 80, bestOffer: true };
     const offerState = { status: "done", evaluation: offerEval };
-    const offerReview = { decision: "WAIT", reason: "Wait at the asking price.", offer: { opening: 68, maxItemPrice: 71 } };
+    const proposed = retargetEvaluation({ ...offerEval, listing: { ...offerEval.listing, price: 68 } }, MONEY_CONFIG.targets);
+    const checkedOffer = verifiedPurchase(proposed, proposed.underwriting!.best!, MONEY_CONFIG.targets, 71);
+    assert.ok(checkedOffer);
+    const offerReview = { decision: "WAIT", reason: "Wait at the asking price.", offer: { opening: 68, maxItemPrice: 71, verifiedPurchase: checkedOffer } };
     const markup = overview(offerState, { listing: offerListing, automaticDecision: offerReview, includeOffers: true });
-    assert.match(markup, />Offer<[\s\S]*Open at \$68\.00 · walk away above \$71\.00 · est. profit/);
+    assert.match(markup, />Offer<[\s\S]*Open at \$68\.00 · walk away above \$71\.00 · [^<]+ · est. profit/);
     const panel = (review: unknown, includeOffers = true) => renderToStaticMarkup(createElement(DetailPanel, {
         listing: offerListing, analysis: offerState, now: Date.now(), onClose() {}, onAnalyze() {}, automaticDecision: review, includeOffers }));
     assert.match(panel(offerReview), /Opening offer[\s\S]*\$68\.00[\s\S]*walk-away price[\s\S]*\$71\.00/);
-    for (const invalid of [{ ...offerReview, decision: "SKIP" }, { ...offerReview, offer: undefined }, { ...offerReview, offer: { opening: 68, maxItemPrice: 90 } }]) {
+    for (const invalid of [{ ...offerReview, decision: "SKIP" }, { ...offerReview, offer: undefined },
+        { ...offerReview, offer: { opening: 68, maxItemPrice: 71 } },
+        { ...offerReview, offer: { ...offerReview.offer, maxItemPrice: 90 } },
+        { ...offerReview, offer: { ...offerReview.offer, verifiedPurchase: { ...checkedOffer, shippingDestination: "00001" } } }]) {
         assert.doesNotMatch(overview(offerState, { listing: offerListing, automaticDecision: invalid, includeOffers: true }), />Offer<|walk away above/);
         assert.doesNotMatch(panel(invalid), /Opening offer/);
     }
     assert.doesNotMatch(panel(offerReview, false), /Opening offer/);
+    const routeTargets = { minProfit: 0, minRoi: 0.30 };
+    const routeEval = structuredClone(offerEval);
+    routeEval.listing.price = 42;
+    routeEval.rawPricing!.prices![0].price = 75;
+    routeEval.gradedPricing = { CGC: { status: "PRICED", printing: "UNLIMITED", byGrade:
+        [6, 7, 8].map(grade => salesSummary("CGC", grade, [126, 126, 126])) } };
+    const asking = retargetEvaluation(routeEval, routeTargets);
+    const opening = retargetEvaluation({ ...routeEval, listing: { ...routeEval.listing, price: 36 } }, routeTargets);
+    assert.equal(asking.underwriting?.best?.path, "RAW");
+    assert.equal(opening.underwriting?.best?.path, "GRADE");
+    const route = verifiedPurchase(opening, opening.underwriting!.best!, routeTargets);
+    assert.ok(route);
+    const routeReview = { ...offerReview, offer: { opening: 36, maxItemPrice: 38.08, verifiedPurchase: route } };
+    const routeListing = { ...offerListing, currentPrice: 42 };
+    const routeState = { status: "done", evaluation: asking };
+    assert.match(overview(routeState, { listing: routeListing, automaticDecision: routeReview, targets: routeTargets, includeOffers: true }),
+        /Open at \$36\.00 · walk away above \$38\.08 · Grade with CGC · est. profit \+\$25\.12/);
+    assert.match(renderToStaticMarkup(createElement(DetailPanel, { listing: routeListing, analysis: routeState, targets: routeTargets,
+        now: Date.now(), onClose() {}, onAnalyze() {}, automaticDecision: routeReview, includeOffers: true })),
+        /Resale plan<\/dt><dd>Grade with CGC[\s\S]*\$25\.12/);
     for (const analysis of [undefined, { status: "loading" }, { status: "error", error: "Offline failure" }]) {
         assert.doesNotMatch(render(item, analysis), /AI raw condition|Not assessed|Certified slab/);
     }
@@ -179,7 +212,7 @@ test("cards show real listed dates, distinguish creation, and keep the card-type
     const panel = renderToStaticMarkup(createElement(DetailPanel, { ...props, listing: item, analysis: { status: "done", evaluation: deferred },
         onClose: () => {}, onAnalyze: () => {}, onPhotoReview: () => {} }));
     assert.match(panel, /Wait for resale evidence/);
-    assert.match(panel, /Run full research \(paid; reuse photos\)/);
+    assert.match(panel, /Run full research \(paid\)/);
     assert.doesNotMatch(panel, /Your review needed/);
 
     const unknownEdition = cardEvaluation();

@@ -13,6 +13,7 @@ const cases = [
     { name: "Dark Blastoise", set: "Team Rocket", number: "3/82", absent: "UNLIMITED" },
     { name: "Espeon", set: "Neo Discovery", number: "1/75", absent: "UNLIMITED" },
     { name: "Dark Gengar", set: "Neo Destiny", number: "6/105", absent: "UNLIMITED" },
+    { name: "Skarmory", set: "Neo Genesis", number: "13/111", absent: "UNLIMITED" },
 ] as const;
 
 async function setup(card = cases[0] as (typeof cases)[number]) {

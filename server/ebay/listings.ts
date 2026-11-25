@@ -1,4 +1,5 @@
 import { configuredShippingZip, ebayGet, EbayError } from "./api.ts";
+import { withShippingDestination } from "./shipping-destination.ts";
 import { listingExclusion, normalizeText } from "./filters.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { ebayUsage, EbayBudgetError } from "./usage.ts";
@@ -41,6 +42,12 @@ export function shippingCacheScope(): string {
 }
 export const listingCacheKey = (itemId: string, shippingScope = shippingCacheScope()) => `ebay:item:${itemId}${shippingScope}`;
 
+// The item's legacy cache key already encoded the destination used to quote it.
+// Reattach it on read so the accepted quote can still be used for that ZIP.
+function cachedShippingDestination<T extends { shippingDestination?: string | null }>(listing: T): T {
+    return listing.shippingDestination === undefined ? { ...listing, shippingDestination: configuredShippingZip() } : listing;
+}
+
 interface Amount {
     value: string;
     currency: string;
@@ -78,6 +85,7 @@ interface EbayItem {
 
 // Full details for analysis.
 export interface ListingDetails {
+    shippingDestination?: string | null;
     listedAt?: string | null;
     createdAt?: string | null;
     itemGroupType?: string;
@@ -232,6 +240,7 @@ function toListing(item: EbayItem, termsCheckedAt: string): ListingSummary {
         id: item.itemId,
         title: item.title,
         currentPrice: price,
+        shippingDestination: configuredShippingZip(),
         termsCheckedAt,
         ...rest,
         ...listingDates(item),
@@ -256,23 +265,28 @@ interface SearchResult {
     sourceLimitReached?: boolean;
 }
 
-export async function searchListings(
+export function searchListings(...args: Parameters<typeof searchListingsAtDestination>): Promise<SearchResult> {
+    return withShippingDestination(() => searchListingsAtDestination(...args));
+}
+
+async function searchListingsAtDestination(
     search: string,
     {
         maxResults = PAGE_SIZE,
         offset: firstOffset = 0,
         anyCategory = false,
+        ccgInventory = false,
         cacheMode,
         keepReserve = false,
         signal,
         sort,
         filters,
-    }: { maxResults?: number; offset?: number; anyCategory?: boolean; cacheMode?: "refresh" | "resume"; keepReserve?: boolean; signal?: AbortSignal; sort?: "newlyListed" | "price" | "endingSoonest"; filters?: ListingFilters } = {}
+    }: { maxResults?: number; offset?: number; anyCategory?: boolean; ccgInventory?: boolean; cacheMode?: "refresh" | "resume"; keepReserve?: boolean; signal?: AbortSignal; sort?: "newlyListed" | "price" | "endingSoonest"; filters?: ListingFilters } = {}
 ): Promise<SearchResult> {
     if (!Number.isSafeInteger(firstOffset) || firstOffset < 0 || firstOffset >= 10_000 || firstOffset % PAGE_SIZE !== 0)
         throw new Error("Choose a valid eBay search continuation offset below 10,000.");
     if (cardLanguageStatus(search) === "OTHER") throw new EnglishOnlyError();
-    const scope = anyCategory ? "any" : "cards";
+    const scope = ccgInventory ? "ccg-inventory" : anyCategory ? "any" : "cards";
     signal?.throwIfAborted();
     const buyingOption = filters?.typeFilter && filters.typeFilter !== "all" ? filters.typeFilter : undefined;
     const kind = filters?.kindFilter && filters.kindFilter !== "all" ? filters.kindFilter : undefined;
@@ -292,10 +306,11 @@ export async function searchListings(
         const saved = await readCache<SearchResult>(key, sort && cacheMode !== "resume" ? 1 / 60 : SEARCH_MAX_AGE_HOURS);
         signal.throwIfAborted();
 
-        if (cacheMode !== "refresh" && saved) return { ...saved, listings: saved.listings.map(listing =>
-            hasSavedConditionExamples(listing) ? { ...listing, conditionNotes: cardSpecificNotes(listing.cardCondition, listing.conditionNotes!) } : listing) };
+        if (cacheMode !== "refresh" && saved) return { ...saved, listings: saved.listings.map(listing => cachedShippingDestination(
+            hasSavedConditionExamples(listing) ? { ...listing, conditionNotes: cardSpecificNotes(listing.cardCondition, listing.conditionNotes!) } : listing)) };
 
-        // The few search requests are refused only when the day's allowance is gone.
+        // Refresh the shared daily observation on uncached searches. Every
+        // Browse request is checked against the reserve at the transport.
         const usage = await ebayUsage();
 
         if (usage && usage.remaining < Math.ceil(maxResults / PAGE_SIZE)) {
@@ -319,11 +334,12 @@ export async function searchListings(
             const filter = [`buyingOptions:{${buyingOption ?? "AUCTION|FIXED_PRICE"}}`, `conditionIds:{${kind === "raw" ? UNGRADED : kind === "graded" ? GRADED : `${UNGRADED}|${GRADED}`}}`];
             if (priceRange !== null) filter.push(`price:[${priceRange}]`, "priceCurrency:USD");
             const params = new URLSearchParams({
-                // Broader discovery must not require a seller to spell out
-                // "English" or "Pokemon" in an otherwise identifiable title.
-                q: anyCategory ? search.trim() : `pokemon ${search}`.trim(),
-                // Outside the card category, for listings filed in the wrong one.
-                ...(anyCategory ? {} : { category_ids: CCG_INDIVIDUAL_CARDS, aspect_filter: `categoryId:${CCG_INDIVIDUAL_CARDS},Language:{English}` }),
+                // Exact card/number queries can look outside the CCG category.
+                // Broad release queries use the category and Pokémon keywords,
+                // leaving unstated seller language eligible for inspection.
+                q: scope === "any" || ccgInventory && /\bpokemon\b/.test(normalizeText(search)) ? search.trim() : `pokemon ${search}`.trim(),
+                ...(scope !== "any" && { category_ids: CCG_INDIVIDUAL_CARDS }),
+                ...(scope === "cards" && { aspect_filter: `categoryId:${CCG_INDIVIDUAL_CARDS},Language:{English}` }),
                 filter: filter.join(","),
                 limit: String(PAGE_SIZE),
                 offset: String(offset),
@@ -397,9 +413,13 @@ export async function searchListings(
 }
 
 // A listing's details, saved for a week. maxAgeHours: 0 always asks eBay.
-// keepReserve: refuse to ask eBay once the day's allowance is in reserve
-// (the free check's bulk lookups); a deliberate analysis still asks.
-export async function getListingDetails(
+// keepReserve also refreshes quota telemetry before optional detail work.
+// The transport guards the reserve even for deliberate or nested lookups.
+export function getListingDetails(...args: Parameters<typeof getListingDetailsAtDestination>): Promise<ListingDetails> {
+    return withShippingDestination(() => getListingDetailsAtDestination(...args));
+}
+
+async function getListingDetailsAtDestination(
     itemId: string,
     { maxAgeHours = DETAILS_MAX_AGE_HOURS, keepReserve = false, expectedPhotos, expectedTitle, allowEndedCache = false, signal }: {
         maxAgeHours?: number; keepReserve?: boolean; expectedPhotos?: readonly string[]; expectedTitle?: string; allowEndedCache?: boolean; signal?: AbortSignal;
@@ -422,7 +442,7 @@ export async function getListingDetails(
                 await writeCache(key, saved);
             }
             signal?.throwIfAborted();
-            return hasSavedConditionExamples(saved) ? { ...saved, conditionNotes: cardSpecificNotes(saved.cardCondition, saved.conditionNotes) } : saved;
+            return cachedShippingDestination(hasSavedConditionExamples(saved) ? { ...saved, conditionNotes: cardSpecificNotes(saved.cardCondition, saved.conditionNotes) } : saved);
         }
     }
 
@@ -453,6 +473,7 @@ async function fetchListingDetails(itemId: string, keepReserve: boolean, signal:
 
     return {
         retrievedAt: new Date().toISOString(),
+        shippingDestination: configuredShippingZip(),
         itemGroupType: item.itemGroupType,
         availability: item.itemEndDate && Date.parse(item.itemEndDate) <= Date.now() || item.estimatedAvailabilities?.some((entry) => entry.estimatedAvailabilityStatus === "OUT_OF_STOCK")
             ? "UNAVAILABLE" : item.estimatedAvailabilities?.some((entry) => ["IN_STOCK", "LIMITED_STOCK"].includes(entry.estimatedAvailabilityStatus ?? "")) ? "ACTIVE" : "UNKNOWN",

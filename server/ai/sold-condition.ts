@@ -99,7 +99,7 @@ function savedReading(value: unknown): SoldConditionReading {
         ![...RAW_CONDITIONS, "UNKNOWN"].includes(result.condition) || !["FIRST_EDITION", "SHADOWLESS", "UNLIMITED", "UNKNOWN"].includes(result.printing) ||
         !["HIGH", "MEDIUM", "LOW"].includes(result.confidence) || !stringList(result.evidence) || !stringList(result.limitations) ||
         ["oneRawCard", "frontVisible", "backVisible", "closeUps", "structuralDamage"].some(field => typeof result[field as keyof SoldConditionReading] !== "boolean")) {
-        throw new StorageUnavailableError("The saved sold-copy photo reading is invalid. It was kept; no replacement review was authorized.");
+        throw new StorageUnavailableError("The saved sold-copy photo reading is invalid.");
     }
     return result;
 }
@@ -225,7 +225,8 @@ export function createSoldConditionAcquirer({ condition, loadDetails = getListin
             if (!allowed || !existing.id || existing.found && !(corroborate && existing.confirmationKey)) return existing.evidence;
             if (!matchesSoldTarget(sale, { name: identity.name!, setName: identity.set, cardNumber: identity.cardNumber }) ||
                 sale.currency !== "USD" || !sale.sale_type || sale.grader || sale.grade || /\b(?:psa|cgc|bgs|sgc|tag|lot|bundle)\b/i.test(sale.title) ||
-                compProblem({ ...sale, grader: "RAW", grade: "ANY" }, { printing: identity.printing, setName: identity.set, finish: identity.finish, grader: "RAW", grade: "ANY", now: now(), windowDays: 90 }) !== null) return null;
+                compProblem({ ...sale, grader: "RAW", grade: "ANY" }, { printing: identity.printing, setName: identity.set, cardName: identity.name,
+                    cardNumber: identity.cardNumber, finish: identity.finish, grader: "RAW", grade: "ANY", now: now(), windowDays: 90 }) !== null) return null;
             signal?.throwIfAborted();
             const listing = existing.listing ?? await loadDetails(existing.id, { maxAgeHours: 24 * 30, keepReserve: true, allowEndedCache: true, ...(signal ? { signal } : {}) }).catch(async error => {
                 if (!(error instanceof EbayError) || ![404, 410].includes(error.status)) throw error;

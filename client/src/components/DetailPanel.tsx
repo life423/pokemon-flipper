@@ -8,6 +8,7 @@ import { AuctionReminderButton } from "./AuctionReminderButton";
 import { useDialog } from "../useDialog";
 import { MONEY_CONFIG } from "../../../shared/money/config.ts";
 import { priceEvidenceGap } from "../../../shared/money/price-evidence.ts";
+import { applyVerifiedPurchase, PURCHASE_RECHECK_MESSAGE } from "../../../shared/money/verified-purchase.ts";
 import { readyForPricing } from "../../../shared/identity.ts";
 import { PhotoGallery } from "./PhotoGallery";
 import { PhotoReview, type DeeperReviewState } from "./PhotoReview";
@@ -53,10 +54,19 @@ interface Props {
     saving?: boolean;
 }
 
-export function DetailPanel({ listing, analysis, automaticDecision, reviewPending, reviewActive, now, onClose, onSnipe, onAnalyze, onRefreshPrices, priceRefresh, closing = false, docked = false, returnFocus, huntFocus, minGrade = 0, targets = MONEY_CONFIG.targets, includeOffers, photoReviewState, onPhotoReview, onSave, saved, saving }: Props) {
+export function DetailPanel({ listing, analysis, automaticDecision: receipt, reviewPending, reviewActive, now, onClose, onSnipe, onAnalyze, onRefreshPrices, priceRefresh, closing = false, docked = false, returnFocus, huntFocus, minGrade = 0, targets = MONEY_CONFIG.targets, includeOffers, photoReviewState, onPhotoReview, onSave, saved, saving }: Props) {
     const unavailable = listing.availability === "UNAVAILABLE" || Boolean(listing.endTime && Date.parse(listing.endTime) <= now);
-    const evaluation = analysis?.status === "done" ? analysis.evaluation : null;
+    const assessed = analysis?.status === "done" ? analysis.evaluation : null;
     const collecting = huntFocus?.report.goal === "collect_slab" && huntFocus.report.destination?.listingId === listing.id;
+    const report = huntFocus?.report;
+    const huntPurchase = !collecting && report?.decision === "BUY" && report.destination?.listingId === listing.id;
+    const review: ReviewedDecision | undefined = huntPurchase && receipt?.decision !== "WAIT"
+        ? { decision: "BUY", reason: report.reason, verifiedPurchase: report.verifiedPurchase } : receipt;
+    const reviewed = review?.decision === "BUY" && assessed?.listing.id === listing.id
+        ? applyVerifiedPurchase(assessed, review.verifiedPurchase, targets, now) : null;
+    const evaluation = reviewed ?? assessed;
+    const automaticDecision: ReviewedDecision | undefined = review?.decision === "BUY" && !reviewed
+        ? { decision: "WAIT", reason: PURCHASE_RECHECK_MESSAGE } : review;
     const checking = Boolean(!collecting && reviewPending && !automaticDecision && !unavailable);
     const override = !collecting && automaticDecision && automaticDecision.decision !== "BUY" ? automaticDecision : null;
     const showPurchaseScenarios = !collecting && !checking && !override;
@@ -120,7 +130,7 @@ export function DetailPanel({ listing, analysis, automaticDecision, reviewPendin
                     <p><strong data-decision={huntFocus.report.decision}>{huntDecisionLabel(huntFocus.report)}</strong> · {huntFocus.report.reason}</p>
                     {huntFocus.alternative && huntFocus.report.decision !== "BID" && <p>{huntFocus.alternative.reason}</p>}
                     {observation && observation !== huntFocus.report.reason && <p>{observation}</p>}
-                    {section === "grading" && <GradingComparison evaluation={evaluation} expanded />}
+                    {section === "grading" && <GradingComparison evaluation={evaluation} expanded verifiedPurchase={Boolean(reviewed)} />}
                     {section === "photos" && photoReview}
                     {section === "sales" && <>
                         {evaluation.slab && <SlabSection slab={evaluation.slab} pricing={evaluation.slabPricing} showSales />}
@@ -138,22 +148,22 @@ export function DetailPanel({ listing, analysis, automaticDecision, reviewPendin
                 <PhotoGallery images={analysis?.status === "done" ? analysis.evaluation.listing.photos ?? listing.images : listing.images} />
                 {!checking && analysis?.status !== "done" && <SoldPriceScreening listing={listing} />}
 
-                {showPurchaseScenarios && analysis?.status === "done" && <FinancialDecision evaluation={analysis.evaluation} targets={targets} now={now} />}
+                {showPurchaseScenarios && evaluation && <FinancialDecision evaluation={evaluation} targets={targets} now={now} />}
                 {analysis?.status === "done" && section !== "sales" && <MarketReferences evaluation={analysis.evaluation} />}
                 {!checking && analysis?.status === "done" && comparisonMarket && <CardmarketComparisonPanel key={comparisonMarket}
                     listing={listing} state={analysis} now={now} market={comparisonMarket} />}
                 {!checking && analysis?.status === "done" && <ResaleReceiptPanel listing={listing} state={analysis} now={now} />}
                 {!checking && (canRefreshPrices || priceRefresh) && <div className={styles.cta}>
                     {canRefreshPrices && <>
-                        <p>Check current listing terms and sold prices using the saved photo assessment. This uses marketplace requests and no new AI.</p>
+                        <p>Check current listing terms and sold prices. This uses marketplace requests and no new AI.</p>
                         <button type="button" className={styles.primary} disabled={reviewing} onClick={onRefreshPrices}>{refreshingPrices ? "Refreshing pricing…" : "Refresh pricing"}</button>
                     </>}
-                    {priceRefresh?.status === "error" && <p role="alert" className={styles.bad}>Pricing refresh failed. {priceRefresh.message} Your saved assessment is still shown.</p>}
+                    {priceRefresh?.status === "error" && <p role="alert" className={styles.bad}>Pricing refresh failed. {priceRefresh.message}</p>}
                     {priceRefresh?.status === "done" && <p role="status">{priceRefresh.message}</p>}
                 </div>}
-                {!checking && includeOffers && !unavailable && !pricingExpired && analysis?.status === "done" && <OfferSection listing={listing} evaluation={analysis.evaluation} automaticDecision={automaticDecision} />}
+                {!checking && includeOffers && !unavailable && !pricingExpired && evaluation && <OfferSection listing={listing} evaluation={evaluation} targets={targets} now={now} automaticDecision={automaticDecision} />}
                 {section !== "photos" && (!checking || evaluation?.photoCheck) && photoReview}
-                {unavailable && <p className={styles.bad}>Saved analysis only. This listing is unavailable or ended.</p>}
+                {unavailable && <p className={styles.bad}>This listing is unavailable or ended. Figures reflect the last check.</p>}
 
                 {!checking && !analysis && !unavailable && (
                     <div className={styles.cta}>
@@ -181,13 +191,14 @@ export function DetailPanel({ listing, analysis, automaticDecision, reviewPendin
                 {analysis?.status === "done" && (
                     <AnalysisDetails
                         listing={listing}
-                        evaluation={analysis.evaluation}
+                        evaluation={evaluation ?? analysis.evaluation}
                         now={now}
                         minGrade={minGrade}
                         promoted={section}
                         onReanalyze={unavailable || checking ? undefined : () => onAnalyze(Boolean(pricingExpired) || !analysis.evaluation.researchMode || analysis.evaluation.researchMode === "FULL")}
                         reviewing={reviewing}
                         showPurchaseScenarios={showPurchaseScenarios}
+                        verifiedPurchase={Boolean(reviewed)}
                     />
                 )}
                 </div>

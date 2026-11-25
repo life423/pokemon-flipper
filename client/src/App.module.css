@@ -177,6 +177,8 @@
     cursor: pointer;
 }
 
+.resumeDiscovery { min-height: 44px; }
+
 .usage {
     max-width: 18rem;
     color: var(--text-muted);
@@ -326,9 +328,12 @@
 /* Columns appear as space allows: no breakpoints. */
 .results {
     display: grid;
-    gap: var(--space-3);
+    gap: var(--space-4);
     align-items: start;
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 19rem), 1fr));
+}
+@container workspace (min-width: 60rem) {
+    .results { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (pointer: coarse) {

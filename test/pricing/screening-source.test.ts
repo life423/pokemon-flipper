@@ -8,11 +8,10 @@ import { setImmediate } from "node:timers/promises";
 import { DATA_DIR } from "../../server/lib/paths.ts";
 import { readCache, writeCache } from "../../server/lib/cache.ts";
 import { StorageUnavailableError } from "../../server/storage/index.ts";
-import { createScreeningPriceSource, fetchComps, ScreeningPriceBudgetError, lookupCards } from "../../server/pricing/pkmnprices.ts";
+import { createScreeningPriceSource, fetchComps, lookupCards } from "../../server/pricing/pkmnprices.ts";
 import { createSoldScreening } from "../../server/pricing/screening-sales.ts";
 import type { CardRecord, Comp } from "../../server/pricing/types.ts";
 import type { ListingSummary, SearchIntent } from "../../shared/types.ts";
-import { PRICE_SCREEN_REQUEST_LIMIT } from "../../shared/research-policy.ts";
 
 let clock = Date.now();
 function offline(t: { after(run: () => void): void; mock: { method(...args: any[]): unknown } }) {
@@ -51,10 +50,10 @@ test("screening uses canonical first-page sold URLs, exact half grades and no cu
     assert.deepEqual(await source.fetchComps(81001, { grader: "CGC", grade: "8.5", variant: "Unlimited Holofoil" }), [sale(1)]);
     assert.deepEqual(await source.fetchRawComps(81001, "Unlimited Holofoil"), [sale(1)]);
     assert.deepEqual(paths, [confirmedPath(gradedPath(81001, "CGC", "8.5")), confirmedPath(rawPath(81001))]);
-    assert.deepEqual(source.stats(), { requests: 2, limit: PRICE_SCREEN_REQUEST_LIMIT });
+    assert.deepEqual(source.stats(), { requests: 2 });
 });
 
-test("existing catalog and sold pages stay usable with zero new-request allowance", async t => {
+test("existing catalog and sold pages need no new requests", async t => {
     offline(t);
     const item = { id: 82002, name: "Lugia", number: "9", total_set_number: "111", set: { name: "Neo Genesis" }, prices: [] };
     await writeCache("pkmnprices:/sets?name=Genesis&language=English&per_page=50", { data: [{ id: 82001, name: "Neo Genesis" }] });
@@ -63,11 +62,11 @@ test("existing catalog and sold pages stay usable with zero new-request allowanc
     await writeCache(`pkmnprices:${gradedPath(82002)}`, { data: [sale(1)] });
     await writeCache(`pkmnprices:${rawPath(82002)}`, { data: [sale(2)] });
     t.mock.method(globalThis, "fetch", async () => { throw new Error("Saved provider responses must not be purchased again"); });
-    const source = createScreeningPriceSource({ maxRequests: 0 });
+    const source = createScreeningPriceSource();
     assert.equal((await source.lookupCards({ set: "Neo Genesis", name: "Lugia", cardNumber: "9/111" }))[0]?.id, 82002);
     assert.equal((await source.fetchComps(82002, { grader: "PSA", grade: 8, variant: "Unlimited Holofoil" })).length, 1);
     assert.equal((await source.fetchRawComps(82002, "Unlimited Holofoil")).length, 1);
-    assert.deepEqual(source.stats(), { requests: 0, limit: 0 });
+    assert.deepEqual(source.stats(), { requests: 0 });
 });
 
 test("different cards share one cached set read within the same screening source", async t => {
@@ -88,28 +87,10 @@ test("different cards share one cached set read within the same screening source
         return (readFile as any)(file, ...args);
     });
     t.mock.method(globalThis, "fetch", () => assert.fail("all metadata is already saved"));
-    const source = createScreeningPriceSource({ maxRequests: 0 });
+    const source = createScreeningPriceSource();
     assert.equal((await source.lookupCards({ set: "Neo Revelation", name: "Raikou", cardNumber: "13/64" }))[0]?.id, 82402);
     assert.equal((await source.lookupCards({ set: "Neo Revelation", name: "Entei", cardNumber: "6/64" }))[0]?.id, 82403);
     assert.equal(setReads, 1);
-});
-
-test("an exhausted screening source rejects missing pages without reserving provider pacing slots", async t => {
-    offline(t);
-    const frozen = clock;
-    t.mock.method(Date, "now", () => frozen);
-    const setTimeout = globalThis.setTimeout;
-    const waits: number[] = [];
-    t.mock.method(globalThis, "setTimeout", (callback: (...args: any[]) => void, delay: number, ...args: any[]) => {
-        waits.push(delay);
-        return setTimeout(callback, 0, ...args);
-    });
-    t.mock.method(globalThis, "fetch", () => assert.fail("an exhausted screening source cannot send a request"));
-    const source = createScreeningPriceSource({ maxRequests: 0 });
-    await assert.rejects(source.fetchRawComps(82501, "Holofoil"), ScreeningPriceBudgetError);
-    await assert.rejects(source.fetchRawComps(82502, "Holofoil"), ScreeningPriceBudgetError);
-    assert.deepEqual(waits, [], "disallowed misses must not enter the provider's one-second pacing queue");
-    assert.equal(source.stats().requests, 0);
 });
 
 test("a saved GG64/70 listing finds the catalog's exact GG64/GG70 PSA 9 sales", async t => {
@@ -123,7 +104,7 @@ test("a saved GG64/70 listing finds the catalog's exact GG64/GG70 PSA 9 sales", 
     const sold: Comp = { ...sale(1), title: "Melony GG64/70 Crown Zenith Galarian Gallery PSA 9", sold_at: new Date(clock - 86_400_000).toISOString(),
         variant: "Holofoil", grader: "PSA", grade: "9", grade_qualifier: null, attribution: "exact", listing_url: "https://www.ebay.com/itm/123" };
     await writeCache(`pkmnprices:${gradedPath(card.id, "PSA", 9, "Holofoil")}`, { data: [sold] });
-    const source = createScreeningPriceSource({ maxRequests: 0 });
+    const source = createScreeningPriceSource();
     const title = "Pokemon Melony (GG64/70) Crown Zenith Galarian Gallery PSA 9";
     const subject: ListingSummary = { id: "saved-melony", title, isGraded: true, currentPrice: 30, shipping: 4.99,
         bids: 0, buyingOption: "FIXED_PRICE", endTime: null, images: [], url: "https://www.ebay.com/itm/123", seller: null };
@@ -139,7 +120,7 @@ test("a saved GG64/70 listing finds the catalog's exact GG64/GG70 PSA 9 sales", 
         const wrong = await run({ ...subject, title: title.replace("GG64/70", number) }, intent);
         assert.equal(wrong.status, "UNAVAILABLE", number);
     }
-    assert.deepEqual(source.stats(), { requests: 0, limit: 0 });
+    assert.deepEqual(source.stats(), { requests: 0 });
 });
 
 test("screening reuses cached final-valuation pages when the first page has no confirmed match", async t => {
@@ -157,7 +138,7 @@ test("screening reuses cached final-valuation pages when the first page has no c
             : { data: first, pagination: { has_more: true, next_cursor: "saved-second" } });
     });
     assert.equal((await fetchComps(id, { grader: "PSA", grade: 8, variant: "Unlimited Holofoil" })).length, 4);
-    const source = createScreeningPriceSource({ maxRequests: 0 });
+    const source = createScreeningPriceSource();
     const record: CardRecord = { source: "pkmnprices", id, name: "Dragonite", setName: "Fossil", cardNumber: "4/62",
         variants: [{ name: "Unlimited Holofoil", printing: "UNLIMITED", finish: "HOLO" }] };
     const subject: ListingSummary = { id: "saved-row", title: "Dragonite Fossil 4/62 Unlimited Holo PSA 8", isGraded: true,
@@ -167,24 +148,23 @@ test("screening reuses cached final-valuation pages when the first page has no c
     const result = await run(subject, intent);
     assert.equal(result.status, "AVAILABLE"); assert.equal(result.exactScope, true); assert.equal(result.references[0].summary.count, 2);
     assert.deepEqual(paths, [confirmedPath(gradedPath(id)), `${confirmedPath(gradedPath(id))}&cursor=saved-second`]);
-    assert.deepEqual(source.stats(), { requests: 0, limit: 0 });
+    assert.deepEqual(source.stats(), { requests: 0 });
 });
 
-test("cursor pages use canonical half-grade and raw URLs under the same source allowance", async t => {
+test("cursor pages use canonical half-grade and raw URLs and reuse cached results", async t => {
     offline(t);
     const paths: string[] = [];
     t.mock.method(globalThis, "fetch", async input => { paths.push(requestPath(input)); return Response.json({ data: [sale(paths.length)] }); });
-    const source = createScreeningPriceSource({ maxRequests: 2 });
+    const source = createScreeningPriceSource();
     await source.fetchSoldPage(82202, { grader: "CGC", grade: "8.5", variant: "Unlimited Holofoil", stream: "CONFIRMED", cursor: "next graded" });
     await source.fetchSoldPage(82202, { grader: null, grade: null, variant: "Unlimited Holofoil", stream: "CONFIRMED", cursor: "next raw" });
-    await assert.rejects(source.fetchSoldPage(82203, { grader: null, grade: null, variant: "Unlimited Holofoil" }), ScreeningPriceBudgetError);
     assert.deepEqual(paths, [`${confirmedPath(gradedPath(82202, "CGC", "8.5"))}&cursor=next+graded`, `${confirmedPath(rawPath(82202))}&cursor=next+raw`]);
-    assert.deepEqual(source.stats(), { requests: 2, limit: 2 });
+    assert.deepEqual(source.stats(), { requests: 2 });
     await source.fetchSoldPage(82202, { grader: null, grade: null, variant: "Unlimited Holofoil", stream: "CONFIRMED", cursor: "next raw" });
-    assert.equal(paths.length, 2, "cached cursor pages remain readable after the request limit");
+    assert.equal(paths.length, 2, "cached cursor pages require no repeat transport");
 });
 
-test("catalog and sold misses share one allowance while cached work continues after exhaustion", async t => {
+test("a source reuses both newly fetched catalog results and existing sold pages", async t => {
     offline(t);
     const item = { id: 83002, name: "Espeon", number: "1", total_set_number: "75", set: { name: "Neo Discovery" }, prices: [] };
     const paths: string[] = [];
@@ -192,18 +172,17 @@ test("catalog and sold misses share one allowance while cached work continues af
         const requested = requestPath(input); paths.push(requested);
         if (requested.startsWith("/sets?")) return Response.json({ data: [{ id: 83001, name: "Neo Discovery" }] });
         if (requested.startsWith("/cards?")) return Response.json({ data: [item] });
-        throw new Error("Only the first two cache misses may dispatch");
+        if (requested === "/cards/83002?currency=usd") return Response.json(item);
+        assert.fail(`Unexpected provider URL ${requested}`);
     });
-    const source = createScreeningPriceSource({ maxRequests: 2 });
+    const source = createScreeningPriceSource();
     const query = { set: "Neo Discovery", name: "Espeon", cardNumber: "1/75" };
-    await assert.rejects(source.lookupCards(query), ScreeningPriceBudgetError);
-    assert.equal(paths.length, 2); assert.deepEqual(source.stats(), { requests: 2, limit: 2 });
-    await writeCache("pkmnprices:/cards/83002?currency=usd", item);
+    assert.equal((await source.lookupCards(query)).length, 1);
+    assert.equal(paths.length, 3); assert.deepEqual(source.stats(), { requests: 3 });
     await writeCache(`pkmnprices:${rawPath(83002)}`, { data: [sale(3)] });
     assert.equal((await source.lookupCards(query)).length, 1);
     assert.equal((await source.fetchRawComps(83002, "Unlimited Holofoil")).length, 1);
-    await assert.rejects(source.fetchComps(83002, { grader: "PSA", grade: 8 }), ScreeningPriceBudgetError);
-    assert.equal(paths.length, 2);
+    assert.equal(paths.length, 3);
 });
 
 test("screening without a collector number loads at most four exact-name card details", async t => {
@@ -222,7 +201,7 @@ test("screening without a collector number loads at most four exact-name card de
     const source = createScreeningPriceSource();
     const result = await source.lookupCards({ set: "Expedition", name: "Charizard", cardNumber: "" });
     assert.deepEqual(result.map(record => record.id), [89002, 89003, 89004, 89005]);
-    assert.equal(paths.length, 4); assert.deepEqual(source.stats(), { requests: 4, limit: PRICE_SCREEN_REQUEST_LIMIT });
+    assert.equal(paths.length, 4); assert.deepEqual(source.stats(), { requests: 4 });
     assert.deepEqual(await lookupCards({ set: "Expedition", name: "Charizard", cardNumber: "" }), [], "ordinary lookup semantics still require a collector-number match");
     assert.equal(paths.length, 4);
 });
@@ -334,7 +313,7 @@ test("query catalog detail contradictions cannot establish a complete identity s
     }
 });
 
-test("query catalog and sold work share one screening allowance and remain reusable after it is exhausted", async t => {
+test("query catalog and sold research stay reusable after additional requests", async t => {
     queryOffline(t);
     const item = queryCard(96003, "3"), paths: string[] = [];
     t.mock.method(globalThis, "fetch", async input => {
@@ -344,14 +323,14 @@ test("query catalog and sold work share one screening allowance and remain reusa
         if (url.pathname.includes("/listings/ebay")) return Response.json({ data: [sale(96)] });
         return Response.json(item);
     });
-    const source = createScreeningPriceSource({ maxRequests: 4 }), query = { set: "Team Rocket", name: "Dark Blastoise" };
+    const source = createScreeningPriceSource(), query = { set: "Team Rocket", name: "Dark Blastoise" };
     assert.equal((await source.lookupQueryCards(query)).complete, true);
-    assert.deepEqual(source.stats(), { requests: 3, limit: 4 });
+    assert.deepEqual(source.stats(), { requests: 3 });
     assert.deepEqual(await source.fetchRawComps(96003, "Unlimited Holofoil"), [sale(96)]);
-    await assert.rejects(source.fetchRawComps(96020, "Unlimited"), ScreeningPriceBudgetError);
+    assert.deepEqual(await source.fetchRawComps(96020, "Unlimited"), [sale(96)]);
     assert.equal((await source.lookupQueryCards(query)).complete, true);
     assert.deepEqual(await source.fetchRawComps(96003, "Unlimited Holofoil"), [sale(96)]);
-    assert.equal(paths.length, 4); assert.deepEqual(source.stats(), { requests: 4, limit: 4 });
+    assert.equal(paths.length, 5); assert.deepEqual(source.stats(), { requests: 5 });
 });
 
 test("concurrent searches share a sold page and one stopped subscriber cannot cancel its other consumer", async t => {
@@ -360,8 +339,8 @@ test("concurrent searches share a sold page and one stopped subscriber cannot ca
     let requests = 0;
     t.mock.method(globalThis, "fetch", async () => { requests++; started.resolve(); return response.promise; });
     const stopped = new AbortController(), useful = new AbortController();
-    const a = createScreeningPriceSource({ signal: stopped.signal, maxRequests: 1 });
-    const b = createScreeningPriceSource({ signal: useful.signal, maxRequests: 1 });
+    const a = createScreeningPriceSource({ signal: stopped.signal });
+    const b = createScreeningPriceSource({ signal: useful.signal });
     const first = a.fetchRawComps(84001, "Unlimited Holofoil");
     const second = b.fetchRawComps(84001, "Unlimited Holofoil");
     const rejection = assert.rejects(first, /stop one search/);
@@ -370,10 +349,10 @@ test("concurrent searches share a sold page and one stopped subscriber cannot ca
     await rejection;
     assert.deepEqual(await second, [sale(4)]);
     assert.equal(requests, 1); assert.equal(a.stats().requests + b.stats().requests, 1);
-    assert.deepEqual(await createScreeningPriceSource({ maxRequests: 0 }).fetchRawComps(84001, "Unlimited Holofoil"), [sale(4)]);
+    assert.deepEqual(await createScreeningPriceSource().fetchRawComps(84001, "Unlimited Holofoil"), [sale(4)]);
 });
 
-test("stop before dispatch blocks queued requests without consuming their allowance", async t => {
+test("stop before dispatch blocks queued requests without accounting for a transport", async t => {
     offline(t);
     const bothStarted = deferred<void>(), response = deferred<Response>();
     const paths: string[] = [];
@@ -381,17 +360,17 @@ test("stop before dispatch blocks queued requests without consuming their allowa
         paths.push(requestPath(input)); if (paths.length === 2) bothStarted.resolve();
         return (await response.promise).clone();
     });
-    const occupying = createScreeningPriceSource({ maxRequests: 2 });
+    const occupying = createScreeningPriceSource();
     const active = [occupying.fetchRawComps(85001, "Unlimited Holofoil"), occupying.fetchRawComps(85002, "Unlimited Holofoil")];
     await bothStarted.promise;
     const controller = new AbortController();
-    const queued = createScreeningPriceSource({ signal: controller.signal, maxRequests: 1 });
+    const queued = createScreeningPriceSource({ signal: controller.signal });
     const pending = queued.fetchRawComps(85003, "Unlimited Holofoil");
     const rejection = assert.rejects(pending, /stop queued/);
     await setImmediate(); controller.abort(new Error("stop queued"));
     await rejection; response.resolve(Response.json({ data: [sale(5)] }));
     await Promise.all(active); await setImmediate();
-    assert.equal(paths.length, 2); assert.deepEqual(queued.stats(), { requests: 0, limit: 1 });
+    assert.equal(paths.length, 2); assert.deepEqual(queued.stats(), { requests: 0 });
 });
 
 test("an accepted response still saves after its final subscriber stops", async t => {
@@ -433,8 +412,4 @@ test("rate limits make one attempt and preserve cached reads without automatic r
     await writeCache(`pkmnprices:${rawPath(88002)}`, { data: [sale(8)] });
     assert.deepEqual(await source.fetchRawComps(88002, "Unlimited Holofoil"), [sale(8)]);
     assert.equal(requests, 1);
-});
-
-test("invalid screening allowances fail before any work", () => {
-    for (const maxRequests of [-1, NaN, Infinity, 1.5]) assert.throws(() => createScreeningPriceSource({ maxRequests }), RangeError);
 });

@@ -15,7 +15,7 @@ export function ProviderUsageNotice({ usage = [], now = Date.now() }: { usage?: 
                 <strong role="alert">{item.label}: {low && fast ? "daily allowance is low and being used quickly" : low ? "daily allowance is running low" : "daily allowance is being used quickly"}</strong>
                 <p>{item.remaining.toLocaleString()} of {item.limit.toLocaleString()} daily {unit} left.
                     {fast && item.usedInWindow !== null ? ` At least ${item.usedInWindow.toLocaleString()} ${unit} used over an observed window of ${minutes} ${minutes === 1 ? "minute" : "minutes"}.` : ""}</p>
-                <small>New provider work uses this allowance; saved responses do not. Daily quota protections remain active.</small>
+                <small>{item.provider === "EBAY" ? "Browse requests are paced. Optional extra pages are deferred." : "Daily quota protections remain active."}</small>
             </section>;
         })}
     </aside>;

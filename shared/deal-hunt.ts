@@ -1,5 +1,6 @@
 import type { Evaluation, ListingSummary, Targets } from "./types.ts";
 import type { ListingFilters } from "./listing-filters.ts";
+import type { VerifiedPurchase } from "./money/verified-purchase.ts";
 
 export const dealHuntGoals = {
     grade_raw: "Find a raw card worth grading",
@@ -8,11 +9,14 @@ export const dealHuntGoals = {
 } as const;
 
 export type DealHuntGoal = keyof typeof dealHuntGoals;
+export const DEAL_HUNT_LISTING_LIMIT = 200;
+export const HUNT_RECHECK_MS = 15 * 60_000;
 export type DealHuntScope = "search" | "same_set" | "any_card";
 export type DealHuntAction = "check_listing" | "inspect_photos" | "resolve_printing" | "check_sales" | "check_price_references" | "calculate_grading" | "check_raw_resale";
 export type DealHuntSection = "grading" | "sales" | "photos";
 export interface HuntMarketPreferences {
     sets?: string[];
+    seed?: { name: string | null; number: string | null; expand: boolean };
     printing?: "FIRST_EDITION" | "SHADOWLESS" | "UNLIMITED";
     grader?: "PSA" | "CGC" | "BGS" | "SGC" | "TAG";
     minGrade?: number;
@@ -20,13 +24,19 @@ export interface HuntMarketPreferences {
     minYear?: number;
     maxYear?: number;
     finish?: "HOLO" | "REVERSE_HOLO" | "NON_HOLO";
+    preferRecentSales?: boolean;
 }
 export interface DealHuntRequest {
     goal: DealHuntGoal;
     listingIds: string[];
+    /** Continued batches that own some of the selected rows. */
+    batchIds?: string[];
     targets: Targets;
     scope?: DealHuntScope;
     standalone?: boolean;
+    watch?: true;
+    /** Discover current fixed-price resale candidates from the newest marketplace inventory. */
+    freshListings?: true;
     filters?: ListingFilters;
     minPotentialGrade?: number;
     marketPreferences?: HuntMarketPreferences;
@@ -38,6 +48,7 @@ export interface DealHuntReport {
     reason: string;
     marketNote?: string;
     destination: { listingId: string; section: DealHuntSection } | null;
+    verifiedPurchase?: VerifiedPurchase;
     steps: {
         listingId: string | null;
         title: string;
@@ -53,6 +64,7 @@ export interface DealHuntReport {
     }[];
 }
 export interface DealHuntResponse {
+    nextCheckAt?: number;
     gradingOpportunity?: import("./grading-watch.ts").GradingOpportunity;
     auctionOpportunity?: import("./auction-opportunity.ts").AuctionOpportunity;
     collectorAuction?: import("./collector-auction.ts").CollectorAuction;
@@ -61,4 +73,5 @@ export interface DealHuntResponse {
     alternative?: { listing: ListingSummary; reason: string };
     /** Other eligible eBay copies discovered in a standalone hunt, without a purchase recommendation. */
     candidates?: ListingSummary[];
+    candidatePrices?: Record<string, import("./listing-market-prices.ts").ListingMarketPrices>;
 }

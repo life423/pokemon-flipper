@@ -96,9 +96,17 @@ test("counting API errors and malformed answers are not retried and do not expos
     for (const response of [new Response("private-provider-body", { status: 500 }), new Response("private-provider-body", { status: 200 }), Response.json({ object: "response.input_tokens", input_tokens: -1 }), Response.json({ input_tokens: 2 })]) {
         let calls = 0;
         const { count, cache } = fixture(t, { fetch: async () => { calls++; return response; } });
-        await assert.rejects(count(body()), error => error instanceof InputPreflightError && !error.message.includes("private-provider-body"));
+        await assert.rejects(count(body()), error => error instanceof InputPreflightError && error.code === "AI_INPUT_PREFLIGHT" &&
+            error.scope === "search" && !error.message.includes("private-provider-body"));
         assert.equal(calls, 1); assert.equal(cache.size, 0);
     }
+});
+
+test("a rejected listing's exact input can wait without stopping other listings", async t => {
+    const { count, cache } = fixture(t, { fetch: async () => new Response("request too large", { status: 413 }) });
+    await assert.rejects(count(body()), error => error instanceof InputPreflightError &&
+        error.code === "AI_INPUT_PREFLIGHT" && error.scope === "listing" && /413/.test(error.message));
+    assert.equal(cache.size, 0);
 });
 
 test("network or count-checkpoint failures remain controlled non-generating stops", async t => {

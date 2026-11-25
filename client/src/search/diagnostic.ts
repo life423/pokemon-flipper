@@ -1,10 +1,13 @@
 import type { SearchDiagnosticRow } from "../../../shared/search-diagnostic.ts";
-import type { BuyerListingReview } from "../../../shared/wait-skip-review.ts";
+import { isBuyerWaitReason, type BuyerListingReview } from "../../../shared/wait-skip-review.ts";
 import type { AnalysisState } from "../analysis-state";
 import type { ListingSummary } from "../types";
 import { evaluationOf, type ResultGroups } from "./results";
 
 type Reason = SearchDiagnosticRow["reason"];
+
+export const listingsInDiagnosticBatch = (listings: readonly ListingSummary[], owners: ReadonlyMap<string, string>, id: string) =>
+    listings.filter(listing => owners.get(listing.id) === id);
 
 export function searchDiagnosticRows(
     listings: ListingSummary[],
@@ -12,7 +15,7 @@ export function searchDiagnosticRows(
     groups: ResultGroups,
     listingBlock: (listing: ListingSummary) => Reason | null,
     waitingReason: Reason,
-    buyerDecisions: Readonly<Record<string, Pick<BuyerListingReview, "decision" | "reason"> & { unavailable?: boolean }>> = {},
+    buyerDecisions: Readonly<Record<string, Pick<BuyerListingReview, "decision" | "reason" | "waitReason" | "verifiedPurchase"> & { unavailable?: boolean }>> = {},
 ): SearchDiagnosticRow[] {
     const deals = new Set(groups.deals.map(listing => listing.id));
     const losses = new Set(groups.losses.map(listing => listing.id));
@@ -28,7 +31,7 @@ export function searchDiagnosticRows(
             // retain a priced outcome when the reviewed row is still a loss.
             const evidence = { id, photoChecked: Boolean(evaluation?.photoCheck) };
             if (checked.unavailable) return { ...evidence, outcome: "FAILED", reason: "BUYER_CHECK_UNAVAILABLE" };
-            if (checked.decision === "WAIT") return { ...evidence, outcome: "WAIT", reason: "BUYER_WAIT" };
+            if (checked.decision === "WAIT") return { ...evidence, outcome: "WAIT", reason: isBuyerWaitReason(checked.waitReason) ? checked.waitReason : "BUYER_WAIT" };
             const best = evaluation?.underwriting?.best;
             if (losses.has(id) && best?.status === "PRICED" && best.profit < 0 && Number.isFinite(best.profit)) {
                 return { ...evidence, outcome: "LOSS", reason: "BUYER_SKIP", priced: true, profit: best.profit };
@@ -45,7 +48,7 @@ export function searchDiagnosticRows(
             return { id, outcome: "SKIPPED", reason: reason ?? waitingReason };
         }
 
-        const best = evaluation.underwriting?.best;
+        const best = checked?.decision === "BUY" ? checked.verifiedPurchase?.path : evaluation.underwriting?.best;
         const photoChecked = Boolean(evaluation.photoCheck);
         const priced = !evaluation.underwriting?.shippingUnconfirmed && best?.status === "PRICED" && Number.isFinite(best.profit);
         const row = { id, photoChecked, priced, ...(priced ? { profit: best.profit } : {}) };

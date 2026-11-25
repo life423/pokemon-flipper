@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createSearchDiagnosticStore, SearchDiagnosticInputError } from "../../server/analysis/search-diagnostic-store.ts";
+import { createBuyerListingReviewer } from "../../server/analysis/wait-skip-review.ts";
 import type { SearchDiagnosticOverflow, SourceDispositionRow } from "../../shared/search-diagnostic.ts";
 
 const first = "v1|123456789012|0";
@@ -99,4 +100,29 @@ test("diagnostic retention expires discovery, its decisions, and the review toge
     now += 20;
     assert.equal(await store.loadDiscovery(newId), null);
     assert.equal(await store.saveSnapshot(newId, rows, {}), null);
+});
+
+test("a verified continued batch repairs a legacy quota placeholder without replacing completed diagnostics", async t => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "search-diagnostic-quota-"));
+    t.after(() => fs.rm(directory, { recursive: true, force: true }));
+    const store = createSearchDiagnosticStore({ directory });
+    const paused = { total: 12, found: 0, screened: 0, skipped: 0, deferred: 0, retainedIds: [],
+        sourceCoverage: "PARTIAL" as const, sourceDispositions: [] };
+    const id = randomUUID();
+    await store.saveDiscovery(id, paused);
+    assert.deepEqual((await store.saveDiscovery(id, discovery)).discovery.retainedIds, []);
+    const reviewer = createBuyerListingReviewer({ discovery: store.loadDiscovery, inventory: async () => null, snapshot: async () => null });
+    const review = () => reviewer(id, first, { minProfit: 7, minRoi: 0 }, false, false, new AbortController().signal);
+    await assert.rejects(review(), { status: 409 });
+    assert.deepEqual((await store.saveDiscovery(id, discovery, true)).discovery.retainedIds, [first, second]);
+    assert.equal((await review()).decision, "WAIT", "the recovered listing passes normal admission");
+    assert.deepEqual((await store.saveDiscovery(id, { ...discovery, retainedIds: [first] }, true)).discovery.retainedIds, [first, second]);
+
+    const completed = randomUUID();
+    await store.saveDiscovery(completed, paused);
+    await store.saveSnapshot(completed, [], {});
+    assert.deepEqual((await store.saveDiscovery(completed, discovery, true)).discovery.retainedIds, []);
+    const empty = randomUUID();
+    await store.saveDiscovery(empty, { ...paused, sourceCoverage: "COMPLETE" });
+    assert.deepEqual((await store.saveDiscovery(empty, discovery, true)).discovery.retainedIds, []);
 });

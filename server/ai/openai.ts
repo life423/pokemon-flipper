@@ -54,10 +54,24 @@ export class MalformedStructuredOutputError extends SyntaxError {
     }
 }
 
+export class StructuredOutputLimitError extends Error {
+    constructor(step: string, readonly usage: Usage) {
+        super(`${step}: response was cut off (max_output_tokens)`);
+        this.name = "StructuredOutputLimitError";
+    }
+}
+
 // Structured output is only trusted when the response finished
 // normally and the model didn't refuse.
 function readStructuredOutput(response: OpenAI.Responses.Response, step: string): unknown {
+    const refusal = (response.output ?? [])
+        .flatMap((item) => (item as { content?: { type: string; refusal?: string }[] }).content ?? [])
+        .find((part) => part.type === "refusal");
+
     if (response.status === "incomplete") {
+        if (response.incomplete_details?.reason === "max_output_tokens" && !refusal) {
+            throw new StructuredOutputLimitError(step, readUsage(response));
+        }
         throw new Error(
             `${step}: response was cut off (${response.incomplete_details?.reason ?? "unknown reason"})`
         );
@@ -65,10 +79,6 @@ function readStructuredOutput(response: OpenAI.Responses.Response, step: string)
     if (response.status !== "completed") {
         throw new Error(`${step}: response did not complete (${response.status ?? "unknown status"})`);
     }
-
-    const refusal = (response.output ?? [])
-        .flatMap((item) => (item as { content?: { type: string; refusal?: string }[] }).content ?? [])
-        .find((part) => part.type === "refusal");
 
     if (refusal) {
         throw new Error(`${step}: model refused (${refusal.refusal})`);

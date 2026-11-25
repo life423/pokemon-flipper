@@ -11,7 +11,8 @@ import { getAiDispatchSignal, getBudgetContext, type AiUsageContext } from "./us
 export interface AiInputProof { inputHash: string; inputTokens: number }
 export const aiInputHash = (body: unknown) => createHash("sha256").update(JSON.stringify(body)).digest("hex");
 export class InputPreflightError extends Error {
-    readonly code = "AI_BUDGET";
+    readonly code = "AI_INPUT_PREFLIGHT";
+    constructor(message: string, readonly scope: "search" | "listing" = "search") { super(message); }
 }
 interface CountEvent extends AiUsageContext { at: string; inputHash: string; model: string; status: number | null; inputTokens: number | null; durationMs: number }
 interface Options {
@@ -27,7 +28,9 @@ const INTEGER = (value: unknown): value is number => typeof value === "number" &
 const COUNT_FIELDS = ["model", "input", "instructions", "parallel_tool_calls", "personality", "reasoning", "text", "tools", "tool_choice", "truncation"] as const;
 const GENERATION_FIELDS = new Set([...COUNT_FIELDS, "max_output_tokens", "metadata", "service_tier", "prompt_cache_options", "store", "tools", "tool_choice", "previous_response_id", "conversation", "stream", "background"]);
 const INLINE_IMAGE = /^data:image\/(?:jpeg|png|webp|gif);base64,[a-z0-9+/]+={0,2}$/i;
-const fail = (message: string): never => { throw new InputPreflightError(`${message} No paid AI generation was authorized.`); };
+const fail = (message: string, scope?: InputPreflightError["scope"]): never => {
+    throw new InputPreflightError(`${message} No paid AI generation was authorized.`, scope);
+};
 
 // GPT-5.6 cache writes are priced by the documented TTL. Reject legacy
 // retention fields, longer TTLs and unverified breakpoint/policy overrides.
@@ -45,7 +48,7 @@ function countPayload(body: any): Record<string, unknown> {
         Object.keys(body).some(key => !GENERATION_FIELDS.has(key) && !(isBoundedPriceSearch(body) && ["max_tool_calls", "include"].includes(key))) ||
         ((body.tools?.length || body.tool_choice && body.tool_choice !== "none") && !isBoundedPriceSearch(body)) ||
         body.previous_response_id || body.conversation || body.stream || body.background || body.truncation && body.truncation !== "disabled") {
-        return fail("The AI request contains unsupported counting or mutable-context fields.");
+        return fail("The AI request contains unsupported counting or mutable-context fields.", "listing");
     }
     let encodedBytes = 0;
     const input = body.input;
@@ -61,7 +64,7 @@ function countPayload(body: any): Record<string, unknown> {
             return encodedBytes <= 32 * 1024 * 1024;
         });
     });
-    if (!immutable) return fail("Exact AI counting requires supported text and immutable inline listing images.");
+    if (!immutable) return fail("Exact AI counting requires supported text and immutable inline listing images.", "listing");
     return Object.fromEntries(COUNT_FIELDS.filter(key => body[key] !== undefined).map(key => [key, body[key]]));
 }
 async function recordCount(event: CountEvent) {
@@ -89,7 +92,7 @@ export function createAiInputPreflight({ fetch: request = (...args) => globalThi
             const saved = await read(key);
             if (saved !== null) {
                 const cached = saved as AiInputProof;
-                if (!cached || cached.inputHash !== inputHash || !INTEGER(cached.inputTokens)) return fail("The saved exact AI token proof is invalid; its evidence was retained.");
+                if (!cached || cached.inputHash !== inputHash || !INTEGER(cached.inputTokens)) return fail("The saved exact AI token proof is invalid; its evidence was retained.", "listing");
                 return cached;
             }
             await ready();
@@ -107,7 +110,8 @@ export function createAiInputPreflight({ fetch: request = (...args) => globalThi
                     body: serialized, signal: AbortSignal.any([active, AbortSignal.timeout(15_000)]),
                 });
                 status = response.status;
-                if (!response.ok) return fail(`Exact AI input counting was unavailable (${response.status}).`);
+                if (!response.ok) return fail(`Exact AI input counting was unavailable (${response.status}).`,
+                    [400, 413, 422].includes(response.status) ? "listing" : "search");
                 const result: any = await response.json();
                 if (result?.object !== "response.input_tokens" || !INTEGER(result.input_tokens)) return fail("Exact AI input counting returned an invalid proof.");
                 inputTokens = result.input_tokens;
@@ -128,7 +132,7 @@ export function createAiInputPreflight({ fetch: request = (...args) => globalThi
         }, waiting);
         waiting?.throwIfAborted();
         await checkAllowed();
-        if (aiInputHash(body) !== inputHash) return fail("The AI request changed after exact input counting.");
+        if (aiInputHash(body) !== inputHash) return fail("The AI request changed after exact input counting.", "listing");
         return proof;
     };
 }

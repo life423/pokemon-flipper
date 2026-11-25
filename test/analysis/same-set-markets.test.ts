@@ -1,6 +1,13 @@
+import "../fixtures/isolated-data.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { rankHuntMarkets, restoreSavedHuntSales, type HuntMarket } from "../../server/analysis/same-set-markets.ts";
+import { randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { findHuntMarkets, rankHuntMarkets, restoreSavedHuntSales, type HuntMarket } from "../../server/analysis/same-set-markets.ts";
+import { createPrivateEvaluationStore } from "../../server/analysis/private-evaluation.ts";
+import { createSearchDiagnosticStore } from "../../server/analysis/search-diagnostic-store.ts";
+import { saveRecord } from "../../server/analysis/store.ts";
 import { marketItemLimit, photoMatchesCollectorMarket } from "../../server/analysis/deal-hunt-market-checks.ts";
 import { groupMarketSearches } from "../../server/analysis/deal-hunt-market-groups.ts";
 import { confirmedHuntPage, savedHuntSaleRows } from "../../server/pricing/saved-hunt-sales.ts";
@@ -97,6 +104,45 @@ test("same-set discovery keeps distinct recent completed sales separate by set, 
     assert.equal(any[0].name, "Gengar");
     assert.equal(rankHuntMarkets(pool, null, "collect_slab", "any_card", now).length, 0);
     assert.equal(rankHuntMarkets(pool, null, "resell", "same_set", now).length, 0);
+});
+
+test("the file-backed hunt combines accepted history across sets with diagnostics and counts each transaction once", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("saved market discovery must not call a provider"));
+    const privateStore = createPrivateEvaluationStore();
+    const diagnostics = createSearchDiagnosticStore();
+    const at = Date.now();
+    const base = rawCard("Blastoise", "Base Set", "2/102", 120000095000, 3);
+    const otherCopy = { ...structuredClone(base), listing: { ...base.listing, id: "v1|120000199501|0" } };
+    const aquapolis = rawCard("Espeon", "Aquapolis", "H9/H32", 120000096000, 2);
+    const unconfirmed = rawCard("Crobat", "Skyridge", "H5/H32", 120000097000, 4);
+    for (const e of [base, otherCopy, aquapolis, unconfirmed]) {
+        e.answeredAt = new Date(at).toISOString();
+        e.assessmentVersion = "offline-model/bounded-prompts-1";
+        e.listing.photos = [];
+        e.rawPricing!.prices![0].comps!.sales.forEach((sale, index) => {
+            sale.soldAt = new Date(at - (index + 1) * day).toISOString();
+            if (e === unconfirmed) sale.saleType = undefined;
+        });
+    }
+    for (const e of [base, otherCopy, unconfirmed]) await privateStore.save(e, { evidenceKey: "fixture-photo-key", contextKey: "a".repeat(64) });
+    await saveRecord(aquapolis.listing.id, { itemId: aquapolis.listing.id, version: "legacy-assessment", photoFingerprint: "fixture",
+        answeredAt: aquapolis.answeredAt, photoCheck: null, assessment: null, latestEvaluation: { evidenceKey: "legacy-photo-key", evaluation: aquapolis } });
+    const search = randomUUID();
+    await diagnostics.saveDiscovery(search, { total: 1, found: 1, screened: 1, skipped: 0, deferred: 0, previouslySeen: 0, retainedIds: [base.listing.id] });
+    await diagnostics.saveSnapshot(search, [{ id: base.listing.id, outcome: "WAIT", reason: "BUYER_WAIT", photoChecked: true, priced: true }], {});
+
+    const readDirectory = fs.readdir;
+    const scans: string[] = [];
+    t.mock.method(fs, "readdir", async (directory: string, ...args: any[]) => {
+        scans.push(path.basename(directory));
+        return (readDirectory as any)(directory, ...args);
+    });
+    const first = await findHuntMarkets(null, "resell", "any_card");
+    const second = await findHuntMarkets(null, "resell", "any_card");
+    const markets = first.map(row => [row.name, row.cardNumber, row.set, row.sales60, row.listingIds.length]);
+    assert.deepEqual(markets, [["Blastoise", "2/102", "Base Set", 3, 2], ["Espeon", "H9/H32", "Aquapolis", 2, 1]]);
+    assert.deepEqual(second, first);
+    assert.deepEqual(scans.sort(), ["evaluations", "price-cache"], "warm lookups reuse the saved file index");
 });
 
 test("ambiguous sale IDs and repeated URLs never inflate observed activity", () => {

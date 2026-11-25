@@ -105,7 +105,11 @@ test("different backend dispatchers share one provider attempt and replay the sa
     const [original, reused] = await Promise.all([a, b]);
     assert.equal(providerCalls, 1);
     assert.equal(state.calls.dispatched, 1);
-    assert.deepEqual(await original.json(), await reused.json());
+    assert.equal(original.bodyUsed, false, "the initial caller can read its body after checkpointing");
+    const [firstBody, replayedBody] = await Promise.all([original.json(), reused.json()]);
+    assert.deepEqual(firstBody, replayedBody);
+    assert.equal(original.headers.get("x-pokemon-flipper-reused"), null);
+    assert.equal(original.headers.get("x-request-id"), "offline-request");
     assert.equal(reused.headers.get("x-pokemon-flipper-reused"), "true");
     assert.equal(reused.headers.get("x-request-id"), "offline-request");
     assert.equal(reused.headers.get("authorization"), null);

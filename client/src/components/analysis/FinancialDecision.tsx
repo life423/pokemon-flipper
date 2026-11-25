@@ -9,11 +9,12 @@ import { Tween } from "../Tween";
 import { Notes, Pairs, Section } from "./primitives";
 import { isResearchDeferred, printingReviewReasons } from "../../../../shared/photo-review.ts";
 import styles from "../DetailPanel.module.css";
-import { isRawSoldPrice, priceEvidenceGap } from "../../../../shared/money/price-evidence.ts";
+import { priceEvidenceGap, rawPriceForPath } from "../../../../shared/money/price-evidence.ts";
 import { readyForPricing } from "../../../../shared/identity.ts";
 import { unconfirmedResale } from "../../../../shared/wait-skip-review.ts";
 import { slabBuyGuidance } from "../../../../shared/money/slab-buy-guidance.ts";
 import { rawBuyGuidance } from "../../../../shared/money/raw-buy-guidance.ts";
+import { tcgplayerEstimateLabel } from "./PricingSections";
 
 export function FinancialDecision({ evaluation, targets, now }: { evaluation: Evaluation; targets: Targets; now: number }) {
     if (!readyForPricing(evaluation.identity) && evaluation.underwriting?.verdict === "NEEDS_REVIEW") {
@@ -38,11 +39,11 @@ export function FinancialDecision({ evaluation, targets, now }: { evaluation: Ev
             ["Shipping", evaluation.listing.shipping === null ? "Not quoted" : dollars(evaluation.listing.shipping)],
             ...(evaluation.underwriting?.best && evaluation.underwriting.best.path !== "RAW" ? [["Reference resale estimate before costs", dollars(evaluation.underwriting.best.salePrice)]] as [string, ReactNode][] : []),
         ]} />
-        {guidance ? <Notes items={guidance.details} /> : <p className={styles.small}>Saved photo findings remain available. A purchase or bid limit needs matched resale evidence.</p>}
+        {guidance ? <Notes items={guidance.details} /> : <p className={styles.small}>A purchase or bid limit needs matched resale evidence.</p>}
     </Section>;
     if (isResearchDeferred(evaluation)) return <Section title="Wait for resale evidence">
         <p>{evaluation.rawPricing?.evidenceNote}</p>
-        <p className={styles.small}>The preliminary check did not establish a resale margin at this price. The saved photos are available for further pricing.</p>
+        <p className={styles.small}>The preliminary check did not establish a resale margin at this price.</p>
     </Section>;
     if (!evaluation.underwriting) return null;
     return evaluation.listing.buyingOption === "AUCTION" ? <Section title="Auction decision">
@@ -73,9 +74,9 @@ function VerdictSection({
         ["Shipping", listing.shipping === null ? `Not quoted · ${dollars(MONEY_CONFIG.buying.assumedShippingWhenUnknown)} assumed` : dollars(listing.shipping)],
     ];
     if (best?.path === "RAW") {
-        const quote = evaluation.rawPricing?.prices?.find(price => price.condition === best.priceCondition && isRawSoldPrice(price));
+        const quote = rawPriceForPath(evaluation.rawPricing, best);
         rows.push(["Raw sale estimate before fees", dollars(best.salePrice)]);
-        rows.push(["Resale evidence", `${quote?.comps?.count ?? "Matched"} eBay sold comps`]);
+        if (quote) rows.push(["Resale evidence", tcgplayerEstimateLabel(quote.basis) ?? `${quote.comps?.count ?? "Matched"} eBay sold comps`]);
         rows.push(["Net sale proceeds after fees and shipping", dollars(best.expectedNet)]);
     }
 
@@ -139,7 +140,9 @@ function VerdictSection({
     );
 }
 
-export function PathCard({ path, auction, referenceReason, shippingPending }: { path: MoneyPath; auction: boolean; referenceReason?: string | null; shippingPending?: boolean }) {
+export function PathCard({ path, auction, referenceReason, shippingPending, modeledAlternative }: {
+    path: MoneyPath; auction: boolean; referenceReason?: string | null; shippingPending?: boolean; modeledAlternative?: boolean;
+}) {
     if (path.status !== "PRICED") {
         return (
             <div className={styles.path}>
@@ -168,11 +171,11 @@ export function PathCard({ path, auction, referenceReason, shippingPending }: { 
               ]
             : [["Sells for", `${dollars(path.salePrice)}${path.priceCondition ? ` (${name(path.priceCondition)})` : ""}`]];
 
-    const actionable = path.clears && !shippingPending;
+    const actionable = path.clears && !shippingPending && !modeledAlternative;
     return (
         <div className={`${styles.path} ${actionable ? styles.clears : ""}`}>
             <div className={styles.pathHead}>
-                <h4>{path.label}</h4>
+                <h4>{path.label}{modeledAlternative && " · modeled alternative"}</h4>
                 {actionable && <span className={styles.clearsTag}>Clears your targets</span>}
             </div>
 
@@ -198,7 +201,7 @@ export function PathCard({ path, auction, referenceReason, shippingPending }: { 
                               ],
                               ["Modeled downside", path.downside === null ? "Unknown" : dollars(path.downside)],
                           ]) as [string, ReactNode][]),
-                    [auction ? "Max bid" : shippingPending ? "Provisional max price" : "Max price", <strong>{dollars(path.maxBid)}</strong>],
+                    ...(!modeledAlternative ? [[auction ? "Max bid" : shippingPending ? "Provisional max price" : "Max price", <strong>{dollars(path.maxBid)}</strong>]] as [string, ReactNode][] : []),
                 ]}
             />
 

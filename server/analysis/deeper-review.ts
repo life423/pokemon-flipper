@@ -63,7 +63,7 @@ async function loadAcceptedReview(key: string, cached: typeof readCache): Promis
     const tokens = (count: unknown) => count === null || typeof count === "number" && Number.isSafeInteger(count) && count >= 0;
     if (!record || record.key !== key || !Number.isFinite(Date.parse(record.reviewedAt)) ||
         !Object.hasOwn(record, "answer") || !record.usage || !tokens(record.usage.inputTokens) || !tokens(record.usage.outputTokens)) {
-        throw new StorageUnavailableError("Saved deeper photo evidence is invalid. It was kept and no replacement request was sent.");
+        throw new StorageUnavailableError("Saved deeper photo evidence is invalid.");
     }
     return record;
 }

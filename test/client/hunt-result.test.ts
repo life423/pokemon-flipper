@@ -25,6 +25,9 @@ test("an open flip hunt can show a verified listing outside the original search,
     assert.throws(() => selectedHuntListing(response, "old-run", "resell", "any_card", []));
     assert.throws(() => selectedHuntListing({ ...response, alternative: undefined }, searchId, "resell", "any_card", []));
     assert.equal(selectedHuntListing({ ...response, alternative: undefined }, searchId, "resell", "search", [listing]), listing);
+    const unrelated = { ...listing, id: "different", title: "Nidoking 24/147 Reverse Holo - Aquapolis" };
+    assert.throws(() => selectedHuntListing({ ...response, alternative: undefined, candidates: [unrelated] },
+        searchId, "resell", "search", [listing]), /does not match this hunt/);
 });
 
 test("a standalone raw grading result opens the exact fixed-price copy and its grading breakdown", () => {

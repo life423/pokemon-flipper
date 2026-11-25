@@ -106,13 +106,11 @@ export interface Screen {
     filledFromTitle?: string[];
 }
 
-// Today's eBay Browse allowance, from eBay's own count.
-export interface EbaySearchAllowance {
-    searchId: string;
-    limit: number;
-    used: number;
-    remaining: number;
-}
+export type EbaySearchAllowance = { searchId: string; used: number } & (
+    { limit: number; remaining: number; policy?: never; historicalLimit?: never } |
+    { limit: null; remaining: null; policy: "daily-reserve"; historicalLimit: number | null }
+);
+// Today's eBay Browse allowance, from eBay's own count and local reservations.
 export interface EbayUsage {
     searchBudget?: EbaySearchAllowance;
     used: number;
@@ -169,6 +167,8 @@ export interface SellerMistake {
 
 // One search result, with the free check once it's run.
 export interface ListingSummary {
+    /** Destination for the quoted shipping; missing on older saved evidence. */
+    shippingDestination?: string | null;
     // eBay first-available time and creation time are separate facts.
     listedAt?: string | null;
     createdAt?: string | null;
@@ -605,6 +605,7 @@ export interface DeeperPhotoReview {
 }
 
 export interface Evaluation {
+    releaseMark?: import("./base-set-release.ts").ReleaseMarkReading;
     trackerRawReference?: import("./tracker-price-reference.ts").TrackerRawReference;
     trackerPriceReference?: import("./tracker-price-reference.ts").TrackerPriceReference;
     webPriceResearch?: import("./web-price-research.ts").WebPriceResearch;
@@ -628,7 +629,7 @@ export interface Evaluation {
         sourceSha256: string;
     };
     focusedStamp?: {
-        method?: "NEO_DESTINY_CONTEXT_V1";
+        method?: "NEO_DESTINY_CONTEXT_V1" | "NEO_GENESIS_CONTEXT_V1";
         observation?: string;
         result: "VISIBLE" | "NOT_PRESENT" | "CANT_TELL";
         photoNumber: number;
@@ -636,6 +637,7 @@ export interface Evaluation {
         sourceSha256: string;
     };
     listing: {
+        shippingDestination?: string | null;
         listedAt?: string | null;
         createdAt?: string | null;
         termsCheckedAt?: string;

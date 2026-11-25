@@ -75,7 +75,7 @@ export function SearchReview({ ready, onReview }: {
                         <p>{task.evidence}</p>
                         <p>{task.proposedFix}</p>
                         <ul>{task.checks.map((check, checkIndex) => <li key={checkIndex}>{check}</li>)}</ul>
-                        {task.exampleRows?.length ? <p className={styles.cost}>Saved listing {task.exampleRows.length === 1 ? "reference" : "references"} {task.exampleRows.join(", ")}.</p> : null}
+                        {task.exampleRows?.length ? <p className={styles.cost}>Listing {task.exampleRows.length === 1 ? "reference" : "references"} {task.exampleRows.join(", ")}.</p> : null}
                     </li>)}
                 </ol>
             </details>}

@@ -49,6 +49,21 @@ export function normalizeText(text: unknown): string {
         .toLowerCase();
 }
 
+const SPORTS_CARD_SINGLES = "261328";
+const SPORTS_LEAGUE = /\b(?:nhl|nfl|nba|wnba|mlb|mls|ufc)\b/;
+const UPPER_DECK = /\bupper[ -]+deck\b/;
+const SPORTS_CONTEXT = /\b(?:hof|hall of fame|hockey|baseball|basketball|football|golf|soccer|rookie)\b/;
+const PANINI = /\bpanini\b/;
+const PANINI_SPORTS_RELEASE = /\b(?:donruss|optic|prizm)\b/;
+
+export function isSportsTradingCardListing({ title, categoryId }: { title: string; categoryId?: string }): boolean {
+    const text = normalizeText(title);
+    // Preserve explicit Pokémon listings even when a seller used the wrong category.
+    if (/\bpokemon\b/.test(text)) return false;
+    return SPORTS_LEAGUE.test(text) || (categoryId === SPORTS_CARD_SINGLES || UPPER_DECK.test(text)) && SPORTS_CONTEXT.test(text) ||
+        PANINI.test(text) && PANINI_SPORTS_RELEASE.test(text);
+}
+
 const EXCLUSION_TEXT = {
     VARIATION: "Pick-your-card listing with several cards",
     LOT: "Lot or bundle",

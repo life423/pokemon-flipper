@@ -52,7 +52,7 @@ export async function runCollectorStrategy({ searchId, query, asOf, checks: read
         const actions: CollectorStep["action"][] = [...remaining];
         if (canFinishEarly(observed)) actions.push("finish");
 
-        let action = actions[0], reason = "Only remaining saved check.", reused: boolean | null = null;
+        let action = actions[0], reason = "Only remaining check.", reused: boolean | null = null;
         if (actions.length > 1) {
             const answer = await withAiUsageContext({ searchId }, () => choose({
                 sourceKey: `collector-strategy:v1:${searchId}`, model: "gpt-6-luna", signal,

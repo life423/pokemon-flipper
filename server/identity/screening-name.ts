@@ -20,6 +20,7 @@ const ART_DESCRIPTION = /\b(?:(?:alternate|alt)(?:[\s/-]+full)?[\s-]+art|full(?:
 const FULL_ART_ABBREVIATION = /\bFA\b(?!['’])(?:\s*\/\s*)?/gi;
 const SET_151 = "scarlet violet 151";
 const RELEASE_CODE_151 = new RegExp(String.raw`(?<=\bscarlet\s*(?:&|and)?\s*violet\s+151\s+)MEW\b(?=\s+(?:en(?:g(?:lish)?)?|mint|${GRADER})\b)`, "gi");
+const E_READER_SETS = new Set(["aquapolis", "expedition", "skyridge"]);
 export const GALLERY_TITLE = String.raw`\b(?:crown\s+zenith[\s:–—-]+)?galarian\s+gallery\b`;
 export function hasGalleryNumber(title: string): boolean {
     return /^GG(?:0?[1-9]|[1-6]\d|70)(?:\/(?:GG)?70)?$/i.test(cardNumberIn(title) ?? "");
@@ -94,6 +95,27 @@ export function stripListingNameBoilerplate(value: string, title = value, set?: 
     // number, numeric grade and written release also anchor publisher metadata.
     // This does not infer a denominator or loosen other rarity/printing rules.
     const partialNumber = cardNumberIn(title);
+    const setName = setKey(set ?? "");
+    const writtenRelease = setName ? new RegExp(`\\b${setName.split(" ").join("[^a-z0-9]+")}\\b`, "i") : null;
+    const releaseAnchor = writtenRelease?.exec(title);
+    if (partialNumber && releaseAnchor) {
+        if (E_READER_SETS.has(setName)) {
+            for (const match of title.matchAll(/\be[ -]+(?:card[ -]+series|reader)\b(?!['’])/gi)) {
+                cleaned = removeObservedWords(cleaned, match, title);
+            }
+            if (fullNumber) for (const match of title.matchAll(/\b(?:common|uncommon)\b(?!['’])/gi)) {
+                cleaned = removeObservedWords(cleaned, match, title);
+            }
+        }
+        // Trailing finish/Stage descriptions need the written release and
+        // collector number. A prefix or another occurrence stays in the name.
+        const afterRelease = releaseAnchor.index + releaseAnchor[0].length;
+        for (const match of title.matchAll(/\b(?:regular|stage[ -]+[12])\b(?!['’])/gi)) {
+            if ((match.index ?? -1) >= afterRelease && sameCardNumber(cardNumberIn(title.slice(0, match.index)), partialNumber)) {
+                cleaned = removeObservedWords(cleaned, match, title);
+            }
+        }
+    }
     const galleryNumber = graded && hasGalleryNumber(title);
     const gallery = galleryNumber && setKey(set ?? "") === "crown zenith galarian gallery" &&
         new RegExp(GALLERY_TITLE, "i").test(title);
@@ -111,8 +133,6 @@ export function stripListingNameBoilerplate(value: string, title = value, set?: 
         // A catalog release and full printed number anchor this observed foil
         // descriptor. Remove only excess source words, preserving a separate
         // occurrence belonging to the card's printed name.
-        const releaseWords = set ? setKey(set).split(" ").filter(Boolean) : [];
-        const writtenRelease = releaseWords.length ? new RegExp(`\\b${releaseWords.join("[^a-z0-9]+")}\\b`, "i") : null;
         // A graded, fully numbered card beside a separate written release can
         // carry its publisher era as metadata. The base Sun & Moon release and
         // unanchored words must not be shortened into a requested card name.

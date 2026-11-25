@@ -14,7 +14,7 @@ import { applyFrameReading } from "../../server/analysis/base-set-frame.ts";
 import { getAiUsageContext, withAiUsageContext } from "../../server/ai/usage-context.ts";
 import { PriceResearchBudgetError } from "../../server/pricing/research-budget.ts";
 import { EnglishOnlyError } from "../../shared/card-language.ts";
-import { cardEvaluation, salesSummary } from "../fixtures/card-evaluation.ts";
+import { cardEvaluation, salesSummary, clearReleaseFixture } from "../fixtures/card-evaluation.ts";
 import { currentPriceEvidence, PRICING_VERSION } from "../../shared/pricing-freshness.ts";
 import { listingEvidenceKey } from "../../shared/listing-evidence.ts";
 import { createPrivateEvaluationStore, evaluationContextKey, PRIVATE_EVALUATION_PREFIX } from "../../server/analysis/private-evaluation.ts";
@@ -71,7 +71,7 @@ function gradedSales({ grader, grade }: { grader: string; grade: string | number
 function harness(extra: Parameters<typeof createBoundedEvaluator>[0] = {}) {
     const cache = new Map<string, any>();
     const calls = { assessed: 0, details: [] as string[], comps: 0, raw: 0 };
-    const evaluate = createBoundedEvaluator({ assertPriceAvailable: async () => {}, now: () => now, details: async id => { calls.details.push(id); return details({ id }); }, saved: async () => null,
+    const evaluate = createBoundedEvaluator({ release: async e => clearReleaseFixture(e), assertPriceAvailable: async () => {}, now: () => now, details: async id => { calls.details.push(id); return details({ id }); }, saved: async () => null,
         cached: async key => cache.get(key) ?? null, save: async (key, value) => { cache.set(key, structuredClone(value)); },
         assess: async (_listing, photos) => { calls.assessed++; return { result: reading(photos.length), usage: { inputTokens: 900, outputTokens: 700 } }; },
         lookup: async () => [structuredClone(card)],
@@ -284,6 +284,26 @@ test("one bounded raw assessment produces priced outcomes without historical pho
     assert.ok(result.underwriting?.paths.some(path => path.status === "PRICED"));
     assert.equal(result.usage.length, 1);
     assert.equal(result.photoReviewKey, undefined, "a bounded answer cannot authorize the legacy full-record deeper endpoint");
+});
+
+test("a focused release mark overrides a confident original-set reading before buying comparisons", async () => {
+    for (const mark of ["PIKACHU_25", "OTHER_MARK", "UNCLEAR"] as const) {
+        const { evaluate, calls } = harness({ release: async e => {
+            clearReleaseFixture(e);
+            return { ...e, releaseMark: { ...e.releaseMark!, mark, observation: "Focused observation from the original front." } };
+        } });
+        const e = await evaluate("v1|release-fixture|0");
+        assert.equal(e.identity?.status, "NEEDS_REVIEW");
+        assert.equal(e.underwriting?.best, null);
+        assert.equal(e.rawPricing, null);
+        assert.equal(calls.raw + calls.comps, 0);
+        if (mark === "PIKACHU_25") {
+            assert.equal(e.identity?.set, "Celebrations: Classic Collection");
+            assert.equal(e.photoCheck?.printingMarks?.reprintMark, "CELEBRATIONS_25TH");
+            assert.match(e.identity?.notThisCard ?? "", /Photo 1.*2021 Celebrations/);
+        }
+        if (mark === "UNCLEAR") assert.ok(!e.identity?.notThisCard);
+    }
 });
 
 test("a corroborated wrong collector number stops after the first photographed front and keeps the search exclusion", async t => {

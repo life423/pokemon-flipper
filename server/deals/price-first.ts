@@ -25,8 +25,7 @@ export function createPriceFirstSession(intent: SearchIntent, {
     const workSignal = signal ? AbortSignal.any([signal, stopped.signal]) : stopped.signal;
     const source = sourceFactory?.({ signal: workSignal });
     const screen = createScreening({ signal: workSignal, targets, now: () => now, ...(source ? { source } : {}) });
-    // Refill batches share the same source allowance, memoized catalog/markets
-    // and cancellation signal. A new batch never renews a provider allowance.
+    // Refill batches share memoized catalog and markets and a cancellation signal.
     const screenBatch = async (listings: ListingSummary[]): Promise<ListingSummary[]> => {
         workSignal.throwIfAborted();
         let priced: ListingSummary[];

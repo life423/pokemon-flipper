@@ -97,7 +97,7 @@ test("wrapped storage errors remain a nonretryable storage stop", () => {
     const storage = new StorageUnavailableError("Offline saved evidence unavailable");
     const wrapped = new Error("SDK connection failed", { cause: new Error("Transport wrapper", { cause: storage }) });
     assert.equal(storageFailure(wrapped), storage);
-    assert.deepEqual(evaluationFailure(wrapped), { status: 503, code: "STORAGE_UNAVAILABLE", error: storage.message, retryable: false });
+    assert.deepEqual(evaluationFailure(wrapped), { status: 503, code: "STORAGE_UNAVAILABLE", error: storage.message, retryable: false, scope: "search" });
     const serialized = { code: "STORAGE_UNAVAILABLE", message: "untrusted internal payload" };
     assert.equal(storageFailure(new Error("wrapper", { cause: serialized }))?.code, "STORAGE_UNAVAILABLE");
     assert.equal(evaluationFailure(new Error("wrapper", { cause: serialized })).retryable, false);

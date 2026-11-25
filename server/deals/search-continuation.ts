@@ -77,9 +77,15 @@ export function createDiscoveryContinuationStore(directory = path.join(DATA_DIR,
             owners.set(searchId, value.rootSearchId);
             return value.rootSearchId;
         },
-        async run(token: string, searchId: string | undefined, work: (state: DiscoveryBacklog, signal: AbortSignal) => Promise<DiscoveryBatchReceipt>, signal?: AbortSignal) {
+        async completedRequest(token: string, searchId: string): Promise<DiscoveryRequest | undefined> {
+            const saved = await read(token);
+            if (saved.searchId !== searchId) throw new Error("This continuation belongs to a different discovery record.");
+            if (saved.receipt) return structuredClone(saved.state.request);
+        },
+        async run(token: string, searchId: string | undefined, search: string, work: (state: DiscoveryBacklog, signal: AbortSignal) => Promise<DiscoveryBatchReceipt>, signal?: AbortSignal) {
             const owner = await read(token);
             if (owner.searchId !== searchId) throw new Error("This continuation belongs to a different discovery record.");
+            if (owner.state.request.search.trim() !== search.trim()) throw new Error("The saved continuation belongs to a different search.");
             let executed = false;
             const receipt = await share(token, async active => {
                 const saved = await read(token);
@@ -101,6 +107,7 @@ export function createDiscoveryContinuationStore(directory = path.join(DATA_DIR,
                 executed = true;
                 try {
                     const result = await work(saved.state, active);
+                    active.throwIfAborted();
                     await withFileLease(file(token), async () => {
                         await writeJsonAtomic(file(token), result.summary.continuation?.blocked ? saved : { ...saved, receipt: result });
                     }, { timeoutError: () => new Error("The completed discovery batch could not be saved.") });

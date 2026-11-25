@@ -13,17 +13,20 @@ without a qualifying purchase.
 Start with the [current plan and supplied resources](LOCAL_PLAN.md),
 [active checklist](LOCAL_TODO.md) and [workflow/code map](docs/architecture.md).
 
-## November 24 progress
+## November 25 local progress
 
 The latest checkpoint adds condition-specific TCGplayer raw resale estimates,
 rolling 60-day sales activity without a hard three-sale purchase veto, bounded
 recovery from temporary review failures, and discovery continuation in batches
 of 50. Active asks and completed sales have separate provenance. The AI assesses
 the raw copy's condition before the app selects its matching condition price.
-Broad hunts still depend on saved market seeds; expanding those seeds and
-independently accepting automatic continuation through the browser remain in
-the [active checklist](LOCAL_TODO.md#november-24-stopping-checkpoint). A new live
-profitable deal has not been demonstrated by this checkpoint.
+The local reliability pass now binds buying advice to its verified exit route,
+preserves conservative lower-condition resale floors and fixes continued-batch
+ownership and quota recovery. Isolated browser checks cover automatic listing 51,
+refresh and holds using real admission validators. Broad hunts can also scan
+unseeded inventory, though live coverage and deal quality remain in the
+[active checklist](LOCAL_TODO.md). A new live profitable deal has not been
+demonstrated by this checkpoint.
 
 The buying guide now lets the AI choose from the app's research functions for a
 collector or reseller goal. It can search a liquid card market, inspect a copy's
@@ -60,6 +63,19 @@ Auction sniper development and the planned PriceCharting importer are on hold.
 
 ## Search workflow
 
+Describe a card or buying goal in ordinary language, such as “find me a liquid
+holographic card from the years 1999–2003 to flip” or “holo card no newer than
+2020.” The latter includes 2020 and earlier. The app shows the interpreted
+criteria. An explicit liquidity request prioritizes recent matched activity;
+zero observed matching sales keeps a profitable estimate at Wait, and small
+samples retain low confidence rather than a promised resale date.
+
+While a hunt runs, its progress panel shows the current market or evidence
+check and observed listing, pricing and review counts. It includes elapsed time
+and Stop. These are actual observations, not a percentage of the marketplace;
+purchase advice still requires the completed evidence checks. Stopping prevents
+further dispatch while already accepted responses finish saving for reuse.
+
 1. Send the submitted search text to OpenAI for a structured interpretation.
    Show the interpreted criteria, then route its refined query into card/set
    discovery or a market hunt. Preserve card, set, number, years, finish,
@@ -69,8 +85,11 @@ Auction sniper development and the planned PriceCharting importer are on hold.
 3. Gather exact recent sold evidence through PKMNPrices and the shared cache.
    Screen prices before buying photos. One eligible sale can support sparse
    research with low confidence. Unresolved evidence is not a zero price.
-4. Continue screening beyond 50 unresolved rows before selecting at most 50
-   retained rows per review batch. Continue saved overflow and later source pages
+4. Select at most 50 retained rows per review batch. Broad searches advance
+   distinct provisional markets and both raw and slab copies, then defer the
+   remainder instead of screening hundreds before the first photo review.
+   Exact-card searches can compare later copies on the fetched page.
+   Continue saved overflow and later source pages
    under the original account and constraints. A thin newest-first BIN search can
    add one lower-price pass under the same allowances. Local result sorting is
    separate from marketplace discovery order.
@@ -171,7 +190,7 @@ the AI to recognize a cleaner copy. An expired quote can be rechecked from Resul
   surfaces support the hierarchy. Grading labels remain neutral; losses use red.
 - Search controls preserve format, raw/graded choice, marketplace order and
   targets. Target changes reprice retained evidence without repeating photos.
-- Choose **Find a flip** on the search screen to hunt for a profitable card across sets without entering a name. The hunt uses saved market evidence to choose which markets to search. A resale Buy requires supported positive profit after costs and the buyer's targets. Observed sales in the last 60 days are shown separately from asking-price estimates, without a hard transaction-count veto.
+- Choose **Find a flip** on the search screen to hunt for a profitable card across sets without entering a name. The fixed-price resale hunt searches active eBay listings newest first. Older active copies are eligible. It screens across printings, reserves some photo checks for incomplete listings, and verifies the actual copy against its price evidence. Scoped searches retain the requested card and filters. A resale Buy requires supported positive profit after costs and the buyer's targets. Observed sales in the last 60 days are shown separately from asking-price estimates, without a hard transaction-count veto.
 - For a named search, try `2000 Team Rocket Dark Alakazam 1/82 holo`, choose **Buy It Now**, and click **Find deals**. When the search finishes, select **Other cards in the same set** and click **Run deal hunt**. Open **Research steps** to see which alternatives it checked. A resale hunt can try a third or fourth market after empty searches while reserving enough checks to verify a copy.
 - After a Buy It Now search finishes, choose a buying goal under **Deal hunt**
   and select **Run deal hunt**. The guide can look for a raw card worth grading,
@@ -301,7 +320,7 @@ it or provider responses to Git. The server reads it on startup.
 | EBAY_SANDBOX_RUNAME | eBay-generated Sandbox redirect name for the same Sandbox keyset |
 | OPENAI_API_KEY | Input preflight and authorized AI work |
 | PKMNPRICES_API_KEY | Catalog and market research |
-| EBAY_SHIP_TO_ZIP | Destination for calculated shipping |
+| EBAY_SHIP_TO_ZIP | Optional fallback delivery ZIP; a destination saved in the app takes precedence |
 | EBAY_SANDBOX_APP_ACCESS_TOKEN | Optional Sandbox application access token for auction details |
 | EBAY_SANDBOX_USER_ACCESS_TOKEN | Optional Sandbox buyer access token with the `buy.offer.auction` scope |
 | OPENAI_MODEL | Legacy text/vision default override |
@@ -333,10 +352,18 @@ daily quota resources under the user's subscriptions, separate from AI dollars.
 The current PKMNPrices subscription supplies 20,000 daily credits. A request and
 a returned row are different units; use the provider's reported credit headers.
 
-New searches have 100 actual Browse requests, 128 uncached PKMNPrices screening
-requests and a shared 256-request all-stage PKMNPrices allowance. Retries, nested
-work and restarts retain original spending. Cached reads consume no new request.
-These safeguards can be tuned when measured useful work is being deferred.
+This installation has no per-search Browse or PKMNPrices request ceiling.
+Historical limits, attempts and unresolved usage remain recorded across retries,
+nested work and restarts. All production Browse calls protect the last 10% of
+the daily allowance. Provider pacing, cancellation and bounded page walks still
+apply. Cached reads consume no new request; accepted photo evidence is reused.
+
+Set **Ship to ZIP code** in search options or Settings for calculated delivery
+quotes. Only a US ZIP is needed, not a full address. The app stores it locally
+and keeps each quote tied to its destination. Saving a different destination
+clears current browser results; explicitly rerun the search to obtain new terms
+while reusing saved photo research. Searches without a ZIP remain available,
+but unquoted shipping cannot support a firm purchase recommendation.
 
 The local operator can configure an AI ceiling or run uncapped. This installation
 is authorized to run uncapped while retaining preflight, bounded output,

@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { createCliResearchScope } from "../scripts/review/research-scope.ts";
 import { getAiUsageContext, withAiUsageContext } from "../server/ai/usage-context.ts";
-import { createSearchBrowseBudget, EBAY_SEARCH_BROWSE_LIMIT } from "../server/ebay/search-budget.ts";
+import { createSearchBrowseBudget } from "../server/ebay/search-budget.ts";
+import { createDailyBrowseBudget } from "../server/ebay/daily-budget.ts";
 
 test("one CLI command retains its research ID through nested, parallel and later follow-up work", async () => {
     const command = createCliResearchScope();
@@ -22,16 +23,17 @@ test("one CLI command retains its research ID through nested, parallel and later
     assert.notEqual(createCliResearchScope()(() => getAiUsageContext().searchId), first);
 });
 
-test("a later CLI stage cannot acquire a new allowance after this command exhausts its Browse reservations", async t => {
+test("CLI follow-up and new commands honor the same daily Browse reserve", async t => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "pokemon-cli-scope-"));
     t.after(() => fs.rm(directory, { recursive: true, force: true }));
     const budget = createSearchBrowseBudget({ directory });
+    const daily = createDailyBrowseBudget({ file: path.join(directory, "daily.json") });
+    const observed = { used: 0, limit: 4, remaining: 4, resetsAt: new Date(Date.now() + 3600_000).toISOString(), braking: false };
     const command = createCliResearchScope();
-    let dailyReservations = 0;
-    const reserve = () => budget.reserve(getAiUsageContext().searchId, async () => { dailyReservations++; });
-    await command(() => Promise.all(Array.from({ length: EBAY_SEARCH_BROWSE_LIMIT }, reserve)));
-    await assert.rejects(command(reserve), new RegExp(`${EBAY_SEARCH_BROWSE_LIMIT}-request.*cap`));
-    assert.equal(dailyReservations, EBAY_SEARCH_BROWSE_LIMIT);
-    await createCliResearchScope()(reserve);
-    assert.equal(dailyReservations, EBAY_SEARCH_BROWSE_LIMIT + 1, "a new explicit command has its own cap");
+    const reserve = () => budget.reserve(getAiUsageContext().searchId, async () => { await daily(observed); });
+    await command(() => Promise.all(Array.from({ length: 3 }, reserve)));
+    await assert.rejects(command(reserve), { code: "EBAY_DAILY_BUDGET" });
+    await assert.rejects(createCliResearchScope()(reserve), { code: "EBAY_DAILY_BUDGET" });
+    assert.equal((await command(() => budget.status(getAiUsageContext().searchId)))?.used, 3);
+    assert.equal((await daily(observed, { consume: false })).remaining, 1);
 });

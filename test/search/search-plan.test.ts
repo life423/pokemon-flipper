@@ -6,7 +6,7 @@ import { createModelExperimentRunner } from "../../server/analysis/model-experim
 import { withAiUsageContext } from "../../server/ai/usage-context.ts";
 import { AiSpendingError } from "../../server/ai/spending.ts";
 
-const knownSets = ["Base Set", "Base Set 2", "Neo Genesis", "Neo Revelation", "Neo Discovery", "Neo Destiny", "Evolving Skies"];
+const knownSets = ["Base Set", "Base Set 2", "Neo Genesis", "Neo Revelation", "Neo Discovery", "Neo Destiny", "Evolving Skies", "Aquapolis", "Skyridge"];
 const filters = { typeFilter: "FIXED_PRICE" as const, kindFilter: "all" as const };
 const baseIntent = { cardName: null, sets: [], cardNumber: null, printing: null, graded: null, grader: null,
     minGrade: null, maxGrade: null, finish: null, minYear: null, maxYear: null };
@@ -53,7 +53,101 @@ test("broad liquid-card wording preserves years and finish without becoming lite
         "find me a deal on a pokemon card holo that is liquid from 1999-2003");
     assert.equal(result.workflow, "market_hunt");
     assert.equal(result.query, "1999-2003 holo");
-    assert.deepEqual(result.marketPreferences, { minYear: 1999, maxYear: 2003, finish: "HOLO" });
+    assert.deepEqual(result.marketPreferences, { minYear: 1999, maxYear: 2003, finish: "HOLO", preferRecentSales: true });
+});
+
+test("positive buyer liquidity wording sets the preference and model prose cannot add it", () => {
+    const broad = reading({}, { workflow: "market_hunt", goal: "resell", summary: "Find liquid cards for resale." });
+    for (const source of ["find liquid cards for resale", "find cards with liquidity for resale"]) {
+        assert.equal(validate(broad, source).marketPreferences.preferRecentSales, true, source);
+    }
+    for (const source of ["find cards for resale", "find non-liquid cards for resale", "find cards for resale, liquidity doesn't matter",
+        "find cards for resale, ignore liquidity"]) {
+        assert.equal(validate(broad, source).marketPreferences.preferRecentSales, undefined, source);
+    }
+});
+
+test("natural wording around explicit release years does not invent a card or remove a named form", () => {
+    const period = { minYear: 1999, maxYear: 2003, finish: "HOLO" };
+    const broad = reading(period, { workflow: "market_hunt", goal: "resell" });
+    for (const query of ["find me a card to flip from the years 1999-2003 that is holographic and liquid",
+        "find holographic cards to resell between the release years 1999 and 2003",
+        "find holographic cards released during the years 1999 through 2003 to flip"]) {
+        const plan = validate(broad, query);
+        assert.equal(plan.query, "1999-2003 holo");
+        assert.equal(plan.workflow, "market_hunt");
+        assert.equal(plan.goal, "resell");
+        assert.equal(plan.intent.cardName, null);
+        assert.equal(plan.intent.minYear, 1999);
+        assert.equal(plan.intent.maxYear, 2003);
+        assert.equal(plan.intent.finish, "HOLO");
+        assert.throws(() => validate({ ...broad, intent: { ...broad.intent, maxYear: 2002 } }, query), /requested.*year/);
+    }
+    const named = "Dark Charizard holo from the years 1999-2003";
+    assert.equal(validate(reading({ ...period, cardName: "Dark Charizard" }), named).query, "1999-2003 Dark Charizard holo");
+    assert.throws(() => validate(broad, named), /omitted a requested card/);
+    assert.throws(() => validate(reading({ ...period, cardName: "Charizard" }), named), /omitted part/);
+    assert.throws(() => validate(broad, "Ancient Years holo from the years 1999–2003"), /omitted a requested card/);
+});
+
+test("open-ended release constraints preserve inclusive and exclusive meaning through compilation", () => {
+    for (const [source, bounds, compiled] of [
+        ["holo card no newer than 2020", { maxYear: 2020 }, "Through 2020 holo"],
+        ["holo card no older than 2010", { minYear: 2010 }, "Since 2010 holo"],
+        ["holo card released before the year 2020", { maxYear: 2019 }, "Through 2019 holo"],
+        ["holo card released after 2010", { minYear: 2011 }, "Since 2011 holo"],
+        ["holo card since 2010", { minYear: 2010 }, "Since 2010 holo"],
+        ["holo card until 2020", { maxYear: 2020 }, "Through 2020 holo"],
+        ["holo card since 2010 and before 2020", { minYear: 2010, maxYear: 2019 }, "2010-2019 holo"],
+    ] as const) {
+        for (const workflow of ["named_search", "market_hunt"]) {
+            const plan = validate(reading({ finish: "HOLO", ...bounds }, { workflow, goal: workflow === "market_hunt" ? "resell" : null }), source);
+            assert.equal(plan.query, compiled, source);
+            assert.equal(plan.intent.minYear, "minYear" in bounds ? bounds.minYear : undefined, source);
+            assert.equal(plan.intent.maxYear, "maxYear" in bounds ? bounds.maxYear : undefined, source);
+            assert.deepEqual(plan.marketPreferences, { ...bounds, finish: "HOLO" }, source);
+        }
+    }
+});
+
+test("year comparators cannot widen named searches or consume prices or collector numbers", () => {
+    const old = reading({ finish: "HOLO", maxYear: 2020 }, { workflow: "market_hunt", goal: "resell" });
+    const query = "Dark Charizard holo no newer than 2020";
+    assert.equal(validate(reading({ finish: "HOLO", maxYear: 2020, cardName: "Dark Charizard" }), query).query, "Through 2020 Dark Charizard holo");
+    assert.throws(() => validate(old, query), /omitted a requested card/);
+    assert.throws(() => validate(reading({ finish: "HOLO", maxYear: 2020, cardName: "Charizard" }), query), /omitted part/);
+    for (const change of [{ minYear: 1900 }, { maxYear: null }, { maxYear: 2021 }, { minYear: 2021 }]) {
+        assert.throws(() => validate({ ...old, intent: { ...old.intent, ...change } }, "holo card no newer than 2020"), /year/);
+    }
+    assert.throws(() => validate(old, "holo card since 2021 and before 2020"), /release years conflict/);
+    assert.throws(() => validate(old, "holo card before 2020"), /year/);
+    assert.throws(() => validate(old, "holo card during 2021-2010"), /release years conflict/);
+    for (const query of ["Pikachu since 2021 and before 2020", "Pikachu before 1900", "Pikachu after 2100", "Pikachu before 2020 2010"]) {
+        assert.throws(() => validate(reading({ cardName: "Pikachu" }), query), /release years/, query);
+    }
+    const number = validate(reading({ cardName: "Pikachu", cardNumber: "2020/2030" }), "Pikachu #2020 / 2030");
+    assert.equal(number.intent.cardNumber, "2020/2030");
+    assert.deepEqual(number.marketPreferences, {});
+    assert.equal(validate(reading({ finish: "HOLO" }, { maxDelivered: 2020 }), "holo card under $ 2020").maxDelivered, 2020);
+});
+
+test("the accepted upper-only search interpretation can replay without another AI request", async () => {
+    const body = reading({ finish: "HOLO", maxYear: 2020 });
+    const cache = new Map<string, unknown>();
+    let calls = 0;
+    const run = createModelExperimentRunner({
+        cached: async key => cache.get(key) ?? null,
+        save: async (key, value) => { cache.set(key, value); },
+        run: async () => { calls++; return { result: body, usage: { inputTokens: 10, outputTokens: 10 } }; },
+    });
+    const interpreter = createSearchInterpreter({ run, setNames: async () => knownSets });
+    for (const id of ["a498c2b9-2aa4-41e9-9bcc-b2caad2da99a", "8231a7e6-7029-4404-a3c2-68da45fd0fef"]) {
+        const plan = await withAiUsageContext({ searchId: id }, () => interpreter({ query: "holo card no newer than 2020", filters }));
+        assert.deepEqual(plan.marketPreferences, { maxYear: 2020, finish: "HOLO" });
+        assert.equal(plan.query, "Through 2020 holo");
+    }
+    assert.equal(calls, 1);
+    assert.equal(body.intent.minYear, null);
 });
 
 test("a catalog-supported set typo becomes live set discovery with no fabricated collector number", () => {
@@ -66,6 +160,49 @@ test("a catalog-supported set typo becomes live set discovery with no fabricated
     assert.throws(() => validateSearchPlan(reading({ sets: ["Neo Revelation"], finish: "HOLO" }, {
         setMentions: [{ text: "neo revolution", name: "Neo Revelation" }] }), { query: "neo revolution holo", filters },
         [...knownSets, "Neo Revolution"]), /matched safely/);
+});
+
+test("ordinary exact set searches recover a misfiled release and accept adjacent set wording", () => {
+    const bare = reading({ cardName: "Aquapolis" }, { query: "Aquapolis fixed price", maxDelivered: 0 });
+    const before = structuredClone(bare);
+    const framed = reading({ sets: ["Aquapolis"] }, { goal: "resell", setMentions: [{ text: "Aquapolis", name: "Aquapolis" }] });
+    for (const [source, response] of [["Aquapolis", bare], ["Pokemon cards from the Aquapolis set", framed],
+        ["Pokemon cards from the Aquapolis set", reading()], ["find holo cards from the Neo-Genesis set",
+            reading({ finish: "HOLO" })]] as const) {
+        const release = source.includes("Neo") ? "Neo Genesis" : "Aquapolis";
+        const plan = validate(response, source);
+        assert.equal(plan.workflow, "named_search");
+        assert.equal(plan.intent.cardName, null);
+        assert.equal(plan.intent.cardNumber, null);
+        assert.equal(plan.maxDelivered, null);
+        assert.equal(plan.intent.source, "ai");
+        assert.deepEqual(plan.intent.sets, [release]);
+        assert.equal(plan.query, source.includes("holo") ? `${release} holo` : release);
+    }
+    assert.deepEqual(bare, before, "use the saved accepted interpreter result without mutating it");
+});
+
+test("an exact set frame preserves named cards, printed variants and explicit collector numbers", () => {
+    const setMentions = [{ text: "Aquapolis", name: "Aquapolis" }];
+    const full = reading({ cardName: "Porygon2", sets: ["Aquapolis"] }, { setMentions });
+    assert.equal(validate(full, "Pokemon Porygon2 cards from the Aquapolis set").query, "Porygon2 Aquapolis");
+    const numbered = reading({ cardNumber: "H9/H32", sets: ["Aquapolis"] }, { setMentions });
+    assert.equal(validate(numbered, "Aquapolis set H9/H32").query, "H9/H32 Aquapolis");
+    const request = "Show me Dark Charizard from the Aquapolis set";
+    assert.equal(validate(reading({ cardName: "Dark Charizard", sets: ["Aquapolis"] }, { setMentions }), request).intent.cardName, "Dark Charizard");
+    assert.throws(() => validate(reading({ cardName: "Charizard", sets: ["Aquapolis"] }, { setMentions }), request), /omitted part/);
+});
+
+test("release recovery cannot discard a different requested set, an unknown word or a conflicting model identity", () => {
+    const aquapolis = { text: "Aquapolis", name: "Aquapolis" }, skyridge = { text: "Skyridge", name: "Skyridge" };
+    for (const request of ["Aquapolis and Skyridge", "Aquapolis holographic Merely", "Pokemon card set"]) {
+        assert.throws(() => validate(reading(), request), /omitted.*card/);
+    }
+    assert.throws(() => validate(reading({ sets: ["Aquapolis"] }, { setMentions: [aquapolis] }), "Aquapolis and Skyridge"), /omitted.*card/);
+    assert.throws(() => validate(reading({ sets: ["Skyridge"] }, { setMentions: [skyridge] }), "Aquapolis"), /matched safely/);
+    assert.throws(() => validate(reading({ cardName: "Espeon" }), "Aquapolis"), /changed.*identity/);
+    assert.throws(() => validate(reading({ cardName: "set", sets: ["Aquapolis"] }, { setMentions: [aquapolis] }), "Aquapolis set"), /changed.*identity/);
+    assert.throws(() => validate(reading({ cardName: "Aquapolis", sets: ["Aquapolis"] }, { setMentions: [aquapolis] }), "Aquapolis unknown subject"), /refined search|omitted/);
 });
 
 test("a particular card with a resale goal cannot be turned into a cross-card hunt", () => {
@@ -153,6 +290,28 @@ test("the exact raw submission goes to OpenAI and identical submissions reuse th
     assert.deepEqual(first, second);
     assert.equal(requests.length, 1);
     assert.equal(JSON.parse(requests[0].prompt).submittedText, input.query);
+});
+
+test("liquidity is recovered on every read of the original accepted interpretation without a paid repeat", async () => {
+    const oldBody = reading({ minYear: 1999, maxYear: 2003, finish: "HOLO" }, { workflow: "market_hunt", goal: "resell" });
+    const saved = new Map<string, unknown>();
+    let calls = 0;
+    const run = createModelExperimentRunner({
+        cached: async key => saved.get(key) ?? null,
+        save: async (key, result) => { saved.set(key, result); },
+        run: async () => {
+            calls++;
+            return { result: oldBody, usage: { inputTokens: 100, outputTokens: 100 } };
+        },
+    });
+    const interpret = createSearchInterpreter({ run, setNames: async () => knownSets });
+    const input = { query: "find me a card to flip from the years 1999-2003 that is holographic and liquid", filters };
+    for (const id of ["a498c2b9-2aa4-41e9-9bcc-b2caad2da99a", "8231a7e6-7029-4404-a3c2-68da45fd0fef"]) {
+        const plan = await withAiUsageContext({ searchId: id }, () => interpret(input));
+        assert.deepEqual(plan.marketPreferences, { minYear: 1999, maxYear: 2003, finish: "HOLO", preferRecentSales: true });
+    }
+    assert.equal(calls, 1);
+    assert.equal(Object.hasOwn(oldBody, "marketPreferences"), false);
 });
 
 test("an unavailable AI interpretation fails visibly and cannot launch a regex fallback", async () => {

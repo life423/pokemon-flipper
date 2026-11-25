@@ -32,6 +32,27 @@ test("release years remain criteria and never become literal marketplace year or
     assert.equal(searchYears("#1999"), null);
 });
 
+test("an upper-only year remains inclusive in the actual discovery query and photo-result criteria", async t => {
+    t.mock.method(globalThis, "fetch", () => assert.fail("the release catalog and listing source are already available"));
+    const query = "Through 2020 holo";
+    const rows = [row("base", "Venusaur Base Set 15/102 Holo"), row("boundary", "2020 Pikachu Holo"), row("later", "2021 Pikachu Holo"),
+        row("reissue", "Venusaur Celebrations 15/102 Holo 2020")];
+    const priced: string[] = [];
+    let summary: SearchSummary | undefined;
+    const dependencies = offlineSearchSteps(rows, { releaseYears: async () => releaseYears,
+        search: async phrase => { assert.equal(phrase, "holo"); return { listings: rows, total: rows.length, skipped: 0, rejections: [] }; },
+        soldScreening: () => async listing => { priced.push(listing.id); return { status: "UNAVAILABLE", exactScope: false, references: [], note: "No saved sales." }; } });
+    const result = await findDeals(query, { onStart: value => { summary = value; } }, dependencies);
+    assert.deepEqual(result.map(listing => listing.id), ["base", "boundary"]);
+    assert.deepEqual(priced, ["base", "boundary"]);
+    assert.equal(summary?.intent.minYear, undefined);
+    assert.equal(summary?.intent.maxYear, 2020);
+    assert.ok(describeSearchCriteria(summary!.intent).includes("Through 2020"));
+    const picked = { listing: { title: "2020 Venusaur 15/102" }, identity: { status: "IDENTIFIED", set: "Celebrations" } } as Evaluation;
+    assert.equal(evaluatedIdentityMismatch(picked, summary!.intent), "OTHER_SET");
+    for (const nonYear of ["#2020", "2020 / 2030", "$ 2020", "Pikachu card number 2020"]) assert.equal(searchYears(nonYear), null);
+});
+
 test("a curated Neo release typo resolves the request without treating it as a card name", () => {
     const query = "find a deal on a holo card form neo revolution";
     const intent = readSearchLocally(query);

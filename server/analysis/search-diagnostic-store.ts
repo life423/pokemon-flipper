@@ -221,7 +221,7 @@ export function createSearchDiagnosticStore<T>({
             return value;
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, entries: [] };
-            throw new StorageUnavailableError("Saved search diagnostics could not be read. The original record was kept.", { cause: error });
+            throw new StorageUnavailableError("Saved search diagnostics could not be read.", { cause: error });
         }
     };
     const active = (entry: Entry<T>, at = now()) => Date.parse(entry.savedAt) > at - maxAgeMs;
@@ -252,12 +252,21 @@ export function createSearchDiagnosticStore<T>({
         if (Buffer.byteLength(JSON.stringify(value), "utf8") > MAX_RECORD_SIZE) throw new Error("The search diagnostic exceeds its saved size limit.");
     }
     return {
-        async saveDiscovery(searchId: string, discovery: SearchDiagnosticDiscovery): Promise<SavedSearchDiagnosticDiscovery> {
+        async saveDiscovery(searchId: string, discovery: SearchDiagnosticDiscovery, verifiedContinuation = false): Promise<SavedSearchDiagnosticDiscovery> {
             requireSearchId(searchId);
             const clean = discoveryRecord(discovery);
             return edit((entries, at) => {
-                const previous = entries.find(entry => entry.searchId === searchId);
-                if (previous) return discoveryFrom(previous);
+                const index = entries.findIndex(entry => entry.searchId === searchId);
+                const previous = entries[index];
+                if (previous) {
+                    const old = previous.discovery;
+                    // Older versions recorded the quota pause as an empty partial
+                    // batch. Only a verified replay with new rows can repair it.
+                    const quotaPlaceholder = old.sourceCoverage === "PARTIAL" && old.found === 0 &&
+                        !old.retainedIds.length && !old.sourceDispositions?.length && !previous.snapshot && !previous.result;
+                    if (!verifiedContinuation || !quotaPlaceholder || !clean.retainedIds.length) return discoveryFrom(previous);
+                    entries.splice(index, 1);
+                }
                 const entry = { searchId, savedAt: new Date(at).toISOString(), discovery: clean };
                 entries.unshift(entry);
                 return entry;

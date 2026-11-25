@@ -2,10 +2,9 @@
 // retries, cache contents, cancellation signals or accepted-response handling.
 import { createHash } from "node:crypto";
 import { EBAY_SEARCH_BROWSE_LIMIT } from "../../server/ebay/search-budget.ts";
-import { PRICE_RESEARCH_LIMIT } from "../../server/pricing/research-budget.ts";
 import { BOUNDED_VISION_MODEL, TEXT_MODEL } from "../../server/ai/policy.ts";
 
-export const BENCHMARK_TRANSPORT_LIMITS = Object.freeze({ ebayBrowse: EBAY_SEARCH_BROWSE_LIMIT, prices: PRICE_RESEARCH_LIMIT, aiGeneration: 25, aiPreflight: 25 });
+export const BENCHMARK_TRANSPORT_LIMITS = Object.freeze({ ebayBrowse: EBAY_SEARCH_BROWSE_LIMIT, prices: 256, aiGeneration: 25, aiPreflight: 25 });
 type BenchmarkLimits = { -readonly [Key in keyof typeof BENCHMARK_TRANSPORT_LIMITS]: number };
 export type BenchmarkService = keyof typeof BENCHMARK_TRANSPORT_LIMITS | "ebayAnalytics" | "ebayOAuth" | "photos" | "azureAuth" | "unknown";
 export interface BenchmarkContext { searchId?: string; listingId?: string; phase?: string }

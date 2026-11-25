@@ -33,13 +33,13 @@ export function PhotoReview({ evaluation, listing, assessment, compact = false, 
             {compact ? <p>{status.reasons[0]}</p> : <ul>{status.reasons.slice(0, 4).map((reason) => <li key={reason}>{reason}</li>)}</ul>}
         </div>}
         {status.photoNotes.length > 0 && <details className={styles.notes}><summary>Photo notes ({status.photoNotes.length})</summary><ul>{status.photoNotes.map(note => <li key={note}>{note}</li>)}</ul></details>}
-        {compact && deep && <p className={styles.meta}>Deeper AI review saved</p>}
-        {compact && current?.status === "loading" && <p className={styles.meta} role="status">Deeper AI review in progress; initial assessment still shown.</p>}
-        {compact && current?.status === "error" && <p className={styles.caution}>Deeper review failed; initial assessment kept. Open analysis for details.</p>}
+        {compact && deep && <p className={styles.meta}>Deeper photo review complete</p>}
+        {compact && current?.status === "loading" && <p className={styles.meta} role="status">Reviewing photo details…</p>}
+        {compact && current?.status === "error" && <p className={styles.caution}>Deeper review failed. Open analysis for details.</p>}
         {!compact && evaluation?.photoCheck && !hasSlabEvidence(evaluation) && (!obscuredWear || deep) && <>
             {deep ? <div className={styles.deep}>
                 <h3>Deeper AI photo review</h3>
-                <p className={styles.meta}>{deep.photoNumbers.length} photos examined · saved result</p>
+                <p className={styles.meta}>{deep.photoNumbers.length} {deep.photoNumbers.length === 1 ? "photo" : "photos"} examined</p>
                 <p>{deep.summary}</p>
                 <p className={styles.meta}>This second opinion adds evidence notes. It does not raise the grade estimate, confidence or bid limit. New concerns pause purchase advice.</p>
                 {deep.findings.map((finding, i) => <div className={styles.finding} key={i}>
@@ -48,14 +48,13 @@ export function PhotoReview({ evaluation, listing, assessment, compact = false, 
                     <p className={styles.meta}>Listing {finding.photoNumbers.length === 1 ? "photo" : "photos"} {finding.photoNumbers.join(", ")}</p>
                 </div>)}
                 {deep.requestedPhotos.length > 0 && <div><h4>Views missing from the listing</h4><ul>{deep.requestedPhotos.map((photo) => <li key={photo}>{photo}</li>)}</ul></div>}
-                <p className={styles.meta}>Reopening this saved review makes no AI request.</p>
             </div> : <div className={styles.action}>
                 <p>An optional second opinion can check the visible corners, edges and surface.</p>
                 <button type="button" onClick={onReview} disabled={!onReview || !evaluation.photoReviewKey || !plan?.photos.length || current?.status === "loading"}>
                     {current?.status === "loading" ? "AI reviewing details…" : "Deeper AI photo review · paid"}
                 </button>
-                <p className={styles.meta}>{!evaluation.photoReviewKey ? "No second opinion is available for this saved assessment." : plan?.reason ?? `One AI request using up to ${plan?.photos.length} existing photos. Results are saved; better seller photos may still be needed.`}</p>
-                {current?.status === "error" && <p role="alert" className={styles.caution}>{current.message} Your previous assessment is still shown.</p>}
+                <p className={styles.meta}>{!evaluation.photoReviewKey ? "No second opinion is available for this assessment." : plan?.reason ?? `One AI request using up to ${plan?.photos.length} existing photos. Clearer photos may still be needed.`}</p>
+                {current?.status === "error" && <p role="alert" className={styles.caution}>{current.message}</p>}
             </div>}
         </>}
     </section>;

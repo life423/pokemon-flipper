@@ -1,14 +1,17 @@
 import { test } from "../fixtures/search-context.ts";
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { findDeals } from "../../server/deals/find-deals.ts";
 import { getListingDetails, searchListings } from "../../server/ebay/listings.ts";
-import { browseSearchAllowance, reserveSearchBrowseRequest } from "../../server/ebay/search-budget.ts";
+import { browseSearchAllowance } from "../../server/ebay/search-budget.ts";
 import { evaluateBoundedListing } from "../../server/analysis/bounded-evaluate.ts";
 import { writeCache } from "../../server/lib/cache.ts";
+import { DATA_DIR } from "../../server/lib/paths.ts";
 import { drainSharedWork } from "../../server/lib/shared-work.ts";
 import { MODEL } from "../../server/ai/openai.ts";
-import { withAiUsageContext } from "../../server/ai/usage-context.ts";
+import { getAiUsageContext, withAiUsageContext } from "../../server/ai/usage-context.ts";
 import { offlineEbayCredentials } from "../fixtures/ebay-credentials.ts";
 
 const quotaResponse = () => Response.json({ rateLimits: [{ apiName: "Browse", resources: [{ name: "buy.browse",
@@ -100,11 +103,13 @@ test("identical uncached searches share a Browse page and only the initiating se
     assert.equal(pages, 1);
 });
 
-test("an exhausted initiating search does not block a follower with its own Browse allowance", async t => {
+test("invalid initiating search accounting does not block a follower with a valid Browse ledger", async t => {
     offlineEbayCredentials(t);
-    const allowance = await browseSearchAllowance();
-    assert.ok(allowance);
-    for (let request = 0; request < allowance.remaining; request++) await reserveSearchBrowseRequest(async () => {});
+    const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+    const directory = path.join(DATA_DIR, "ebay-search-budgets", hash(process.env.EBAY_CLIENT_ID!));
+    const malformed = path.join(directory, `${hash(getAiUsageContext().searchId!)}.json`);
+    await fs.mkdir(directory, { recursive: true });
+    await fs.writeFile(malformed, "{malformed");
     const follower = { searchId: randomUUID() };
     let pages = 0;
     t.mock.method(globalThis, "fetch", async (url: unknown) => {
@@ -116,12 +121,12 @@ test("an exhausted initiating search does not block a follower with its own Brow
         return Response.json({ total: 1, itemSummaries: [{ itemId: "v1|follow-up-summary|0", title: "Venusaur Base Set Holo" }] });
     });
 
-    const query = "offline exhausted shared summary";
-    const first = assert.rejects(searchListings(query), /eBay Browse cap/);
+    const query = "offline corrupted accounting shared summary";
+    const first = assert.rejects(searchListings(query), { code: "EBAY_BUDGET_ACCOUNTING" });
     const second = withAiUsageContext(follower, () => searchListings(query));
     await first;
     assert.equal((await second).listings[0]?.id, "v1|follow-up-summary|0");
-    assert.equal((await browseSearchAllowance())?.used, allowance.limit);
+    assert.equal(await fs.readFile(malformed, "utf8"), "{malformed");
     assert.equal((await withAiUsageContext(follower, browseSearchAllowance))?.used, 1);
     assert.equal(pages, 1);
 });

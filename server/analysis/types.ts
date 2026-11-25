@@ -5,6 +5,7 @@ export type GradingMode = "FULL" | "LIMITED" | "BLOCKED";
 // Current purchase terms supplied by the browser; photo evidence is reused
 // independently from these changing listing facts.
 export interface CurrentState {
+    shippingDestination?: string | null;
     title?: string;
     images?: string[];
     price: number | null;

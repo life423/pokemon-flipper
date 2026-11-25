@@ -32,6 +32,29 @@ test("printed forms, owners and distinct species do not collapse into an intent 
     assert.equal(resolveScreeningName({ title: "Charizard ex", claims: ["Charizard", "Charizard ex"], candidate: "Charizard" }), null);
 });
 
+test("numbered e-Reader listings preserve Porygon2 and remove anchored seller descriptors", () => {
+    for (const [title, polluted, name, number] of [
+        ["Slowpoke 108/147 Aquapolis Regular LP", "slowpoke regular", "slowpoke", "108/147"],
+        ["Miltank Pokemon e-Card Series Aquapolis #94 2003", "miltank e- series", "miltank", "94"],
+        ["The Pokémon Company Nidorino 055/147 Aquapolis 2002 English 70 HP Stage 1", "nidorino stage", "nidorino", "055/147"],
+        ["Porygon2 28/147 Rare Aquapolis Pokemon Reverse Holo Near Mint", "porygon2", "porygon2", "28/147"],
+        ["Porygon2 #2 Aquapolis", "porygon2", "porygon2", "2"],
+    ]) {
+        const reading = readTitleByRules(title);
+        assert.equal(reading.cardNumber, number);
+        assert.equal(reading.cardName, name, title);
+        assert.equal(resolveScreeningName({ title, set: "Aquapolis", claims: [reading.cardName, polluted] }), name);
+    }
+    assert.equal(readTitleByRules("Porygon2").cardName, "porygon2");
+    assert.equal(readTitleByRules("Porygon 28/147 Aquapolis").cardName, "porygon");
+    assert.equal(readTitleByRules("Porygon3 28/147 Aquapolis").cardName, null);
+    assert.equal(readTitleByRules("Regular Slowpoke 108/147 Aquapolis").cardName, "regular slowpoke");
+    assert.equal(readTitleByRules("Slowpoke Regular Aquapolis").cardName, "slowpoke regular");
+    assert.equal(readTitleByRules("Slowpoke 108/147 Regular").cardName, "slowpoke regular");
+    assert.equal(readTitleByRules("Dark Slowpoke 108/147 Aquapolis Regular").cardName, "dark slowpoke");
+    assert.equal(readTitleByRules("Slowpoke Curious 108/147 Aquapolis Regular").cardName, "slowpoke curious");
+});
+
 test("post-grade EX descriptors cannot erase the card's own ex from a clean cached claim", () => {
     assert.equal(resolveScreeningName({ title: "Charizard ex PSA 5 EX", claims: ["Charizard ex", "charizard ex ex"], candidate: "Charizard ex" }), "Charizard ex");
     assert.equal(resolveScreeningName({ title: "Charizard ex PSA 8 NM-MT", claims: ["Charizard ex", "charizard ex -mt"], candidate: "Charizard ex" }), "Charizard ex");

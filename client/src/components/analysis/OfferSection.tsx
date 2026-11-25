@@ -1,8 +1,10 @@
 import { useState } from "react";
-import type { Evaluation, ListingSummary } from "../../types";
+import type { Evaluation, ListingSummary, Targets } from "../../types";
 import { dollars, percent } from "../../format";
 import { describeOffer, numbersAtOffer, offerFor, type OfferPlan } from "../../../../shared/money/offer.ts";
 import type { BuyerListingReview } from "../../../../shared/wait-skip-review.ts";
+import { applyVerifiedPurchase } from "../../../../shared/money/verified-purchase.ts";
+import { retargetEvaluation } from "../../../../shared/money/targets.ts";
 import { resultGroup } from "../../../../shared/analysis.ts";
 import { Pairs, Section } from "./primitives";
 import styles from "../DetailPanel.module.css";
@@ -33,30 +35,40 @@ export function SellerOfferDraft({ cardName, plan }: { cardName?: string | null;
     );
 }
 
-export type ReviewedDecision = Pick<BuyerListingReview, "decision" | "reason" | "offer" | "auctionOpportunity">;
+export type ReviewedDecision = Pick<BuyerListingReview, "decision" | "reason" | "offer" | "auctionOpportunity" | "verifiedPurchase">;
 
-export function reviewedOfferPlan(plan: OfferPlan | null, review?: ReviewedDecision): OfferPlan | null {
-    if (!review || review.decision === "BUY") return plan;
+export function listingOffer(listing: ListingSummary, evaluation: Evaluation, targets: Targets, now: number, review?: ReviewedDecision) {
+    const best = evaluation.underwriting?.best;
+    const plan = offerFor(listing, best?.maxBid);
+    if (!best || !plan) return null;
+    if (!review || review.decision === "BUY") return { plan, path: best };
     const offer = review.offer;
-    if (review.decision !== "WAIT" || !offer || !plan || plan.clearsAtAsking || plan.requiresPriceDrop ||
+    if (review.decision !== "WAIT" || !offer || plan.clearsAtAsking || plan.requiresPriceDrop ||
+        evaluation.listing.id !== listing.id || evaluation.listing.bestOffer !== true || evaluation.listing.price !== listing.currentPrice ||
         offer.opening !== plan.offer || !Number.isFinite(offer.maxItemPrice) ||
         offer.maxItemPrice < offer.opening || offer.maxItemPrice > plan.walkAway) return null;
-    return { ...plan, offer: offer.opening, walkAway: offer.maxItemPrice };
+    const current = retargetEvaluation(evaluation, targets, listing);
+    const opening = retargetEvaluation({ ...current, listing: { ...current.listing, price: offer.opening } }, targets);
+    const path = applyVerifiedPurchase(opening, offer.verifiedPurchase, targets, now)?.underwriting?.best;
+    return path?.maxBid === offer.maxItemPrice ? { plan: { ...plan, walkAway: path.maxBid }, path } : null;
 }
 
-export function OfferSection({ listing, evaluation, automaticDecision }: { listing: ListingSummary; evaluation: Evaluation; automaticDecision?: ReviewedDecision }) {
+export function OfferSection({ listing, evaluation, targets, now, automaticDecision }: {
+    listing: ListingSummary; evaluation: Evaluation; targets: Targets; now: number; automaticDecision?: ReviewedDecision;
+}) {
     const group = resultGroup(listing, evaluation, true);
     if ((group !== "offers" && group !== "deals") || listing.currentPrice === null) return null;
-    const best = evaluation.underwriting?.best;
-    const plan = reviewedOfferPlan(offerFor(listing, best?.maxBid), automaticDecision);
-    if (!best || !plan) return null;
-    const outcome = numbersAtOffer(best, plan);
+    const offer = listingOffer(listing, evaluation, targets, now, automaticDecision);
+    if (!offer) return null;
+    const { plan, path } = offer;
+    const outcome = numbersAtOffer(path, plan);
 
     return (
         <Section title="Best Offer">
             <Pairs rows={[
                 ["Opening offer", <strong>{dollars(plan.offer)}</strong>],
                 ["Your walk-away price", dollars(plan.walkAway)],
+                ["Resale plan", path.label],
                 ["Est. profit if accepted", `${dollars(outcome.profit)} (${percent(outcome.roi)} return)`],
             ]} />
             <p className={styles.small}>{describeOffer(plan, listing.currentPrice)}</p>

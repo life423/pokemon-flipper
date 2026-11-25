@@ -43,13 +43,6 @@ export const ClockIcon = (props: IconProps) => (
     </Icon>
 );
 
-export const TrendIcon = (props: IconProps) => (
-    <Icon {...props}>
-        <path d="m3 17 6-6 4 4 8-8" />
-        <path d="M15 7h6v6" />
-    </Icon>
-);
-
 export const TrendDownIcon = (props: IconProps) => (
     <Icon {...props}>
         <path d="m3 7 6 6 4-4 8 8" />

@@ -5,15 +5,19 @@ import { listingEvidenceKey } from "../../shared/listing-evidence.ts";
 import { retargetEvaluation } from "../../shared/money/targets.ts";
 import { PRICING_VERSION } from "../../shared/pricing-freshness.ts";
 import type { Evaluation, ListingSummary, SearchIntent } from "../../shared/types.ts";
-import { getAiUsageContext } from "../../server/ai/usage-context.ts";
+import { getAiUsageContext, getBudgetContext, withAiUsageContext } from "../../server/ai/usage-context.ts";
+import { huntPhotoIdentityIssue } from "../../server/analysis/deal-hunt-market-checks.ts";
+import { huntProgress } from "../../server/analysis/deal-hunt-progress.ts";
 import { createDealHuntService, dealHuntRequest } from "../../server/analysis/deal-hunt-service.ts";
 import { runDealHunt } from "../../server/analysis/deal-hunt.ts";
 import { createModelExperimentRunner } from "../../server/analysis/model-experiment.ts";
 import { evaluationContextKey } from "../../server/analysis/private-evaluation.ts";
 import { rankHuntMarkets } from "../../server/analysis/same-set-markets.ts";
+import { createHuntInventoryScanner, type SearchSummary } from "../../server/deals/find-deals.ts";
 import type { ListingDetails } from "../../server/ebay/listings.ts";
 import { EbayBudgetError } from "../../server/ebay/usage.ts";
-import { cardEvaluation, salesSummary } from "../fixtures/card-evaluation.ts";
+import { cardEvaluation, clearReleaseFixture, salesSummary } from "../fixtures/card-evaluation.ts";
+import { offlineSearchSteps } from "../fixtures/search-steps.ts";
 
 const searchId = "348cae85-377d-44a4-9436-25a311eb2d4c";
 const listingId = "v1|120000000001|0";
@@ -27,6 +31,7 @@ function example() {
     Object.assign(e.listing, { id: listingId, price: 5, shipping: 0, termsCheckedAt: stamp, availability: "ACTIVE", buyingOption: "FIXED_PRICE",
         title: "1999 Base Set Venusaur 15/102 Holo", url: "https://www.ebay.com/itm/120000000001", photos: ["https://i.ebayimg.com/images/g/front/s-l1600.jpg", "https://i.ebayimg.com/images/g/back/s-l1600.jpg"] });
     e.photoCheck!.cardCount = "ONE";
+    clearReleaseFixture(e);
     Object.assign(e, { answeredAt: stamp, pricesCheckedAt: stamp, pricingVersion: PRICING_VERSION, assessmentVersion: "offline/bounded-prompts-4", conditionVersion: "offline/bounded-condition-1/prompts-1" });
     for (const pricing of Object.values(e.gradedPricing!)) {
         Object.assign(pricing, { printing: "UNLIMITED", source: "pkmnprices", variant: "holo" });
@@ -44,6 +49,8 @@ function example() {
 }
 
 const unexpected = async () => assert.fail("Unexpected provider or storage call");
+const emptyInventory = () => async (_query: string, intent: SearchIntent) => ({ listings: [],
+    summary: { intent, mode: "development", deferred: 0, total: 0, found: 0, count: 0, skipped: 0 } satisfies SearchSummary });
 
 function service(fixture: ReturnType<typeof example>, overrides: Parameters<typeof createDealHuntService>[0] = {}, onChoice?: (chosen: string, options: string[]) => void) {
     const cache = new Map();
@@ -61,7 +68,8 @@ function service(fixture: ReturnType<typeof example>, overrides: Parameters<type
     });
     return createDealHuntService({
         now: () => now, discovery: async () => fixture.discovery, inventory: async () => fixture.inventory, snapshot: async () => fixture.snapshot,
-        details: unexpected, evaluate: unexpected, supplement: unexpected, plan: (input, signal) => runDealHunt(input, signal, choose), ...overrides,
+        details: unexpected, evaluate: unexpected, supplement: unexpected, inventoryScanner: emptyInventory, liquidMarkets: async () => [],
+        plan: (input, signal) => runDealHunt(input, signal, choose), ...overrides,
     });
 }
 
@@ -72,6 +80,59 @@ test("hunt set preferences are bounded, normalized and kept separate from era pr
     assert.deepEqual(dealHuntRequest(request).marketPreferences?.sets, ["Neo Revelation"]);
     for (const sets of [[], [""], ["   "], "Neo Revelation", [null], ["x".repeat(121)], Array(9).fill("Neo Revelation")]) {
         assert.throws(() => dealHuntRequest({ ...request, marketPreferences: { sets } }), { status: 400 });
+    }
+});
+
+test("an upper-only year ceiling survives standalone hunt admission and includes its boundary", async () => {
+    const market = liquidGradingMarket();
+    const request = { goal: "resell", scope: "any_card", standalone: true, listingIds: [], targets: goal.targets,
+        marketPreferences: { maxYear: 2020, finish: "HOLO" }, filters: { typeFilter: "FIXED_PRICE" } };
+    const validated = dealHuntRequest(request);
+    assert.equal(validated.marketPreferences?.minYear, undefined);
+    assert.equal(validated.marketPreferences?.maxYear, 2020);
+    const hunt = service(example(), {
+        discovery: unexpected, inventory: unexpected, snapshot: unexpected, discoverMarket: unexpected,
+        setYears: async () => ({ "neo destiny": 2002, "vivid voltage": 2020, celebrations: 2021 }),
+        markets: async () => [
+            { ...market, name: "Title Boundary", set: "Vivid Voltage" }, { ...market, name: "Title Kept", set: "Neo Destiny" },
+            { ...market, name: "Title Excluded", set: "Celebrations" }, { ...market, name: "Unknown", set: "Unknown year" },
+        ],
+        plan: async ({ markets }) => {
+            assert.deepEqual(markets?.filter(x => x.source !== "inventory").map(x => x.title.split(" · ")[0]).sort(),
+                [`Title Boundary ${market.cardNumber}`, `Title Kept ${market.cardNumber}`]);
+            return { searchId, goal: "resell", decision: "WAIT", destination: null, reason: "Only supported release boundaries were checked.", steps: [] };
+        },
+    });
+    await hunt(searchId, request, signal());
+});
+
+test("explicit liquidity preferences survive validation and rank exact recent markets before higher margins", async () => {
+    const lead = liquidGradingMarket();
+    const highMargin = { ...lead, name: "Dark Gengar", set: "Neo Destiny", cardNumber: "6/105",
+        sales60: 1, projectedProfit: 110 };
+    const moreActive = { ...lead, name: "Lugia", set: "Neo Genesis", cardNumber: "9/111",
+        sales60: 8, projectedProfit: 30 };
+    const request = { goal: "resell", scope: "any_card", standalone: true, listingIds: [], targets: goal.targets,
+        filters: { typeFilter: "FIXED_PRICE", kindFilter: "raw" } };
+    const preferences = { minYear: 1999, maxYear: 2003, finish: "HOLO", preferRecentSales: true };
+    assert.equal(dealHuntRequest({ ...request, marketPreferences: preferences }).marketPreferences?.preferRecentSales, true);
+    assert.throws(() => dealHuntRequest({ ...request, marketPreferences: { ...preferences, preferRecentSales: "true" } }), { status: 400 });
+    for (const optedIn of [false, true]) {
+        const hunt = service(example(), {
+            discovery: unexpected, inventory: unexpected, snapshot: unexpected, discoverMarket: unexpected,
+            setYears: async () => ({ "neo genesis": 2000, "neo destiny": 2002, celebrations: 2021 }),
+            markets: async () => [highMargin, moreActive, { ...moreActive, set: "Celebrations" },
+                { ...moreActive, finish: "REVERSE_HOLO" }],
+            plan: async ({ markets, preferRecentSales }) => {
+                assert.equal(Boolean(preferRecentSales), optedIn);
+                assert.equal(markets?.length, 3);
+                assert.match(markets![0].title, optedIn ? /Lugia/ : /Dark Gengar/);
+                assert.match(markets![1].title, optedIn ? /Dark Gengar/ : /Lugia/);
+                assert.equal(markets![2].source, "inventory");
+                return { searchId, goal: "resell", decision: "WAIT", destination: null, reason: "Only market ordering was checked.", steps: [] };
+            },
+        });
+        await hunt(searchId, { ...request, marketPreferences: { ...preferences, preferRecentSales: optedIn } }, signal());
     }
 });
 
@@ -90,7 +151,8 @@ test("hunt printing and certified-grade preferences reject widening before offer
         const hunt = createDealHuntService({ now: () => now, discovery: unexpected, inventory: unexpected, snapshot: unexpected,
             setYears: unexpected, markets: async () => markets, discoverMarket: unexpected,
             plan: async input => {
-                assert.equal(input.markets?.length, 1, JSON.stringify(input.markets));
+                assert.equal(input.markets?.length, 2, JSON.stringify(input.markets));
+                assert.equal(input.markets![1].source, "inventory");
                 assert.match(input.markets![0].summary, marketPreferences.printing === "FIRST_EDITION" ? /first edition/ : /unlimited/);
                 assert.match(input.markets![0].summary, /CGC 8.5/);
                 return { searchId, goal: "resell", decision: "WAIT", destination: null, reason: "No copy inspected.", steps: [] };
@@ -140,7 +202,8 @@ test("a requested Neo Revelation market cannot broaden into Neo Genesis when no 
         plan: async ({ markets, candidates }) => {
             menuSeen = true;
             assert.equal(candidates.length, 0);
-            assert.equal(markets?.length, 1);
+            assert.equal(markets?.length, 2);
+            assert.equal(markets![1].source, "inventory");
             assert.match(markets![0].title, /Neo Revelation/);
             return { searchId, goal: "resell", decision: "WAIT", destination: null, reason: "The requested release has no checked copy yet.", steps: [] };
         },
@@ -162,6 +225,35 @@ test("the service rejects a listing outside the search before any inventory, evi
     await assert.rejects(hunt(searchId, { ...goal, listingIds: ["v1|120000000002|0"] }, signal()), { status: 409 });
 });
 
+test("a root hunt can research original and continued copies without borrowing another search", async () => {
+    const fixture = example();
+    const batchId = "2f044091-d0f0-4207-b2ec-a6f95c104805";
+    const continuedId = "v1|120000000002|0";
+    const continuedListing = { ...fixture.inventory.rows[0].listing, id: continuedId };
+    const hunt = service(fixture, {
+        batchOwner: async id => id === batchId ? searchId : undefined,
+        discovery: async id => id === searchId ? fixture.discovery : { ...fixture.discovery, searchId: batchId,
+            discovery: { ...fixture.discovery.discovery, retainedIds: [continuedId] } },
+        inventory: async id => id === searchId ? fixture.inventory : { ...fixture.inventory,
+            rows: [{ listing: continuedListing, assessable: true }] },
+        snapshot: async () => null,
+        evaluate: async id => {
+            assert.equal(id, continuedId);
+            assert.equal(getAiUsageContext().searchId, batchId);
+            assert.equal(getBudgetContext().searchId, searchId);
+            return { ...fixture.e, listing: { ...fixture.e.listing, id } };
+        },
+        plan: async input => {
+            assert.deepEqual(input.candidates.map(candidate => candidate.listingId), [listingId, continuedId]);
+            await input.candidates[1].read("inspect_photos", signal());
+            return { searchId, goal: "grade_raw", decision: "WAIT", destination: null, reason: "Both batches were admitted.", steps: [] };
+        },
+    });
+    const request = { ...goal, listingIds: [listingId, continuedId], batchIds: [batchId] };
+    assert.equal((await hunt(searchId, request, signal())).report.searchId, searchId);
+    await assert.rejects(hunt(searchId, { ...request, batchIds: ["64b3c69b-6b2d-4c92-8f05-d4505175c040"] }, signal()), { status: 409 });
+});
+
 test("the selected screened listing gets one bounded photo assessment, then normal planning uses that assessment in its destination", async () => {
     const f = example();
     let calls = 0;
@@ -174,6 +266,12 @@ test("the selected screened listing gets one bounded photo assessment, then norm
             assert.deepEqual(options?.targets, goal.targets);
             assert.equal(getAiUsageContext().searchId, searchId);
             assert.equal(getAiUsageContext().listingId, listingId);
+            const progress = huntProgress.read(searchId);
+            assert.equal(progress?.phase, "reviewing");
+            assert.equal(progress.action, "inspect_photos");
+            assert.equal(progress.cohort, f.e.listing.title);
+            assert.equal(progress.retained, 1);
+            assert.equal(progress.reviewed, 0);
             return f.e;
         },
     });
@@ -183,6 +281,8 @@ test("the selected screened listing gets one bounded photo assessment, then norm
     assert.equal(result.report.decision, "BUY");
     assert.deepEqual(result.report.destination, { listingId, section: "grading" });
     assert.equal(result.evaluation?.listing.id, listingId);
+    assert.equal(huntProgress.read(searchId)?.phase, "completed");
+    assert.equal(huntProgress.read(searchId)?.reviewed, 1);
 });
 
 test("refreshed shipping and price change the decision without repeating any earlier photo check", async () => {
@@ -310,6 +410,7 @@ function freshCopy(number: number) {
     Object.assign(row, { id, url, images, listedAt: old,
         screen: { status: "UNSCREENED", needsAnalysis: "IDENTITY", card: null, bestCase: null, assumed: null, reason: null } });
     Object.assign(f.e.listing, { id, url, photos: images, listedAt: old, endTime: null });
+    clearReleaseFixture(f.e);
     Object.assign(f.details, { ...f.e.listing, images });
     f.e.gradedPricing = { PSA: f.e.gradedPricing!.PSA };
     for (const summary of f.e.gradedPricing.PSA!.byGrade!) {
@@ -361,7 +462,8 @@ test("a standalone fresh grading hunt assesses the ranked fifteen before choosin
             checked.push(id);
             return current.get(id)!.e;
         },
-    }, () => {
+    }, choice => {
+        if (choice.endsWith("/find_listings")) return;
         assert.deepEqual(new Set(checked), new Set(picks.filter(id => id !== saved)),
             "planner receives all fifteen photo assessments, including the previously saved assessment");
     });
@@ -397,6 +499,113 @@ test("omitting the hunt scope keeps a named search within its retained rows with
     assert.equal(result.report.destination?.listingId, listingId);
     assert.equal(result.alternative, undefined);
     assert.equal(result.candidates, undefined);
+});
+
+test("a broad hunt with no saved markets screens new releases under its original filters and holds unpriced copies for review", async () => {
+    const f = example();
+    const budgetId = "42c350cb-1b6c-4780-9b7a-bd2dc9d9a6c6";
+    const copy = (number: number, title: string): ListingSummary => ({ ...f.inventory.rows[0].listing, title,
+        id: `v1|${number}|0`, url: `https://www.ebay.com/itm/${number}`, currentPrice: 14 });
+    const lugia = copy(120000000031, "Lugia 9/111 Neo Genesis Unlimited Holo English");
+    const gengar = copy(120000000032, "Dark Gengar 6/105 Neo Destiny Unlimited Holo English");
+    const modern = copy(120000000033, "Pikachu 58/102 Celebrations Classic Collection Holo English");
+    const reverse = copy(120000000034, "Lugia 9/111 Neo Genesis Unlimited Reverse Holo English");
+    const filters = { typeFilter: "FIXED_PRICE", kindFilter: "raw", minPrice: 7, maxPrice: 30 } as const;
+    const releases: string[] = [], snapshots: string[] = [], notes: string[] = [];
+    let priceSources = 0;
+    const hunt = service(f, {
+        discovery: unexpected, inventory: unexpected, discoverMarket: unexpected, markets: async () => [],
+        setYears: async () => ({ "neo genesis": 2000, "neo destiny": 2002, celebrations: 2021 }),
+        inventoryScanner: active => createHuntInventoryScanner(active, offlineSearchSteps([], {
+            readIntent: unexpected,
+            priceSource: () => {
+                priceSources++;
+                return { lookupCards: unexpected, lookupQueryCards: unexpected, fetchComps: unexpected, fetchRawComps: unexpected,
+                    fetchSoldPage: unexpected, stats: () => ({ requests: 0, limit: 128 }) };
+            },
+            search: async (query, options) => {
+                releases.push(query);
+                assert.equal(getBudgetContext().searchId, budgetId);
+                const progress = huntProgress.read(budgetId, searchId);
+                assert.equal(progress?.phase, "discovering");
+                assert.equal(progress.cohort, query);
+                assert.equal(progress.scans, releases.length - 1);
+                assert.equal(options?.sort, "newlyListed");
+                assert.equal(options?.keepReserve, true);
+                assert.equal(options?.ccgInventory, true);
+                assert.deepEqual(options?.filters, filters);
+                const listings = query === "neo genesis" ? [lugia, modern, reverse, lugia] : [gengar, lugia];
+                return { listings, total: listings.length, skipped: 0, rejections: [], sourceLimitReached: query === "neo genesis" };
+            },
+        })),
+        snapshot: async id => { snapshots.push(id); return null; },
+        plan: async ({ goal, markets, candidates }, active) => {
+            assert.deepEqual(candidates, []);
+            assert.deepEqual(markets?.map(m => m.source), ["inventory"]);
+            const source = markets![0];
+            assert.deepEqual(releases, [], "a source offered to the planner does not spend until selected");
+            const first = await source.discover(active, note => notes.push(note));
+            assert.deepEqual(first.map(c => c.listingId), [lugia.id]);
+            const firstProgress = huntProgress.read(budgetId, searchId);
+            assert.equal(firstProgress?.discovered, 3);
+            assert.equal(firstProgress.retained, 1);
+            assert.equal(firstProgress.reviewed, 0);
+            assert.equal(firstProgress.scans, 1);
+            assert.deepEqual(first[0].available(new Set()), ["inspect_photos"]);
+            assert.equal(first[0].outcome(new Set()), null);
+            assert.equal(source.hasMore?.(), true);
+            const second = await source.discover(active, note => notes.push(note));
+            assert.deepEqual(second.map(c => c.listingId), [gengar.id]);
+            assert.equal(source.hasMore?.(), false);
+            return { searchId, goal, decision: "WAIT", reason: "Copy evidence remains unchecked.", destination: null, steps: [] };
+        },
+    });
+    const result = await withAiUsageContext({ searchId, watchBudgetId: budgetId }, () => hunt(searchId,
+        { ...goal, goal: "resell", listingIds: [], scope: "any_card", standalone: true, filters,
+            marketPreferences: { minYear: 1999, maxYear: 2003, finish: "HOLO", printing: "UNLIMITED" } }, signal()));
+    assert.deepEqual(releases, ["neo genesis", "neo destiny"]);
+    assert.deepEqual(snapshots, [lugia.id, gengar.id]);
+    assert.equal(priceSources, 1, "release queries share one price-screening allowance");
+    assert.match(notes[0], /loaded 3 distinct listing summaries.*part of the source results/);
+    assert.match(result.report.marketNote!, /Completed 2 of 2 broader eBay queries\. More results remained/);
+    assert.equal(result.report.decision, "WAIT");
+    assert.equal(result.evaluation, null);
+    assert.deepEqual(result.candidates?.map(listing => listing.id), [lugia.id, gengar.id]);
+    const completed = huntProgress.read(budgetId, searchId);
+    assert.equal(completed?.phase, "completed");
+    assert.equal(completed.discovered, 5);
+    assert.equal(completed.retained, 2);
+    assert.equal(completed.reviewed, 0);
+    assert.equal(completed.scans, 2);
+});
+
+test("quota and cancellation stop an unseeded inventory hunt before photos", async () => {
+    const request = { ...goal, goal: "resell", listingIds: [], scope: "any_card", standalone: true };
+    let scans = 0;
+    const quota = service(example(), { markets: async () => [], evaluate: unexpected, snapshot: unexpected,
+        inventoryScanner: () => async () => { scans++; throw new EbayBudgetError("Daily quota", "QUOTA"); } });
+    const limited = await quota(searchId, request, signal());
+    assert.equal(scans, 1);
+    assert.equal(limited.report.decision, "WAIT");
+    assert.match(limited.report.reason, /eBay listing allowance ran out/);
+    assert.match(limited.report.marketNote!, /Completed 0 of 1 broader eBay query/);
+    assert.deepEqual(limited.candidates, []);
+
+    const { promise: dispatched, resolve } = Promise.withResolvers<void>();
+    const { promise: cancelled, resolve: finished } = Promise.withResolvers<void>();
+    const abort = new AbortController();
+    const blocked = service(example(), { markets: async () => [], evaluate: unexpected, snapshot: unexpected,
+        inventoryScanner: active => async () => {
+            resolve();
+            await new Promise<void>(done => active.addEventListener("abort", () => { finished(); done(); }, { once: true }));
+            active.throwIfAborted();
+            assert.fail("the cancelled scan must not return candidates");
+        } });
+    const pending = blocked(searchId, request, abort.signal);
+    await dispatched;
+    abort.abort(new Error("Stop the hunt"));
+    await assert.rejects(pending, /Stop the hunt/);
+    await cancelled;
 });
 
 test("a flip with no seed searches the liquid market with the buyer's filters and returns the checked copy", async () => {
@@ -523,7 +732,7 @@ test("a liquid comparison market cannot qualify a copy whose assessed printing d
         discoverMarket: async () => [f.inventory.rows[0].listing],
     })(searchId, { ...goal, goal: "resell", listingIds: [], scope: "any_card", standalone: true }, signal());
     assert.equal(result.report.decision, "WAIT");
-    assert.deepEqual(result.report.steps.map(step => step.action), ["find_listings"]);
+    assert.deepEqual(result.report.steps.map(step => step.action), ["find_listings", "find_listings"]);
     assert.equal(result.report.destination, null);
     assert.equal(result.evaluation, null);
     assert.equal(result.alternative, undefined);
@@ -822,4 +1031,86 @@ test("a hunt dispatches only the eligible printing detail and reevaluates that c
     const response = await app(searchId, { ...goal, goal: "resell", filters: { maxPrice: 80 } }, signal());
     assert.equal(detailCalls, 1);
     assert.equal(response.evaluation?.identity?.printing, "UNLIMITED");
+});
+
+test("fresh fixed-price resale starts with current inventory even when past research favored one card", async () => {
+    const queries: string[] = [];
+    const hunt = service(example(), {
+        inventory: unexpected, discovery: unexpected, snapshot: unexpected, markets: unexpected, discoverMarket: unexpected,
+        browsePressure: async () => null,
+        inventoryScanner: () => async (query, intent, filters, _targets, _now, scan) => {
+            queries.push(query);
+            assert.equal(intent.cardName, null);
+            assert.equal(filters.typeFilter, "FIXED_PRICE");
+            assert.equal(scan.freshListings, true);
+            return emptyInventory()(query, intent);
+        },
+    });
+    const response = await hunt(searchId, { goal: "resell", scope: "any_card", freshListings: true, standalone: true,
+        targets: goal.targets, filters: { typeFilter: "FIXED_PRICE" }, listingIds: [] }, signal());
+    assert.deepEqual(queries.map(q => q.toLowerCase()), ["pokemon"]);
+    assert.equal(response.report.decision, "WAIT");
+});
+
+test("the photographed release, name and number must agree before a fresh resale buy", () => {
+    const value = example().e;
+    const card = { name: "Charizard", cardNumber: "4/102", set: "Base Set", finish: "HOLO",
+        language: "English", confidence: "HIGH", evidence: ["Readable original front and edition marks."] };
+    Object.assign(value.identity!, { ...card, status: "IDENTIFIED", printing: "UNLIMITED", evidence: { photo: "UNLIMITED" } });
+    Object.assign(value.photoCheck!, { cardIdentity: card, cardCount: "ONE", holder: "NONE", printedName: "Charizard", printedNumber: "4/102" });
+    assert.equal(huntPhotoIdentityIssue(value), null);
+    card.set = "Celebrations";
+    assert.match(huntPhotoIdentityIssue(value)!, /release/);
+    card.set = "Base Set"; value.photoCheck!.printedName = "Nidoking";
+    assert.match(huntPhotoIdentityIssue(value)!, /name and collector number/);
+});
+
+test("a guided Ampharos miss gives the planner verified vintage markets and honors its selected query", async () => {
+    const queries: string[] = [], menus: string[][] = [];
+    const model = createModelExperimentRunner({
+        cached: async () => null, save: async () => {},
+        run: async request => {
+            const prompt = JSON.parse(request.prompt);
+            assert.ok(prompt.observed.some((s: {observation:string}) => s.observation.includes("Aquapolis")));
+            assert.equal(getAiUsageContext().searchId, searchId);
+            menus.push(prompt.menu.map((m: { market:string }) => m.market));
+            return { result:{choice: prompt.menu[1].key, reason: "Check Dragonite next based on the eligible markets and earlier misses."},
+                usage:{inputTokens:30,outputTokens:9} };
+        },
+    });
+    const hunt = service(example(), {
+        markets: unexpected, browsePressure: async () => null,
+        guidedInventoryTargets: async function*() {
+            yield {name:"Ampharos", set:null, number:null};
+            yield {name:null, set:"Aquapolis", number:null};
+            yield {name:"Gengar", set:"Fossil", number:"5/62", sales:21};
+            yield {name:"Dragonite", set:"Fossil", number:"4/62", sales:19};
+        },
+        inventoryScanner: () => async (query, intent) => { queries.push(query); return emptyInventory()(query, intent); },
+        plan: (input, active) => runDealHunt(input, active, model),
+    });
+    const response = await hunt(searchId, { goal:"resell", scope:"any_card", standalone:true, listingIds:[], freshListings:true,
+        targets:goal.targets, filters:{typeFilter:"FIXED_PRICE"}, marketPreferences:{preferRecentSales:true,
+            seed:{name:"Ampharos",number:null,expand:true}} }, signal());
+    assert.deepEqual(queries, ["Ampharos","Aquapolis","Dragonite 4/62 Fossil","Gengar 5/62 Fossil"]);
+    assert.deepEqual(menus, [["Gengar 5/62 Fossil","Dragonite 4/62 Fossil"]]);
+    assert.equal(response.report.steps[2].selectedBy, "model");
+    assert.match(response.report.steps[2].reason, /Dragonite/);
+    assert.equal(response.report.decision, "WAIT");
+});
+
+test("new quota pressure between stages prevents both the guided pivot and its next Browse call", async () => {
+    const queries: string[] = [];
+    let checks = 0;
+    const hunt = service(example(), {
+        browsePressure: async () => ++checks === 1 ? null : "QUOTA_LOW",
+        liquidMarkets: async () => ["A","B","C"].map((name,index) => ({name,id:index+1,set:"Aquapolis",number:"1/147",sales:9-index})),
+        inventoryScanner: () => async (query, intent) => { queries.push(query); return emptyInventory()(query, intent); },
+        plan: (input, active) => runDealHunt(input, active, async () => assert.fail("A protected pivot must make no model request")),
+    });
+    const result = await hunt(searchId, {goal:"resell",scope:"any_card",standalone:true,listingIds:[],freshListings:true,
+        targets:goal.targets,filters:{typeFilter:"FIXED_PRICE"},marketPreferences:{preferRecentSales:true}}, signal());
+    assert.deepEqual(queries, ["A 1/147 Aquapolis"]);
+    assert.equal(result.report.decision, "WAIT");
+    assert.match(result.report.marketNote ?? "", /daily eBay allowance/);
 });

@@ -1,4 +1,5 @@
 import { dealHuntGoals, type DealHuntAction, type DealHuntGoal, type DealHuntReport, type DealHuntSection } from "../../shared/deal-hunt.ts";
+import { FIRST_REVIEW_COUNT } from "../../shared/search-review-selection.ts";
 import { DEVELOPMENT_SEARCH_LIMIT } from "../../shared/research-policy.ts";
 import { aiSpendingFailure } from "../ai/spending.ts";
 import { withAiUsageContext } from "../ai/usage-context.ts";
@@ -6,12 +7,15 @@ import { EbayBudgetError } from "../ebay/daily-budget.ts";
 import { PriceResearchBudgetError } from "../pricing/research-budget.ts";
 import { createModelExperimentRunner } from "./model-experiment.ts";
 import { isSearchDiagnosticId } from "./search-diagnostic-store.ts";
+import type { HuntProgressObserver } from "./deal-hunt-progress.ts";
 
 export interface DealHuntOutcome {
     decision: DealHuntReport["decision"];
     reason: string;
     section: DealHuntSection;
     alternateSections?: DealHuntSection[];
+    verifiedPurchase?: DealHuntReport["verifiedPurchase"];
+    recentSales?: number;
 }
 
 /** The service constructs these from the search's own saved evidence. */
@@ -34,21 +38,27 @@ interface DealHuntInput {
     auction?: boolean;
     /** Host-level runaway safeguard, independent of provider request allowances. */
     maxSteps?: number;
+    preferRecentSales?: boolean;
+    freshListings?: boolean;
+    guidedResale?: boolean;
+    progress?: Pick<HuntProgressObserver, "stage" | "checked" | "guidance">;
 }
 
 export interface DealHuntMarket {
+    source?: "inventory";
     cardKey?: string;
     releaseYear?: number;
     title: string;
     summary: string;
-    discover(signal?: AbortSignal, reportQueries?: (description: string) => void): Promise<DealHuntCandidate[]>;
-    /** A later source page remains available under the same research account. */
+    discover(signal?: AbortSignal, reportQueries?: (description: string) => void,
+        chooseMarket?: (markets: { title: string; summary: string }[]) => Promise<number>): Promise<DealHuntCandidate[]>;
+    /** Another source page or release remains available under this account. */
     hasMore?(): boolean;
 }
 
 type ResearchChoice = { action: DealHuntAction; index: number };
-type DestinationChoice = { action: "finish"; index: number; section: DealHuntSection; decision: DealHuntOutcome["decision"]; reason: string };
-type MarketChoice = { action: "find_listings"; index: number; title: string; summary: string; differentCard?: boolean; releaseYear?: number };
+type DestinationChoice = { action: "finish"; index: number; section: DealHuntSection; decision: DealHuntOutcome["decision"]; reason: string; recentSales?: number };
+type MarketChoice = { action: "find_listings"; index: number; title: string; summary: string; source?: DealHuntMarket["source"]; differentCard?: boolean; releaseYear?: number };
 type Option = ResearchChoice | DestinationChoice | MarketChoice;
 
 const initialResearchLimit = 128;
@@ -92,7 +102,7 @@ function inventoryEntry({ listingId, title, summary, freshRawGradingLead }: Deal
 
 async function selectOption(options: Option[], searchId: string, goal: DealHuntGoal,
     inventory: ReturnType<typeof inventoryEntry>[], steps: DealHuntReport["steps"],
-    choose: typeof experiment, remainingChecks: number, signal?: AbortSignal, auction = false, pivot = false) {
+    choose: typeof experiment, remainingChecks: number, signal?: AbortSignal, auction = false, pivot = false, preferRecentSales = false, afterMiss = false) {
     if (options.length === 1) return {
         selected: options[0], reason: pivot ? "Only one eligible market remains to search and verify." : "This is the next available check.", reused: null,
     };
@@ -104,6 +114,7 @@ async function selectOption(options: Option[], searchId: string, goal: DealHuntG
     const menu = options.map(option => {
         if (option.action === "finish") return { key: key(option), decision: option.decision, reason: option.reason };
         if (option.action === "find_listings") return { key: key(option), market: option.title, evidence: option.summary,
+            ...(option.source && { source: option.source }),
             ...(option.differentCard !== undefined && { differentCard: option.differentCard }),
             ...(option.releaseYear !== undefined && { releaseYear: option.releaseYear }) };
         return { key: key(option) };
@@ -114,13 +125,14 @@ async function selectOption(options: Option[], searchId: string, goal: DealHuntG
         ? "Direct the research for the buyer's goal. Choose a primary check and optionally an independent check on another listing."
         : "Direct the research for the buyer's goal. Choose exactly one option from the supplied menu on each turn.";
     const guidance: string[] = [];
+    if (preferRecentSales) guidance.push("The buyer asked for a liquid card. Prioritize recent matched sales for the exact resale route ahead of larger projected profit, while preserving the buyer's profit and ROI targets. A price estimate alone does not establish liquidity.");
     if (auction) {
         guidance.push("Only consider active auctions ending in under ten hours. Compare the next legal bid, destination shipping, estimated tax and time remaining.");
         guidance.push(goal === "collect_slab"
             ? "For a collector, choose a slab within the buyer's delivered budget and fair value supported by matching sold copies. Resale fees and profit targets do not apply."
             : "For a flipper, prioritize recent sales activity and profit after costs at the next bid. An opening bid alone does not establish profit.");
     }
-    if (options.some(option => option.action === "find_listings")) {
+    if (options.some(option => option.action === "find_listings" && option.source !== "inventory")) {
         if (researchRawGrading && goal === "grade_raw") {
             guidance.push("find_listings searches a raw market. Compare recent matched sales at attainable grades, listing costs and profit potential. A sale at a high grade does not establish that a raw copy will earn that grade.");
         } else {
@@ -128,6 +140,9 @@ async function selectOption(options: Option[], searchId: string, goal: DealHuntG
                 ? "find_listings searches one exact slab market. Use matching sales, collector preferences and affordability to select a market. Verify the asking terms before recommending a copy."
                 : "find_listings opens current listings in the requested format for one exact market. Pick a promising market using recent matched sales and potential profit after costs. For resale the buyer cares about profit, regardless of card name. A historical profit or sales count is only a lead. Check an actual copy before recommending it.");
         }
+    }
+    if (options.some(option => option.action === "find_listings" && option.source === "inventory")) {
+        guidance.push("The broader inventory choice checks current eBay listings, including cards with no saved research. Use it when saved markets are sparse or unpromising. Assess the actual copy and exact matching prices before recommending a purchase.");
     }
     if (researchRawGrading) {
         guidance.push("A freshRawGradingLead is a recently listed raw copy worth investigating. Treat seller condition as a claim. Inspect the original photos to establish wear and the likely grade. Use matching sales and calculate_grading to test profit after costs at that grade and one lower.");
@@ -152,6 +167,8 @@ async function selectOption(options: Option[], searchId: string, goal: DealHuntG
     const referenceInstructions = options.some(option => option.action === "check_price_references")
         ? " check_price_references checks additional price sources when exact sales are sparse. Use it to resolve a missing price. A provider estimate or asking price cannot substitute for a completed matching sale."
         : "";
+    const offeredCopies = new Set(checks.map(check => check.index));
+    const shownInventory = afterMiss ? inventory.filter(row => offeredCopies.has(row.index)) : inventory;
     const answer = await withAiUsageContext({ searchId }, () => choose<{
         choice: string; also?: ResearchChoice; reason: string; fallback: boolean;
     }>({
@@ -160,12 +177,13 @@ async function selectOption(options: Option[], searchId: string, goal: DealHuntG
             step: "Choose deal research", schemaName: "deal_hunt_action",
             instructions: [choiceInstruction, instructions, ...guidance].join(" ") + pivotInstructions + referenceInstructions,
             photos: [], maxOutputTokens: allowPair ? 240 : 160,
-            prompt: JSON.stringify({ goal: dealHuntGoals[goal], inventory, observed, remainingChecks, menu }),
+            prompt: JSON.stringify({ goal: dealHuntGoals[goal], inventory: shownInventory, observed, remainingChecks, menu }),
             schema: { type: "object", additionalProperties: false, required: allowPair ? ["choice", "reason", "also"] : ["choice", "reason"], properties: {
                 choice: { type: "string", enum: choices }, reason: { type: "string", maxLength: 240 },
                 ...(allowPair && { also: { type: ["string", "null"], enum: [...checks.map(key), null] } }),
             } },
         },
+        recoverOutputLimit: true,
         onMalformedOutput() {
             // Every option comes from the host's evidence and prerequisites. Prefer an existing
             // decision or a terms check over starting another paid photo assessment.
@@ -197,7 +215,8 @@ async function selectOption(options: Option[], searchId: string, goal: DealHuntG
         reason: answer.result.reason, reused: answer.reused, fallback: answer.result.fallback };
 }
 
-export async function runDealHunt({ searchId, goal, candidates: initial, markets = [], auction = false, maxSteps = initialResearchLimit }: DealHuntInput, signal?: AbortSignal, choose = experiment): Promise<DealHuntReport> {
+export async function runDealHunt({ searchId, goal, candidates: initial, markets = [], auction = false, maxSteps = initialResearchLimit,
+    preferRecentSales = false, freshListings = false, guidedResale = false, progress }: DealHuntInput, signal?: AbortSignal, choose = experiment): Promise<DealHuntReport> {
     signal?.throwIfAborted();
     const format = auction ? "auction" : "Buy It Now";
     const candidates = [...initial];
@@ -217,6 +236,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
     };
     const completed = candidates.map(() => new Set<DealHuntAction>());
     const inventory = candidates.map(inventoryEntry);
+    let reconsiderCopies = false;
 
     try {
         while (true) {
@@ -231,7 +251,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             for (const [index, candidate] of candidates.entries()) {
                 const checked = completed[index];
                 const outcome = checked.size ? candidate.outcome(checked) : null;
-                if (remainingChecks > 0 && !(huntGradingMarkets && outcome)) {
+                if (remainingChecks > 0 && !((huntGradingMarkets || freshListings) && outcome)) {
                     const available = [...new Set(candidate.available(checked))].filter(action => !checked.has(action));
                     const affordable = huntGradingMarkets ? affordableGradingChecks(available, checked, remainingChecks) : available;
                     if (available.length && !affordable.length && !outcome) gradingChecksExceedLimit = true;
@@ -247,7 +267,8 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                 }
                 if (outcome) {
                     for (const section of new Set([outcome.section, ...(outcome.alternateSections ?? [])])) {
-                        options.push({ action: "finish", index, section, decision: outcome.decision, reason: outcome.reason });
+                        options.push({ action: "finish", index, section, decision: outcome.decision, reason: outcome.reason,
+                            ...(outcome.recentSales !== undefined && { recentSales: outcome.recentSales }) });
                     }
                 }
             }
@@ -255,9 +276,10 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             const canBrowse = huntMarketsForBuyer ? canVerifyNewCopy && (!hasUncheckedMarketCopy || canSwitchCopy)
                 : steps.length < researchLimit && searchedMarkets.size < 2;
             if (canBrowse) {
-                markets.forEach(({ title, summary }, index) => {
+                markets.forEach(({ title, summary, source }, index) => {
                     if (!searchedMarkets.has(index) || markets[index].hasMore?.()) options.push({ action: "find_listings", index, title,
-                        summary: searchedMarkets.has(index) ? `Continue the next source page. ${summary}` : summary });
+                        ...(source && { source }), summary: searchedMarkets.has(index)
+                            ? `${source === "inventory" ? "Check the next eligible release." : "Continue the next source page."} ${summary}` : summary });
                 });
             }
             if (!options.length) {
@@ -274,8 +296,10 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                 return wait("The available evidence did not establish a purchase for this goal.");
             }
             // A supported buy for this goal has precedence over reporting a different copy's WAIT.
-            const buys = options.filter(option => option.action === "finish" && option.decision !== "WAIT");
-            const eligible = buys.length ? buys : huntMarketsForBuyer && (hasUncheckedMarketCopy || options.some(option => option.action === "find_listings"))
+            const buys = options.filter((option): option is DestinationChoice => option.action === "finish" && option.decision !== "WAIT");
+            const mostRecentSales = Math.max(0, ...buys.map(option => option.recentSales ?? 0));
+            const eligible = buys.length ? preferRecentSales ? buys.filter(option => (option.recentSales ?? 0) === mostRecentSales) : buys :
+                huntMarketsForBuyer && (hasUncheckedMarketCopy || options.some(option => option.action === "find_listings"))
                 ? options.filter(option => option.action !== "finish") : options;
             // After two unsuccessful markets, reserve the remaining checks for a new copy.
             // Let the planner compare every unsearched eligible market, including another printing.
@@ -289,13 +313,54 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                     ...(cardKey && { differentCard: [...searchedMarkets].every(index => markets[index].cardKey !== cardKey) }),
                 };
             }) : eligible;
-            const { selected, also, reason, reused, fallback } = await selectOption(menu, searchId, goal, inventory, steps, choose, remainingChecks, signal, auction, pivot);
+            progress?.stage("planning");
+            // New listings arrive in screened market order. Complete one copy's physical and
+            // financial checks without buying a separate planning call for each observation.
+            const lastCopy = steps.at(-1)?.listingId;
+            const pendingCopies = menu.filter(isListingCheck);
+            const chooseAfterMiss = freshListings && reconsiderCopies && lastCopy && !buys.length &&
+                !pendingCopies.some(option => inventory[option.index].listingId === lastCopy) &&
+                new Set(pendingCopies.map(option => option.index)).size > 1;
+            let choiceMenu = menu;
+            if (chooseAfterMiss) {
+                reconsiderCopies = false;
+                const nextIndices = new Set([...new Set(pendingCopies.map(option => option.index))].slice(0, FIRST_REVIEW_COUNT));
+                choiceMenu = menu.filter(option => !isListingCheck(option) || nextIndices.has(option.index));
+            }
+            const nextFresh = freshListings && !chooseAfterMiss && (buys.at(0) ??
+                pendingCopies.find(option => inventory[option.index].listingId === lastCopy) ?? pendingCopies.at(0) ?? menu[0]);
+            const { selected, also, reason, reused, fallback } = nextFresh
+                ? { selected: nextFresh, also: undefined, reason: nextFresh.action === "find_listings" ? "Check newly listed Buy It Now cards." :
+                    nextFresh.action === "finish" ? "Use the checked purchase evidence." : "Verify this copy against the purchase criteria.", reused: null, fallback: false }
+                : await selectOption(choiceMenu, searchId, goal, inventory, chooseAfterMiss ? steps.slice(-6) : steps, choose,
+                remainingChecks, signal, auction, pivot, preferRecentSales, Boolean(chooseAfterMiss));
             const selectedBy = reused === null || fallback ? "app" : "model";
+            if (chooseAfterMiss && selectedBy === "model") progress?.guidance?.(reason);
             signal?.throwIfAborted();
             if (selected.action === "find_listings") {
                 searchedMarkets.add(selected.index);
                 const queries: string[] = [];
-                const discovered = await withAiUsageContext({ searchId }, () => markets[selected.index].discover(signal, note => queries.push(note)));
+                progress?.stage("discovering", selected.title, selected.action);
+                let choiceReason = reason, choiceReused = reused;
+                let choiceSource: "app" | "model" = selectedBy;
+                const chooseMarket = async (routes: { title: string; summary: string }[]) => {
+                    signal?.throwIfAborted();
+                    const options = routes.map((route, index): MarketChoice => ({ ...route, index, action: "find_listings", source: "inventory" }));
+                    progress?.stage("planning", "Comparing the next markets after the checked listings");
+                    const decision = await selectOption(options, searchId, goal, [], [
+                        ...steps.filter(step => step.action === "find_listings").slice(-3),
+                        ...steps.filter(step => step.listingId).slice(-4),
+                    ], choose, remainingChecks, signal, auction, true, preferRecentSales);
+                    signal?.throwIfAborted();
+                    choiceReason = decision.reason;
+                    choiceReused = decision.reused;
+                    choiceSource = choiceReused === null || decision.fallback ? "app" : "model";
+                    progress?.guidance?.(choiceReason);
+                    return decision.selected.index;
+                };
+                const discovered = await withAiUsageContext({ searchId }, () => markets[selected.index].discover(signal,
+                    note => queries.push(note), guidedResale ? chooseMarket : undefined));
+                reconsiderCopies = guidedResale;
                 signal?.throwIfAborted();
                 let added = 0;
                 for (const candidate of discovered) {
@@ -306,7 +371,8 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                     added++;
                 }
                 const observation = [selected.summary, ...queries, `Found ${added} additional eligible ${format} ${added === 1 ? "listing" : "listings"} to check.`].join(" ");
-                steps.push({ listingId: null, title: selected.title, action: selected.action, reason, observation, reused, selectedBy });
+                steps.push({ listingId: null, title: selected.title, action: selected.action, reason: choiceReason, observation,
+                    reused: choiceReused, selectedBy: choiceSource });
                 continue;
             }
             const candidate = candidates[selected.index];
@@ -317,13 +383,16 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                     ? selected.section : current.section;
                 return { searchId, goal, steps, decision: current.decision,
                     reason: fallback ? `${current.reason} The app selected this evidence after an unreadable AI choice.` : current.reason,
+                    ...(current.verifiedPurchase && { verifiedPurchase: current.verifiedPurchase }),
                     destination: { listingId: candidate.listingId, section } };
             }
             const checks = also ? [selected, also] : [selected];
+            progress?.stage("reviewing", candidate.title, selected.action);
             const results = await Promise.allSettled(checks.map(async ({ index, action }) => {
                 const listing = candidates[index];
                 const observation = await withAiUsageContext({ searchId, listingId: listing.listingId }, () => listing.read(action, signal));
                 if (typeof observation !== "string" || !observation.trim()) throw new Error("The research function returned no observation.");
+                progress?.checked(listing.listingId, action);
                 return observation.slice(0, 1800);
             }));
             signal?.throwIfAborted();
@@ -347,14 +416,15 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             reason = "The search reached its pricing allowance before the evidence supported a decision.";
         } else {
             const guard = aiSpendingFailure(error);
-            if (guard?.code !== "AI_BUDGET" && guard?.code !== "AI_PAUSED") throw error;
-            reason = "The search’s AI spending allowance or pause setting stopped research before it reached a decision.";
+            if (!guard || guard.code === "AI_EVIDENCE_HELD") throw error;
+            reason = guard.message;
         }
         // A sibling check can finish verifying a bid while another exhausts an allowance.
         for (const [index, candidate] of candidates.entries()) {
             const outcome = completed[index].size && candidate.outcome(completed[index]);
             if (outcome && outcome.decision !== "WAIT") return {
                 searchId, goal, steps, decision: outcome.decision, reason: outcome.reason,
+                ...(outcome.verifiedPurchase && { verifiedPurchase: outcome.verifiedPurchase }),
                 destination: { listingId: candidate.listingId, section: outcome.section },
             };
         }

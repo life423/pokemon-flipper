@@ -5,7 +5,7 @@ import { setKey } from "./sets.ts";
 import { explicitReprintSet, hasBaseSetFourthPrint } from "./reprint-release.ts";
 import { confirmedPhotoCard, observedCardKind } from "./photo-evidence.ts";
 import { compareCardNumbers } from "./card-number.ts";
-import { outsideSearchYears, withoutSearchYears } from "./search-years.ts";
+import { outsideSearchYears, releaseYearText, withoutSearchYears } from "./search-years.ts";
 
 type Finish = NonNullable<SearchIntent["finish"]>;
 const GRADER = "(?:psa|cgc|bgs|sgc|tag)";
@@ -128,11 +128,14 @@ export function evaluatedIdentityMismatch(evaluation: Evaluation, intent: Search
     if (outsideSearchYears(intent, card?.set ?? evaluation.identity?.set, evaluation.listing?.title ?? "")) return "OTHER_SET";
     if (cardSet && wantedSets.length && !wantedSets.includes(cardSet)) return "OTHER_SET";
     if (compareCardNumbers(intent.cardNumber, card?.cardNumber) === false) return "OTHER_CARD";
-    if (card?.name && !/^(?:unknown|not (?:known|visible|stated))$/i.test(card.name) && intent.titleWords.length) {
+    if (card?.name && !/^(?:unknown|not (?:known|visible|stated))$/i.test(card.name)) {
         const words = (value: string) => value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
             .replace(/♀/g, " female ").replace(/♂/g, " male ").replace(/[^a-z0-9]+/g, " ").trim();
         const name = ` ${words(card.name)} `;
-        if (intent.titleWords.some(word => !name.includes(` ${words(word)} `))) return "OTHER_CARD";
+        // An interpreted buyer query may have a name without title words.
+        // Catalog-generated market intents verify their artwork aliases separately.
+        const requested = intent.titleWords.length ? intent.titleWords : intent.source === "ai" && intent.cardName ? [intent.cardName] : [];
+        if (requested.some(word => !name.includes(` ${words(word)} `))) return "OTHER_CARD";
     }
     if (identified && intent.printing && isPrinting(identified.printing) && identified.printing !== intent.printing &&
         (!strongPhoto || !photo?.set || !identified.set || searchSetFamily(photo.set) === searchSetFamily(identified.set))) return "OTHER_PRINTING";
@@ -174,5 +177,5 @@ export function describeSearchCriteria(intent: SearchIntent): string[] {
     const range = !grades ? "" : intent.minGrade === intent.maxGrade ? `${intent.minGrade}` : intent.maxGrade === 10 ? `${intent.minGrade ?? 1}+` : `${intent.minGrade ?? 1}–${intent.maxGrade ?? 10}`;
     return [intent.grader ? `${intent.grader}${range ? ` ${range}` : ""}` : grades ? `Grade ${range}` : intent.graded === null ? "" : intent.graded ? "Graded" : "Raw",
         intent.finish === "HOLO" ? "Holo only" : intent.finish === "REVERSE_HOLO" ? "Reverse holo only" : intent.finish === "NON_HOLO" ? "Non-holo only" : "Any finish",
-        intent.minYear === undefined ? "" : intent.minYear === intent.maxYear ? `${intent.minYear}` : `${intent.minYear}–${intent.maxYear}`].filter(Boolean);
+        releaseYearText(intent.minYear, intent.maxYear)].filter(Boolean);
 }

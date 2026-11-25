@@ -64,6 +64,10 @@ export async function supplementalResearch(value: Evaluation, options: { cacheOn
             options.signal.throwIfAborted();
             if (storageFailure(error) || error instanceof PriceResearchBudgetError && error.reason !== "LIMIT") throw error;
             const guard = aiSpendingFailure(error);
+            if (guard?.code === "AI_EVIDENCE_HELD") {
+                result.supplementalPriceNote = [result.supplementalPriceNote, `${source} has no additional confirmed price for this copy.`].filter(Boolean).join(" ");
+                return null;
+            }
             if (guard && !(error instanceof AiSearchAllowanceError) && guard.code !== "AI_PAUSED") throw error;
             const message = guard || error instanceof PriceResearchBudgetError
                 ? `${source} stopped at the search allowance or spending setting.` : `${source} was unavailable for this check.`;

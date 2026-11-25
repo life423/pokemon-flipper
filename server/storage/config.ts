@@ -1,6 +1,10 @@
 export class StorageUnavailableError extends Error {
     readonly code = "STORAGE_UNAVAILABLE";
-    constructor(message = "Saved evidence storage is unavailable. No replacement provider work was authorized.", options?: ErrorOptions) { super(message, options); }
+    readonly scope: "listing" | "search";
+    constructor(message = "Saved evidence storage is unavailable. No replacement provider work was authorized.", options?: ErrorOptions & { scope?: "listing" | "search" }) {
+        super(message, options);
+        this.scope = options?.scope ?? "search";
+    }
 }
 
 export function storageBackend(): "file" | "azure-sql" {

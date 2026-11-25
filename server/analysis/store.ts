@@ -53,7 +53,7 @@ export function createAssessmentStore({ directory = STORE_DIR, backend = storage
             }
             catch (error) {
                 if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-                throw new StorageUnavailableError("The saved photo assessment could not be read. It was kept; no replacement AI assessment was started.", { cause: error });
+                throw new StorageUnavailableError("The saved photo assessment could not be read.", { cause: error });
             }
         },
         async save(itemId: string, record: SavedRecord): Promise<void> {

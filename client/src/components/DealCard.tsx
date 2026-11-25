@@ -4,16 +4,18 @@ import { currentBinComparison } from "../../../shared/bin-market-comparison.ts";
 import type { ListingSummary, Targets } from "../types";
 import { dollars, timeLeft, name } from "../format";
 import { ceilingLabel } from "../../../shared/format.ts";
-import { numbersAtOffer, offerFor } from "../../../shared/money/offer.ts";
+import { numbersAtOffer } from "../../../shared/money/offer.ts";
 import { MONEY_CONFIG } from "../../../shared/money/config.ts";
 import { acquisitionCost } from "../../../shared/money/underwriting.ts";
 import { slabBuyGuidance } from "../../../shared/money/slab-buy-guidance.ts";
+import { applyVerifiedPurchase, PURCHASE_RECHECK_MESSAGE } from "../../../shared/money/verified-purchase.ts";
 import { rawBuyGuidance } from "../../../shared/money/raw-buy-guidance.ts";
 import { auctionDecision, returnText } from "../../../shared/card-presentation.ts";
 import { readyForPricing } from "../../../shared/identity.ts";
 import { unconfirmedResale } from "../../../shared/wait-skip-review.ts";
 import { yearOf } from "../../../shared/sets.ts";
 import { resaleActivity } from "../../../shared/liquidity.ts";
+import { SALES_ACTIVITY_DAYS } from "../../../shared/sales-activity.ts";
 import { hasSlabEvidence, photoEvidence } from "../../../shared/photo-evidence.ts";
 import { currentSellerMistakes } from "../../../shared/seller-mistakes.ts";
 import { AuctionSummary } from "./AuctionSummary";
@@ -23,14 +25,17 @@ import { RawCardGrade } from "./RawCardGrade";
 import { ListingThumbnail } from "./ListingThumbnail";
 import { PhotoReview, type DeeperReviewState } from "./PhotoReview";
 import styles from "./DealCard.module.css";
+import { releaseIssue, withReleaseEvidence } from "../../../shared/base-set-release.ts";
+import { listingMarketPrices } from "../../../shared/listing-market-prices.ts";
+import { MarketPrices } from "./MarketPrices";
 import { cardDetails } from "../../../shared/card-details.ts";
 import { claimedCondition, conditionGap, CONDITION_NAMES, isRawCondition } from "../../../shared/conditions.ts";
 import { isResearchDeferred, photoReviewStatus, printingReviewReasons } from "../../../shared/photo-review.ts";
 import { SoldPriceScreening } from "./SoldPriceScreening";
-import { isRawSoldPrice, priceEvidenceGap } from "../../../shared/money/price-evidence.ts";
+import { isRawSoldPrice, priceEvidenceGap, rawPriceForPath } from "../../../shared/money/price-evidence.ts";
 import { resultGroup } from "../../../shared/analysis.ts";
-import { reviewedOfferPlan, SellerOfferDraft, type ReviewedDecision } from "./analysis/OfferSection";
-import { soldEstimateBasis } from "./analysis/PricingSections";
+import { listingOffer, SellerOfferDraft, type ReviewedDecision } from "./analysis/OfferSection";
+import { soldEstimateBasis, tcgplayerEstimateLabel } from "./analysis/PricingSections";
 
 interface Props {
     index?: number;
@@ -59,8 +64,13 @@ const LISTED_DATE = new Intl.DateTimeFormat(undefined, { year: "numeric", month:
 const signed = (value: number) => `${value < 0 ? "−" : "+"}${dollars(Math.abs(value))}`;
 const dateOf = (value: string | null | undefined) => typeof value === "string" && Number.isFinite(Date.parse(value)) ? new Date(value) : null;
 
-export function DealCard({ listing, analysis, assessmentNote, automaticDecision, reviewPending, reviewActive, selected, now, onOpen, onSnipe, years, index = 0, transitionName, minGrade = 0, targets = MONEY_CONFIG.targets, includeOffers, photoReviewState, saved, saving, onSave }: Props) {
-    const evaluation = analysis?.status === "done" ? analysis.evaluation : null;
+export function DealCard({ listing, analysis, assessmentNote, automaticDecision: receipt, reviewPending, reviewActive, selected, now, onOpen, onSnipe, years, index = 0, transitionName, minGrade = 0, targets = MONEY_CONFIG.targets, includeOffers, photoReviewState, saved, saving, onSave }: Props) {
+    const assessed = analysis?.status === "done" ? withReleaseEvidence(analysis.evaluation) : null;
+    const reviewed = receipt?.decision === "BUY" && assessed?.listing.id === listing.id
+        ? applyVerifiedPurchase(assessed, receipt.verifiedPurchase, targets, now) : null;
+    const evaluation = reviewed ?? assessed;
+    const automaticDecision: ReviewedDecision | undefined = receipt?.decision === "BUY" && !reviewed
+        ? { decision: "WAIT", reason: PURCHASE_RECHECK_MESSAGE } : receipt;
     const identityGap = evaluation !== null && !readyForPricing(evaluation.identity);
     const pricingExpired = analysis?.status === "done" && analysis.pricingExpired;
     const priceGap = priceEvidenceGap(evaluation);
@@ -72,11 +82,10 @@ export function DealCard({ listing, analysis, assessmentNote, automaticDecision,
     const guidance = priceGap && evaluation && !pricingExpired && !priceReview ? rawBuyGuidance(evaluation, now, targets) : null;
     const slabGuidance = !pricingExpired ? slabBuyGuidance(evaluation, now) : null;
     const best = evaluation?.underwriting?.best;
-    const rawPrice = best?.path === "RAW" ? evaluation?.rawPricing?.prices?.find(price =>
-        price.condition === best.priceCondition && price.price === best.salePrice && isRawSoldPrice(price)) : undefined;
+    const rawPrice = best && rawPriceForPath(evaluation?.rawPricing, best);
     const assessedCondition = evaluation?.condition?.rawCondition;
     const lowerConditionSales = evaluation?.rawPricing?.conditionEvidence === "AI_PHOTOS" && isRawCondition(assessedCondition) &&
-        rawPrice && isRawCondition(rawPrice.condition) && conditionGap(assessedCondition, rawPrice.condition) > 0 ? rawPrice.comps : undefined;
+        rawPrice && isRawSoldPrice(rawPrice) && isRawCondition(rawPrice.condition) && conditionGap(assessedCondition, rawPrice.condition) > 0 ? rawPrice.comps : undefined;
     const verdict = evaluation?.underwriting?.verdict;
     const group = resultGroup(listing, evaluation, includeOffers);
     const deal = group === "deals" && Boolean(best);
@@ -95,9 +104,9 @@ export function DealCard({ listing, analysis, assessmentNote, automaticDecision,
     const comparison = !pricingExpired && currentBinComparison(listing, evaluation, now);
     const unresolved = analysis?.status === "held" || analysis?.status === "inconclusive";
     const pricePending = !evaluation && !unresolved && screen?.priceAnomaly && !screen.priceAnomaly.photoChecked;
-    const offer = !reviewPending && !identityGap && !pricingExpired && group === "offers"
-        ? reviewedOfferPlan(offerFor(listing, best?.maxBid), automaticDecision) : null;
-    const offerNumbers = offer && best ? numbersAtOffer(best, offer) : null;
+    const offer = !reviewPending && !identityGap && !pricingExpired && group === "offers" && evaluation
+        ? listingOffer(listing, evaluation, targets, now, automaticDecision) : null;
+    const offerNumbers = offer ? numbersAtOffer(offer.path, offer.plan) : null;
     const evidence = evaluation ? photoEvidence(evaluation, minGrade) : null;
     const mistakes = currentSellerMistakes(listing, evaluation);
     const activity = resaleActivity(evaluation, now);
@@ -108,7 +117,7 @@ export function DealCard({ listing, analysis, assessmentNote, automaticDecision,
     const number = card?.cardNumber?.replace(/^0+(?=\d)/, "");
     const title = card?.name ? [card.name, number].filter(Boolean).join(" ") : listing.title;
     const showUnlimited = evaluation?.identity?.status === "IDENTIFIED" && evaluation.identity.hasEditions && !/\bunlimited\b/i.test(card?.set ?? "");
-    const subtitle = card?.name ? [card.set, yearOf(years, card.set), card.printing !== "UNLIMITED" || showUnlimited ? card.printingLabel : null].filter(Boolean).join(" · ") : listing.isGraded ? "Graded card" : "Raw card";
+    const subtitle = card?.name ? [card.set, yearOf(years, card.set), card.printing !== "UNLIMITED" || showUnlimited ? card.printingLabel : null].filter(Boolean).join(" · ") : null;
     const unavailable = listing.availability === "UNAVAILABLE" || evaluation?.listing.availability === "UNAVAILABLE" ||
         Boolean(listing.endTime && Date.parse(listing.endTime) <= now) || decision?.ended;
     const checking = !automaticDecision && (reviewPending || analysis?.status === "loading");
@@ -116,6 +125,8 @@ export function DealCard({ listing, analysis, assessmentNote, automaticDecision,
     const underwritingReason = evaluation?.underwriting && printingReviewReasons(evaluation, evaluation.underwriting.reasons)[0];
     function buyerDecision(): [badge: string, tone: string, reason: string] {
         if (unavailable) return ["Skip", "pass", "This listing is no longer available to buy."];
+        const release = evaluation && (evaluation.identity?.notThisCard || releaseIssue(evaluation));
+        if (release) return evaluation?.identity?.notThisCard ? ["Skip", "pass", release] : ["Wait", "watch", release];
         if (opportunity && opportunity.validUntil <= now) return ["Wait", "watch", "The auction check expired. A fresh bid quote and matching sales are needed to update the bid limit."];
         if (opportunity?.status === "BID") {
             const reason = opportunity.nextBid != null && opportunity.nextTotal != null && opportunity.profitAtNext != null && opportunity.route
@@ -180,7 +191,7 @@ export function DealCard({ listing, analysis, assessmentNote, automaticDecision,
                 <div className={styles.identity}>
                     <div className={styles.metaRow}><span className={styles.saleType}>{auction ? "Auction" : "Buy It Now"}</span><span className={styles.badge}>{badge}</span></div>
                     <h2><button type="button" onClick={onOpen}>{title}</button></h2>
-                    <p>{subtitle}</p>
+                    {subtitle && <p>{subtitle}</p>}
                     <p className={styles.details}><span>{details.source}: </span>{details.grade} · {details.finish}</p>
                     {evaluation && !slab && <RawCardGrade evaluation={evaluation} />}
                     {evaluation?.photoCheck && <p className={styles.evidenceStatus}>{photoStatus.checked} of {photoStatus.total} photos checked{slab && ` · ${name(photoStatus.confidence)} confidence`}</p>}
@@ -198,6 +209,10 @@ export function DealCard({ listing, analysis, assessmentNote, automaticDecision,
                 </p> : <p className={styles.note}>{auction ? `${timeLeft(currentQuote?.endsAt ?? listing.endTime, now) ?? "End time unavailable"} · ${bids} ${bids === 1 ? "bid" : "bids"} · ` : ""}{shipping === null ? !evaluation && screen?.soldEvidence
                     ? "Shipping not quoted · preliminary screening excludes shipping"
                     : `Shipping not quoted · ${dollars(MONEY_CONFIG.buying.assumedShippingWhenUnknown)} assumed in estimates` : shipping === 0 ? "Free shipping" : `${dollars(shipping)} shipping`}</p>}
+                {!checking && <MarketPrices prices={pricingExpired ? undefined : listingMarketPrices(evaluation, listing, now)} now={now} />}
+                {showEconomics && best?.path === "RAW" && rawPrice && !priceGap && <p className={styles.note}>
+                    Resale {dollars(rawPrice.price)} · {tcgplayerEstimateLabel(rawPrice.basis) ?? (evaluation?.rawPricing?.source === "pkmnprices" ? "Matched eBay sales via PKMNPrices" : "Matched eBay sales")}
+                </p>}
                 {showEconomics && best && outcome && <p className={styles.note}>{best.label} · total invested {dollars(outcome.cost)} · includes tax, shipping{best.path === "GRADE" ? " and grading" : ""}. Sale fees are included in net profit.</p>}
                 {comparison && !override && !checking && <p className={styles.note}>
                     <strong>Price lead · {comparison.discountPercent}% below both medians at search time</strong><br />
@@ -216,7 +231,7 @@ export function DealCard({ listing, analysis, assessmentNote, automaticDecision,
         </div>
         <div className={styles.notices}>
             <p className={styles.note}>{reason}</p>
-            {!unavailable && offer && offerNumbers && <p className={styles.note}>Open at {dollars(offer.offer)} · walk away above {dollars(offer.walkAway)} · est. profit {signed(offerNumbers.profit)} if accepted.</p>}
+            {!unavailable && offer && offerNumbers && <p className={styles.note}>Open at {dollars(offer.plan.offer)} · walk away above {dollars(offer.plan.walkAway)} · {offer.path.label} · est. profit {signed(offerNumbers.profit)} if accepted.</p>}
         </div>
         <details className={styles.support}>
             <summary>Evidence and costs <span>Photos · condition · recent sales</span></summary>
@@ -227,9 +242,9 @@ export function DealCard({ listing, analysis, assessmentNote, automaticDecision,
                 {!evaluation && screen?.soldEvidence && <SoldPriceScreening listing={listing} compact />}
                 {!evaluation && !screen?.soldEvidence && screen?.status === "UNSCREENED" && <p className={styles.note}>{screen.pricingIssue?.kind === "RATE_LIMIT" ? "Pricing paused for provider cooldown." : screen.pricingIssue?.kind === "TEMPORARY" ? "Price lookup temporarily unavailable." : screen.pricingIssue?.kind === "CREDITS" ? "Pricing unavailable. Check provider credits." : screen.pricingIssue?.kind === "CONFIG" ? "Pricing unavailable. Check provider setup." : screen.reason}</p>}
                 {auction && evaluation && showEconomics && <AuctionSummary evaluation={evaluation} targets={targets} now={now} />}
-                {offer && <SellerOfferDraft key={offer.offer} cardName={card?.name} plan={offer} />}
+                {offer && <SellerOfferDraft key={offer.plan.offer} cardName={card?.name} plan={offer.plan} />}
                 {mistakes[0] && <p className={styles.note}>{mistakes[0].detail}</p>}
-                {!priceGap && best?.path === "RAW" && <p className={styles.note}>Estimated resale {dollars(best.salePrice)} · {name(best.priceCondition ?? "UNKNOWN")} · {soldEstimateBasis(rawPrice?.comps)}.</p>}
+                {!priceGap && rawPrice && !(showEconomics && best?.path === "RAW") && <p className={styles.note}>Estimated resale {dollars(rawPrice.price)} · {name(rawPrice.condition)} · {tcgplayerEstimateLabel(rawPrice.basis) ?? soldEstimateBasis(rawPrice.comps)}.</p>}
                 {best?.path === "GRADED_RESALE" && evaluation?.slabPricing?.activeReference && !evaluation.slabPricing.summary?.count && <p className={styles.note}>Resale target {dollars(best.salePrice)} · below photo-checked Buy It Now competition.</p>}
                 {!slab && sellerCondition && sellerCondition !== evaluation?.condition?.rawCondition && <p className={styles.note}>Seller described this card as {CONDITION_NAMES[sellerCondition]}.</p>}
                 {!slab && minGrade > 0 && evidence && <p className={styles.note}>{evidence.target}</p>}
@@ -238,7 +253,9 @@ export function DealCard({ listing, analysis, assessmentNote, automaticDecision,
                     {sellerInventory && <div><dt>Seller inventory sample</dt><dd>{sellerInventory.cardListings.toLocaleString()} trading card {sellerInventory.cardListings === 1 ? "single" : "singles"} · {sellerInventory.otherListings.toLocaleString()} {sellerInventory.otherListings === 1 ? "listing" : "listings"} in {sellerInventory.categories.slice(1).join(" and ") || "other sampled categories"}</dd></div>}
                     <div><dt>Listing date</dt><dd>{listingDate ? <>{listedAt ? "Listed" : "Created"} <time dateTime={listingDate.toISOString()} title={listingDate.toUTCString()}>{LISTED_DATE.format(listingDate)}</time></> : "Listed time unavailable"}</dd></div>
                 </dl>
-                {evaluation && <p className={styles.note} title={activity.detail}>{activity.label}{activity.recentSales !== null ? ` · ${activity.recentSales} ${activity.scope === "MATCHED" ? "matching sold comps" : evaluation.marketActivity?.scope === "RAW" ? "sales across raw conditions" : "sales across all grades"} / 30 days` : ""}</p>}
+                {evaluation && <p className={styles.note} title={activity.detail}>{activity.label}{activity.recentSales !== null && (activity.scope === "MATCHED"
+                    ? ` · ${activity.recentSales} matching sold comps / ${SALES_ACTIVITY_DAYS} days`
+                    : ` · ${activity.recentSales} sales across ${evaluation.marketActivity?.scope === "RAW" ? "raw conditions" : "all grades"} / 30 days`)}</p>}
             </div>
         </details>
     </article>;

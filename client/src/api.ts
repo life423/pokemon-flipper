@@ -11,9 +11,16 @@ import type { DiscoveryOrder, ListingFilters, MarketplaceOrder } from "../../sha
 import type { SearchDiagnosticResult, SearchDiagnosticRow, SearchSourceCoverage } from "../../shared/search-diagnostic.ts";
 import type { CollectorStrategyState, LiveCollectorReport } from "../../shared/collector-strategy.ts";
 import type { DealHuntRequest, DealHuntResponse } from "../../shared/deal-hunt.ts";
-import { isBuyerReviewFailure, type BuyerListingReview } from "../../shared/wait-skip-review.ts";
+import { isBuyerReviewFailure, isBuyerWaitReason, type BuyerListingReview } from "../../shared/wait-skip-review.ts";
 import type { SearchReviewSelection } from "../../shared/search-review-selection.ts";
 import type { SearchContinuation } from "../../shared/search-continuation.ts";
+
+export function fetchShippingDestination(signal?: AbortSignal) {
+    return request<{ zip: string | null }>("/api/shipping-destination", { signal, cache: "no-store" });
+}
+export function saveShippingDestination(zip: string) {
+    return request<{ zip: string }>("/api/shipping-destination", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ zip }) });
+}
 
 export function fetchAuctionTracking(signal?: AbortSignal) {
     return request<import("../../shared/auction-tracking.ts").AuctionTrackingResults>("/api/auction-tracking", { signal });
@@ -40,7 +47,12 @@ function retryDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
         signal?.addEventListener("abort", cancel, { once: true });
     });
 }
-export function fetchAiUsage(searchRunId?: string): Promise<AiUsageDay> { return request(`/api/ai-usage${searchRunId ? `?searchId=${encodeURIComponent(watchBudgets.get(searchRunId) ?? searchRunId)}` : ""}`); }
+export function fetchAiUsage(searchRunId?: string, huntId?: string): Promise<AiUsageDay> {
+    const query = new URLSearchParams();
+    if (searchRunId) query.set("searchId", watchBudgets.get(searchRunId) ?? searchRunId);
+    if (huntId && huntId !== query.get("searchId")) query.set("huntId", huntId);
+    return request(`/api/ai-usage${query.size ? `?${query}` : ""}`);
+}
 export function gradeCameraCard(photos: { front: string; back: string; tilted?: string }, signal?: AbortSignal): Promise<CameraGradeResult> {
     return request("/api/camera/grade", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(photos), signal,
@@ -49,9 +61,12 @@ export function gradeCameraCard(photos: { front: string; back: string; tilted?: 
 // One explicit operation keeps one ID through retries and nested analysis.
 // Standalone link/shortlist actions receive their own bounded request group.
 const watchBudgets = new Map<string, string>();
+export function restoreWatchBudget(id: string, original: string) {
+    if (id !== original) watchBudgets.set(id, watchBudgets.get(original) ?? original);
+}
 export function newWatchScanId(parentSearchId: string): string {
     const id = crypto.randomUUID();
-    watchBudgets.set(id, watchBudgets.get(parentSearchId) ?? parentSearchId);
+    restoreWatchBudget(id, parentSearchId);
     return id;
 }
 const searchHeaders = (searchRunId: string = crypto.randomUUID()): Record<string, string> => {
@@ -78,6 +93,7 @@ export async function reviewBuyerListing(id: string, searchId: string, targets: 
     if (!result || result.listingId !== id || !["WAIT", "SKIP", "BUY"].includes(result.decision) || typeof result.reason !== "string" || !result.reason.trim() ||
         result.unavailable && (result.decision !== "WAIT" || result.offer) ||
         result.failure !== undefined && (!result.unavailable || !isBuyerReviewFailure(result.failure)) ||
+        result.waitReason !== undefined && (result.decision !== "WAIT" || !isBuyerWaitReason(result.waitReason)) ||
         result.retryAt !== undefined && (!result.unavailable || !result.failure?.retryable || !Number.isSafeInteger(result.retryAt) || result.retryAt < 0) ||
         result.failure?.retryable && result.retryAt === undefined)
         throw new ApiRequestError("The buyer review response was incomplete. Its purchase advice was not accepted.");
@@ -102,6 +118,11 @@ export function startLiveCollectorStrategy(sourceSearchId: string, maxTotal: num
     return request("/api/collector-strategy/live", {
         method: "POST", headers: { ...searchHeaders(runId), "Content-Type": "application/json" },
         body: JSON.stringify({ sourceSearchId, maxTotal }), signal,
+    });
+}
+export function fetchPriceHistory(listingId: string, market: string, signal: AbortSignal) {
+    return request<import("../../shared/price-history.ts").MarketHistory>(`/api/listings/${encodeURIComponent(listingId)}/price-history`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ market }), signal,
     });
 }
 export function fetchCardmarketComparison(listingId: string, market: string, searchId?: string): Promise<CardmarketComparison> {
@@ -142,7 +163,8 @@ export function cancelSnipe(id: string): Promise<{ job: SniperJob }> {
     return request(`/api/sniper/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 export class ApiRequestError extends Error {
-    constructor(message: string, readonly retryable = false, readonly retryAfterMs = 1500, readonly code?: string, readonly retryAt?: number) { super(message); }
+    constructor(message: string, readonly retryable = false, readonly retryAfterMs = 1500, readonly code?: string, readonly retryAt?: number,
+        readonly failureScope?: "listing" | "search") { super(message); }
 }
 
 export function saveSearchDiagnostic(searchRunId: string, rows: SearchDiagnosticRow[], signal: AbortSignal): Promise<SearchDiagnosticResult> {
@@ -166,7 +188,7 @@ async function reach(url: string, init?: RequestInit): Promise<Response> {
         return await fetch(url, { ...init, headers });
     } catch (error) {
         if (init?.signal?.aborted) throw error;
-        throw new ApiRequestError("The app connection was interrupted. Reconnecting to resume saved analysis.", true);
+        throw new ApiRequestError("The app connection was interrupted. Reconnect to continue.", true);
     }
 }
 
@@ -178,7 +200,8 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
         const declared = Number(body?.retryAfterMs);
         const cooldown = Number.isFinite(declared) && declared > 0 ? Math.max(1500, Math.ceil(declared)) : 1500;
         throw new ApiRequestError(body?.error ?? `Request failed (${response.status})`, body?.retryable === true || body?.retryable === undefined && [502, 503, 504].includes(response.status),
-            Math.min(90_000, cooldown), body?.code, Number.isSafeInteger(Date.now() + cooldown) ? Date.now() + cooldown : undefined);
+            Math.min(90_000, cooldown), body?.code, Number.isSafeInteger(Date.now() + cooldown) ? Date.now() + cooldown : undefined,
+            body?.scope === "listing" || body?.scope === "search" ? body.scope : undefined);
     }
 
     return body as T;
@@ -189,7 +212,7 @@ export type DealsMessage =
     | { type: "start"; total: number; found: number; count: number; skipped: number; intent: SearchIntent; continuation?: SearchContinuation; sourceLimitReached?: boolean; reviewSelection?: SearchReviewSelection; mode?: "new" | "development"; deferred?: number; previouslySeen?: number; screened?: number; priceExcluded?: number; unresolvedOverflow?: number; soldPurchaseCeiling?: number; marketplaceOrder?: DiscoveryOrder; pricePass?: { status: "COMPLETE" | "UNAVAILABLE"; newListings: number; candidates: number } }
     | { type: "listing"; listing: ListingSummary }
     | ({ type: "done" } & SearchSourceCoverage)
-    | { type: "error"; error: string };
+    | { type: "error"; error: string; code?: string; retryable?: boolean; scope?: "listing" | "search" };
 
 // A search with every listing screened for free, streamed one listing at
 // a time so the page fills in while the first, slower search runs.
@@ -204,7 +227,7 @@ async function streamLines<T extends { type: string }>(
 
     if (!response.ok || !response.body) {
         const body = await response.json().catch(() => null);
-        throw new Error(body?.error ?? `Search failed (${response.status})`);
+        throw new ApiRequestError(body?.error ?? `Search failed (${response.status})`, body?.retryable === true, 1500, body?.code, undefined, body?.scope);
     }
 
     const reader = response.body.getReader();
@@ -213,8 +236,8 @@ async function streamLines<T extends { type: string }>(
     let completed = false;
     const deliver = (line: string) => {
         if (!line.trim()) return;
-        const message = JSON.parse(line) as T & { error?: string };
-        if (message.type === "error") throw new Error(message.error);
+        const message = JSON.parse(line) as T & { error?: string; code?: string; retryable?: boolean; scope?: "listing" | "search" };
+        if (message.type === "error") throw new ApiRequestError(message.error ?? "The search could not finish.", message.retryable === true, 1500, message.code, undefined, message.scope);
         onMessage(message);
         if (message.type === "done") completed = true;
     };
@@ -234,10 +257,13 @@ async function streamLines<T extends { type: string }>(
 
             if (done) {
                 deliver(buffered);
-                if (!completed) throw new Error("Search ended before completion. Results checked so far are kept; run the search again to finish.");
+                if (!completed) throw new ApiRequestError("The search connection ended before completion. Continue the search to check the remaining listings.", true, 1500, "SEARCH_STREAM_INTERRUPTED");
                 return;
             }
         }
+    } catch (error) {
+        if (signal?.aborted || error instanceof ApiRequestError || error instanceof SyntaxError) throw error;
+        throw new ApiRequestError("The search connection was interrupted. Continue the search to check the remaining listings.", true, 1500, "SEARCH_STREAM_INTERRUPTED");
     } finally {
         await reader.cancel().catch(() => {});
         reader.releaseLock();
@@ -308,6 +334,7 @@ export async function evaluateListing(listing: ListingSummary, { fresh = false, 
             images: listing.images,
             price: listing.currentPrice,
             shipping: listing.shipping,
+            shippingDestination: listing.shippingDestination,
             bids: listing.bids,
             endTime: listing.endTime,
             termsCheckedAt: listing.termsCheckedAt,

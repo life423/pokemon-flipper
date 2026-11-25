@@ -13,21 +13,27 @@ export interface ResaleActivity {
 export function matchedSoldActivity(evaluation: Evaluation | null, now = Date.now()) {
     let summary: CompSummary | undefined;
     let sellerCondition = false;
+    let floor = false;
     const best = evaluation?.underwriting?.best;
     if (evaluation?.slab || best?.path === "GRADED_RESALE") summary = evaluation?.slabPricing?.summary;
     else if (best?.path === "GRADE" && best.grader) {
         const grade = evaluation?.condition?.gradeRange?.likely ?? evaluation?.condition?.gradeRange?.low;
         summary = evaluation?.gradedPricing?.[best.grader]?.byGrade?.find(entry => Number(entry.grade) === grade);
     } else if (evaluation?.condition) {
-        summary = evaluation.rawPricing?.prices?.find(entry => entry.condition === evaluation.condition?.rawCondition)?.comps
-            ?? evaluation.rawPricing?.ebayComps?.find(entry => entry.grade === evaluation.condition?.rawCondition && entry.count > 0);
+        const assessed = evaluation.condition.rawCondition;
+        const condition = best?.path === "RAW" ? best.priceCondition ?? assessed : assessed;
+        floor = condition !== assessed;
+        summary = evaluation.rawPricing?.prices?.find(entry => entry.condition === condition)?.comps
+            ?? evaluation.rawPricing?.ebayComps?.find(entry => entry.grader === "RAW" && entry.grade === condition && entry.count > 0);
         const seller = evaluation.rawPricing?.sellerConditionComps;
-        if (seller?.grader === "RAW" && seller.grade === evaluation.condition.rawCondition && seller.count > 0) {
+        if (condition === assessed && seller?.grader === "RAW" && seller.grade === condition && seller.count > 0) {
             summary = seller; sellerCondition = true;
         }
     }
     if (!summary) return null;
-    const activity = observedSalesActivity(summary.activitySales ?? summary.sales, now, { maxDays: summary.windowDays ?? 180, slab: summary.grader !== "RAW" });
+    const sales = summary.activitySales ?? summary.sales;
+    const scopedSales = floor ? sales.filter(sale => sale.photoCondition === summary!.grade && sale.conditionEvidence?.length) : sales;
+    const activity = observedSalesActivity(scopedSales, now, { maxDays: summary.windowDays ?? (floor ? 90 : 180), slab: summary.grader !== "RAW" });
     const dates = activity.observations.map(sale => sale.sale.soldAt).sort((a, b) => Date.parse(a) - Date.parse(b));
     return { scope: summary.grader === "RAW" ? `Raw · ${CONDITION_NAMES[summary.grade as keyof typeof CONDITION_NAMES] ?? summary.grade}${sellerCondition ? " · seller-described condition" : ""}` : `${summary.grader} ${summary.grade}`,
         last7: activity.sales7, last30: activity.sales30, last60: activity.sales60, last90: activity.sales90,

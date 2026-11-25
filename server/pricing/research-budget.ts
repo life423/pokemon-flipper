@@ -11,10 +11,9 @@ import { recordProviderUsage } from "../lib/provider-usage.ts";
 import { requireLiveProvider } from "../lib/saved-provider-evidence.ts";
 import type { PricingResearchUsage } from "../../shared/pricing-usage.ts";
 
-// New searches receive more research headroom. A stored search keeps the
-// allowance under which its requests were reserved, including exhausted IDs.
-export const PRICE_RESEARCH_LIMIT = 256;
-const STORED_PRICE_RESEARCH_LIMITS = new Set([64, 128, PRICE_RESEARCH_LIMIT]);
+// Numeric limits remain readable on older ledgers. The next reservation
+// appends to the same history and records the current accounting-only policy.
+const LEGACY_REQUEST_LIMITS = new Set([64, 128, 256]);
 type FailureReason = "LIMIT" | "SCOPE" | "ACCOUNT" | "STORAGE" | "LOCK" | "STATE";
 export class PriceResearchBudgetError extends Error {
     readonly code = "PRICE_RESEARCH_BUDGET";
@@ -38,7 +37,9 @@ interface Attempt {
     headers: Record<string, number>;
     rows: number | null;
 }
-interface Ledger { version: 1; searchId: string; limit: number; attempts: Attempt[] }
+type Ledger = { searchId: string; attempts: Attempt[] } & (
+    { version: 1; limit: number } | { version: 2; limit: null; historicalLimit: number | null }
+);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HASH = /^[a-f0-9]{64}$/;
 const LISTING = /^[a-zA-Z0-9_|:-]{1,200}$/;
@@ -51,11 +52,8 @@ const stopped = new AsyncLocalStorage<AbortSignal | undefined>();
 export function withPriceResearchSignal<T>(signal: AbortSignal | undefined, work: () => T): T { return stopped.run(signal, work); }
 export function getPriceResearchSignal(): AbortSignal | undefined { return stopped.getStore(); }
 function scope(searchId: string | undefined): string {
-    if (!searchId || !UUID.test(searchId)) throw new PriceResearchBudgetError("A valid search UUID is required before price research can start. Follow-up work must keep the original search ID and its request allowance.", "SCOPE");
+    if (!searchId || !UUID.test(searchId)) throw new PriceResearchBudgetError("A valid search UUID is required before price research can start. Follow-up work must be recorded under the original search ID.", "SCOPE");
     return searchId.toLowerCase();
-}
-function capError(limit: Ledger["limit"]): PriceResearchBudgetError {
-    return new PriceResearchBudgetError(`This search has reached its ${limit}-request price-research allowance. Saved market evidence remains available; this is a search limit, not exhausted provider credits.`, "LIMIT");
 }
 function request(path: string): { requestHash: string; endpoint: Endpoint } {
     if (typeof path !== "string" || !/^\/(?!\/)/.test(path) || /[\r\n\\]/.test(path)) throw new PriceResearchBudgetError("The price-research endpoint is invalid. No provider request was authorized.", "STATE");
@@ -95,7 +93,7 @@ function summarize(ledger: Ledger): PricingResearchUsage {
     const completed = ledger.attempts.filter(attempt => attempt.state === "COMPLETE");
     const observed = completed.filter(attempt => ["x-credits-limit", "x-credits-remaining", "x-credits-balance", "x-credits-reset"].some(key => attempt.headers[key] !== undefined)).at(-1);
     const provider = observed?.headers;
-    return { searchId: ledger.searchId, limit: ledger.limit, used: ledger.attempts.length, remaining: ledger.limit - ledger.attempts.length,
+    return { searchId: ledger.searchId, limit: null, used: ledger.attempts.length, remaining: null,
         completed: completed.length, pending: ledger.attempts.filter(attempt => attempt.state === "PENDING").length,
         unresolved: ledger.attempts.filter(attempt => attempt.state === "UNRESOLVED").length,
         reportedCredits: completed.reduce((sum, attempt) => sum + (attempt.headers["x-credits-charged"] ?? 0), 0),
@@ -118,13 +116,15 @@ export function createPriceResearchBudget({ directory, now = Date.now, providerK
         let value: unknown;
         try { value = JSON.parse(await fs.readFile(fileFor(id), "utf8")); }
         catch (error) {
-            if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, searchId: id, limit: PRICE_RESEARCH_LIMIT, attempts: [] };
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 2, searchId: id, limit: null, historicalLimit: null, attempts: [] };
             throw new PriceResearchBudgetError("The price-research accounting could not be read. No new provider request was authorized.", "STORAGE");
         }
         const ledger = value as Ledger | null;
-        if (!ledger || Object.keys(ledger).some(key => !["version", "searchId", "limit", "attempts"].includes(key)) || ledger.version !== 1 || ledger.searchId !== id ||
-            !STORED_PRICE_RESEARCH_LIMITS.has(ledger.limit) || !Array.isArray(ledger.attempts) ||
-            ledger.attempts.length > ledger.limit || !ledger.attempts.every(validAttempt) || new Set(ledger.attempts.map(attempt => attempt.id.toLowerCase())).size !== ledger.attempts.length ||
+        const policy = ledger?.version === 1 ? LEGACY_REQUEST_LIMITS.has(ledger.limit) && !Object.hasOwn(ledger, "historicalLimit")
+            : ledger?.version === 2 && ledger.limit === null && (ledger.historicalLimit === null || LEGACY_REQUEST_LIMITS.has(ledger.historicalLimit));
+        if (!ledger || !policy || Object.keys(ledger).some(key => !["version", "searchId", "limit", "historicalLimit", "attempts"].includes(key)) ||
+            ledger.searchId !== id || !Array.isArray(ledger.attempts) || ledger.version === 1 && ledger.attempts.length > ledger.limit ||
+            !ledger.attempts.every(validAttempt) || new Set(ledger.attempts.map(attempt => attempt.id.toLowerCase())).size !== ledger.attempts.length ||
             !Number.isSafeInteger(ledger.attempts.reduce((sum, attempt) => sum + (attempt.headers["x-credits-charged"] ?? 0), 0)))
             throw new PriceResearchBudgetError("The price-research accounting is invalid. Its evidence was kept and no new provider request was authorized.", "STATE");
         return ledger;
@@ -144,16 +144,19 @@ export function createPriceResearchBudget({ directory, now = Date.now, providerK
     return {
         async summary(searchId?: string): Promise<PricingResearchUsage | null> { return searchId === undefined ? null : summarize(await read(scope(searchId))); },
         async assertAvailable(searchId: string | undefined, signal?: AbortSignal): Promise<void> {
-            signal?.throwIfAborted(); const ledger = await read(scope(searchId)); signal?.throwIfAborted();
-            if (ledger.attempts.length >= ledger.limit) throw capError(ledger.limit);
+            signal?.throwIfAborted();
+            await read(scope(searchId));
+            signal?.throwIfAborted();
         },
         async reserve(path: string, context: AiUsageContext, signal?: AbortSignal): Promise<PriceRequestReservation> {
             signal?.throwIfAborted(); const id = scope(context.searchId), target = request(path);
             const attempt: Attempt = { ...target, id: randomUUID(), listingId: context.listingId && LISTING.test(context.listingId) ? context.listingId : null,
                 reservedAt: new Date(now()).toISOString(), completedAt: null, state: "PENDING", status: null, headers: {}, rows: null };
             await edit(id, async ledger => {
-                signal?.throwIfAborted(); if (ledger.attempts.length >= ledger.limit) throw capError(ledger.limit);
-                await writeJsonAtomic(fileFor(id), { ...ledger, attempts: [...ledger.attempts, attempt] });
+                signal?.throwIfAborted();
+                const next: Ledger = { version: 2, searchId: id, limit: null,
+                    historicalLimit: ledger.version === 1 ? ledger.limit : ledger.historicalLimit, attempts: [...ledger.attempts, attempt] };
+                await writeJsonAtomic(fileFor(id), next);
             }, signal);
             signal?.throwIfAborted();
             return {

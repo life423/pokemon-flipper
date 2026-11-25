@@ -28,6 +28,9 @@ test("price research distinguishes requests, provider credits and incomplete acc
     assert.match(html, /Credit usage is incomplete for 3 requests/);
     assert.match(html, /separately from OpenAI spending/);
     assert.doesNotMatch(html, /\$|123 credits/);
+    const current = renderToStaticMarkup(createElement(PriceResearchStatus, { usage: { ...usage, limit: null, remaining: null, used: 260 } }));
+    assert.match(current, /<b>260<\/b> requests/);
+    assert.doesNotMatch(current, /260 \/|null/);
     const unknown = renderToStaticMarkup(createElement(PriceResearchStatus, { usage: { ...usage, provider: null } }));
     assert.doesNotMatch(unknown, /daily credits left/);
     assert.match(unknown, /incomplete for 3 requests/);

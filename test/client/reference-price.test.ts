@@ -11,6 +11,9 @@ import { groupSearchResults } from "../../client/src/search/results.ts";
 import type { ActiveReference, ListingSummary } from "../../shared/types.ts";
 import { underwrite } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
+import { PRICING_VERSION } from "../../shared/pricing-freshness.ts";
+import { createBuyerListingReviewer } from "../../server/analysis/wait-skip-review.ts";
+import { BEST_BUY_TERMS_MAX_AGE_MS } from "../../shared/search-diagnostic.ts";
 
 test("best current buy shows an honest losing resale scenario and seller risk", async t => {
     const server = await createServer({ configFile: path.resolve("client/vite.config.js"), envFile: false, appType: "custom", logLevel: "silent",
@@ -143,7 +146,8 @@ test("saved unsupported raw prices are hidden from the card and analysis", async
         priceRefresh: { status: "error", evidenceKey: "saved", message: "Price research unavailable" } });
     assert.match(panel, /Refresh pricing/);
     assert.match(panel, /Reanalyze full listing \(paid\)/);
-    assert.match(panel, /Pricing refresh failed\. Price research unavailable Your saved assessment is still shown\./);
+    assert.match(panel, /Pricing refresh failed\. Price research unavailable/);
+    assert.doesNotMatch(panel, /Your saved assessment is still shown/);
     assert.match(panel, /AI photo review complete/);
     assert.doesNotMatch(render(PathCard, { path: value.underwriting.best, auction: true, referenceReason: "Unverified resale reference" }), /Max bid|Profit at your max bid/);
     // An older saved verdict must not revive a recommendation, even when a
@@ -239,4 +243,137 @@ test("unquoted Buy It Now shipping labels estimated profit and limits as provisi
     assert.match(card + decision, /Modeled net profit at asking/);
     assert.match(card + decision + details, /Provisional max price/);
     assert.doesNotMatch(card + decision + details, /Free shipping|Clears your targets|Below your price limit|Suggested offer|Selected strategy/);
+});
+
+test("raw quote captions identify TCGplayer estimates and show the separate 60-day sales count", async t => {
+    const server = await createServer({ configFile: path.resolve("client/vite.config.js"), envFile: false, appType: "custom", logLevel: "silent",
+        server: { middlewareMode: true, hmr: false, watch: null } });
+    t.after(() => server.close());
+    const { DealCard } = await server.ssrLoadModule("/src/components/DealCard.tsx");
+    const { FinancialDecision } = await server.ssrLoadModule("/src/components/analysis/FinancialDecision.tsx");
+    const { AnalysisDetails } = await server.ssrLoadModule("/src/components/analysis/AnalysisDetails.tsx");
+    const { AuctionSummary } = await server.ssrLoadModule("/src/components/AuctionSummary.tsx");
+    const now = Date.parse("2026-11-24T15:00:00Z"), stamp = new Date(now).toISOString();
+    const targets = { minProfit: 0, minRoi: 0 }, evaluation = cardEvaluation(targets);
+    Object.assign(evaluation.listing, { buyingOption: "FIXED_PRICE", availability: "ACTIVE", endTime: null, price: 20, shipping: 0 });
+    const listing = { ...evaluation.listing, currentPrice: evaluation.listing.price, images: [], isGraded: false };
+    const sold = salesSummary("RAW", "LIGHTLY_PLAYED", [68, 70, 72]);
+    for (const [i, sale] of sold.sales.entries()) Object.assign(sale, {
+        soldAt: new Date(now - [5, 45, 65][i] * 86_400_000).toISOString(), saleType: "fixed_price", url: `https://www.ebay.com/itm/${120000020000 + i}`,
+    });
+    evaluation.gradedPricing = null;
+    evaluation.rawPricing = { status: "PRICED", conditionEvidence: "TCGPLAYER", printing: "UNLIMITED", finish: "HOLO", ebayComps: [sold], prices: [{
+        condition: "LIGHTLY_PLAYED", price: 63, updatedAt: stamp, basis: "TCGPLAYER_OFFERS",
+        offers: { source: "TCGPLAYER", currency: "USD", condition: "LIGHTLY_PLAYED", printing: "Unlimited Holofoil", checkedAt: stamp,
+            snapshotAt: stamp, method: "LOWEST_DELIVERED_COMPETITION", marketCondition: "Lightly Played", price: 63, low: 63, median: 63, high: 63,
+            sellerCount: 1, offers: [{ id: "offer-1", sellerId: "seller-1", sellerName: "Fixture", price: 60, shipping: 3, total: 63, quantity: 1, snapshotAt: stamp }] },
+    }] };
+    evaluation.underwriting = underwrite(evaluation, { ...MONEY_CONFIG, targets });
+    assert.equal(evaluation.underwriting.best?.path, "RAW");
+    const props = { listing, evaluation, now, targets };
+    const renderCard = () => renderToStaticMarkup(createElement(DealCard, { ...props, analysis: { status: "done", evaluation }, selected: false,
+        onOpen() {}, years: {}, includeOffers: false }));
+    const renderDecision = () => renderToStaticMarkup(createElement(FinancialDecision, props));
+    const card = renderCard();
+    const decision = renderDecision();
+    const details = renderToStaticMarkup(createElement(AnalysisDetails, { ...props, minGrade: 0, reviewing: false }));
+    assert.match(card, /2 matching sold comps \/ 60 days/);
+    assert.doesNotMatch(card + decision, /2 matching sold comps \/ 30 days|eBay sold median|Matched eBay sold comps/);
+    for (const html of [card, decision, details]) assert.match(html, /TCGplayer asking-price estimate/);
+    assert.match(details, /Observed \/ 30 days<\/dt><dd>1<\/dd>/);
+    assert.match(details, /Observed \/ 60 days<\/dt><dd>2<\/dd>/);
+
+    const quote = evaluation.rawPricing.prices![0];
+    quote.basis = "TCGPLAYER_MARKET";
+    Object.assign(quote.offers!, { method: "CONDITION_MARKET", marketPrice: 63, sellerCount: 0, offers: [] });
+    for (const html of [renderCard(), renderDecision()]) assert.match(html, /TCGplayer condition market estimate/);
+    const auction = renderToStaticMarkup(createElement(AuctionSummary, { evaluation, targets, now }));
+    assert.match(auction, /TCGplayer condition market estimate/);
+    assert.doesNotMatch(auction, /Closing price guide/);
+});
+
+test("the live buyer-review path displays only the verified resale route and counts a supported lower-condition floor", async t => {
+    const server = await createServer({ configFile: path.resolve("client/vite.config.js"), envFile: false, appType: "custom", logLevel: "silent",
+        server: { middlewareMode: true, hmr: false, watch: null } });
+    t.after(() => server.close());
+    const { DealCard } = await server.ssrLoadModule("/src/components/DealCard.tsx");
+    const { DetailPanel } = await server.ssrLoadModule("/src/components/DetailPanel.tsx");
+    const now = Date.parse("2026-11-25T17:20:00Z"), stamp = new Date(now).toISOString();
+    const searchId = "0151ea5e-490c-422f-a4ee-a830b11cecef", id = "v1|123456789012|0";
+    const targets = { minProfit: 0, minRoi: 0 };
+    const evaluation = cardEvaluation(targets);
+    Object.assign(evaluation.listing, { id, title: "Alakazam Base Set 1/102 Unlimited Holo", buyingOption: "FIXED_PRICE",
+        endTime: null, availability: "ACTIVE", price: 60, shipping: 5, termsCheckedAt: stamp, photos: [] });
+    Object.assign(evaluation.identity!, { name: "Alakazam", cardNumber: "1/102" });
+    Object.assign(evaluation, { answeredAt: stamp, pricesCheckedAt: stamp, pricingVersion: PRICING_VERSION,
+        assessmentVersion: "fixture/bounded-prompts-4", conditionVersion: "fixture/bounded-condition-1/prompts-1" });
+    evaluation.photoCheck!.cardCount = "ONE";
+    const comp = (grader: string, grade: number | string, prices: number[]) => {
+        const summary = salesSummary(grader, grade, prices);
+        for (const [i, sale] of summary.sales.entries()) Object.assign(sale, {
+            soldAt: new Date(now - (i + 1) * 86_400_000).toISOString(), saleType: "fixed_price",
+            url: `https://www.ebay.com/itm/${120000020000 + 100 * (typeof grade === "number" ? grade : 5) + i}`,
+            title: evaluation.listing.title + (typeof grade === "number" ? ` ${grader} ${grade}` : ""),
+            ...(grader === "RAW" && { photoCondition: "LIGHTLY_PLAYED", conditionEvidence: ["Whitening along the back edge."] }),
+        });
+        return summary;
+    };
+    const raw = comp("RAW", "LIGHTLY_PLAYED", [105, 110, 115]);
+    evaluation.rawPricing = { status: "PRICED", printing: "UNLIMITED", variant: "Unlimited Holofoil", conditionEvidence: "AI_PHOTOS",
+        sellerConditionComps: null, prices: [{ condition: "LIGHTLY_PLAYED", basis: "EBAY_SOLD", price: 110, updatedAt: stamp, comps: raw }] };
+    evaluation.gradedPricing = { PSA: { status: "PRICED", grader: "PSA", printing: "UNLIMITED", variant: "Unlimited Holofoil",
+        byGrade: [comp("PSA", 6, [120, 125, 130]), comp("PSA", 7, [320, 325, 330]), comp("PSA", 8, [445, 450, 455])] } };
+    const unexpected = async (): Promise<never> => assert.fail("provider or storage write called from saved-only review");
+    const read = createBuyerListingReviewer({ now: () => now,
+        discovery: async () => ({ searchId, savedAt: stamp, discovery: { total: 1, found: 1, skipped: 0, deferred: 0, retainedIds: [id] } }),
+        inventory: async () => null, snapshot: async () => ({ version: 1, searchId, contextKey: "fixture", evidenceKey: "fixture", evaluation }),
+        restorePhotoReview: async value => value, restoreSales: async () => undefined, evaluate: unexpected, deeper: unexpected,
+        supplement: unexpected, save: unexpected });
+    const review = () => read(searchId, id, targets, false, false, new AbortController().signal);
+    const checked = await review();
+    assert.equal(checked.decision, "BUY");
+    assert.equal(checked.evaluation?.underwriting?.best?.path, "GRADE", "preserve the modeled alternative");
+    assert.equal(checked.evaluation?.underwriting?.best?.downside, -47.11);
+    assert.equal(checked.verifiedPurchase?.path.path, "RAW");
+    assert.equal(checked.verifiedPurchase?.path.profit, 17.08);
+    assert.equal(checked.verifiedPurchase?.maxItemPrice, 75.77);
+    const listing: ListingSummary = { ...evaluation.listing, currentPrice: evaluation.listing.price, images: [], isGraded: false };
+    const props = { listing, now, targets, automaticDecision: checked, analysis: { status: "done", evaluation: checked.evaluation },
+        includeOffers: false, onClose() {}, onAnalyze() {}, onPhotoReview() {}, selected: false, years: {}, onOpen() {} };
+    const card = renderToStaticMarkup(createElement(DealCard, props));
+    const panel = renderToStaticMarkup(createElement(DetailPanel, props));
+    for (const html of [card, panel]) {
+        assert.match(html, /\$75\.77/);
+        assert.doesNotMatch(html, /Buy \+ grade|\$159\.31/);
+    }
+    assert.match(card, /\$17\.08/);
+    assert.match(panel, /Grade with PSA · modeled alternative/);
+    assert.doesNotMatch(panel, /PSA · selected/);
+    assert.match(card, /3 matching sold comps \/ 60 days/);
+    for (const change of [{ now: now + BEST_BUY_TERMS_MAX_AGE_MS }, { targets: { ...targets, minProfit: 20 } },
+        { analysis: { ...props.analysis, evaluation: { ...checked.evaluation!, listing: { ...checked.evaluation!.listing, shippingDestination: "11111" } } } }]) {
+        for (const Component of [DealCard, DetailPanel]) {
+            const stale = renderToStaticMarkup(createElement(Component, { ...props, ...change }));
+            assert.match(stale, /verified price or purchase terms need a fresh check/);
+            assert.doesNotMatch(stale, /\$75\.77|\$159\.31|Buy \+ grade/);
+        }
+    }
+
+    evaluation.listing.price = 40;
+    evaluation.condition!.rawCondition = "NEAR_MINT";
+    evaluation.condition!.gradeRange = null;
+    evaluation.gradedPricing = null;
+    evaluation.rawPricing.prices![0] = { ...evaluation.rawPricing.prices![0], price: 100, comps: comp("RAW", "LIGHTLY_PLAYED", [95, 100, 105]) };
+    const floor = await review();
+    assert.equal(floor.decision, "BUY");
+    assert.equal(floor.verifiedPurchase?.path.priceCondition, "LIGHTLY_PLAYED");
+    assert.equal(floor.verifiedPurchase?.path.profit, 30.20);
+    assert.equal(floor.verifiedPurchase?.maxItemPrice, 67.89);
+    assert.match(floor.reason, /photo-checked Lightly Played resale floor of \$100\.00/);
+    assert.match(floor.reason, /3 observed matching Lightly Played raw sales in the last 60 days/);
+    const floorCard = renderToStaticMarkup(createElement(DealCard, { ...props, listing: { ...listing, currentPrice: 40 },
+        automaticDecision: floor, analysis: { status: "done", evaluation: floor.evaluation } }));
+    assert.match(floorCard, /3 matching sold comps \/ 60 days/);
+    evaluation.rawPricing.prices![0].comps!.sales[0].conditionEvidence = [];
+    assert.equal((await review()).decision, "WAIT", "unverified condition evidence cannot support the floor");
 });

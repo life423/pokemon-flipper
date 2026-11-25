@@ -90,12 +90,6 @@ export function boundedAssessmentPlan(listing: ListingDetails): BoundedAssessmen
     return planFor(listing, requestsSlabLabel(listing) ? "SLAB_LABEL" : "RAW");
 }
 
-// A separately accepted, full-gallery second look can be reused without
-// selecting the stronger model for ordinary analysis.
-export function boundedSecondLookPlan(listing: ListingDetails): BoundedAssessmentPlan {
-    return planFor(listing, "RAW", "gpt-5.6-terra");
-}
-
 export function compatibleBoundedPlans(listing: ListingDetails): BoundedAssessmentPlan[] {
     const requested = boundedAssessmentPlan(listing);
     // The physical holder is model evidence. A changed advisory seller

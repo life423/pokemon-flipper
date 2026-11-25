@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { DATA_DIR } from "../lib/paths.ts";
+import { syncDirectory } from "../lib/atomic-json.ts";
 import { getSqlRepositories, storageBackend, StorageUnavailableError, localOwner, type TaskClaim, type TaskResult } from "../storage/index.ts";
 import { AiSpendingError } from "./spending.ts";
 import { aiRateLimitDelayMs, isAiCreditFailure } from "./errors.ts";
@@ -63,8 +64,7 @@ async function saveRecovery(file: string, value: Recovery) {
         await handle.writeFile(JSON.stringify(value), "utf8"); await handle.sync();
         await handle.close(); handle = undefined;
         await fs.rename(temporary, file);
-        const directory = await fs.open(path.dirname(file), "r");
-        try { await directory.sync(); } finally { await directory.close(); }
+        await syncDirectory(path.dirname(file));
     } finally { await handle?.close().catch(() => {}); await fs.rm(temporary, { force: true }).catch(() => {}); }
 }
 
@@ -144,7 +144,9 @@ export function createSqlAiDispatch({ enabled = () => storageBackend() === "azur
                 console.error(recoverySaved ? "An accepted AI answer is saved locally for SQL recovery; its shared claim remains held."
                     : "An accepted AI answer could not be checkpointed. Its shared claim remains held and the answer is returned to its caller.");
             }
-            return response;
+            // Give the first caller its own readable body, as with a replay.
+            // Checkpointing may disturb the provider stream on some runtimes.
+            return new Response(accepted.body, { status: response.status, statusText: response.statusText, headers: response.headers });
         } catch (error) {
             if (dispatched) await repos.markTaskUnknown(key, owner).catch(() => {});
             else await repos.releaseTask(key, owner).catch(() => {});

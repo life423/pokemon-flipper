@@ -1,4 +1,4 @@
-import type { CompSale, CompSummary, GradedPricing, RawPricing } from "../../types";
+import type { CompSale, CompSummary, GradedPricing, RawPrice, RawPricing } from "../../types";
 import { dollars, name } from "../../format";
 import { RAW_CONDITIONS, CONDITION_NAMES } from "../../../../shared/conditions.ts";
 import { isUsableRawPrice } from "../../../../shared/money/price-evidence.ts";
@@ -13,6 +13,12 @@ export function soldEstimateBasis(summary?: CompSummary): string {
         case "RECENCY_WEIGHTED_MEDIAN": return "eBay sold median across available formats, weighted toward newer sales";
         default: return "eBay sold median";
     }
+}
+
+export function tcgplayerEstimateLabel(basis: RawPrice["basis"]): string | null {
+    if (basis === "TCGPLAYER_OFFERS") return "TCGplayer asking-price estimate";
+    if (basis === "TCGPLAYER_MARKET") return "TCGplayer condition market estimate";
+    return null;
 }
 
 const SALE_TYPES: Record<NonNullable<CompSale["saleType"]>, string> = {
@@ -109,8 +115,9 @@ export function PricesSection({
                     {raw.status === "PRICED" ? (
                         <Pairs rows={RAW_CONDITIONS.map(condition => {
                             const price = raw.prices?.find(entry => entry.condition === condition && isUsableRawPrice(entry));
+                            const source = price?.offers ? tcgplayerEstimateLabel(price.basis) : null;
                             return [CONDITION_NAMES[condition], !price ? "No supported price"
-                                : price.offers ? `${dollars(price.price)} · TCGplayer ${price.basis === "TCGPLAYER_OFFERS" ? `asking-price estimate (${price.offers.offers.length} offers)` : "condition market estimate"}`
+                                : source ? `${dollars(price.price)} · ${source}${price.basis === "TCGPLAYER_OFFERS" && price.offers ? ` (${price.offers.offers.length} offers)` : ""}`
                                 : `${dollars(price.price)} · ${soldEstimateBasis(price.comps)}${price.comps ? ` (${price.comps.count} ${raw.conditionEvidence === "AI_PHOTOS" ? "photo-assessed " : ""}${price.comps.count === 1 ? "sale" : "sales"} in sample)` : ""}`];
                         })} />
                     ) : (

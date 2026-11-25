@@ -12,7 +12,7 @@ import { StorageUnavailableError } from "../../server/storage/index.ts";
 import { RejectedPhotoAssessmentError } from "../../server/analysis/failure.ts";
 import { photoFingerprint } from "../../server/analysis/store.ts";
 import { currentPriceEvidence } from "../../shared/pricing-freshness.ts";
-import { cardEvaluation } from "../fixtures/card-evaluation.ts";
+import { cardEvaluation, clearReleaseFixture } from "../fixtures/card-evaluation.ts";
 import type { ListingDetails } from "../../server/ebay/listings.ts";
 import type { CardRecord } from "../../server/pricing/types.ts";
 
@@ -44,7 +44,7 @@ function harness(subject = listing(), overrides: Parameters<typeof createBounded
     const cache = new Map<string, any>();
     const calls = { assessed: [] as { mode: unknown; photos: { number: number; url: string }[] }[], lookup: 0,
         comps: [] as { grader: string; grade: number | string; variant?: string }[], raw: 0 };
-    const evaluate = createBoundedEvaluator({ assertPriceAvailable: async () => {}, now: () => NOW,
+    const evaluate = createBoundedEvaluator({ release: async e => clearReleaseFixture(e), assertPriceAvailable: async () => {}, now: () => NOW,
         details: async id => ({ ...structuredClone(subject), id }), saved: async () => null,
         cached: async key => cache.get(key) ?? null, save: async (key, value) => { cache.set(key, structuredClone(value)); },
         assess: async (_listing, photos, _signal, mode) => { calls.assessed.push({ mode, photos: structuredClone(photos) }); return { result: slabReading(photos.length), usage: { inputTokens: 500, outputTokens: 300 } }; },

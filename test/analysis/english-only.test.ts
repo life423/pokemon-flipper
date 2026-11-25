@@ -8,7 +8,7 @@ import { EnglishOnlyError, evaluationFailure } from "../../server/analysis/failu
 
 test("English scope distinguishes unknown language and conflicting or non-English language evidence", () => {
     assert.equal(cardLanguageStatus("Charizard 4/102"), "UNKNOWN");
-    for (const language of [null, "Unknown", "not visible", "N/A"]) assert.equal(cardLanguageStatus("Charizard", [language]), "UNKNOWN");
+    for (const language of [undefined, null, "Unknown", "not visible", "N/A"]) assert.equal(cardLanguageStatus("Charizard", [language]), "UNKNOWN");
     for (const language of ["English", "EN", "ENG", "en-US"]) assert.equal(cardLanguageStatus("Charizard", [language]), "ENGLISH");
     for (const language of ["Japanese", "de", "French", "English / Japanese", "Chinese", "Multilingual"]) assert.equal(cardLanguageStatus("Charizard", [language]), "OTHER");
     assert.equal(cardLanguageStatus("Charizard Japanese PSA 9", ["English"]), "OTHER");

@@ -19,6 +19,14 @@ import { PriceResearchBudgetError } from "../../server/pricing/research-budget.t
 import type { CardRecord } from "../../server/pricing/types.ts";
 
 const baseQuery = "dark blastoise team rocket";
+test("a named search excludes a different photographed card even if the interpretation has no title words", () => {
+    const intent = { ...readSearchLocally("Charizard"), source: "ai" as const, titleWords: [] };
+    const copy = photoAssessment(listing("copy", "Charizard"), "REVERSE_HOLO", "24/147");
+    Object.assign(copy.photoCheck!.cardIdentity!, { name: "Nidoking", set: "Aquapolis" });
+    assert.equal(evaluatedIdentityMismatch(copy, intent), "OTHER_CARD");
+    Object.assign(copy.photoCheck!.cardIdentity!, { name: "Charizard" });
+    assert.equal(evaluatedIdentityMismatch(copy, intent), null);
+});
 const phrases = [
     [baseQuery, null, "Any finish"],
     [`${baseQuery} holo`, "HOLO", "Holo only"],
@@ -144,7 +152,7 @@ test("the exact conversational holo request resolves through catalog before one 
     const query = "find me a good deal on a holographic dark blastoise team rocket";
     const cards = [catalogCard("3/82"), catalogCard("20/82", "NON_HOLO")];
     const events: string[] = []; let factories = 0, summary;
-    const source = { ...createScreeningPriceSource({ maxRequests: 0 }),
+    const source = { ...createScreeningPriceSource(),
         lookupQueryCards: async value => { events.push("catalog"); assert.deepEqual(value, { name: "dark blastoise", set: "Team Rocket" }); return { cards, complete: true }; },
         lookupCards: async value => { events.push("listing-catalog"); assert.equal(value.cardNumber, "3/82"); return cards; },
         fetchRawComps: async () => [], fetchComps: async () => [], fetchSoldPage: async () => ({ sales: [], nextCursor: null }) };
@@ -201,7 +209,7 @@ test("query catalog outages preserve the original intent while cancellation, sto
     const stopped = new AbortController();
     await assert.rejects(resolveQueryCatalog(intent, async () => { stopped.abort(new Error("Stopped")); return { cards: [catalogCard("3/82")], complete: true }; }, stopped.signal), /Stopped/);
     const cancelled = new AbortController();
-    const source = { ...createScreeningPriceSource({ maxRequests: 0 }), lookupQueryCards: async () => {
+    const source = { ...createScreeningPriceSource(), lookupQueryCards: async () => {
         cancelled.abort(new Error("Stopped before marketplace search")); return { cards: [catalogCard("3/82")], complete: true };
     } };
     assert.deepEqual(await findDeals(`${baseQuery} holo`, { signal: cancelled.signal }, {
