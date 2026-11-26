@@ -30,21 +30,16 @@ function raw() {
 }
 const receipt = (e: Evaluation, budget?: number) => auctionOpportunity(retargetEvaluation(e, targets), targets, now, budget);
 
-test("a raw auction can use an exact TCGplayer estimate while sixty-day sale activity stays separate", () => {
+test("a raw auction needs verified sold evidence for its bid ceiling", () => {
     const e = raw();
     e.rawPricing!.conditionEvidence = "TCGPLAYER";
     e.rawPricing!.prices = [tcgplayerRawEstimate(100, stamp)];
-    const opportunity = receipt(e)!;
-    assert.equal(opportunity.status, "BID");
-    assert.equal(opportunity.marketValue, 100);
-    assert.equal(opportunity.sales60, 0); assert.equal(opportunity.exitSales60, 0); assert.equal(opportunity.sampleSize, 0);
-    assert.ok(opportunity.maxBid! < 100, "fees, shipping and tax still constrain the bid");
+    assert.notEqual(receipt(e)?.status, "BID");
+    assert.equal(receipt(e)?.maxBid ?? null, null);
     const summary = sales("RAW", "LIGHTLY_PLAYED", [100]);
-    summary.sales[0].soldAt = new Date(now - 45 * 86_400_000).toISOString();
-    delete summary.sales[0].photoCondition; delete summary.sales[0].conditionEvidence;
     e.rawPricing!.sellerConditionComps = summary;
-    assert.equal(receipt(e)?.sales60, 1); assert.equal(receipt(e)?.sales30, 0);
-    assert.equal(receipt(e)?.status, "BID");
+    assert.notEqual(receipt(e)?.status, "BID");
+    assert.equal(receipt(e)?.maxBid ?? null, null, "a TCGplayer reference cannot authorize a bid");
     e.listing.endTime = end(10 * 3_600_000);
     assert.equal(receipt(e), null, "the strict ten-hour auction window is preserved");
 });

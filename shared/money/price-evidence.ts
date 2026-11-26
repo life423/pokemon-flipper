@@ -59,6 +59,8 @@ export function isUsableRawPrice(price: RawPrice): boolean {
     if (price.basis === "TCGPLAYER_MARKET") return quote.method === "CONDITION_MARKET" &&
         quote.marketPrice === price.price && quote.offers.length === 0;
     return price.basis === "TCGPLAYER_OFFERS" && quote.method === "LOWEST_DELIVERED_COMPETITION" &&
+        (Number.isFinite(quote.marketPrice) && quote.marketPrice! > 0 && price.price <= quote.marketPrice! ||
+            new Set(quote.offers.filter(offer => offer.sellerId && offer.total <= price.price * 2.5).map(offer => offer.sellerId)).size >= 2) &&
         quote.offers.length > 0 && quote.offers.every(offer => Number.isFinite(offer.total) && offer.total > 0 &&
             offer.price >= 0 && offer.shipping >= 0 && Math.abs(offer.total - offer.price - offer.shipping) < .001) &&
         price.price <= Math.min(...quote.offers.map(offer => offer.total));
@@ -67,7 +69,7 @@ export function isUsableRawPrice(price: RawPrice): boolean {
 export function rawPriceForPath(pricing: RawPricing | null | undefined, path: PricedPath): RawPrice | undefined {
     if (path.path !== "RAW") return;
     return pricing?.prices?.find(price => price.condition === path.priceCondition &&
-        price.price === path.salePrice && isUsableRawPrice(price));
+        price.price === path.salePrice && isRawSoldPrice(price));
 }
 
 export function withoutUnsupportedRawPrices(evaluation: Evaluation): Evaluation {

@@ -17,15 +17,22 @@ acceptance beyond listing 50, per-batch diagnostics, root-wide hunt ownership,
 single-batch refresh and global hold propagation. Broad hunts may also scan
 unseeded inventory; live market coverage remains unproven.
 
-The continuous Find a flip path keeps a query-owned in-memory backlog in
-`createHuntInventoryScanner`, including pending summaries, seen IDs and source
-cursors. A batch of 50 and a small model menu bound active work, not the total
-copies the hunt may consider. Ranked catalog markets are priorities followed by
-independent inventory queries. Resale planning has no default total-step ceiling;
-Stop, accessible-source exhaustion and real provider/accounting stops remain.
-Closed negative outcomes are retained without repeated financial recalculation.
-`canRepeat` can explicitly authorize one otherwise-supported expired BIN terms
-refresh. Neither that preview nor provisional progress cards authorize buying.
+Find a flip stores each watched format leg and its spending owner in the installation's
+private SQLite journal (`server/analysis/flip-run-store.ts`). A new leg imports any older
+watch checkpoint. Source pages persist pending copies and cursors before photo work.
+The queue records the action before dispatch and the accepted evidence and remaining
+actions afterwards. A crashed process releases the worker slot on restart. An interrupted
+dispatch can recover from saved evidence under its original account. A live worker
+prevents a second worker from claiming the same leg. Changing the shipping destination
+or request requires a new leg. Spending, evidence storage and provider reserves keep
+their existing authorities.
+
+The resale planner admits a window of candidates, reevaluates the copy being researched,
+and keeps the remaining candidates queued. A current positive receipt takes priority.
+A waiting pass schedules the next inventory check. Stop cancels subsequent work. The
+open client drives wake-ups, and Resume reconnects after a reload. Exact-number guidance
+additionally compares the original front with independent catalog artwork before exposing
+a candidate or its matched prices. Optional tile comparisons require buyer activation.
 
 Both format legs use separate hunt IDs under the same root budget. The client
 shows provisional summaries from the bounded `HuntProgress.candidates` window,

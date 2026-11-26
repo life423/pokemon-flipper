@@ -646,3 +646,35 @@ test("Find a flip keeps researching an eligible auction when another copy alread
     assert.equal(result.decision, "BID");
     assert.equal(result.destination?.listingId, "second");
 });
+
+test("resale scheduling grows linearly across a 100-copy and a 1,600-copy losing page", async t => {
+    const counts = [];
+    for (const size of [100, 1600]) {
+        let eligible = 0, reviewed = 0;
+        const copies: DealHuntCandidate[] = Array.from({ length: size }, (_, index) => ({
+            listingId: String(index), title: "Copy " + index, summary: "Raw single",
+            available() { eligible++; return ["inspect_photos"]; },
+            read() { reviewed++; return "The pictured printing does not match."; },
+            outcome(done) { return done.has("inspect_photos") ? { decision: "WAIT", section: "photos", reason: "Different printing." } : null; },
+        }));
+        const result = await runDealHunt({ searchId, goal: "resell", candidates: [], freshListings: true,
+            markets: [{ title: "Local page", summary: "", discover: async () => copies }] });
+        assert.equal(result.decision, "WAIT");
+        assert.equal(reviewed, size);
+        counts.push(eligible);
+    }
+    assert.ok(counts[1] <= 20 * counts[0]);
+    t.diagnostic("Eligibility checks for 100 and 1,600 copies: " + counts.join(", "));
+});
+
+test("optional price lookups in a full window leave room for an unreviewed primary photo", async () => {
+    const copies: DealHuntCandidate[] = Array.from({ length: 60 }, (_, index) => ({
+        listingId: String(index), title: "Copy " + index, summary: "Offline listing",
+        available: () => index === 59 ? ["inspect_photos"] : ["search_web_sales"],
+        read(action) { assert.equal(action, "inspect_photos"); return "Current matching evidence."; },
+        outcome: done => done.has("inspect_photos") ? { decision: "BUY", section: "sales", reason: "Verified winning fixture." } : null,
+    }));
+    const result = await runDealHunt({ searchId, goal: "resell", candidates: [], freshListings: true, guidedResale: true,
+        markets: [{ title: "Local page", summary: "", discover: async () => copies }] });
+    assert.equal(result.destination?.listingId, "59");
+});

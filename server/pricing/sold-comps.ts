@@ -1,4 +1,4 @@
-import { median } from "../../shared/sold-evidence.ts";
+import { comparablePriceBounds, median } from "../../shared/sold-evidence.ts";
 import {
     mapVariantPrintings,
     printingClaimFromText,
@@ -103,9 +103,6 @@ export interface CompCriteria {
 const RECENT_DAYS = 180;
 const DAY_MS = 86400000;
 
-// A sale this far from the others' median is more likely a mislabeled
-// printing or a special copy than an ordinary price.
-const OUTLIER_FACTOR = 2.5;
 
 function titleAgrees(claim: PrintingClaim, printing: PrintingOrUnknown): boolean {
     if (claim === "CONFLICTING") return false;
@@ -181,39 +178,24 @@ export function compProblem(comp: Comp, { printing, setName, cardName, cardNumbe
 
 function marketEstimate(sales: Comp[], now: number): CompSummary["marketEstimate"] {
     if (!sales.length) return undefined;
-    const observations = sales.map(({ price, sold_at, sale_type }) => ({ price, age: now - Date.parse(sold_at), saleType: sale_type }))
-        .sort((a, b) => a.age - b.age);
-    const rounded = (price: number) => Math.round(price * 100) / 100;
-    // Resale is listed at Buy It Now. A recent fixed-price cohort is stronger
-    // evidence for that route, and its median resists a single unusual sale.
-    const fixedPrice = observations.filter(({ age, saleType }) => saleType === "fixed_price" && age <= 30 * DAY_MS).slice(0, 5);
-    if (fixedPrice.length >= 3) return {
-        price: rounded(median(fixedPrice.map(({ price }) => price))),
-        method: "RECENT_FIXED_PRICE_MEDIAN",
-        sampleSize: fixedPrice.length,
+    const recent = sales.filter(sale => now - Date.parse(sale.sold_at) <= 30 * DAY_MS);
+    const window = recent.length ? recent : sales;
+    const fixed = window.filter(sale => sale.sale_type === "fixed_price" || sale.sale_type === "best_offer_accepted");
+    const cohort = fixed.length ? fixed : window;
+    const amounts = cohort.map(sale => sale.price);
+    const bounds = comparablePriceBounds(amounts);
+    const middle = median(amounts);
+    const deviation = median(amounts.map(amount => Math.abs(amount - middle)));
+    // For four or more prices, resist an isolated sale while allowing normal
+    // variation. Keep the full observed range for screening and liquidity.
+    const spread = amounts.length >= 4 ? Math.max(middle * 0.5, 4.45 * deviation) : Infinity;
+    const ordinary = amounts.filter(amount => amount >= bounds.low && amount <= bounds.high && Math.abs(amount - middle) <= spread);
+    return {
+        price: Math.round(ordinary.reduce((sum, price) => sum + price, 0) * 100 / ordinary.length) / 100,
+        method: fixed.length ? "FIXED_PRICE_AVERAGE" : "SOLD_AVERAGE",
+        sampleSize: ordinary.length,
+        ...(recent.length && { windowDays: 30 }),
     };
-
-    const recent = observations.filter(({ age }) => age <= 2 * DAY_MS).slice(0, 4);
-    if (recent.length === 4) {
-        const newest = (recent[0].price + recent[1].price) / 2;
-        const previous = (recent[2].price + recent[3].price) / 2;
-        return { price: rounded(median(recent.map(({ price }) => price))), method: "RECENT_FOUR",
-            ...(recent[1].age < recent[2].age ? { recentTrendPercent: rounded((newest / previous - 1) * 100) } : {}) };
-    }
-
-    // Keep a robust middle price for sparse markets. Newer observations move
-    // it up or down, while actual sales still establish the downside and high.
-    const ranked = observations.sort((a, b) => a.price - b.price)
-        .map(({ price, age }) => ({ price, weight: age <= 7 * DAY_MS ? 3 : age <= 30 * DAY_MS ? 2 : 1 }));
-    const totalWeight = ranked.reduce((sum, sale) => sum + sale.weight, 0);
-    let cumulative = 0;
-    for (const [index, { price, weight }] of ranked.entries()) {
-        cumulative += weight;
-        if (cumulative * 2 >= totalWeight) return {
-            price: cumulative * 2 === totalWeight ? rounded((price + ranked[index + 1].price) / 2) : price,
-            method: "RECENCY_WEIGHTED_MEDIAN",
-        };
-    }
 }
 
 function confidenceFor(count: number): Confidence {
@@ -252,15 +234,9 @@ export function summarizeComps(
 
     const activity = kept;
     if (kept.length >= 2) {
-        const middle = median(kept.map((comp) => comp.price));
-        const sparseFloor = kept.length === 2 ? Math.min(...kept.map(comp => comp.price)) : null;
-
-        kept = kept.filter((comp) => {
-            // Two radically different observations cannot justify averaging an
-            // isolated premium into the ordinary price. Keep the lower amount.
-            const far = sparseFloor !== null ? comp.price > sparseFloor * OUTLIER_FACTOR
-                : comp.price > middle * OUTLIER_FACTOR || comp.price < middle / OUTLIER_FACTOR;
-
+        const bounds = comparablePriceBounds(kept.map(comp => comp.price));
+        kept = kept.filter(comp => {
+            const far = comp.price < bounds.low || comp.price > bounds.high;
             if (far) drop("price far from the other sales");
 
             return !far;

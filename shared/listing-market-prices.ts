@@ -8,10 +8,28 @@ import { isUsableRawPrice, unsupportedVariantReason } from "./money/price-eviden
 import { deeperPhotoConcerns } from "./photo-review.ts";
 import { observedCardKind, obscuredDisclosedWear } from "./photo-evidence.ts";
 import { currentPriceEvidence, maxPriceEvidenceAge } from "./pricing-freshness.ts";
-import { observedSoldSales } from "./sales-activity.ts";
+import { observedSoldSales, type ObservedSale } from "./sales-activity.ts";
 import { verifiedSlabMarketKey } from "./slab-market.ts";
-import { median, soldMarketPrice } from "./sold-evidence.ts";
-import type { CompSummary, Evaluation, ListingSummary } from "./types.ts";
+import { median, soldMarketPrice, usableSoldReference } from "./sold-evidence.ts";
+import type { CompSummary, Evaluation, ListingSummary, ScreeningSoldReference, SoldSaleType } from "./types.ts";
+
+export interface TileSale { price: number; soldAt: string; title: string; url: string; method: SoldSaleType }
+function tileSales(sales: ObservedSale[]): TileSale[] {
+    return sales.map(({ id, price, at, sale }) => ({ price, soldAt: new Date(at).toISOString(), title: sale.title,
+        url: "https://www.ebay.com/itm/" + id, method: sale.saleType! }));
+}
+
+export function screeningSaleGroups(references: ScreeningSoldReference[], now: number) {
+    return references.flatMap(ref => {
+        if (!usableSoldReference(ref, Boolean(ref.grader))) return [];
+        const sales = observedSoldSales(ref.summary.sales ?? [], now, { maxDays: ref.summary.windowDays, slab: Boolean(ref.grader) });
+        if (!sales.length) return [];
+        const condition = ref.grader ? ref.grader + " " + ref.grade : ref.condition ? CONDITION_NAMES[ref.condition] : "Raw · condition unspecified";
+        const scope = [ref.name, ref.cardNumber, ref.set, printingName(ref.printing), ref.finish.replaceAll("_", " ").toLowerCase(), condition].join(" · ");
+        return [{ scope, sales: tileSales(sales), median: median(sales.map(s => s.price)), days: ref.summary.windowDays!,
+            validUntil: sales[sales.length - 1].at + ref.summary.windowDays! * 86_400_000 + 1 }];
+    }).sort((a, b) => b.sales[0].soldAt.localeCompare(a.sales[0].soldAt));
+}
 
 export interface ProviderPrice {
     source: string;
@@ -26,6 +44,7 @@ export interface BuyerPriceComparison {
     market: string;
     prices: ProviderPrice[];
     notes: string[];
+    saleGroups?: ReturnType<typeof screeningSaleGroups>;
 }
 export interface ListingMarketPrices {
     lookup?: { listingId: string; market: string };
@@ -33,7 +52,7 @@ export interface ListingMarketPrices {
     additional?: ProviderPrice[];
     scope: string;
     validUntil: number;
-    sold?: { price: number; count: number; days: number; sellerCondition: boolean; latestSale?: string; validUntil?: number };
+    sold?: { price: number; count: number; days: number; sales30?: number; typicalRange?: [number, number]; sellerCondition: boolean; latestSale?: string; validUntil?: number; sales?: TileSale[] };
     tcg?: { market?: number; delivered?: number; condition: string; checkedAt?: string; marketRecordAt?: string | null; snapshotAt?: string; validUntil?: number; offerValidUntil?: number };
 }
 
@@ -43,13 +62,15 @@ export function listingMarketPrices(e: Evaluation | null | undefined, listing: P
     if (!e || e.listing.id !== listing.id || e.listing.title.trim() !== listing.title.trim() ||
         !searchPhotosFitDetails(listing.images, e.listing.photos ?? []) || !readyForPricing(e.identity) ||
         e.identity?.notThisCard || releaseIssue(e) || unsupportedVariantReason(e) || deeperPhotoConcerns(e).length || obscuredDisclosedWear(e) ||
-        e.photoCheck?.cardMatch?.verdict === "MISMATCH" || !currentPriceEvidence(e, Date.parse(e.pricesCheckedAt ?? "")) ||
+        e.photoCheck?.cardMatch?.verdict === "MISMATCH" ||
         cardLanguageStatus("", [e.identity?.language, e.photoCheck?.cardIdentity?.language]) !== "ENGLISH" ||
         cardLanguageStatus(listing.title, [e.listing.aspects.Language]) === "OTHER") return;
     const kind = observedCardKind(e);
-    const checked = Date.parse(e.pricesCheckedAt!);
-    const validUntil = checked + maxPriceEvidenceAge(e);
-    if (!(checked <= now && now < validUntil)) return;
+    const checked = Date.parse(e.pricesCheckedAt ?? "");
+    const expiry = checked + maxPriceEvidenceAge(e);
+    const hasPrices = checked <= now && now < expiry && currentPriceEvidence(e, checked);
+    if (!hasPrices && (!e.identity?.recordId || !e.photoCheck?.images.some(photo => photo.usable && !photo.isStockImage))) return;
+    const validUntil = hasPrices ? expiry : now + 300_000;
     let scope: string;
     let summary: CompSummary | undefined;
     let sellerCondition = false;
@@ -58,16 +79,19 @@ export function listingMarketPrices(e: Evaluation | null | undefined, listing: P
     if (kind === "graded") {
         const pricing = e.slabPricing;
         if (!verifiedSlabMarketKey(e, { allowScratchedCase: true }) || !e.slab) return;
-        if (pricing?.printing === e.identity!.printing && pricing.grader === e.slab.grader && String(pricing.grade) === e.slab.grade &&
+        if (hasPrices && pricing?.printing === e.identity!.printing && pricing.grader === e.slab.grader && String(pricing.grade) === e.slab.grade &&
             pricing.summary?.grader === e.slab.grader && String(pricing.summary.grade) === e.slab.grade) summary = pricing.summary;
         scope = `${e.slab.grader} ${e.slab.grade}`;
     } else {
         if (kind !== "raw" || !isRawCondition(wear) || e.condition?.authenticity.concern !== "NONE_SEEN" || !["HOLO", "REVERSE_HOLO", "NON_HOLO"].includes(e.identity!.finish)) return;
-        const raw = e.rawPricing?.printing === e.identity!.printing && e.rawPricing.finish === e.identity!.finish ? e.rawPricing : null;
+        const raw = hasPrices && e.rawPricing?.printing === e.identity!.printing && e.rawPricing.finish === e.identity!.finish ? e.rawPricing : null;
         scope = CONDITION_NAMES[wear];
-        const row = raw?.prices?.find(r => r.condition === wear && isUsableRawPrice(r));
-        const quote = row?.offers;
-        if (quote && row?.basis?.startsWith("TCGPLAYER_")) {
+        const rows = raw?.prices?.filter(r => r.condition === wear && isUsableRawPrice(r)) ?? [];
+        const reference = e.rawPricing?.tcgplayerReference;
+        const quote = reference?.condition === wear && e.rawPricing?.printing === e.identity!.printing &&
+            e.rawPricing.finish === e.identity!.finish && reference.printing === e.rawPricing.variant
+            ? reference : rows.find(r => r.basis?.startsWith("TCGPLAYER_"))?.offers;
+        if (quote) {
             tcg = { condition: quote.marketCondition, checkedAt: quote.checkedAt, marketRecordAt: quote.marketRecordAt,
                 snapshotAt: quote.snapshotAt, validUntil: Date.parse(quote.checkedAt) + 6 * 3_600_000 };
             if (Number.isFinite(quote.marketPrice) && quote.marketPrice! > 0) tcg.market = quote.marketPrice;
@@ -76,7 +100,7 @@ export function listingMarketPrices(e: Evaluation | null | undefined, listing: P
                 tcg.offerValidUntil = Math.min(tcg.validUntil!, Date.parse(quote.snapshotAt) + 86_400_000);
             }
         }
-        summary = row?.comps ?? raw?.ebayComps?.find(s => s.grader === "RAW" && s.grade === wear);
+        summary = rows.find(r => r.comps?.count)?.comps ?? raw?.ebayComps?.find(s => s.grader === "RAW" && s.grade === wear);
     }
     const soldRows = (s: CompSummary | null | undefined, seller: boolean) => {
         if (!s || kind === "raw" && (s.grader !== "RAW" || s.grade !== wear)) return [];
@@ -85,13 +109,18 @@ export function listingMarketPrices(e: Evaluation | null | undefined, listing: P
         return observedSoldSales(sales, now, { maxDays: s.windowDays ?? 90, slab: kind === "graded" });
     };
     let sales = soldRows(summary, false);
-    if (!sales.length && kind === "raw" && e.rawPricing?.printing === e.identity!.printing && e.rawPricing?.finish === e.identity!.finish) {
+    if (hasPrices && !sales.length && kind === "raw" && e.rawPricing?.printing === e.identity!.printing && e.rawPricing?.finish === e.identity!.finish) {
         summary = e.rawPricing?.sellerConditionComps ?? undefined;
         sales = soldRows(summary, true);
         sellerCondition = true;
     }
     const days = summary?.windowDays ?? 90;
     const sampleUntil = Math.min(validUntil, ...sales.map(s => s.at + days * 86_400_000 + 1));
+    const recentPrices = sales.filter(row => now - row.at <= 30 * 86_400_000).map(row => row.price).sort((a, b) => a - b);
+    const quartile = (fraction: number) => {
+        const rank = (recentPrices.length - 1) * fraction;
+        return recentPrices[Math.floor(rank)] + (recentPrices[Math.ceil(rank)] - recentPrices[Math.floor(rank)]) * (rank % 1);
+    };
     const medianPrice = sales.length ? median(sales.map(sale => sale.price)) : undefined;
     const estimate = summary?.marketEstimate && summary.count === sales.length && sales.length ? soldMarketPrice(summary) : null;
     const additional: ProviderPrice[] = [];
@@ -102,7 +131,8 @@ export function listingMarketPrices(e: Evaluation | null | undefined, listing: P
     const ended = e.listing.availability === "UNAVAILABLE" || Date.parse(e.listing.endTime ?? "") <= now;
     return { scope, additional, printing: printingName(e.identity!.printing), ...(ended ? {} : { lookup: { listingId: listing.id, market } }),
         validUntil, tcg, sold: sales.length ? {
-        latestSale: new Date(sales[0].at).toISOString(), validUntil: sampleUntil,
-        price: medianPrice!, count: sales.length, days, sellerCondition,
+        latestSale: new Date(sales[0].at).toISOString(), validUntil: sampleUntil, sales: tileSales(sales),
+        price: medianPrice!, count: sales.length, days, sellerCondition, sales30: recentPrices.length,
+        ...(recentPrices.length >= 4 && { typicalRange: [quartile(0.25), quartile(0.75)] }),
     } : undefined };
 }

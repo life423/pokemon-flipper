@@ -121,7 +121,9 @@ export function marketItemLimit(m: HuntMarket, goal: DealHuntGoal, targets: Targ
         if (!tier) return 0;
         fixedCosts = tier.fee + config.grading.shippingPerCard;
     }
-    const expectedNet = netFromSale(m.medianUsd, m.condition ? "raw" : "graded", config.selling);
+    const exit = goal === "resell" && m.comparableActivity
+        ? Math.min(m.medianUsd, m.comparableActivity.low) : m.medianUsd;
+    const expectedNet = netFromSale(exit, m.condition ? "raw" : "graded", config.selling);
     return maxBid({ expectedNet, fixedCosts, shipping }, config);
 }
 

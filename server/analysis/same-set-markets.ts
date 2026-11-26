@@ -6,7 +6,7 @@ import { finishClaim } from "../../shared/finish.ts";
 import { isPrinting, readyForPricing } from "../../shared/identity.ts";
 import { parseListingLink } from "../../shared/listing-link.ts";
 import { money } from "../../shared/money/cents.ts";
-import { isRawSoldPrice, isUsableRawPrice, rawPriceForPath, referencePriceReason, unsupportedVariantReason } from "../../shared/money/price-evidence.ts";
+import { isRawSoldPrice, rawPriceForPath, referencePriceReason, unsupportedVariantReason } from "../../shared/money/price-evidence.ts";
 import { conflictsWithPhotoFinish, observedCardKind } from "../../shared/photo-evidence.ts";
 import { hasBaseSetFourthPrint } from "../../shared/reprint-release.ts";
 import { setKey } from "../../shared/sets.ts";
@@ -21,6 +21,7 @@ import { confirmedHuntPage, savedHuntSaleRows } from "../pricing/saved-hunt-sale
 import { readHuntEvaluations, recentHuntCardIndex } from "./private-evaluation.ts";
 import { createSearchDiagnosticStore } from "./search-diagnostic-store.ts";
 
+import { comparablePriceBounds } from "../../shared/sold-evidence.ts";
 import { resaleActivity, type ResaleActivity } from "./resale-activity.ts";
 
 export interface HuntOrigin { name: string; set: string; cardNumber: string | null }
@@ -35,6 +36,7 @@ export interface HuntMarket {
     /** Actual distinct transaction dates, so a long-running hunt can recount its window. */
     activityDates?: string[];
     activity?: ResaleActivity;
+    comparableActivity?: ResaleActivity;
     /** Active fixed-price copies observed within the last day. Research leads only. */
     observedAsks?: ObservedAsk[];
     /** Legacy saved activity boundary. Never a purchase-volume requirement. */
@@ -69,12 +71,12 @@ function copyMarkets(value: Evaluation, goal: DealHuntGoal, slab: boolean, inclu
     const result: CopyMarket[] = [];
     const condition = value.condition.rawCondition, raw = value.rawPricing;
     if (goal === "resell" && matches(raw) && isRawCondition(condition) && (!raw.finish || raw.finish === id.finish)) {
-        const row = raw.prices?.find(row => row.condition === condition && isUsableRawPrice(row));
+        const row = raw.prices?.find(row => row.condition === condition && isRawSoldPrice(row));
         const physical = row?.comps ?? raw.ebayComps?.find(s => s.grader === "RAW" && s.grade === condition && s.count > 0);
         const seller = raw.sellerConditionComps;
-        const summary = seller?.grader === "RAW" && seller.grade === condition && seller.count > 0 ? seller
+        const summary = physical?.grader === "RAW" && physical.grade === condition && physical.count > 0 ? physical : seller?.grader === "RAW" && seller.grade === condition && seller.count > 0 ? seller
             : physical?.grader === "RAW" && physical.grade === condition ? physical : undefined;
-        if (row) result.push({ summary, price: row.price, basis: row.basis?.startsWith("TCGPLAYER_") ? row.basis : "EBAY_SOLD",
+        if (row) result.push({ summary, price: row.price, basis: "EBAY_SOLD",
             quoteAsOf: row.offers?.checkedAt, activityScope: summary === physical ? "PHOTO_CONDITION" : "SELLER_CONDITION", condition, variant: raw.variant,
             path: paths.find(path => path.path === "RAW" && path.priceCondition === condition && path.salePrice === row.price) });
     }
@@ -110,7 +112,7 @@ export function rankHuntMarkets(evaluations: Evaluation[], origin: HuntOrigin | 
     if (!eligible(scope, origin)) return [];
     type Market = Omit<HuntMarket, "sales30" | "sales60" | "sales90" | "latestSaleAt" | "medianUsd" | "listingIds" | "projectedProfit">;
     type Sale = { at: number; price: number };
-    const groups = new Map<string, { market: Market; sales: Map<string, Sale>; copies: Map<string, number | null>; values: number[] }>();
+    const groups = new Map<string, { market: Market; sales: Map<string, Sale>; comparable: Set<string>; copies: Map<string, number | null>; values: number[] }>();
     const transactions = new Map<string, { scope: string; at: number; price: number }>();
     const ambiguous = new Set<string>();
     for (const value of evaluations) {
@@ -145,8 +147,14 @@ export function rankHuntMarkets(evaluations: Evaluation[], origin: HuntOrigin | 
             let group = groups.get(key);
             if (!group) {
                 group = { market: { set: id.set, cardNumber: id.cardNumber, name: id.name, printing: id.printing, finish: id.finish,
-                    kind: acquisitionKind, grader, grade, condition, valueBasis: basis, quoteAsOf, activityScope }, sales: new Map(), copies: new Map(), values: [] };
+                    kind: acquisitionKind, grader, grade, condition, valueBasis: basis, quoteAsOf, activityScope }, sales: new Map(), comparable: new Set(), copies: new Map(), values: [] };
                 groups.set(key, group);
+            }
+            // Keep sales used for a physical price separate from wider activity and seller clues.
+            if (activityScope === "GRADE" || activityScope === "PHOTO_CONDITION") {
+                for (const { id: saleId, sale } of observedSoldSales(summary?.sales ?? [], now, { slab: !condition, maxDays: 60 })) {
+                    if (!condition || sale.photoCondition === condition && sale.conditionEvidence?.length) group.comparable.add(saleId);
+                }
             }
             group.values.push(marketPrice);
             if (!useSlabSalesForRaw && value.listing.buyingOption === "FIXED_PRICE" && value.listing.availability === "ACTIVE") {
@@ -170,16 +178,22 @@ export function rankHuntMarkets(evaluations: Evaluation[], origin: HuntOrigin | 
         }
     }
     const ranked: HuntMarket[] = [];
-    for (const { market, sales, copies, values } of groups.values()) {
+    for (const { market, sales, comparable, copies, values } of groups.values()) {
         const verified = [...sales].filter(([id]) => !ambiguous.has(id)).map(([, sale]) => sale);
         const recent = verified.filter(sale => now - sale.at <= SALES_ACTIVITY_MS).sort((a, b) => b.at - a.at);
+        const supported = [...comparable].filter(id => !ambiguous.has(id)).flatMap(id => {
+            const sale = sales.get(id);
+            return sale && now - sale.at <= SALES_ACTIVITY_MS ? [sale] : [];
+        });
+        const bounds = supported.length ? comparablePriceBounds(supported.map(sale => sale.price)) : null;
+        const comparableActivity = bounds && resaleActivity(supported.filter(sale => sale.price >= bounds.low && sale.price <= bounds.high));
         // Activity describes observed transactions. It cannot veto a supported
         // value quote, and zero observations never becomes invented volume.
         if (!values.length || !verified.length && !market.valueBasis?.startsWith("TCGPLAYER_")) continue;
         const listings = [...copies].sort((a, b) => (b[1] ?? -Infinity) - (a[1] ?? -Infinity) || a[0].localeCompare(b[0]));
         ranked.push({ ...market, sales30: recent.filter(s => now - s.at <= 30 * day).length, sales60: recent.length,
             sales90: verified.filter(s => now - s.at <= 90 * day).length, medianUsd: money(median(values)),
-            activity: resaleActivity(recent), activityDates: verified.map(sale => new Date(sale.at).toISOString()),
+            activity: resaleActivity(recent), ...(comparableActivity && { comparableActivity }), activityDates: verified.map(sale => new Date(sale.at).toISOString()),
             latestSaleAt: verified.length ? new Date(Math.max(...verified.map(sale => sale.at))).toISOString() : "",
             listingIds: listings.map(([id]) => id), projectedProfit: listings[0]?.[1] ?? null });
     }

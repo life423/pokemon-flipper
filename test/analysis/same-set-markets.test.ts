@@ -9,7 +9,7 @@ import { createPrivateEvaluationStore } from "../../server/analysis/private-eval
 import { createSearchDiagnosticStore } from "../../server/analysis/search-diagnostic-store.ts";
 import { saveRecord } from "../../server/analysis/store.ts";
 import { marketItemLimit, photoMatchesCollectorMarket } from "../../server/analysis/deal-hunt-market-checks.ts";
-import { groupMarketSearches } from "../../server/analysis/deal-hunt-market-groups.ts";
+import { groupMarketSearches, pricedInventoryTargets } from "../../server/analysis/deal-hunt-market-groups.ts";
 import { confirmedHuntPage, savedHuntSaleRows } from "../../server/pricing/saved-hunt-sales.ts";
 import type { Comp } from "../../server/pricing/types.ts";
 import { underwrite } from "../../shared/money/underwriting.ts";
@@ -287,4 +287,21 @@ test("auction hunt menu reserves space for a liquid slab from auction-only histo
     assert.equal(menu.length, 10, "priority ordering must not delete the ninth or tenth market");
     assert.ok(menu.some(group => group.leads.includes(slab)), "both raw and slab exits remain available");
     assert.ok(menu.every(group => group.observedPurchaseTotal === undefined));
+});
+
+test("an exact discovery ceiling uses verified recent typical sales while isolated premiums and seller claims stay out", async () => {
+    const card = rawCard("Blastoise", "Base Set", "2/102", 120000099000, 3);
+    const comps = card.rawPricing!.prices![0].comps!;
+    comps.sales.forEach((sale, i) => Object.assign(sale, { price: [50, 55, 1000][i], conditionEvidence: ["Front and back wear examined."] }));
+    const seller = rawCard("Gengar", "Fossil", "5/62", 120000090000, 3);
+    seller.rawPricing!.prices![0].comps!.sales.forEach(sale => { delete sale.conditionEvidence; });
+    const markets = rankHuntMarkets([card, seller], null, "resell", "any_card", now);
+    const exact = markets.find(m => m.name === "Blastoise")!;
+    assert.equal(exact.sales60, 3);
+    assert.equal(exact.comparableActivity?.count, 2);
+    assert.equal(exact.comparableActivity.low, 51.25);
+    const suggestions = await pricedInventoryTargets({ typeFilter: "FIXED_PRICE" }, { minProfit: 0, minRoi: 0 },
+        new AbortController().signal, { cardName: null, sets: [], graded: null, titleWords: [] }, async () => markets);
+    assert.deepEqual(suggestions.map(s => s.name), ["Blastoise"]);
+    assert.ok(suggestions[0].exactMarket!.maxItem < 51.25);
 });

@@ -2,7 +2,7 @@ import '../fixtures/isolated-data.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { tcgplayerRawPrice } from '../../server/pricing/tcgplayer-raw.ts';
-import { isRawSoldPrice, isUsableRawPrice, referencePriceReason } from '../../shared/money/price-evidence.ts';
+import { isRawSoldPrice, isUsableRawPrice } from '../../shared/money/price-evidence.ts';
 import { underwrite } from '../../shared/money/underwriting.ts';
 import { currentPriceEvidence, PRICING_VERSION } from '../../shared/pricing-freshness.ts';
 import { cardEvaluation } from '../fixtures/card-evaluation.ts';
@@ -25,7 +25,7 @@ test('AI condition selects exact TCGplayer delivered competition; a high asking 
     const calls: unknown[][] = [];
     const quote = await tcgplayerRawPrice(card, identity, 'LIGHTLY_PLAYED', { now,
         fetchMarket: async () => detail([marketRow]), fetchOffers: async (...args) => { calls.push(args); return { data: [offer(1, 60), offer(2, 65), offer(3, 1000)] }; } });
-    assert.deepEqual(calls, [[123, 'Lightly Played', 'Unlimited Holofoil', undefined]]);
+    assert.deepEqual(calls, [[123, 'Lightly Played', 'Unlimited Holofoil', undefined, false]]);
     assert.equal(quote?.price, 62);
     assert.equal(quote?.offers?.sellerCount, 3);
     assert.equal(quote?.offers?.marketPrice, 75);
@@ -40,6 +40,7 @@ test('fresh snapshot accepts unchanged offers; wrong condition, edition, currenc
     const quote = await tcgplayerRawPrice(card, identity, 'LIGHTLY_PLAYED', { now, fetchMarket: async () => detail(), fetchOffers: async () => ({ data: rows }) });
     assert.equal(quote?.price, 52);
     assert.equal(quote?.offers?.offers.length, 1);
+    assert.equal(isUsableRawPrice(quote!), false, "one uncorroborated seller can only supply a reference");
 });
 
 test('exact condition market can price a copy with no sold-photo comparison or active offer; other conditions cannot substitute', async () => {
@@ -60,7 +61,7 @@ test('Mint is conservatively valued against Near Mint and market quote caps isol
     assert.equal(condition, 'Near Mint'); assert.equal(quote?.price, 100); assert.equal(quote?.condition, 'MINT');
 });
 
-test('supported TCGplayer estimate reaches raw profit calculation with zero eBay sold-photo prices', async () => {
+test('a supported TCGplayer reference alone cannot price the raw exit', async () => {
     const price = (await tcgplayerRawPrice(card, identity, 'LIGHTLY_PLAYED', { now, fetchMarket: async () => detail([marketRow]), fetchOffers: async () => ({ data: [offer(1, 60)] }) }))!;
     const e = cardEvaluation({ minProfit: 0, minRoi: 0 });
     e.identity = identity; e.condition!.rawCondition = 'LIGHTLY_PLAYED'; e.condition!.authenticity.concern = 'NONE_SEEN';
@@ -68,8 +69,7 @@ test('supported TCGplayer estimate reaches raw profit calculation with zero eBay
     e.listing.buyingOption = 'FIXED_PRICE'; e.gradedPricing = null; e.slab = null;
     e.rawPricing = { status: 'PRICED', source: 'pkmnprices', printing: 'UNLIMITED', finish: 'HOLO', variant: 'Unlimited Holofoil', conditionEvidence: 'TCGPLAYER', prices: [price] } satisfies RawPricing;
     const u = underwrite(e); e.underwriting = u;
-    assert.equal(u.verdict, 'BUY_RAW'); assert.ok(u.best!.profit > 0);
-    assert.equal(referencePriceReason(e, u.best!), null);
+    assert.equal(u.verdict, 'CANT_PRICE'); assert.equal(u.best, null);
     e.pricingVersion = PRICING_VERSION; e.pricesCheckedAt = new Date(now).toISOString();
     e.assessmentVersion = 'test/bounded-prompts-4'; e.conditionVersion = 'test/bounded-condition-1/prompts-1';
     assert.equal(currentPriceEvidence(e, now), true);
@@ -102,4 +102,12 @@ test('native numbered holo names supply TCGplayer market prices only for the sam
         }), null);
     }
     assert.equal(requests, 0, 'An incompatible catalog record cannot authorize a market or offer request.');
+});
+
+test('multiple listings from the same seller and an isolated high ask cannot corroborate a raw price', async () => {
+    const quote = async (rows: ReturnType<typeof offer>[]) => (await tcgplayerRawPrice(card, identity, 'LIGHTLY_PLAYED', {
+        now, fetchMarket: async () => detail(), fetchOffers: async () => ({ data: rows }),
+    }))!;
+    assert.equal(isUsableRawPrice(await quote([offer(1, 500), offer(2, 510, { seller_id: '1' }), offer(3, 3000)])), false);
+    assert.equal(isUsableRawPrice(await quote([offer(1, 500), offer(2, 510), offer(3, 3000)])), true);
 });

@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createServer } from "vite";
 import { ApiRequestError, newWatchScanId, runDealHunt } from "../../client/src/api.ts";
 import { independentHuntFailure, runGuidedHuntLegs, type GuidedHuntLeg } from "../../client/src/search/guided-hunt.ts";
+import { HUNT_RECHECK_MS, type DealHuntResponse } from "../../shared/deal-hunt.ts";
 import type { ListingSummary } from "../../shared/types.ts";
 
 const legs: GuidedHuntLeg[] = [{ id: "fixed", format: "FIXED_PRICE", started: 1 }, { id: "auction", format: "AUCTION", started: 1 }];
@@ -16,30 +17,34 @@ const deferred = <T>() => {
     return { promise, resolve, reject };
 };
 
+const reply = (decision: "WAIT" | "BUY" | "BID", nextCheckAt?: number): DealHuntResponse => ({
+    report: { decision, searchId: "fixed", goal: "resell", destination: null, reason: "Fixture", steps: [] }, evaluation: null, nextCheckAt,
+});
+
 test("Both starts independent format checks immediately; an ordinary temporary leg failure does not abandon the other", async () => {
-    const fixed = deferred<string>(), auction = deferred<string>();
+    const fixed = deferred<DealHuntResponse>(), auction = deferred<DealHuntResponse>();
     const started: string[] = [], results: string[] = [], failures: string[] = [];
     const work = runGuidedHuntLegs({ legs, signal: new AbortController().signal,
         run: leg => { started.push(leg.id); return leg.format === "AUCTION" ? auction.promise : fixed.promise; },
-        onResult: (_leg, result) => results.push(result), onFailure: leg => failures.push(leg.id), isOpportunity: () => false });
+        onResult: (_leg, result) => results.push(result.report.decision), onWaiting: leg => failures.push(leg.id), isOpportunity: result => result.report.decision === "BID" });
     assert.deepEqual(started, ["fixed", "auction"], "a slow BIN check cannot starve auctions");
     fixed.reject(new ApiRequestError("Temporary listing failure", true, 1500, "PROVIDER_TEMPORARY", undefined, "listing"));
-    auction.resolve("auction checked");
-    assert.deepEqual(await work, { found: false });
-    assert.deepEqual(failures, ["fixed"]); assert.deepEqual(results, ["auction checked"]);
+    auction.resolve(reply("BID"));
+    assert.equal((await work).report.decision, "BID");
+    assert.deepEqual(failures, ["fixed"]); assert.deepEqual(results, ["BID"]);
 });
 
 test("a bound opportunity stops sibling work while retaining the actionable result", async () => {
-    const found = deferred<string>();
+    const found = deferred<DealHuntResponse>();
     const results: string[] = [], cancelled: string[] = [];
     const work = runGuidedHuntLegs({ legs, signal: new AbortController().signal,
-        run: (leg, signal) => leg.id === "auction" ? found.promise : new Promise<string>((_resolve, reject) => {
+        run: (leg, signal) => leg.id === "auction" ? found.promise : new Promise<DealHuntResponse>((_resolve, reject) => {
             signal.addEventListener("abort", () => { cancelled.push(leg.id); reject(signal.reason); }, { once: true });
-        }), onResult: (_leg, result) => results.push(result), onFailure: () => assert.fail("cancellation is not a failed leg"),
-        isOpportunity: value => value === "verified" });
-    found.resolve("verified");
-    assert.deepEqual(await work, { found: true });
-    assert.deepEqual(results, ["verified"]); assert.deepEqual(cancelled, ["fixed"]);
+        }), onResult: (_leg, result) => results.push(result.report.decision), onWaiting: () => assert.fail("cancellation is not a failed leg"),
+        isOpportunity: value => value.report.decision === "BID" });
+    found.resolve(reply("BID"));
+    assert.equal((await work).report.decision, "BID");
+    assert.deepEqual(results, ["BID"]); assert.deepEqual(cancelled, ["fixed"]);
 });
 
 test("authority, storage, held charges and search-wide failures stop siblings instead of bypassing the hold", async () => {
@@ -50,12 +55,12 @@ test("authority, storage, held charges and search-wide failures stop siblings in
         new ApiRequestError("Shared failure", true, 1500, "PROVIDER_TEMPORARY", undefined, "search"),
         new Error("The returned identity did not match"),
     ]) {
-        const first = deferred<string>();
+        const first = deferred<DealHuntResponse>();
         let cancelled = false;
         const work = runGuidedHuntLegs({ legs, signal: new AbortController().signal,
-            run: (leg, signal) => leg.id === "fixed" ? first.promise : new Promise<string>((_resolve, reject) => {
+            run: (leg, signal) => leg.id === "fixed" ? first.promise : new Promise<DealHuntResponse>((_resolve, reject) => {
                 signal.addEventListener("abort", () => { cancelled = true; reject(signal.reason); }, { once: true });
-            }), onResult: () => assert.fail("no purchase result"), onFailure: () => assert.fail("hard failure cannot skip to another leg"), isOpportunity: () => false });
+            }), onResult: () => assert.fail("no purchase result"), onWaiting: () => assert.fail("hard failure cannot skip to another leg"), isOpportunity: () => false });
         first.reject(failure);
         await assert.rejects(work, error => error === failure);
         assert.equal(cancelled, true);
@@ -66,9 +71,9 @@ test("authority, storage, held charges and search-wide failures stop siblings in
 test("Stop aborts every active format without returning an incomplete hunt as complete", async () => {
     const stop = new AbortController(), cancelled: string[] = [];
     const work = runGuidedHuntLegs({ legs, signal: stop.signal,
-        run: (leg, signal) => new Promise<string>((_resolve, reject) => signal.addEventListener("abort", () => {
+        run: (leg, signal) => new Promise<DealHuntResponse>((_resolve, reject) => signal.addEventListener("abort", () => {
             cancelled.push(leg.id); reject(signal.reason);
-        }, { once: true })), onResult: () => assert.fail("no result"), onFailure: () => assert.fail("Stop is not a provider failure"), isOpportunity: () => false });
+        }, { once: true })), onResult: () => assert.fail("no result"), onWaiting: () => assert.fail("Stop is not a provider failure"), isOpportunity: () => false });
     stop.abort();
     await assert.rejects(work, { name: "AbortError" });
     assert.deepEqual(cancelled, ["fixed", "auction"]);
@@ -82,14 +87,50 @@ test("Both uses different hunt IDs under one original request account", async t 
         const headers = new Headers(options.headers);
         const body = JSON.parse(String(options.body));
         calls.push({ id: headers.get("X-Pokemon-Flipper-Search-Id"), owner: headers.get("X-Pokemon-Flipper-Watch-Budget"), format: body.filters.typeFilter });
-        return Response.json({ report: { decision: "WAIT" }, evaluation: null });
+        return Response.json(reply(body.filters.typeFilter === "AUCTION" ? "BID" : "WAIT"));
     });
     await runGuidedHuntLegs({ legs: legs.map((leg, index) => ({ ...leg, id: ids[index] })), signal: new AbortController().signal,
         run: (leg, signal) => runDealHunt(leg.id, { goal: "resell", standalone: true, scope: "any_card", listingIds: [], targets: { minProfit: 0, minRoi: 0 }, filters: { typeFilter: leg.format } }, signal),
-        onResult() {}, onFailure: () => assert.fail("no failure"), isOpportunity: () => false });
+        onResult() {}, onWaiting() {}, isOpportunity: result => result.report.decision === "BID" });
     assert.equal(calls.length, 2); assert.notEqual(calls[0].id, calls[1].id);
     assert.ok(calls.every(call => call.owner === root));
     assert.deepEqual(calls.map(call => call.format), ["FIXED_PRICE", "AUCTION"]);
+});
+
+test("a missed pass waits for the scheduled time and checks the same search again until a verified result", async t => {
+    t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+    const waiting = deferred<number>(), checked: string[] = [], current = reply("BUY");
+    const work = runGuidedHuntLegs({ legs: [legs[0]], signal: new AbortController().signal,
+        run: async leg => { checked.push(leg.id); return checked.length === 1 ? reply("WAIT", 1000 + HUNT_RECHECK_MS) : current; },
+        onResult() {}, onWaiting: (_leg, at) => waiting.resolve(at), isOpportunity: result => result === current });
+    assert.equal(await waiting.promise, 1000 + HUNT_RECHECK_MS);
+    t.mock.timers.tick(HUNT_RECHECK_MS - 1);
+    assert.deepEqual(checked, ["fixed"]);
+    t.mock.timers.tick(1);
+    assert.equal(await work, current);
+    assert.deepEqual(checked, ["fixed", "fixed"]);
+});
+
+test("Stop during the next-check countdown prevents every later dispatch, including after a stale Buy", async t => {
+    t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+    const waiting = deferred<number>(), controller = new AbortController();
+    let calls = 0;
+    const work = runGuidedHuntLegs({ legs: [legs[0]], signal: controller.signal,
+        run: async () => { calls++; return reply("BUY"); },
+        onResult() {}, onWaiting: (_leg, at) => waiting.resolve(at), isOpportunity: () => false });
+    assert.equal(await waiting.promise, Date.now() + HUNT_RECHECK_MS);
+    controller.abort();
+    await assert.rejects(work, { name: "AbortError" });
+    t.mock.timers.tick(HUNT_RECHECK_MS * 2);
+    assert.equal(calls, 1);
+});
+
+test("a spending or accounting hold returned as Wait requires attention without scheduling a new pass", async () => {
+    const result = reply("WAIT");
+    result.report.needsAttention = true;
+    result.report.reason = "Spending paused.";
+    await assert.rejects(runGuidedHuntLegs({ legs: [legs[0]], signal: new AbortController().signal, run: async () => result,
+        onResult() {}, onWaiting: () => assert.fail("cannot schedule spending around a hold"), isOpportunity: () => false }), /Spending paused/);
 });
 
 test("provisional hunt cards show original copies and asking prices without a purchase verdict", async t => {

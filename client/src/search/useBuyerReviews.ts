@@ -126,10 +126,12 @@ export function useBuyerReviews(options: Options, checkpoint?: BuyerReviewCheckp
             started = true;
             const stopForHold = (failure: BuyerReviewFailure | undefined, reason: string) => {
                 const code = buyerReviewGlobalHold(failure, reason);
-                if (!allowResearch || !code || blockedSearch.current === searchId) return;
+                if (!allowResearch || !code) return false;
+                if (blockedSearch.current === searchId) return true;
                 blockedSearch.current = searchId;
                 for (const [listingId, job] of running.current) if (listingId !== id) job.abort();
                 latest.current.onGlobalHold(code, reason);
+                return true;
             };
             void (async () => {
                 try {
@@ -148,6 +150,7 @@ export function useBuyerReviews(options: Options, checkpoint?: BuyerReviewCheckp
                         !Number.isFinite(result.offer.maxItemPrice) || result.offer.opening > result.offer.maxItemPrice ||
                         result.offer.verifiedPurchase?.listingId !== id || result.offer.opening !== result.offer.verifiedPurchase.itemPrice ||
                         result.offer.maxItemPrice !== result.offer.verifiedPurchase.maxItemPrice)) throw new Error("Invalid offer");
+                    if (stopForHold(result.failure, result.reason)) return;
                     const updated = currentOptions.onResult(current, result, owner);
                     const retryAt = allowResearch ? buyerReviewRetryAt(result.failure, result.retryAt, attempts, Date.now()) : undefined;
                     const exhausted = result.failure?.retryable && attempts >= BUYER_REVIEW_MAX_ATTEMPTS;
@@ -156,7 +159,6 @@ export function useBuyerReviews(options: Options, checkpoint?: BuyerReviewCheckp
                             offer: result.offer, gradingOpportunity: result.gradingOpportunity, auctionOpportunity: result.auctionOpportunity,
                             verifiedPurchase: result.verifiedPurchase, waitReason: result.waitReason,
                             unavailable: result.unavailable, failure: result.failure }, unavailable: !!result.unavailable, validUntil, retryAt, attempts });
-                    stopForHold(result.failure, result.reason);
                 } catch (error) {
                     if (!controller.signal.aborted) {
                         const failure = buyerReviewFailure(error instanceof ApiRequestError ? error.code : undefined, error instanceof ApiRequestError && error.retryable,
@@ -164,12 +166,12 @@ export function useBuyerReviews(options: Options, checkpoint?: BuyerReviewCheckp
                         const retryAt = allowResearch ? buyerReviewRetryAt(failure, error instanceof ApiRequestError
                             ? error.retryAt ?? Date.now() + error.retryAfterMs : undefined, attempts, Date.now()) : undefined;
                         const reason = error instanceof ApiRequestError ? error.message : "Wait to buy. The app could not finish checking this listing’s price and purchase terms.";
+                        if (stopForHold(failure, reason)) return;
                         completedReviews.set(id, { key, unavailable: true, retryAt, attempts, decision: {
                             decision: "WAIT", unavailable: true, failure,
                             reason: reason + (failure.retryable && attempts >= BUYER_REVIEW_MAX_ATTEMPTS
                                 ? " Automatic checks stopped after three attempts; this copy has not failed verification." : ""),
                         } });
-                        stopForHold(failure, reason);
                     }
                 } finally {
                     if (running.current.get(id) === controller) {

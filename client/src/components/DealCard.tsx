@@ -209,7 +209,8 @@ export function DealCard({ listing, analysis, assessmentNote, automaticDecision:
                 </p> : <p className={styles.note}>{auction ? `${timeLeft(currentQuote?.endsAt ?? listing.endTime, now) ?? "End time unavailable"} · ${bids} ${bids === 1 ? "bid" : "bids"} · ` : ""}{shipping === null ? !evaluation && screen?.soldEvidence
                     ? "Shipping not quoted · preliminary screening excludes shipping"
                     : `Shipping not quoted · ${dollars(MONEY_CONFIG.buying.assumedShippingWhenUnknown)} assumed in estimates` : shipping === 0 ? "Free shipping" : `${dollars(shipping)} shipping`}</p>}
-                {!checking && <MarketPrices prices={pricingExpired ? undefined : listingMarketPrices(evaluation, listing, now)} now={now} />}
+                <MarketPrices prices={listingMarketPrices(evaluation, listing, now)} screen={!evaluation ? listing.screen : undefined}
+                    loadAdditional={!checking} now={now} />
                 {showEconomics && best?.path === "RAW" && rawPrice && !priceGap && <p className={styles.note}>
                     Resale {dollars(rawPrice.price)} · {tcgplayerEstimateLabel(rawPrice.basis) ?? (evaluation?.rawPricing?.source === "pkmnprices" ? "Matched eBay sales via PKMNPrices" : "Matched eBay sales")}
                 </p>}

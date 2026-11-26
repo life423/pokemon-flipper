@@ -10,7 +10,7 @@ import { parseListingLink } from "./listing-link.ts";
 import { cents } from "./money/cents.ts";
 import { MONEY_CONFIG } from "./money/config.ts";
 import { isRawSoldPrice, isUsableRawPrice, unsupportedVariantReason } from "./money/price-evidence.ts";
-import { acquisitionCost, maxBid } from "./money/underwriting.ts";
+import { acquisitionCost, affordableItemLimit as affordableBidLimit, maxBid } from "./money/underwriting.ts";
 import { observedCardKind, photoCoverage } from "./photo-evidence.ts";
 import { currentPriceEvidence, maxPriceEvidenceAge } from "./pricing-freshness.ts";
 import { BEST_BUY_TERMS_MAX_AGE_MS } from "./search-diagnostic.ts";
@@ -18,6 +18,8 @@ import { verifiedSlabMarketKey } from "./slab-market.ts";
 import { soldMarketPrice } from "./sold-evidence.ts";
 import { observedSalesActivity, SALES_ACTIVITY_MS } from "./sales-activity.ts";
 import type { CompSummary, Evaluation, Grader, PathKind, RawPrice, Targets } from "./types.ts";
+
+export { affordableBidLimit };
 
 const day = 86_400_000;
 export { withinOpportunityWindow, AUCTION_OPPORTUNITY_HOURS } from "./auction-window.ts";
@@ -147,17 +149,6 @@ function resaleRoutes(e: Evaluation, market: Market, targets: Targets, nextTotal
                 likelyProfit: profit(likely.net), lowerProfit: profit(lower.net) } });
     }
     return routes;
-}
-
-// Compare the rounded, tax-inclusive purchase in whole cents, including bids exactly at the cap.
-export function affordableBidLimit(limit: number, shipping: number, budget: number) {
-    let low = 0, high = cents(limit);
-    while (low < high) {
-        const middle = low + Math.ceil((high - low) / 2);
-        if (cents(acquisitionCost(middle / 100, shipping, MONEY_CONFIG.buying)) <= cents(budget)) low = middle;
-        else high = middle - 1;
-    }
-    return low / 100;
 }
 
 export function currentAuctionMarket(e: Evaluation, now: number) {

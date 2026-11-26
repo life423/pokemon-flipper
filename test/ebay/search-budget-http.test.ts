@@ -51,6 +51,9 @@ test("HTTP Browse resumes an exhausted legacy search and preserves the daily res
             });req.on('error',reject);req.end(payload);
         });
         try{
+            assert.equal((await request('GET','/api/ebay-usage?cachedOnly=1',oldSearch)).body,null);
+            assert.deepEqual((await request('GET','/api/set-years?cachedOnly=1',oldSearch)).body,{});
+            assert.equal(oauth,0);assert.equal(browse,0);
             const noId=await request('POST','/api/listings/resolve',undefined,{input:'123456780001'});
             assert.equal(noId.status,503);assert.match(noId.body.error,/valid search ID/);
             assert.equal(noId.body.retryable,false);assert.equal(oauth,0);assert.equal(browse,0);

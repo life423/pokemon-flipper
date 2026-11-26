@@ -45,3 +45,7 @@
 .controls .expand { display: flex; align-items: center; min-height: var(--tap); flex: 0 1 auto; }
 .controls .expand input { accent-color: var(--accent); }
 .run:disabled { opacity: .6; cursor: default; }
+
+.settings { min-width: 0; }
+.settings > summary { min-height: var(--tap); align-content: center; color: var(--action-text); overflow-wrap: anywhere; cursor: pointer; }
+.settings[open] > summary { margin-bottom: var(--space-2); }

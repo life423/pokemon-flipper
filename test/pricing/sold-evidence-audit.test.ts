@@ -30,28 +30,28 @@ test("one high transaction cannot inflate the ordinary sold price", () => {
             "an eligible unusual transaction stays in activity while its amount cannot inflate value");
     }
     const recent = summarizeComps([20, 21, 22, 50].map((price, index) => sale(price, { id: index + 1, sale_type: "auction" })), criteria);
-    assert.equal(soldMarketPrice(recent), 21.5, "the four-observation estimate uses the median, not an outlier-sensitive average");
+    assert.equal(soldMarketPrice(recent), 21, "the ordinary-sale average excludes the isolated high price");
     const one = summarizeComps([sale(21)], criteria);
     assert.equal(soldMarketPrice(one), 21, "a sparse exact quote remains available with its actual low confidence");
     assert.equal(one.confidence, "LOW");
 });
 
-test("four newest distinct sales within 48 hours drive the current price and show an observed move", () => {
+test("recent distinct transactions set the average when there are only auctions", () => {
     const at = (price: number, hours: number) => sale(price, { id: `sale-${hours}`, sale_type: "auction",
         sold_at: new Date(now - hours * 3_600_000).toISOString() });
     const latest = at(120, 1);
     const sales = [at(50, 50), at(90, 48), at(100, 24), latest, at(80, 20 * 24), at(110, 4),
         at(80, 2 * 24 + 1), { ...latest }, at(1500, 3)];
     const summary = summarizeComps(sales, criteria);
-    assert.deepEqual(summary.marketEstimate, { price: 105, method: "RECENT_FOUR", recentTrendPercent: 21.05 });
+    assert.deepEqual(summary.marketEstimate, { price: 90, method: "SOLD_AVERAGE", sampleSize: 7, windowDays: 30 });
     assert.equal(summary.low, 50);
     assert.equal(summary.high, 120);
     assert.equal(summary.dropped["price far from the other sales"], 1);
     const path = gradedResalePath({ price: 60, shipping: 0 }, summary, 0, MONEY_CONFIG);
     assert.equal(path.status, "PRICED");
-    if (path.status === "PRICED") assert.equal(path.salePrice, 105);
+    if (path.status === "PRICED") assert.equal(path.salePrice, 90);
     const tooOld = summarizeComps(sales.filter(comp => comp.sold_at !== at(90, 48).sold_at), criteria);
-    assert.equal(tooOld.marketEstimate?.method, "RECENCY_WEIGHTED_MEDIAN");
+    assert.equal(tooOld.marketEstimate?.method, "SOLD_AVERAGE");
 });
 
 test("recent Buy It Now comps anchor resale while auctions remain a separate bid reference", () => {
@@ -62,7 +62,7 @@ test("recent Buy It Now comps anchor resale while auctions remain a separate bid
         at(370, 30), ...latest, { ...latest[0] }, at(300, 0, "auction"), at(330, 2, "auction"),
         at(340, 0.5, "best_offer_accepted"), at(950, 0.25, null),
     ], criteria);
-    assert.deepEqual(summary.marketEstimate, { price: 500, method: "RECENT_FIXED_PRICE_MEDIAN", sampleSize: 5 });
+    assert.deepEqual(summary.marketEstimate, { price: 430, method: "FIXED_PRICE_AVERAGE", sampleSize: 7, windowDays: 30 });
     assert.equal(summary.low, 300);
     assert.equal(summary.sales.filter((comp) => comp.saleType === "auction").length, 2);
     assert.equal(summary.sales.filter((comp) => comp.saleType === "best_offer_accepted").length, 1);
@@ -70,10 +70,10 @@ test("recent Buy It Now comps anchor resale while auctions remain a separate bid
     assert.deepEqual(usualPrice([], summary), { price: 315, sales: [300, 330] });
     const path = gradedResalePath({ price: 300, shipping: 0 }, summary, 0, MONEY_CONFIG);
     assert.equal(path.status, "PRICED");
-    if (path.status === "PRICED") assert.equal(path.salePrice, 500);
+    if (path.status === "PRICED") assert.equal(path.salePrice, 430);
 
     const sparse = summarizeComps([at(500, 3), at(500, 4), at(500, 31), at(300, 0, "auction")], criteria);
-    assert.equal(sparse.marketEstimate?.method, "RECENCY_WEIGHTED_MEDIAN");
+    assert.equal(sparse.marketEstimate?.method, "FIXED_PRICE_AVERAGE");
 });
 
 test("sparse exact markets weight newer sales in either direction and preserve legacy medians", () => {
@@ -83,7 +83,7 @@ test("sparse exact markets weight newer sales in either direction and preserve l
         const summary = summarizeComps([...older, sale(price, { sold_at: age(3) })], criteria);
         assert.equal(soldMarketPrice(summary), price);
         assert.notEqual(summary.median, price);
-        assert.equal(summary.marketEstimate?.method, "RECENCY_WEIGHTED_MEDIAN");
+        assert.equal(summary.marketEstimate?.method, "FIXED_PRICE_AVERAGE");
         const { marketEstimate: _estimate, ...legacy } = summary;
         assert.equal(soldMarketPrice(legacy), summary.median);
     }

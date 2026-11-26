@@ -84,6 +84,38 @@ test("a saved continuation shares simultaneous work, survives reload and cannot 
     assert.equal(replay.reused, true); assert.equal(runs, 1);
 });
 
+test("new release searches use Pokémon inventory while old continuations keep their source scope", async t => {
+    t.mock.method(globalThis, "fetch", async () => assert.fail("source scope is checked without provider calls"));
+    const search = "Aquapolis";
+    const root = randomUUID();
+    const calls: { categoryScoped: boolean; offset: number; sort?: string }[] = [];
+    const steps = offlineSearchSteps([], {
+        search: async (_query, options) => {
+            const offset = options?.offset ?? 0;
+            calls.push({ categoryScoped: options?.ccgInventory === true, offset, sort: options?.sort });
+            assert.equal(options?.anyCategory === true, !options?.ccgInventory);
+            return { listings: [], total: 240, skipped: 0, rejections: [], ...(offset === 0 && { nextOffset: 200 }) };
+        },
+    });
+    const filters = { typeFilter: "FIXED_PRICE" as const };
+    let summary: SearchSummary | undefined;
+    const onStart = (value: SearchSummary) => { summary = value; };
+    await withAiUsageContext({ searchId: root }, () => findDeals(search, { filters, onStart }, steps));
+    const next = summary!.continuation!;
+    await withAiUsageContext({ searchId: next.searchId }, () => findDeals(search, { continuation: next.token }, steps));
+
+    const legacy = await discoveryContinuations.create({ rootSearchId: root, request: { search, filters }, pending: [], seenIds: [], total: 240,
+        sources: [{ query: search, sort: "newlyListed", filters, offset: 200, total: 240 }] });
+    await withAiUsageContext({ searchId: legacy.searchId }, () => findDeals(search, { continuation: legacy.token }, steps));
+
+    assert.deepEqual(calls, [
+        { categoryScoped: true, offset: 0, sort: "newlyListed" },
+        { categoryScoped: true, offset: 0, sort: "price" },
+        { categoryScoped: true, offset: 200, sort: "newlyListed" },
+        { categoryScoped: false, offset: 200, sort: "newlyListed" },
+    ]);
+});
+
 test("a cancelled worker cannot save an incomplete continuation receipt", async () => {
     const directory = `${isolatedDataDir}/cancelled-continuation`, store = createDiscoveryContinuationStore(directory);
     const next = await store.create({ rootSearchId: randomUUID(), request: { search: query }, pending: [row(1)], sources: [], seenIds: [], total: 1 });

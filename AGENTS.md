@@ -203,6 +203,19 @@ Read docs/architecture.md for the source map and reading order.
   sold screening, one bounded text request can reorder tied Buy It Now photo
   candidates when automatic photos are on. Neither request changes pricing
   or verification requirements.
+- Preserve natural-language release bounds through validation, compiled queries,
+  discovery and displayed criteria. "No newer than 2020" includes 2020 and
+  earlier; before/after exclude the boundary. A missing minimum or maximum is
+  valid. Keep collector numbers and prices separate from release years.
+- An explicit liquidity request prioritizes observed 60-day sales for the exact
+  selected exit. Zero observed activity stays Wait; one or two sales retain LOW
+  confidence, not a universal three-sale veto or a promised sale date. Broad
+  release inventory uses Pokémon and collectible-card scope before paid photos;
+  exact-card recovery retains useful all-category alias coverage.
+- Keep accounting, exact-input verification and genuine budget denials distinct.
+  Do not cache transient global authority errors as per-copy financial decisions.
+  Explicit same-account retry rechecks authority and reuses accepted answers;
+  genuine caps and unresolved-charge holds are never cleared to resume work.
 - Production Browse and PKMNPrices have no per-search request ceiling on this
   installation. Original search IDs retain request counts, historical limits,
   spending and unresolved state across retries, nested calls and restarts. The
@@ -219,7 +232,8 @@ Read docs/architecture.md for the source map and reading order.
   Price-only deferral stays Sorting while accepted photos and completed prices
   remain reusable; a supported profitable route can still reach Deals.
   The user authorizes broader PKMNPrices research as needed within reason.
-  Preserve provider limits, daily reserve, rate pacing and shared cache reuse.
+  Preserve provider pacing, bounded page walks, cancellation and shared cache
+  reuse; removed request ceilings do not authorize purposeless consumption.
 - Daily usage warnings appear outside the drawer at <=20% remaining or >=5% of
   an allowance observed consumed within 15 minutes. Account-keyed local samples
   persist across searches/restarts, expire when stale or reset, and do not

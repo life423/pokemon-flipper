@@ -7,7 +7,7 @@ import { cents, meetsMoneyTargets } from "../../shared/money/cents.ts";
 import { PRICING_VERSION } from "../../shared/pricing-freshness.ts";
 import { dealHuntCandidate } from "../../server/analysis/deal-hunt-evidence.ts";
 import { rankHuntMarkets } from "../../server/analysis/same-set-markets.ts";
-import { cardEvaluation, salesSummary } from "../fixtures/card-evaluation.ts";
+import { cardEvaluation, matchedRawPrice, salesSummary } from "../fixtures/card-evaluation.ts";
 import { tcgplayerRawEstimate } from "../fixtures/tcgplayer-raw-estimate.ts";
 
 const now = Date.now();
@@ -30,37 +30,23 @@ function rawCard(lowerPrice = 250) {
     return e;
 }
 
-test("a matched TCGplayer raw estimate supports buying without fabricating completed-sales activity", () => {
+test("an asking quote alone cannot authorize buying or establish a liquid market", () => {
     const e = rawCard();
     e.gradedPricing = null;
     e.rawPricing = { status: "PRICED", source: "pkmnprices", printing: "UNLIMITED", variant: "Unlimited Holofoil", finish: "HOLO",
         conditionEvidence: "TCGPLAYER", prices: [tcgplayerRawEstimate(175, stamp)] };
     e.underwriting = underwrite(e, { ...MONEY_CONFIG, targets: { minProfit: 0, minRoi: 0 } });
-    assert.equal(e.underwriting.verdict, "BUY_RAW");
-    const result = dealHuntCandidate(e, "resell", now)!.outcome(checked)!;
-    assert.equal(result.decision, "BUY");
-    assert.match(result.reason, /0 observed matching Lightly Played raw sales in the last 60 days/);
-    assert.match(result.reason, /quote alone does not establish sales activity/);
-    assert.match(String(dealHuntCandidate(e, "resell", now)!.read("check_sales")), /TCGplayer estimate/);
-    const [market] = rankHuntMarkets([e], null, "resell", "any_card", now);
-    assert.equal(market.sales60, 0); assert.equal(market.sales30, 0); assert.equal(market.latestSaleAt, "");
-    assert.equal(market.quoteAsOf, stamp); assert.equal(market.valueBasis, "TCGPLAYER_MARKET");
-
-    const sellers = salesSummary("RAW", "LIGHTLY_PLAYED", [160]);
-    Object.assign(sellers.sales[0], { saleType: "fixed_price", soldAt: new Date(now - 45 * 86_400_000).toISOString(),
-        url: "https://www.ebay.com/itm/123111111111", sellerCondition: "LIGHTLY_PLAYED" });
-    e.rawPricing.sellerConditionComps = sellers;
-    const observed = dealHuntCandidate(e, "resell", now)!.outcome(checked)!;
-    assert.equal(observed.decision, "BUY");
-    assert.match(observed.reason, /1 observed matching Lightly Played raw sale in the last 60 days/);
-    assert.equal(rankHuntMarkets([e], null, "resell", "any_card", now)[0].activityScope, "SELLER_CONDITION");
+    assert.equal(e.underwriting.verdict, "CANT_PRICE");
+    assert.equal(dealHuntCandidate(e, "resell", now)!.outcome(checked)?.verifiedPurchase, undefined);
+    assert.deepEqual(rankHuntMarkets([e], null, "resell", "any_card", now), []);
 });
 
 test("a liquidity-constrained Buy needs observed recent sales on the exact exit, with one or two allowed at low confidence", () => {
     const e = rawCard();
     e.gradedPricing = null;
+    const prior = new Date(now - 62 * 86_400_000).toISOString();
     e.rawPricing = { status: "PRICED", source: "pkmnprices", printing: "UNLIMITED", variant: "Unlimited Holofoil", finish: "HOLO",
-        conditionEvidence: "TCGPLAYER", prices: [tcgplayerRawEstimate(175, stamp)] };
+        conditionEvidence: "AI_PHOTOS", prices: [matchedRawPrice(175, prior)] };
     const targets = { minProfit: 0, minRoi: 0 };
     e.underwriting = underwrite(e, { ...MONEY_CONFIG, targets });
     const liquidity = { preferRecentSales: true };
@@ -79,7 +65,8 @@ test("a liquidity-constrained Buy needs observed recent sales on the exact exit,
         const recent = salesSummary("RAW", "LIGHTLY_PLAYED", Array(count).fill(160));
         recent.sales.forEach((sale, i) => Object.assign(sale, { saleType: "fixed_price", soldAt: soldAt(45 - i),
             url: `https://www.ebay.com/itm/${123111111112 + i}`, sellerCondition: "LIGHTLY_PLAYED" }));
-        e.rawPricing.sellerConditionComps = recent;
+        e.rawPricing.prices = [matchedRawPrice(175, soldAt(45), count)];
+        e.underwriting = underwrite(e, { ...MONEY_CONFIG, targets });
         const outcome = dealHuntCandidate(e, "resell", now, unmatched, targets, undefined, liquidity)!.outcome(checked)!;
         assert.equal(outcome.decision, "BUY");
         assert.equal(outcome.recentSales, count);
@@ -135,7 +122,7 @@ test("grading purchases meet the buyer's targets at the likely grade, not just a
         assert.match(outcome.reason, /likely-grade return falls short of your profit or ROI target/);
 
         e.rawPricing = { status: "PRICED", printing: "UNLIMITED", variant: "Unlimited Holofoil", finish: "HOLO",
-            conditionEvidence: "TCGPLAYER", prices: [tcgplayerRawEstimate(300, stamp)] };
+            conditionEvidence: "AI_PHOTOS", prices: [matchedRawPrice(300, stamp)] };
         e.underwriting = underwrite(e, { ...MONEY_CONFIG, targets });
         const raw = dealHuntCandidate(e, "resell", now, undefined, targets)!.outcome(checked)!;
         assert.equal(raw.decision, "BUY", "an independently profitable raw exit remains usable");
@@ -153,13 +140,25 @@ test("grading purchases meet the buyer's targets at the likely grade, not just a
         "the receipt's ceiling preserves the likely-grade target to the cent");
 });
 
+test("a supported purchase ceiling fits the buyer's delivered budget to the last cent", () => {
+    const targets = { minProfit: 0, minRoi: 0 };
+    const copy = rawCard();
+    Object.assign(copy.listing, { price: 5, shipping: 0 });
+    copy.underwriting = underwrite(copy, { ...MONEY_CONFIG, targets });
+    const result = dealHuntCandidate(copy, "grade_raw", now, undefined, targets, 6)!.outcome(checked)!;
+    assert.equal(result.decision, "BUY");
+    assert.equal(result.verifiedPurchase?.maxItemPrice, 5.54);
+    assert.equal(result.verifiedPurchase.maxDelivered, 6);
+    assert.ok(result.verifiedPurchase.marketMaxItemPrice! > 6);
+});
+
 test("an otherwise supported fixed-price purchase can request fresh terms without approving stale terms", () => {
     const targets = { minProfit: 0, minRoi: 0 };
     const create = () => {
         const e = rawCard();
         e.gradedPricing = null;
         e.rawPricing = { status: "PRICED", printing: "UNLIMITED", variant: "Unlimited Holofoil", finish: "HOLO",
-            conditionEvidence: "TCGPLAYER", prices: [tcgplayerRawEstimate(175, stamp)] };
+            conditionEvidence: "AI_PHOTOS", prices: [matchedRawPrice(175, stamp)] };
         e.underwriting = underwrite(e, { ...MONEY_CONFIG, targets });
         return e;
     };
@@ -194,6 +193,7 @@ test("an otherwise supported fixed-price purchase can request fresh terms withou
             blocked.condition!.authenticity.concern = "POSSIBLE";
             blocked.underwriting = underwrite(blocked, { ...MONEY_CONFIG, targets });
         }
+        if (stop === "liquidity") blocked.rawPricing!.prices = [matchedRawPrice(175, new Date(clock - 65 * 86_400_000).toISOString())];
         if (stop === "prices") blocked.pricesCheckedAt = new Date(clock - 7 * 3_600_000).toISOString();
         if (stop === "ended") blocked.listing.availability = "UNAVAILABLE";
         const hold = dealHuntCandidate(blocked, "resell", () => clock, undefined, targets, undefined,

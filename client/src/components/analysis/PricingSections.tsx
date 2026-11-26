@@ -8,6 +8,7 @@ import styles from "../DetailPanel.module.css";
 export function soldEstimateBasis(summary?: CompSummary): string {
     const estimate = summary?.marketEstimate;
     switch (estimate?.method) {
+        case "FIXED_PRICE_AVERAGE": case "SOLD_AVERAGE": return `average of ${estimate.sampleSize} matched eBay ${estimate.method === "FIXED_PRICE_AVERAGE" ? "fixed-price sales including confirmed offers" : "sales"}${estimate.windowDays ? " within " + estimate.windowDays + " days" : " in the comparison window"}`;
         case "RECENT_FIXED_PRICE_MEDIAN": return `median of the ${estimate.sampleSize ?? 5} latest matched Buy It Now sales within 30 days`;
         case "RECENT_FOUR": return "average of the four latest matched eBay sales across available formats within 48 hours";
         case "RECENCY_WEIGHTED_MEDIAN": return "eBay sold median across available formats, weighted toward newer sales";

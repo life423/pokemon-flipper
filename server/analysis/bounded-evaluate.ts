@@ -35,7 +35,7 @@ import { rateDeal } from "../../shared/money/rating.ts";
 import { cardLanguageStatus, EnglishOnlyError } from "../../shared/card-language.ts";
 import { listingEvidenceKey, normalizedPhoto } from "../../shared/listing-evidence.ts";
 import { BOUNDED_REVIEW_REVISION, currentPriceEvidence, PREVIOUS_PRICING_VERSION, PRICING_VERSION, provisionalComparisonRange } from "../../shared/pricing-freshness.ts";
-import { unsupportedVariantReason, withoutUnsupportedRawPrices, withoutUnsupportedVariantPrices } from "../../shared/money/price-evidence.ts";
+import { isRawSoldPrice, unsupportedVariantReason, withoutUnsupportedRawPrices, withoutUnsupportedVariantPrices } from "../../shared/money/price-evidence.ts";
 import { minimumOfferPrice } from "../../shared/money/cents.ts";
 import { CONDITION_AREAS, CONDITION_NAMES, isRawCondition, RAW_CONDITIONS, sellerCreaseOverridesCondition } from "../../shared/conditions.ts";
 import { withinAutomaticAuctionWindow, type ListingFilters } from "../../shared/listing-filters.ts";
@@ -48,6 +48,7 @@ import { isSearchDiagnosticId } from "./search-diagnostic-store.ts";
 import { findStampDecision, hasFreshStampTerms, ordinaryNeoStamp, stampCandidate, STAMP_TERMS_MAX_AGE_MS } from "./stamp-decision.ts";
 import { applyFrameReading, needsBaseSetFrame, readBaseSetFrame, storedFrameReading } from "./base-set-frame.ts";
 import { huntPrintingCheck, huntPrintingTerms } from "./deal-hunt-printing.ts";
+import { hasVerifiedRawFlip } from "./deal-hunt-evidence.ts";
 import { readStampCrop } from "./stamp-reading.ts";
 import { printingMarkConflicts, reconcileIdentityReadings, visibleReprintReading } from "./resolve-evidence.ts";
 import { assertPriceResearchAvailable, PriceResearchBudgetError, withPriceResearchSignal } from "../pricing/research-budget.ts";
@@ -392,6 +393,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             verifiedFixedPriceTerms(listing.shipping ?? 0) && listing.price !== null
             ? minimumOfferPrice(listing.price) : null;
         const canReuseRawResearch = (saved: Evaluation) => {
+            if (saved.gradingPricesDeferred) return false; // Re-evaluate the live terms using the accepted photos and prices.
             const deferred = saved.rawPricing?.soldPhotoDeferred;
             return !deferred || ((verifiedOfferPrice() ?? listing.price ?? Infinity) >= deferred.price &&
                 (listing.shipping ?? MONEY_CONFIG.buying.assumedShippingWhenUnknown) >= deferred.shipping &&
@@ -627,13 +629,6 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                 (!verifySoldCondition || frontRawPrices.prices.prices?.some(row => row.condition === requestedCondition))) {
                 prices.rawPricing = frontRawPrices.prices;
             } else if (requestedCondition !== "UNKNOWN") {
-                // The live copy's AI condition chooses the TCGplayer market.
-                // Historical sold photos can add corroboration but are not a
-                // prerequisite for estimating resale from current competition.
-                let tcgPrice: Awaited<ReturnType<typeof tcgplayerRawPrice>> = null;
-                if (deps.tcgplayer) try {
-                    tcgPrice = await inspect(() => deps.tcgplayer!(card, identity, requestedCondition, { signal, now: deps.now() }));
-                } catch (error) { unavailable(error); }
                 const sold = deps.soldCondition({ condition: requestedCondition, loadDetails: (...args) => inspect(() => deps.details(...args)),
                     cached: deps.cached, save: deps.save, now: deps.now });
                 const beforeRaw = priceLimits;
@@ -643,7 +638,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                     fetchRawComps: (...args) => inspect(() => deps.fetchRawComps(...args)), signal, now: deps.now(), requestedCondition,
                     assessCondition: (sale, target) => inspect(() => sold.read(sale, target, signal)),
                     conditionStatus: sold.status,
-                    acquireCondition: !tcgPrice && (allowSoldPhoto || verifySoldCondition) ? async sales => {
+                    acquireCondition: (allowSoldPhoto || verifySoldCondition) ? async sales => {
                         // Resolving another copy's resale price cannot settle
                         // this copy's suspected structural damage or authenticity.
                         if (condition.creases === "SUSPECTED" || condition.authenticity.concern !== "NONE_SEEN") return null;
@@ -696,12 +691,25 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                     raw.evidenceNote = `${raw.evidenceNote} ${note}`;
                     if (raw.status === "PRICE_UNAVAILABLE") raw.reason = note;
                 }
-                prices.rawPricing = tcgPrice ? { ...raw, status: "PRICED", reason: undefined, conditionEvidence: "TCGPLAYER",
-                    prices: [tcgPrice, ...(raw.prices ?? []).filter(row => row.condition !== requestedCondition)],
-                    evidenceNote: `TCGplayer ${tcgPrice.basis === "TCGPLAYER_OFFERS" ? "current asking-price competition" : "condition market estimate"} for ${CONDITION_NAMES[requestedCondition]}. ${tcgPrice.offers?.offers.length ?? 0} current offers; these are not completed sales. ${raw.evidenceNote ?? ""}` }
-                    : priceLimits > beforeRaw ? { status: "PRICE_UNAVAILABLE", reason: evaluation.pricingDeferred!.note } : raw;
+                let tcgPrice: Awaited<ReturnType<typeof tcgplayerRawPrice>> = null;
+                if (deps.tcgplayer) try {
+                    tcgPrice = await inspect(() => deps.tcgplayer!(card, identity, requestedCondition, { signal, now: deps.now(), cachedOnly: rawOnly || !!raw.prices?.some(isRawSoldPrice) }));
+                } catch (error) { unavailable(error); }
+                prices.rawPricing = !raw.prices?.some(isRawSoldPrice) && priceLimits > beforeRaw
+                    ? { ...raw, status: "PRICE_UNAVAILABLE", reason: evaluation.pricingDeferred!.note } : raw;
+                if (tcgPrice?.offers) prices.rawPricing.tcgplayerReference = tcgPrice.offers;
             }
             if (hardFailure) throw hardFailure;
+            if (!rawOnly && options.deferSupplemental && !options.priceOnly && !creaseDisclosed && condition.gradeRange &&
+                prices.rawPricing?.status === "PRICED" && verifiedFixedPriceTerms()) {
+                const now = deps.now();
+                const assessed = { ...evaluation, ...prices, identity, pricesCheckedAt: new Date(now).toISOString() };
+                assessed.underwriting = underwrite(assessed, money);
+                if (hasVerifiedRawFlip(assessed, money.targets, now)) {
+                    evaluation.gradingPricesDeferred = true;
+                    return prices;
+                }
+            }
             if (!rawOnly && !creaseDisclosed) {
                 prices.gradedPricing = {};
                 // Establish that the first grade lookup can proceed before

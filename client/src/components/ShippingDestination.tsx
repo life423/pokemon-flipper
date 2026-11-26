@@ -1,3 +1,4 @@
+import { validShippingZip } from "../../../shared/shipping-zip.ts";
 import { useEffect, useId, useRef, useState } from "react";
 import { fetchShippingDestination, saveShippingDestination } from "../api";
 import styles from "./ShippingDestination.module.css";
@@ -20,7 +21,7 @@ export function ShippingDestination({ busy = false, onSaved }: ShippingDestinati
         const controller = new AbortController();
         const savedElsewhere = (event: Event) => {
             const value = (event as CustomEvent<{ zip: string }>).detail;
-            if (!value || !/^\d{5}(?:-\d{4})?$/.test(value.zip)) return;
+            if (!value || !validShippingZip(value.zip)) return;
             controller.abort();
             edited.current = false;
             setSaved(value.zip); setZip(value.zip); setLoading(false); setError("");
@@ -35,7 +36,7 @@ export function ShippingDestination({ busy = false, onSaved }: ShippingDestinati
     }, []);
     async function save() {
         if (saving || loading) return;
-        if (!/^\d{5}(?:-\d{4})?$/.test(zip.trim())) { setError("Enter a five-digit US ZIP code, optionally followed by four more digits."); return; }
+        if (!validShippingZip(zip.trim())) { setError("Enter a five-digit US ZIP code, optionally followed by four more digits."); return; }
         setSaving(true); setError(""); setNotice("");
         try {
             const value = await saveShippingDestination(zip.trim());

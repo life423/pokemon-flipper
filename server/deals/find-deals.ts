@@ -12,6 +12,7 @@ import { screenListingWithoutAi } from "./screen-listing.ts";
 import { screeningBlock, type DiscoveryOrder, type ListingFilters, type MarketplaceOrder } from "../../shared/listing-filters.ts";
 import { cardLanguageStatus, EnglishOnlyError } from "../../shared/card-language.ts";
 import { sameCardNumber } from "../identity/card-identity.ts";
+import { sameCatalogName } from "../identity/catalog-name.ts";
 import { DEVELOPMENT_SEARCH_LIMIT, SEARCH_SOURCE_PAGE_LIMIT } from "../../shared/research-policy.ts";
 import { createPriceFirstSession, type SoldScreeningFactory } from "./price-first.ts";
 import { analysisPriority, compareAnalysisPriority } from "../../shared/analysis-priority.ts";
@@ -46,6 +47,14 @@ function literalTitleBlock(listing: ListingSummary, intent: SearchIntent): Sourc
     if (outsideSearchYears(intent, reading.set, listing.title)) return "OTHER_SET";
     if (intent.cardNumber && reading.cardNumber && !sameCardNumber(intent.cardNumber, reading.cardNumber)) return "OTHER_CARD";
     return null;
+}
+
+function disputedHolder(row: ListingSummary, kind: ListingFilters["kindFilter"]) {
+    const attrs = searchAttributes(row.title);
+    if (kind === "graded" && !row.isGraded && attrs.grader !== null && attrs.grade !== null &&
+        !/\b(?:raw|ungraded|unslabbed|candidate|contender|potential|possible|worthy|ready|would grade|regrade|not graded)\b/i.test(row.title)) return kind;
+    if (kind === "raw" && row.isGraded && /\b(?:raw|ungraded|unslabbed)\b/i.test(row.title) && !attrs.grader) return kind;
+    return undefined;
 }
 
 interface FindSteps {
@@ -113,16 +122,20 @@ export interface SearchOptions {
 }
 
 interface InventoryScan {
+    diagnostic?: ReturnType<typeof import("../analysis/flip-diagnostic.ts").flipDiagnostic>;
     excludeIds: ReadonlySet<string>;
     previouslyChecked?: (row: ListingSummary) => boolean;
     freshGrading: boolean;
     freshListings?: true;
+    recoverTitles?: boolean;
+    firstPhotoBatch?: boolean;
     offset?: number;
     onNextPage?: (offset: number | undefined) => void;
     onProgress?: SearchOptions["onProgress"];
     onStage?: (stage: "discovering" | "pricing") => void;
     /** Keep unreached copies and source cursors with the owning hunt. */
     onBacklog?: (backlog: DiscoveryBacklog | undefined) => void;
+    resumeBacklog?: DiscoveryBacklog;
 }
 
 // Screen one page in the requested marketplace order. When the newest BIN page
@@ -135,12 +148,16 @@ async function findDealsBatch(search: string, {
     if (cardLanguageStatus(search) === "OTHER") throw new EnglishOnlyError();
     let intent = await dependencies.readIntent(search, signal);
     const broadSearch = !intent.cardName;
+    // Offsets from older all-category searches must stay in that source stream.
+    const ccgInventory = Boolean(inventoryScan || (resume ? resume.ccgInventory : broadSearch && !intent.cardNumber &&
+        (intent.sets.length || intent.minYear !== undefined || intent.maxYear !== undefined)));
     if (signal?.aborted) return [];
     if (intent.minYear !== undefined || intent.maxYear !== undefined) {
         const releaseYears = await dependencies.releaseYears?.();
         if (releaseYears) intent = { ...intent, releaseYears };
         if (signal?.aborted) return [];
     }
+    const requestedFullNumber = intent.cardNumber?.includes('/') === true;
     const typedCollectorNumber = intent.cardNumber?.split("/", 1)[0];
     const screenPrices = createPriceFirstSession(intent, { signal, targets, includeOffers, now: asOf, sourceFactory: dependencies.priceSource,
         onScreened: () => { screenedCount++; reportProgress(); } }, dependencies.soldScreening);
@@ -171,7 +188,7 @@ async function findDealsBatch(search: string, {
         : exactRawBin ? rawBuyItNowQuery(keywords, intent) : keywords;
     const sourceOptions = {
         maxResults: SEARCH_SOURCE_PAGE_LIMIT, signal, filters: firstFilters,
-        ...(inventoryScan ? { ccgInventory: true } : { anyCategory: true }),
+        ...(ccgInventory ? { ccgInventory: true } : { anyCategory: true }),
         ...(inventoryScan?.freshListings || inventoryScan?.previouslyChecked ? { cacheMode: "refresh" as const, offset: inventoryScan.offset } : {}),
     };
     // Browse can ignore itemEndDate ranges. Bring soon-ending auctions into
@@ -235,13 +252,14 @@ async function findDealsBatch(search: string, {
         : analysisPriority(listing, targets, asOf).band > 0 ? 2 : 1;
 
     function preliminaryBlock(listing: ListingSummary, pageFilters: ListingFilters): SourceRejectionReason | null {
-        if (inventoryScan && isSportsTradingCardListing(listing)) return "OTHER_CARD";
+        if (ccgInventory && isSportsTradingCardListing(listing)) return "OTHER_CARD";
         if ((newOnly?.gradingWatch || inventoryScan?.freshGrading) && freshListingTime(listing, asOf) === null) return "OUTSIDE_GRADING_WATCH";
         if (marketCeiling !== null && !listing.bestOffer && listing.currentPrice !== null && listing.currentPrice > marketCeiling) return "ABOVE_SOLD_CEILING";
         const filtered = screeningBlock(listing, pageFilters, asOf);
         if (filtered) return filtered;
-        if (!titleMatches(listing.title, intent)) return cardLanguageStatus(listing.title) === "OTHER" ? "OTHER_LANGUAGE" : "OTHER_CARD";
-        if (!gradingMatches(listing.isGraded, intent)) return "CARD_TYPE";
+        if (cardLanguageStatus(listing.title) === "OTHER") return "OTHER_LANGUAGE";
+        if (!listing.researchIdentity && !titleMatches(listing.title, intent)) return "OTHER_CARD";
+        if (!gradingMatches(listing.researchKind ? listing.researchKind === "graded" : listing.isGraded, intent)) return "CARD_TYPE";
         const mismatch = criteriaMismatch(searchAttributes(listing.title), intent, false);
         if (mismatch && mismatch !== "UNCONFIRMED_CRITERIA") return mismatch;
         return literalTitleBlock(listing, intent);
@@ -261,9 +279,14 @@ async function findDealsBatch(search: string, {
                 if (!loaded.has(row.id)) rejections.set(row.id, "UNAVAILABLE");
                 continue;
             }
-            const listing = loaded.get(row.id) ?? row;
+            const disputed = inventoryScan?.freshListings && !row.researchKind ? disputedHolder(row, pageFilters.kindFilter) : undefined;
+            const claims = inventoryScan?.freshListings && intent.cardName && requestedFullNumber && intent.sets.length === 1 &&
+                row.images.some(Boolean) && !titleMatches(row.title, intent) ? readTitleByRules(row.title, intent.sets) : null;
+            const corroboratedNumber = claims?.set && claims.cardNumber?.includes("/") && sameCardNumber(claims.cardNumber, intent.cardNumber) &&
+                setMatches(claims.set, intent, claims.cardNumber);
+            const listing = corroboratedNumber ? { ...row, researchIdentity: true as const, ...(disputed && { researchKind: disputed }) } : disputed ? { ...row, researchKind: disputed } : row.researchKind || row.researchIdentity ? row : loaded.get(row.id) ?? row;
             if (!loaded.has(row.id)) {
-                loaded.set(row.id, row);
+                loaded.set(row.id, listing);
                 if (excluded.has(row.id)) previouslySeen++;
             }
             if (considered.has(row.id) || eligible.has(row.id)) continue;
@@ -273,6 +296,8 @@ async function findDealsBatch(search: string, {
                 continue;
             }
             rejections.delete(row.id);
+            // Overflow must keep the clues that made this copy eligible on the alternate query.
+            loaded.set(row.id, listing);
             eligible.set(row.id, listing);
             deferred.add(row.id);
         }
@@ -286,7 +311,10 @@ async function findDealsBatch(search: string, {
             if (!started) { onStart(summary(batch.length)); started = true; }
             signal?.throwIfAborted();
             inventoryScan?.onStage?.("pricing");
-            const priced = await screenPrices(batch);
+            // A disputed holder has no safe preliminary raw/slab market. Photos decide it.
+            const undisputed = batch.filter(row => !row.researchKind && !row.researchIdentity);
+            const priced = undisputed.length ? await screenPrices(undisputed) : [];
+            priced.push(...batch.filter(row => row.researchKind || row.researchIdentity));
             // Confident price exclusions do not consume display slots.
             for (const listing of priced) {
                 signal?.throwIfAborted();
@@ -315,7 +343,11 @@ async function findDealsBatch(search: string, {
             } else prepared.push(mismatch ? { ...screened, match: mismatch } : screened);
         }
         const ordered = broadSearch ? orderBroadDiscovery(prepared, targets, asOf) : prepared;
+        // Return the first promising group promptly. The rest of this already fetched
+        // page stays in the saved backlog under the original account.
+        const photoBatch = inventoryScan?.firstPhotoBatch && inventoryScan.onBacklog && !resume ? 6 : undefined;
         for (const listing of ordered) {
+            if (photoBatch && matching.length >= photoBatch) break;
             // Broad inventory should reach photo review after one useful batch,
             // rather than exhaust pricing on hundreds of weak or repeated rows.
             // The remainder stays server-owned and is screened in later batches.
@@ -332,7 +364,7 @@ async function findDealsBatch(search: string, {
             batch.push(listing);
             // Once display is full, keep looking in the already-fetched page
             // for supported candidates. Price work still shares one allowance.
-            const remainingSlots = DEVELOPMENT_SEARCH_LIMIT - matching.length;
+            const remainingSlots = (photoBatch ?? DEVELOPMENT_SEARCH_LIMIT) - matching.length;
             if (batch.length >= (remainingSlots > 0 ? remainingSlots : REFILL_BATCH_SIZE)) await priceBatch();
         }
         if (batch.length) await priceBatch();
@@ -343,6 +375,41 @@ async function findDealsBatch(search: string, {
     try {
         const first = await screenPage(firstPage, firstFilters, MIN_NEWEST_CANDIDATES);
         matching = first.matching;
+        const kind = listingFilters.kindFilter;
+        const numbered = !!intent.cardNumber?.includes("/");
+        const exactSet = numbered && intent.sets.length === 1;
+        if (inventoryScan?.freshListings && marketCeiling !== 0 && !resume && !inventoryScan.offset &&
+            (intent.cardName || intent.sets.length === 1) && (kind === "raw" || kind === "graded" || exactSet && inventoryScan.recoverTitles) &&
+            matching.length < MIN_NEWEST_CANDIDATES && !await dependencies.browsePressure?.()) {
+            // Sellers can omit the name or file the card outside the singles category.
+            // Use one bounded alternate query and verify the original buyer constraints on photos.
+            const exactQuery = exactSet ? [intent.sets[0], intent.cardNumber].join(" ") :
+                [intent.cardName ?? intent.sets[0], intent.cardNumber].filter(Boolean).join(" ");
+            const recovery = await dependencies.search(exactQuery, { maxResults: 12, signal, anyCategory: true, keepReserve: true,
+                filters: { ...listingFilters, kindFilter: "all" }, sort: "newlyListed" }).catch(error => {
+                signal?.throwIfAborted();
+                if (!(error instanceof EbayBudgetError && error.reason === "QUOTA" || error instanceof ProviderError || error instanceof EbayError)) throw error;
+                completeCoverage = false;
+                return { listings: [], total: 0, skipped: 0, rejections: [] };
+            });
+            const copies: ListingSummary[] = [];
+            for (const row of recovery.listings) {
+                if (matching.some(copy => copy.id === row.id)) continue;
+                const title = readTitleByRules(row.title, intent.sets);
+                const sameNumber = numbered && !!title.cardNumber?.includes("/") && sameCardNumber(title.cardNumber, intent.cardNumber);
+                const named = intent.cardName ? sameCatalogName(title.cardName, intent.cardName) : true;
+                const numberedSet = requestedFullNumber && exactSet && sameNumber && !!title.set && setMatches(title.set, intent, title.cardNumber);
+                const disputed = disputedHolder(row, kind);
+                const correctKind = kind !== "raw" && kind !== "graded" || row.isGraded === (kind === "graded");
+                if ((!named && !numberedSet) || numbered && !sameNumber || !intent.cardName && !title.set) {
+                    if (!loaded.has(row.id)) rejections.set(row.id, "OTHER_CARD");
+                } else if (disputed || correctKind && numberedSet) {
+                    copies.push({ ...row, ...(disputed && { researchKind: disputed }), ...(!named && { researchIdentity: true as const }) });
+                } else if (!loaded.has(row.id)) rejections.set(row.id, "CARD_TYPE");
+            }
+            const recovered = await screenPage({ ...recovery, listings: copies }, listingFilters, 0);
+            matching.push(...recovered.matching);
+        }
         const promising = first.promising;
         const moreDirectListings = !newOnly && sourceOrder !== "lowest" && (total > SEARCH_SOURCE_PAGE_LIMIT || deferred.size > 0);
         const widenForOffers = !moreDirectListings && soldPurchaseCeiling !== undefined && offerCeiling !== null &&
@@ -407,7 +474,7 @@ async function findDealsBatch(search: string, {
                     request: { search, minPrice, filters, targets, includeOffers, automaticPhotos, marketplaceOrder, asOf, newOnly },
                     pending: [...new Map(pending.map(row => [row.id, row])).values()],
                     seenIds: [...new Set([...(resume?.seenIds ?? []), ...considered, ...rejections.keys()])].filter(id => !pendingIds.has(id)),
-                    sources, total, ...(sourceLimitReached && { sourceLimitReached: true }) });
+                    sources, total, ...(ccgInventory && { ccgInventory: true }), ...(sourceLimitReached && { sourceLimitReached: true }) });
             }
         }
         if (cheaper) {
@@ -506,23 +573,32 @@ export function createHuntInventoryScanner(signal: AbortSignal, dependencies = d
     const exhausted = new Set<string>();
     const observed = new Map<string, Set<string>>();
     return async (query: string, intent: SearchIntent, filters: ListingFilters, targets: Targets, asOf: number, scan: InventoryScan): Promise<{
-        listings: ListingSummary[]; summary: SearchSummary; hasMore?: boolean; sourcePages?: number;
+        listings: ListingSummary[]; summary: SearchSummary; hasMore?: boolean; sourcePages?: number; backlog?: DiscoveryBacklog;
     }> => {
         active.throwIfAborted();
         const key = JSON.stringify([query, intent, filters, targets, asOf]);
         if (exhausted.has(key)) return { listings: [], hasMore: false, sourcePages: 0,
             summary: { intent, mode: "development", deferred: 0, total: 0, found: 0, count: 0, skipped: 0 } };
+        if (!observed.has(key) && scan.resumeBacklog) remaining.set(key, scan.resumeBacklog);
         const seen = observed.get(key) ?? new Set<string>();
         observed.set(key, seen);
         const found = new Set<string>();
+        const dispositions: SourceDispositionRow[] = [];
+        const overflow: ScreenedOverflowRow[] = [];
+        const excludedPrices: ListingSummary[] = [];
         let sourcePages = 0;
         let summary: SearchSummary | undefined;
         const listings = await findDealsBatch(query, { signal: active, filters, targets, asOf,
+            onSourceDisposition: row => dispositions.push(row),
+            onPriceExcluded: row => excludedPrices.push(row),
+            onScreenedOverflow: row => overflow.push(row),
             onProgress: value => scan.onProgress?.({ ...value, found: found.size }),
             onStart: value => { summary = value; } }, {
             ...dependencies, readIntent: async () => intent, releaseYears: async () => intent.releaseYears ?? null,
             search: async (...args) => {
                 const page = await dependencies.search(...args);
+                await scan.diagnostic?.("page", { query, providerQuery: args[0], providerFilters: args[1]?.filters, intent, filters, targets, asOf, offset: args[1]?.offset ?? 0,
+                    sort: args[1]?.sort, page });
                 sourcePages++;
                 for (const row of page.listings) if (!seen.has(row.id)) { found.add(row.id); seen.add(row.id); }
                 return page;
@@ -534,7 +610,9 @@ export function createHuntInventoryScanner(signal: AbortSignal, dependencies = d
         } }).catch(error => { stopped.abort(error); throw error; });
         active.throwIfAborted();
         if (!summary) throw new Error("The inventory scan stopped before the listing summary finished.");
-        return { listings, summary: { ...summary, found: found.size }, hasMore: remaining.has(key), sourcePages };
+        await scan.diagnostic?.("screened", { query, summary, dispositions, overflow, listings, excludedPrices,
+            pending: remaining.get(key)?.pending.map(row => row.id) ?? [] });
+        return { listings, summary: { ...summary, found: found.size }, hasMore: remaining.has(key), sourcePages, backlog: remaining.get(key) };
     };
 }
 

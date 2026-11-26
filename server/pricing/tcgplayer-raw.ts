@@ -20,8 +20,8 @@ interface Dependencies { offers: typeof fetchTcgplayerConditionData; market: typ
 
 /** Price an AI-assessed raw condition from that exact TCGplayer market. No sold-photo prerequisite. */
 export async function tcgplayerRawPrice(card: PricedCard | null, identity: Identity, condition: RawCondition,
-    { signal, now = Date.now(), fetchOffers = fetchTcgplayerConditionData, fetchMarket = fetchTcgplayerMarketData }:
-    { signal?: AbortSignal; now?: number; fetchOffers?: Dependencies['offers']; fetchMarket?: Dependencies['market'] } = {}): Promise<RawPrice | null> {
+    { signal, now = Date.now(), cachedOnly = false, fetchOffers = fetchTcgplayerConditionData, fetchMarket = fetchTcgplayerMarketData }:
+    { signal?: AbortSignal; now?: number; cachedOnly?: boolean; fetchOffers?: Dependencies['offers']; fetchMarket?: Dependencies['market'] } = {}): Promise<RawPrice | null> {
     signal?.throwIfAborted();
     if (!readyForPricing(identity) || !identity.name || !isRawCondition(condition) || !card) return null;
     const selected = variantFor(card, identity).variant;
@@ -35,7 +35,7 @@ export async function tcgplayerRawPrice(card: PricedCard | null, identity: Ident
         mapVariantPrintings([...card.variants.map(v => v.name), label], identity.set)[label] === identity.printing;
     let marketPrice: number | undefined, marketRecordAt: string | null = null;
     try {
-        const detail = await fetchMarket(selected.recordId);
+        const detail = await fetchMarket(selected.recordId, cachedOnly);
         signal?.throwIfAborted();
         const body = detail?.data && !Array.isArray(detail.data) ? detail.data : detail;
         const number = body?.total_set_number ? `${body.number}/${body.total_set_number}` : body?.number;
@@ -52,7 +52,7 @@ export async function tcgplayerRawPrice(card: PricedCard | null, identity: Ident
     let cursor: string | undefined;
     for (let page = 0; page < 4; page++) {
         let response;
-        try { response = await fetchOffers(selected.recordId, marketCondition, selected.name, cursor); }
+        try { response = await fetchOffers(selected.recordId, marketCondition, selected.name, cursor, cachedOnly); }
         catch (error) { signal?.throwIfAborted(); if (storageFailure(error) || error instanceof PriceResearchBudgetError && error.reason !== 'LIMIT') throw error; break; }
         signal?.throwIfAborted();
         if (!Array.isArray(response?.data)) break;

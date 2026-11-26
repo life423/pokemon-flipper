@@ -139,7 +139,9 @@ test("saved unsupported raw prices are hidden from the card and analysis", async
     assert.match(decision, /Wait for resale evidence/);
     assert.doesNotMatch(decision, /Run full research|Max price|Your review needed/);
     const details = render(AnalysisDetails, { onReanalyze() {}, minGrade: 0, reviewing: false });
-    assert.doesNotMatch(details + card + decision, /\$500|TCGplayer/i);
+    assert.doesNotMatch(details + card + decision, /\$500/);
+    assert.doesNotMatch(details + decision, /TCGplayer/i);
+    assert.match(card, /TCGplayer market<\/dt><dd>Unverified<\/dd>/);
     assert.doesNotMatch(details, /Clears your targets|Selected strategy: sell raw|Suggested offer|Walk away above/);
     const panel = render(DetailPanel, { analysis: { status: "done", evaluation: value }, includeOffers: false,
         onClose() {}, onAnalyze() {}, onPhotoReview() {}, onRefreshPrices() {},
@@ -245,7 +247,7 @@ test("unquoted Buy It Now shipping labels estimated profit and limits as provisi
     assert.doesNotMatch(card + decision + details, /Free shipping|Clears your targets|Below your price limit|Suggested offer|Selected strategy/);
 });
 
-test("raw quote captions identify TCGplayer estimates and show the separate 60-day sales count", async t => {
+test("raw asking quotes remain references in the buyer interface", async t => {
     const server = await createServer({ configFile: path.resolve("client/vite.config.js"), envFile: false, appType: "custom", logLevel: "silent",
         server: { middlewareMode: true, hmr: false, watch: null } });
     t.after(() => server.close());
@@ -266,10 +268,10 @@ test("raw quote captions identify TCGplayer estimates and show the separate 60-d
         condition: "LIGHTLY_PLAYED", price: 63, updatedAt: stamp, basis: "TCGPLAYER_OFFERS",
         offers: { source: "TCGPLAYER", currency: "USD", condition: "LIGHTLY_PLAYED", printing: "Unlimited Holofoil", checkedAt: stamp,
             snapshotAt: stamp, method: "LOWEST_DELIVERED_COMPETITION", marketCondition: "Lightly Played", price: 63, low: 63, median: 63, high: 63,
-            sellerCount: 1, offers: [{ id: "offer-1", sellerId: "seller-1", sellerName: "Fixture", price: 60, shipping: 3, total: 63, quantity: 1, snapshotAt: stamp }] },
+            marketPrice: 68, sellerCount: 1, offers: [{ id: "offer-1", sellerId: "seller-1", sellerName: "Fixture", price: 60, shipping: 3, total: 63, quantity: 1, snapshotAt: stamp }] },
     }] };
     evaluation.underwriting = underwrite(evaluation, { ...MONEY_CONFIG, targets });
-    assert.equal(evaluation.underwriting.best?.path, "RAW");
+    assert.equal(evaluation.underwriting.best, null);
     const props = { listing, evaluation, now, targets };
     const renderCard = () => renderToStaticMarkup(createElement(DealCard, { ...props, analysis: { status: "done", evaluation }, selected: false,
         onOpen() {}, years: {}, includeOffers: false }));
@@ -277,19 +279,10 @@ test("raw quote captions identify TCGplayer estimates and show the separate 60-d
     const card = renderCard();
     const decision = renderDecision();
     const details = renderToStaticMarkup(createElement(AnalysisDetails, { ...props, minGrade: 0, reviewing: false }));
-    assert.match(card, /2 matching sold comps \/ 60 days/);
-    assert.doesNotMatch(card + decision, /2 matching sold comps \/ 30 days|eBay sold median|Matched eBay sold comps/);
-    for (const html of [card, decision, details]) assert.match(html, /TCGplayer asking-price estimate/);
-    assert.match(details, /Observed \/ 30 days<\/dt><dd>1<\/dd>/);
-    assert.match(details, /Observed \/ 60 days<\/dt><dd>2<\/dd>/);
-
-    const quote = evaluation.rawPricing.prices![0];
-    quote.basis = "TCGPLAYER_MARKET";
-    Object.assign(quote.offers!, { method: "CONDITION_MARKET", marketPrice: 63, sellerCount: 0, offers: [] });
-    for (const html of [renderCard(), renderDecision()]) assert.match(html, /TCGplayer condition market estimate/);
+    assert.doesNotMatch(card + decision, /Buy ·|Buy this copy|Max item price/i);
+    assert.match(details, /TCGplayer/i);
     const auction = renderToStaticMarkup(createElement(AuctionSummary, { evaluation, targets, now }));
-    assert.match(auction, /TCGplayer condition market estimate/);
-    assert.doesNotMatch(auction, /Closing price guide/);
+    assert.match(auction, /No reliable bid limit/);
 });
 
 test("the live buyer-review path displays only the verified resale route and counts a supported lower-condition floor", async t => {

@@ -7,7 +7,7 @@ import { conflictsWithPhotoFinish } from "./photo-evidence.ts";
 import { hasSavedConditionExamples } from "./ebay-condition-notes.ts";
 
 // Pricing changes do not invalidate paid photo/condition assessments.
-export const PRICING_VERSION = "condition-resale-19";
+export const PRICING_VERSION = "ebay-average-20";
 export const PREVIOUS_PRICING_VERSION = "ebay-resale-18";
 export const PHOTO_REVIEW_REVISION = 10;
 // Raw-condition prompting changes do not invalidate historical sold-copy categories.
@@ -42,6 +42,8 @@ export function currentPriceEvidence(evaluation: Evaluation, now = Date.now()): 
     const quote = evaluation.rawPricing?.prices?.find(row => row.condition === evaluation.condition?.rawCondition && isUsableRawPrice(row))?.offers;
     if (quote && (!(now - Date.parse(quote.checkedAt) >= 0) || now - Date.parse(quote.checkedAt) >= 6 * 3_600_000 ||
         quote.method === "LOWEST_DELIVERED_COMPETITION" && !(now - Date.parse(quote.snapshotAt) >= 0 && now - Date.parse(quote.snapshotAt) < 86_400_000))) return false;
+    const rawPricing = evaluation.rawPricing;
+    if (evaluation.pricingVersion !== PRICING_VERSION && rawPricing?.prices?.some(price => price.basis?.startsWith("TCGPLAYER_"))) return false;
     if (!evaluation.slab && hasSavedConditionExamples(evaluation.listing)) return false;
     if (hasMismatchedPricePrinting(evaluation) || conflictsWithPhotoFinish(evaluation.photoCheck, evaluation.identity?.finish)) return false;
     const condition = evaluation.condition?.rawCondition;
@@ -49,7 +51,7 @@ export function currentPriceEvidence(evaluation: Evaluation, now = Date.now()): 
     // even though a disclosed crease requires a Damaged resale comparison.
     if (!evaluation.slab && condition && evaluation.gradedPricing && sellerCreaseOverridesCondition(condition, evaluation.listing.conditionNotes) &&
         !evaluation.rawPricing?.prices?.some(price => price.condition === "DAMAGED" && isUsableRawPrice(price))) return false;
-    if (evaluation.pricingVersion !== PRICING_VERSION) {
+    if (evaluation.pricingVersion !== PRICING_VERSION && evaluation.pricingVersion !== "condition-resale-19") {
         if (evaluation.pricingVersion !== PREVIOUS_PRICING_VERSION && evaluation.pricingVersion !== "ebay-resale-17") return false;
         // Raw valuations now consult condition-matched TCGplayer prices.
         // Reuse accepted physical findings, but refresh older raw economics.
@@ -77,6 +79,7 @@ export function currentPriceEvidence(evaluation: Evaluation, now = Date.now()): 
     const raw = evaluation.rawPricing?.prices;
     const soldSummaries = [...gradedSummaries, evaluation.rawPricing?.sellerConditionComps, evaluation.rawPricing?.cleanerSellerConditionComps,
         ...(evaluation.rawPricing?.ebayComps ?? []), ...(raw ?? []).map(price => price.comps)];
+    if (soldSummaries.some(summary => summary?.marketEstimate && !["FIXED_PRICE_AVERAGE", "SOLD_AVERAGE"].includes(summary.marketEstimate.method))) return false;
     if (soldSummaries.some(summary => summary?.sales?.some(sale => hasBaseSetFourthPrint(evaluation.identity?.set, sale.title)))) return false;
     if (raw?.some(price => !isUsableRawPrice(price)) && !raw.some(isUsableRawPrice) &&
         !Object.values(evaluation.gradedPricing ?? {}).some(pricing => pricing.status === "PRICED")) return false;

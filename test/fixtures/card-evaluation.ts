@@ -32,3 +32,15 @@ export function clearReleaseFixture(e: Evaluation): Evaluation {
         photoNumber: front.number, gallery: releaseGalleryKey(e), sourceSha256: "a".repeat(64) };
     return e;
 }
+
+
+export function matchedRawPrice(price: number, soldAt: string, count = 1) {
+    const comps = salesSummary("RAW", "LIGHTLY_PLAYED", Array(count).fill(price));
+    comps.median = price;
+    comps.newestSale = soldAt;
+    comps.windowDays = 90;
+    comps.sales.forEach((sale, index) => Object.assign(sale, { soldAt, saleType: "fixed_price",
+        photoCondition: "LIGHTLY_PLAYED", conditionEvidence: ["Sold photos show edge wear."],
+        url: `https://www.ebay.com/itm/${123111111112 + index}` }));
+    return { basis: "EBAY_SOLD" as const, condition: "LIGHTLY_PLAYED" as const, price, updatedAt: soldAt, comps };
+}

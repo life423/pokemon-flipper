@@ -183,6 +183,10 @@ export interface ListingSummary {
     shipping: number | null;
     bids: number;
     isGraded: boolean;
+    /** Conflicting seller title admitted for a photo check in an exact-card search. */
+    researchKind?: "raw" | "graded";
+    /** Collector number and set allow a photo check of an unnamed listing. */
+    researchIdentity?: true;
     buyingOption: BuyingOption;
     endTime: string | null;
     images: string[];
@@ -364,6 +368,7 @@ interface PriceSource {
 export interface RawPricing extends PriceSource {
     // Price context for a collector. The sold sellers described the condition.
     sellerConditionComps?: CompSummary | null;
+    tcgplayerReference?: TcgplayerRawEstimate;
     // Nearest cleaner seller-described condition, for context when this condition lacks a photo match.
     cleanerSellerConditionComps?: CompSummary | null;
     conditionEvidence?: "AI_PHOTOS" | "SELLER_TEXT" | "TCGPLAYER";
@@ -410,7 +415,8 @@ export interface CompSummary {
     mean?: number | null;
     marketEstimate?: {
         price: number;
-        method: "RECENT_FIXED_PRICE_MEDIAN" | "RECENT_FOUR" | "RECENCY_WEIGHTED_MEDIAN";
+        windowDays?: number;
+        method: "FIXED_PRICE_AVERAGE" | "SOLD_AVERAGE" | "RECENT_FIXED_PRICE_MEDIAN" | "RECENT_FOUR" | "RECENCY_WEIGHTED_MEDIAN";
         sampleSize?: number;
         recentTrendPercent?: number;
     };
@@ -605,6 +611,8 @@ export interface DeeperPhotoReview {
 }
 
 export interface Evaluation {
+    /** A verified profitable raw exit answered this flip search before paid grading comparisons. */
+    gradingPricesDeferred?: true;
     releaseMark?: import("./base-set-release.ts").ReleaseMarkReading;
     trackerRawReference?: import("./tracker-price-reference.ts").TrackerRawReference;
     trackerPriceReference?: import("./tracker-price-reference.ts").TrackerPriceReference;

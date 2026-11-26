@@ -1,6 +1,5 @@
 import type { HuntProgress } from "../../shared/ai-usage.ts";
 import type { DealHuntAction } from "../../shared/deal-hunt.ts";
-import type { ListingSummary } from "../../shared/types.ts";
 import { DEVELOPMENT_SEARCH_LIMIT } from "../../shared/research-policy.ts";
 
 const ACTIVE_TTL_MS = 30 * 60_000;
@@ -12,10 +11,10 @@ type ActivePhase = Exclude<HuntProgress["phase"], TerminalPhase>;
 export interface HuntProgressObserver {
     stage(phase: ActivePhase, cohort?: string, action?: HuntProgress["action"]): void;
     guidance?(reason: string): void;
-    source(discovered: number, screened: number, scans?: number): void;
+    source(discovered: number, screened: number, scans?: number, queuedInLastQuery?: number): void;
     retain(count: number): void;
     checked(listingId: string, action: DealHuntAction): void;
-    candidates?(rows: ListingSummary[]): void;
+    candidates?(rows: NonNullable<HuntProgress["candidates"]>): void;
 }
 
 export function createHuntProgressStore(now = Date.now) {
@@ -57,7 +56,8 @@ export function createHuntProgressStore(now = Date.now) {
                 guidance: reason => update({ guidance: reason.slice(0, 240) }),
                 stage: (phase, cohort, action) => update({ phase, cohort: cohort?.replace(/\s+/g, " ").trim().slice(0, 140), action,
                     ...(phase === "planning" && { guidance: undefined }) }),
-                source: (discovered, screened, scans = 0) => update({
+                source: (discovered, screened, scans = 0, queuedInLastQuery) => update({
+                    ...(queuedInLastQuery !== undefined && { queuedInLastQuery }),
                     discovered: record.discovered + discovered, screened: record.screened + screened, scans: record.scans + scans,
                 }),
                 retain: retained => update({ retained }),

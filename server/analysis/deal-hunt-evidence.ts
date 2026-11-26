@@ -1,4 +1,4 @@
-import { auctionOpportunity, nextAuctionBid, withinOpportunityWindow } from "../../shared/auction-opportunity.ts";
+import { affordableBidLimit, auctionOpportunity, nextAuctionBid, withinOpportunityWindow } from "../../shared/auction-opportunity.ts";
 import { collectorAuction } from "../../shared/collector-auction.ts";
 import { freshListingTime, GRADING_WATCH_FRESH_MS, type GradingOpportunity } from "../../shared/grading-watch.ts";
 import type { DealHuntAction, DealHuntGoal } from "../../shared/deal-hunt.ts";
@@ -9,7 +9,7 @@ import { dollars } from "../../shared/format.ts";
 import { readyForPricing } from "../../shared/identity.ts";
 import { cents, meetsMoneyTargets } from "../../shared/money/cents.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
-import { isUsableRawPrice, referencePriceReason } from "../../shared/money/price-evidence.ts";
+import { isRawSoldPrice, referencePriceReason } from "../../shared/money/price-evidence.ts";
 import { rawBuyGuidance, rawPriceReferences } from "../../shared/money/raw-buy-guidance.ts";
 import { slabBuyGuidance } from "../../shared/money/slab-buy-guidance.ts";
 import { acquisitionCost, maxBid } from "../../shared/money/underwriting.ts";
@@ -27,6 +27,14 @@ import { supplementalMarket } from "../pricing/supplemental-research.ts";
 import { configuredShippingZip } from "../ebay/shipping-destination.ts";
 import { activityDescription } from "./resale-activity.ts";
 import { activityForExit, rankHuntMarkets, salesForExit, verifiedRawFloor, type HuntMarket } from "./same-set-markets.ts";
+import { huntPhotoIdentityIssue } from "./deal-hunt-market-checks.ts";
+
+export function hasVerifiedRawFlip(value: Evaluation, targets: Targets, now: number) {
+    if (value.underwriting?.verdict !== "BUY_RAW" || huntPhotoIdentityIssue(value)) return false;
+    const result = dealHuntCandidate(value, "resell", now, undefined, targets, undefined, { preferRecentSales: true })
+        ?.outcome(new Set(["check_listing", "inspect_photos", "check_raw_resale", "check_sales"]));
+    return result?.decision === "BUY" && result.verifiedPurchase?.path.path === "RAW" && (result.recentSales ?? 0) > 0;
+}
 
 const STALE_PURCHASE_TERMS = "The saved purchase terms need a fresh availability and shipping check.";
 
@@ -85,8 +93,7 @@ function rawMarket(value: Evaluation, now: number) {
     const condition = value.condition?.rawCondition;
     const rawPath = value.underwriting?.paths.find((path): path is PricedPath => path.path === "RAW" && path.status === "PRICED");
     if (rawPath && rawPath.priceCondition !== condition) return verifiedRawFloor(value, rawPath, now)?.row ?? null;
-    const row = pricing.prices?.find(row => row.condition === condition && isUsableRawPrice(row));
-    if (row?.basis?.startsWith("TCGPLAYER_")) return row;
+    const row = pricing.prices?.find(row => row.condition === condition && isRawSoldPrice(row));
     const comp = row?.comps ?? pricing.ebayComps?.find(row => row.grader === "RAW" && row.grade === condition);
     return row && comp?.grade === condition && comp?.grader === "RAW" && matchedPrice(comp, now) === row.price ? row : null;
 }
@@ -391,9 +398,17 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
         // and availability, destination, prices and all other safeguards still apply.
         const termsCaution = previewTermsRefresh && terms.status === STALE_PURCHASE_TERMS ? "" : terms.status;
         const cautions = [termsCaution, stalePrices && "The market prices need updating.", sellerConcern && "The seller has limited or low feedback."].filter(Boolean);
-        const purchase = exit && supported && cautions.length === 0 ? verifiedPurchase(value, exit, targets, reviewedLimit) : undefined;
+        const purchase = exit && supported && cautions.length === 0 ? verifiedPurchase(value, exit, targets, reviewedLimit, maxDelivered) : undefined;
+        const effectiveLimit = exit && maxDelivered !== undefined && value.listing.shipping !== null
+            ? affordableBidLimit(exit.maxBid, value.listing.shipping, maxDelivered) : exit?.maxBid;
+        const priceGap = goal === "resell" && exit && exit.path !== "GRADE" && (raw || slabSales) &&
+            !cautions.length && !referencePriceReason(value, exit) && currentPriceEvidence(value, now) &&
+            !value.deeperPhotoReview?.findings.some(f => f.impact === "NEW_CONCERN") &&
+            terms.total !== null && value.listing.price !== null && recentSales && recentSales > 0 &&
+            value.underwriting?.verdict === "PASS" && effectiveLimit !== undefined && effectiveLimit > 0 && effectiveLimit < value.listing.price
+            ? { allIn: terms.total, maxItemPrice: effectiveLimit, drop: (cents(value.listing.price) - cents(effectiveLimit)) / 100 } : undefined;
         return { decision: supported && cautions.length === 0 && (goal === "collect_slab" || purchase) ? "BUY" : "WAIT",
-            reason: [reason, ...cautions].join(" "), section, ...(purchase && { verifiedPurchase: purchase }),
+            reason: [reason, ...cautions].join(" "), section, ...(purchase && { verifiedPurchase: purchase }), ...(priceGap && { priceGap }),
             ...(requiresLiquidity && recentSales !== null && { recentSales, resalePriority: resale?.activity?.priority }),
             alternateSections: section === "grading" && hasGradeComparisons ? ["sales"] : undefined };
     }
@@ -445,7 +460,7 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
 
 // The buyer reviewer calls this with its existing evidence. Checking a watch
 // never starts a second price lookup or photo assessment.
-export function newGradingOpportunity(value: Evaluation, now: number, targets: Targets, dates: Pick<Evaluation["listing"], "listedAt" | "createdAt"> = value.listing): GradingOpportunity | undefined {
+export function newGradingOpportunity(value: Evaluation, now: number, targets: Targets, dates: Pick<Evaluation["listing"], "listedAt" | "createdAt"> = value.listing, maxDelivered?: number): GradingOpportunity | undefined {
     const listed = freshListingTime(dates, now);
     const terms = listingTerms(value, now);
     if (listed === null || terms.status || terms.total === null || Date.parse(value.listing.endTime ?? "") <= now ||
@@ -467,7 +482,7 @@ export function newGradingOpportunity(value: Evaluation, now: number, targets: T
             listed + GRADING_WATCH_FRESH_MS,
             Date.parse(value.listing.endTime ?? "") || Infinity);
         if (!(validUntil > now)) continue;
-        const purchase = verifiedPurchase(value, path, targets, gradeItemLimit(path, likely.profit, lower.profit, targets));
+        const purchase = verifiedPurchase(value, path, targets, gradeItemLimit(path, likely.profit, lower.profit, targets), maxDelivered);
         if (!purchase) continue;
         return { grader: path.grader, listingDate: new Date(listed).toISOString(), dateSource: dates.listedAt ? "listed" : "created", validUntil, delivered: terms.total,
             verifiedPurchase: purchase,

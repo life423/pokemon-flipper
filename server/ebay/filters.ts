@@ -91,7 +91,8 @@ export function listingExclusion(item: { title: string; itemId: string; itemGrou
     if (PICK_OR_MYSTERY.test(title)) return "MYSTERY";
     // "Champions Path ETB promo" is the single card that came in the box.
     if (SEALED.test(title) && !/\bpromo\b/.test(title)) return "SEALED";
-    if (MERCH.test(title)) return "MERCHANDISE";
+    if (MERCH.test(title) || /\bsun[ -]?catchers?\b/i.test(title.replace(/\b(?:with|includes?) (?:a )?sun[ -]?catcher\b/gi, "")))
+        return "MERCHANDISE";
     if (NOT_A_CARD.test(title) || HOLDER_PRODUCT.test(title.replace(HOLDER_WITH_CARD, ""))) return "EMPTY_HOLDER";
 
     return null;

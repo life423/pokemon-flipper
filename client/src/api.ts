@@ -39,7 +39,7 @@ function filterQuery(filters?: ListingFilters): string {
     return query.size ? `&${query}` : "";
 }
 
-function retryDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+export function retryDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
     return new Promise((resolve, reject) => {
         const cancel = () => { clearTimeout(timer); reject(signal?.reason); };
@@ -47,10 +47,11 @@ function retryDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
         signal?.addEventListener("abort", cancel, { once: true });
     });
 }
-export function fetchAiUsage(searchRunId?: string, huntId?: string): Promise<AiUsageDay> {
+export function fetchAiUsage(searchRunId?: string, huntId?: string | string[]): Promise<AiUsageDay> {
     const query = new URLSearchParams();
     if (searchRunId) query.set("searchId", watchBudgets.get(searchRunId) ?? searchRunId);
-    if (huntId && huntId !== query.get("searchId")) query.set("huntId", huntId);
+    if (Array.isArray(huntId)) query.set("legs", huntId.join(","));
+    else if (huntId && huntId !== query.get("searchId")) query.set("huntId", huntId);
     return request(`/api/ai-usage${query.size ? `?${query}` : ""}`);
 }
 export function gradeCameraCard(photos: { front: string; back: string; tilted?: string }, signal?: AbortSignal): Promise<CameraGradeResult> {
@@ -172,7 +173,10 @@ export function cancelSnipe(id: string): Promise<{ job: SniperJob }> {
 }
 export class ApiRequestError extends Error {
     constructor(message: string, readonly retryable = false, readonly retryAfterMs = 1500, readonly code?: string, readonly retryAt?: number,
-        readonly failureScope?: "listing" | "search") { super(message); }
+        readonly failureScope?: "listing" | "search") {
+        super(message);
+        if (code === "EBAY_BUDGET") this.code = "EBAY_DAILY_BUDGET";
+    }
 }
 
 export function saveSearchDiagnostic(searchRunId: string, rows: SearchDiagnosticRow[], signal: AbortSignal): Promise<SearchDiagnosticResult> {
@@ -313,7 +317,7 @@ export function refreshSavedListings(ids: string[], searchRunId?: string): Promi
 
 // How much of today's eBay allowance is left, or null if eBay won't say.
 export function fetchEbayUsage(searchRunId?: string): Promise<EbayUsage | null> {
-    return request("/api/ebay-usage", searchRunId ? { headers: searchHeaders(searchRunId) } : undefined);
+    return request("/api/ebay-usage?cachedOnly=1", searchRunId ? { headers: searchHeaders(searchRunId) } : undefined);
 }
 
 // Paid the first time for a listing; the server reuses saved answers
@@ -335,20 +339,8 @@ export async function evaluateListing(listing: ListingSummary, { fresh = false, 
         if (targets) { query.set("profit", String(targets.minProfit)); query.set("roi", String(targets.minRoi)); }
         try { return await request(`/api/listings/${encodeURIComponent(listing.id)}/evaluate?${query}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...(account && searchHeaders(account)) },
+        headers: account ? searchHeaders(account) : undefined,
         signal,
-        body: priceOnly ? undefined : JSON.stringify({
-            title: listing.title,
-            images: listing.images,
-            price: listing.currentPrice,
-            shipping: listing.shipping,
-            shippingDestination: listing.shippingDestination,
-            bids: listing.bids,
-            endTime: listing.endTime,
-            termsCheckedAt: listing.termsCheckedAt,
-            buyingOption: listing.buyingOption,
-            bestOffer: listing.bestOffer,
-        }),
         }); } catch (error) {
             if (priceOnly || signal?.aborted || attempt > 0 || !(error instanceof ApiRequestError) || !error.retryable || error.code === "AI_EVIDENCE_HELD") throw error;
             await retryDelay(error.retryAfterMs, signal);
@@ -358,7 +350,7 @@ export async function evaluateListing(listing: ListingSummary, { fresh = false, 
 
 // Each set's release year, by set key (shared/sets.ts).
 export function fetchSetYears(): Promise<Record<string, number>> {
-    return request("/api/set-years");
+    return request("/api/set-years?cachedOnly=1");
 }
 
 export function reviewListingPhotos(itemId: string, key: string, searchRunId?: string): Promise<DeeperPhotoReview> {

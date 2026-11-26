@@ -1,3 +1,4 @@
+import type { SearchIntent } from "../../shared/types.ts";
 import type { HuntMarketPreferences } from "../../shared/deal-hunt.ts";
 import type { ListingFilters } from "../../shared/listing-filters.ts";
 import { yearOf, setKey } from "../../shared/sets.ts";
@@ -18,6 +19,8 @@ export interface InventoryTarget {
     stage?: string;
     sales?: number;
     activeDays?: number;
+    windowDays?: number;
+    exactMarket?: { intent: SearchIntent; maxItem: number; reason: string };
 }
 
 interface GuidanceSources {
