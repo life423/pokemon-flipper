@@ -7,7 +7,10 @@ import { currentPriceEvidence } from "../pricing-freshness.ts";
 import { BEST_BUY_TERMS_MAX_AGE_MS } from "../search-diagnostic.ts";
 import type { Evaluation, PricedPath, Targets } from "../types.ts";
 
+import { competitiveResalePath, type CompetingAsk } from "./competitive-resale.ts";
+
 export interface VerifiedPurchase {
+    competition?: CompetingAsk;
     listingId: string;
     itemPrice: number;
     termsCheckedAt: string;
@@ -50,7 +53,9 @@ export function applyVerifiedPurchase(evaluation: Evaluation | null, purchase: V
         evaluation.pricesCheckedAt !== purchase.pricesCheckedAt || !currentPriceEvidence(evaluation, now) ||
         purchase.targets?.minProfit !== targets.minProfit || purchase.targets?.minRoi !== targets.minRoi) return null;
     const savedPath = JSON.stringify(purchase.path);
-    const path = underwriting.paths.find((candidate): candidate is PricedPath => candidate.status === "PRICED" && JSON.stringify(candidate) === savedPath);
+    const baseline = underwriting.paths.find((candidate): candidate is PricedPath => candidate.status === "PRICED" && JSON.stringify(candidate) === savedPath);
+    const path = purchase.competition && baseline
+        ? competitiveResalePath(evaluation, baseline, purchase.competition, now, targets) : baseline;
     if (!path?.clears || !(path.profit > 0) || !Number.isFinite(purchase.maxItemPrice) || purchase.maxItemPrice > path.maxBid ||
         purchase.maxItemPrice < purchase.itemPrice || path.shipping !== listing.shipping) return null;
 
@@ -68,6 +73,6 @@ export function applyVerifiedPurchase(evaluation: Evaluation | null, purchase: V
         downsideAtMaxBid: path.downside === null ? null : (cents(path.downside) + cents(path.cost) - cost) / 100 };
     const reviewed: Evaluation = { ...evaluation, underwriting: { ...underwriting, best,
         verdict: best.path === "RAW" ? "BUY_RAW" : best.path === "GRADE" ? "BUY_AND_GRADE" : "BUY_GRADED",
-        paths: underwriting.paths.map(candidate => candidate === path ? best : candidate) } };
+        paths: underwriting.paths.map(candidate => candidate === baseline ? best : candidate) } };
     return { ...reviewed, rating: rateDeal(reviewed) };
 }

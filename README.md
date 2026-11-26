@@ -56,9 +56,8 @@ different listings can run together. Code validates the evidence and calculates
 the purchase ceiling. The result opens the relevant listing and evidence in the
 inspector, with the choices recorded under **Research steps**.
 
-- After two unsuccessful markets, the planner can choose another printing or a
-  different card within the buyer's set, era and finish preferences. Recent
-  matching sales guide that choice.
+- In a flexible Find a flip search, the planner can stay with another copy or switch to a different eligible card as soon as the evidence favors it. It keeps unreviewed copies and the original buyer constraints.
+- Named Buy It Now searches start with eBay’s lowest price including shipping. For “Near Mint or better”, Find a flip also retrieves raw and graded listings independently and deduplicates their eBay IDs. A seller’s condition claim can earn a photo check. The purchase requires condition evidence for that copy.
 - Auction hunts support collectors buying below market and resellers seeking
   positive profit after costs. Candidates must be live with strictly less than
   ten hours remaining. Alerts retain the original bid limit for outcome tracking.
@@ -79,7 +78,18 @@ The roadmap retains the [original twenty strategies](LOCAL_PLAN.md#twenty-deal-f
 all [fifteen supplied eBay tactics](LOCAL_PLAN.md#fifteen-ebay-tactics-for-the-deal-planner)
 and the collector feature ideas.
 The [checklist](LOCAL_TODO.md) records their implementation and validation work.
-Auction sniper development is on hold. For personal guide research, run
+Auction sniper development is on hold.
+
+### Market research and price history
+
+The **Cheapest checked Buy It Now** panel in Find a deal shows the lowest delivered cost among checked matches, including copies priced above a guide. Find a flip checks the projected proceeds after fees. When another checked copy of the same quality is available, its price including shipping can lower the resale estimate. A higher asking price can raise it within the upper part of recent comparable sales. Price history shows the source, dated observations and change over the observed period.
+
+For daily private discovery, `npm run pokeprice:movers` imports PokéPrice’s rising cards, posted eBay asks and sold medians by grade, TCGplayer Near Mint prices by variant, and published price-history changes when available. With the Silph Co key configured it also samples one represented set’s eBay activity board, prioritizing cards with sales in consecutive weeks. The app reads the saved leads during search. The daily import tracks each source separately and runs once per Central calendar day. An always-running server can enable `POKEPRICE_MOVERS_DAILY=true`. [PokéPrice movers](https://www.pokeprice.gg/movers)
+
+**Check additional prices** can use Silph Co to look up the photographed market through its TCGplayer product ID. It displays an outlier-filtered 30-day eBay median when available, dated individual sales and observed fixed-price competition. A pre-shipping ask carries its own label. Find a flip can inspect this evidence during its price-history check and pass individual sale links to its existing verifier. Duplicate eBay transactions count once across verification sources. [Silph Co developer reference](https://silphcoanalytics.xyz/developers)
+
+For personal daily Pokémon market research, `npm run pricecharting:movers` saves the published Big Movers table once per Central calendar day. Set `PRICECHARTING_MOVERS_DAILY=true` to run it automatically while the app server is running. The daily request falls between 5 and 6 a.m. America/Chicago and catches up on a later start. The table includes sealed products. Each change compares two published loose prices. A separate check of exact comparable sales establishes liquidity for a flip.
+
 `npm run pricecharting:guide -- PRODUCT_ID PRODUCT_URL` with the canonical
 Pokémon product page. The importer saves the USD guide values and all sale rows
 published on that page for Ungraded and grades 7, 8 and 9. It records the published
@@ -242,7 +252,7 @@ the AI to recognize a cleaner copy. An expired quote can be rechecked from Resul
 - Best Offer drafts are conditional, with openings at most 15% below asking.
   Unaccepted offers are separate from Deals.
 - To hunt across auctions, type `Find vintage holos from 1999–2003 I can flip for at least $25.` into the search bar. The AI chooses markets with recent sales and decides which listings, photos, sale comparisons or grading costs to check. **Research steps** shows its choices.
-- After two misses, the AI compares the remaining eligible markets and explains why it chose the next one. Expand **Research steps** to see that reason and whether the app reused it. On an identified copy without an exact sale price, the hunt can check additional price sources and show a dated reference alongside its decision.
+- When another copy competes with switching markets, the AI weighs the delivered price, photos, comparable sales and potential margin. Expand **Research steps** to see that reason and whether the app reused it. On an identified copy without an exact sale price, the hunt can check additional price sources and show a dated reference alongside its decision.
 - **Auction opportunities** shows open auctions with strictly less than 10 hours left and a current price below matching sales. Each bid recommendation gives a maximum item bid, the next bid with shipping and estimated tax, and projected resale profit after costs if you win at that next bid. You place the bid on eBay.
 - Open **Tracked auction outcomes** in auction Results to see whether an alerted copy sold within its original bid limit. While the local server runs, it refreshes bids near closing and looks for a completed sale for that exact eBay item. Only confirmed sales count toward the displayed result.
 - **Competing auctions** compares matching certified slabs ending within 15
@@ -360,6 +370,7 @@ it or provider responses to Git. The server reads it on startup.
 | EBAY_SANDBOX_RUNAME | eBay-generated Sandbox redirect name for the same Sandbox keyset |
 | OPENAI_API_KEY | Input preflight and authorized AI work |
 | PKMNPRICES_API_KEY | Catalog and market research |
+| SILPHCO_API_KEY | Server-side Silph Co price, sales, active listing and set activity lookups |
 | EBAY_SHIP_TO_ZIP | Optional fallback delivery ZIP; a destination saved in the app takes precedence |
 | EBAY_SANDBOX_APP_ACCESS_TOKEN | Optional Sandbox application access token for auction details |
 | EBAY_SANDBOX_USER_ACCESS_TOKEN | Optional Sandbox buyer access token with the `buy.offer.auction` scope |

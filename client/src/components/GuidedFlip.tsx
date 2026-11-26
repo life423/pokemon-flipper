@@ -128,8 +128,9 @@ export function GuidedFlip({ filters: initialFilters, targets: initialTargets, m
             prepared = true;
             setRun(previous => previous && { ...previous, legs }); setLastLegs(legs);
             setMessage([formats.length > 1 ? "Checking Buy It Now listings and auctions together" :
-                formats[0] === "AUCTION" ? "Auctions ending within ten hours" : "Buy It Now listings · newest first",
-                scoped.seed?.expand && !scoped.seed.number ? `Starting with ${scoped.seed.name}. After two misses, checking the same set and same-year or older releases.` : plan?.query,
+                formats[0] === "AUCTION" ? "Auctions ending within ten hours" : scoped.seed?.name ? "Buy It Now · lowest price plus shipping first" : "Buy It Now · newest across cards",
+                scoped.minimumCondition && "Near Mint or better",
+                scoped.seed?.expand && !scoped.seed.number ? `Starting with ${scoped.seed.name}. Related cards can come from the same set, the same year or an older release.` : plan?.query,
                 Number.isFinite(ceiling) && `Up to $${ceiling.toFixed(2)} delivered`].filter(Boolean).join(" · "));
             const outcome = await runGuidedHuntLegs<Result>({ legs, signal,
                 async run(leg, legSignal) {
@@ -197,7 +198,7 @@ export function GuidedFlip({ filters: initialFilters, targets: initialTargets, m
                 <input type="search" maxLength={300} value={text} disabled={!!session} onChange={event => setText(event.target.value)}
                     placeholder="Card, set or buying goal (optional)" aria-describedby="flip-hint" />
             </label>
-            <p className={styles.note} id="flip-hint">Leave blank to start with cards showing recent eBay sales.</p>
+            <p className={styles.note} id="flip-hint">Searches English cards on eBay. Leave blank to start with cards showing recent sales.</p>
             <details className={styles.limits}><summary>Search filters{activeLimits.length > 0 && " · " + activeLimits.join(" · ")}</summary>
                 <div className={styles.controls}>
                     <label>Card type<select disabled={!!session} value={kindFilter} onChange={e => setKind(e.target.value as typeof kindFilter)}>

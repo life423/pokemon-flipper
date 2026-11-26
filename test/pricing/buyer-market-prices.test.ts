@@ -85,18 +85,25 @@ test("CGC 8.5 with no eBay sales still gets both Tracker estimates and matched E
             return { observation: "Grade guide", prices: [{ source: "PriceCharting", basis: "Grade 9 guide · mixed graders", price: 120, currency: "USD" as const,
                 asOf: stamp, validUntil: now + 86_400_000 }] };
         },
+        silph: async () => {
+            providers.push("Silph Co");
+            return { notes:[], context:[], prices: [{ source:"Silph Co · eBay", basis:"CGC 8.5 · 30-day sold median", price:92,
+                currency:"USD" as const, asOf:stamp, validUntil:now + 86_400_000 }], sales: [{ url:"https://www.ebay.com/itm/123456789014", date:stamp.slice(0,10), priceUsd:90 }],
+                points:[{ day:stamp.slice(0,10), price:90 }] };
+        },
         rawQuote: unexpected, record: unexpected, recentSales: async () => [] };
     const before = structuredClone(e);
     const comparison = await buyerMarketPrices(e, lookup.market, signal, deps, () => now);
     assert.deepEqual(comparison?.prices.map(row => [row.source, row.price, row.currency]), [
-        ["Pokémon Price Tracker", 90, "USD"], ["Pokémon Price Tracker", 82, "USD"], ["Cardmarket", 71, "EUR"], ["PriceCharting", 120, "USD"]]);
+        ["Pokémon Price Tracker", 90, "USD"], ["Pokémon Price Tracker", 82, "USD"], ["Cardmarket", 71, "EUR"], ["PriceCharting", 120, "USD"], ["Silph Co · eBay", 92, "USD"]]);
+    assert.equal(comparison?.silphHistory?.sales[0].priceUsd,90);
     assert.deepEqual(e, before);
     track.gradedMarket.grade = "9";
     assert.deepEqual(providerPrices({ ...e, trackerPriceReference: track }, now), []);
     track.gradedMarket.grade = "8.5"; track.printingLabel = "1st Edition Holofoil";
     assert.deepEqual(providerPrices({ ...e, trackerPriceReference: track }, now), []);
     assert.equal(await buyerMarketPrices(e, "earlier assessment", signal, deps, () => now), null);
-    assert.deepEqual(providers, ["references", "Europe", "guide"]);
+    assert.deepEqual(providers, ["references", "Europe", "guide", "Silph Co"]);
 });
 
 test("one unavailable source preserves the other returned prices and a note", async () => {

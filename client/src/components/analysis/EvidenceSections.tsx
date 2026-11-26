@@ -105,11 +105,11 @@ export function SlabSection({ slab, pricing, showSales = false }: { slab: Slab; 
         <Section title="Slab">
             <Pairs
                 rows={[
-                    ["Status", slab.status === "OK" ? "Checks out" : name(slab.status)],
+                    ["Label check", slab.status === "OK" ? "Photographed label checked" : name(slab.status)],
                     ["Grader", slab.grader ?? "Unreadable"],
                     ["Grade", grade],
                     [
-                        "Cert",
+                        "Certification number",
                         slab.certUrl ? (
                             <a href={slab.certUrl} target="_blank" rel="noopener noreferrer">
                                 {slab.certNumber}
@@ -118,6 +118,7 @@ export function SlabSection({ slab, pricing, showSales = false }: { slab: Slab; 
                             slab.certNumber ?? "Unreadable"
                         ),
                     ],
+                    ...(slab.certNumber ? [["Registry verification", "Unchecked"]] as [string, string][] : []),
                     ["Case", name(slab.caseCondition)],
                     ["Label", slab.labelText ?? "\u2014"],
                 ]}

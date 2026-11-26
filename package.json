@@ -8,6 +8,8 @@
     "start": "node --import tsx scripts/start.mjs",
     "test": "node scripts/test.mjs",
     "pricecharting:guide": "tsx scripts/pricecharting-guide.ts",
+    "pokeprice:movers": "tsx scripts/pokeprice-movers.ts",
+    "pricecharting:movers": "tsx scripts/pricecharting-movers.ts",
     "evaluate": "tsx scripts/evaluate.ts",
     "build": "vite build --config client/vite.config.js",
     "typecheck": "tsc -p . && tsc -p client",

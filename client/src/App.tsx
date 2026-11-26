@@ -68,7 +68,7 @@ import { SearchControls, SearchOptions } from "./search/SearchControls";
 import { SearchCoverage } from "./search/SearchCoverage";
 import { matchesContinuationDestination, readContinuationSession, writeContinuationSession, type ContinuationRequest, type ContinuationSession } from "./search/continuation-session";
 import { displayAnalysis, type AnalysisState, type PriceRefreshState } from "./analysis-state";
-import { evaluationOf, filterSearchResults, groupSearchResults, sortSearchResults, countSearchResults, selectDealAlternatives, selectBestCurrentBuy, selectRawBuyingComparison, rawComparisonQuoteIds, type View, type SortKey, type TypeFilter, type KindFilter, type SearchPage } from "./search/results";
+import { evaluationOf, filterSearchResults, groupSearchResults, sortSearchResults, countSearchResults, selectDealAlternatives, selectBestCurrentBuy, cheapestCheckedBin, selectRawBuyingComparison, rawComparisonQuoteIds, type View, type SortKey, type TypeFilter, type KindFilter, type SearchPage } from "./search/results";
 import { ALL, AUTO_KEY, RECENT_KEY, RECENT_LIMIT, STARTER_SEARCHES, readRecentSearches, readTargets, readAutoSetting, targetText } from "./search/settings";
 import { analysisBlockPolicy, describeIntent, describeUsage, type AnalysisBlockCode } from "./search/presentation";
 import { automaticListingBlock, describeListingBlock } from "./search/analysis-admission";
@@ -1373,6 +1373,9 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
     const competitionId = parseListingLink(coverage?.competition?.url)?.itemId;
     const competitionListing = competitionId && listings.find(row => parseListingLink(row.id)?.itemId === competitionId);
     const comparisonAllowed = !competitionListing || purchasable.some(row => row.id === competitionListing.id);
+    const cheapestCopy = useMemo(() => !showingFlip && page === "search" && !linkInput && !stopped && !needsWiderSearch && typeFilter !== "AUCTION"
+        ? cheapestCheckedBin(filtered, analyses, summary?.intent, now) : null,
+        [showingFlip, page, linkInput, stopped, needsWiderSearch, typeFilter, filtered, analyses, summary?.intent, now]);
     const bestCurrentBuy = useMemo(() => page === "search" && searchStatus === "done" && !stopped && !needsWiderSearch
         ? selectBestCurrentBuy(purchasable, analyses, summary?.intent, now,
             comparisonAllowed && coverage?.searchTargets.minProfit === targets.minProfit && coverage.searchTargets.minRoi === targets.minRoi &&
@@ -1832,6 +1835,12 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
                         <CompetingAuctions listings={filtered} analyses={analyses} intent={summary?.intent} targets={targets} now={now} onOpen={openPanel} />}
                     {page === "search" && searchStatus === "done" && !stopped && !needsWiderSearch && typeFilter !== "AUCTION" &&
                         <ResaleReceiptMatches listings={purchasable} analyses={analyses} intent={summary?.intent} now={now} onOpen={openPanel} />}
+                    {cheapestCopy && <section className={styles.cheapestCopy} aria-label="Cheapest checked Buy It Now">
+                        <h2>Cheapest checked Buy It Now</h2>
+                        <p><strong>{dollars(cheapestCopy.total)} including estimated tax</strong> · {cheapestCopy.scope}</p>
+                        <a href={parseListingLink(cheapestCopy.listing.url)!.url} target="_blank" rel="noopener noreferrer">{cheapestCopy.listing.title} ↗</a>
+                        <p>{dollars(cheapestCopy.price)} + {dollars(cheapestCopy.shipping)} shipping · {cheapestCopy.checked} checked {cheapestCopy.checked === 1 ? "copy" : "copies"}</p>
+                    </section>}
                     {bestCurrentBuy && <BestCurrentBuy reference={bestCurrentBuy} evaluation={evaluationOf(analyses[bestCurrentBuy.listingId])}
                         onOpen={bestBuyListing ? () => openPanel(bestBuyListing.id) : undefined} />}
                     {gradedAlternative && <button type="button" className={styles.alternative} onClick={() => openPanel(gradedAlternative.listingId)}>

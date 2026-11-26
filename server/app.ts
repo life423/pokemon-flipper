@@ -55,6 +55,8 @@ import { huntProgress } from "./analysis/deal-hunt-progress.ts";
 import type { ListingSummary } from "../shared/types.ts";
 import { readSniperQuote, sandboxBuyerId, sniperCapabilities, submitSandboxBid } from "./ebay/sniper.ts";
 import { auctionTracker } from "./auction-tracking/service.ts";
+import { startPokePriceSchedule } from "./pricing/pokeprice-movers.ts";
+import { startMoversSchedule } from "./pricing/pricecharting-movers.ts";
 import { createSniperScheduler } from "./sniper/scheduler.ts";
 import { sniperRoutes } from "./sniper/routes.ts";
 import { ebayConnectionRoutes } from "./ebay/connection-routes.ts";
@@ -720,5 +722,7 @@ server.listen(PORT, "127.0.0.1", () => {
         secondaryServer.listen(SECONDARY_PORT, "127.0.0.1", () => console.log(`Same app available on http://localhost:${SECONDARY_PORT}`));
     }
     auctionTracker.start();
+    if (process.env.POKEPRICE_MOVERS_DAILY === "true") startPokePriceSchedule(shutdown.signal);
+    if (process.env.PRICECHARTING_MOVERS_DAILY === "true") startMoversSchedule(shutdown.signal);
     void trackSharedWork(auctionSniper.start()).catch(() => console.error("Auction sniper could not start. Inspect its saved queue."));
 });

@@ -1,9 +1,27 @@
 # Pokémon Flipper — current checklist
 
-Updated November 25, 2026. This is the active work list. Current decisions and
+Updated November 26, 2026. This is the active work list. Current decisions and
 resource locations are in [LOCAL_PLAN.md](LOCAL_PLAN.md); verified audit findings
 are in [the maintained audit](docs/deal-search-audit.md). Git retains removed
 reports. Provider payloads, paid evidence, credentials and user data stay private.
+
+## November 26 market data and buyer comparisons
+
+- [x] Capture daily PokéPrice movers and exact card detail pages. The first private run saved 30 of 30 card pages, with eBay asks for 30 and sold medians for seven. The local 5:30 a.m. job reused today’s capture and stored 11 additional Silph Co set candidates.
+- [x] Connect the exact-condition Silph Co eBay median, recent sale links, competitor asks and a dated daily-median chart. A November 26 provider check for raw Near Mint English Unlimited Neo Genesis Pikachu returned a $9.95 30-day median based on 16 provider-reported sales. Keep the provider’s review flag visible.
+- [x] Show collectors the cheapest checked Buy It Now copy and apply competing same-quality asks to verified flip estimates. Recalculate costs, profit and the buyer limit.
+- [ ] Compare projected resale with later completed sales and verify one currently purchasable, liquid Buy It Now flip end to end.
+
+### Four checks before the next live Buy It Now run
+
+Use the normal Find a flip entry point with a recorded clock, buyer filters and isolated storage. Block live provider requests during replay. Save the expected decision and its supporting evidence before changing the implementation.
+
+- [ ] **Trace the original copy.** Identify the buyer’s Shadowless Alakazam by listing ID and confirm which original inventory pages, photos and terms survive. Replay those inputs and the saved Dark Gengar search. Record each copy’s first exclusion, deferral or completed decision, the evidence used, and time to the first useful decision. A missing original page leaves historical discovery unverified. Keep a controlled regression for any fix.
+- [ ] **Check competition while the decision can still change.** Replay a near miss with a higher competing delivered ask and recent matched sales that support the increase. Replay a cheaper equivalent copy that removes the profit. Include a relist, a different printing and unknown shipping. Confirm the displayed resale estimate, profit after costs and maximum item price against an independent cents calculation.
+- [ ] **Verify a sale available through one provider.** With the PKMNPrices row absent, use a recorded completed eBay listing to verify the final amount, date, identity and photo condition or slab grade. Repeat with a hidden accepted offer, a mismatched copy and a duplicate link from a second provider. The genuine sale counts once. Each unsupported amount or condition stays unresolved.
+- [ ] **Switch cards according to evidence.** In a flexible Dark Gengar replay, give the planner weak remaining copies and a stronger same-era or older liquid card. In a second replay, leave a credible Dark Gengar copy worth checking. Assert the chosen listing or market, preserved backlog, price floor, budget and era. An exact-only run stays on the named card. Record the reason and number of checks so a fixed miss threshold cannot satisfy both cases.
+
+After all four pass, run one live Buy It Now validation with the buyer’s destination and targets. Record the available listing, delivered cost, matched sales activity, competing ask, projected net profit and maximum item price. If no copy qualifies, retain the closest priced miss, its gap and the search stop or resume reason.
 
 ## November 25 Find a flip repair
 
@@ -601,7 +619,7 @@ no push was requested for the break.
   1. Follow a general-merchandise seller's second Pokémon listing after identifying the first. Check whether its own photos, matching sales and delivered price support a flip.
   2. Compare two cards at the same purchase budget. Favor the one that still earns the target if it grades one point lower, and measure how often comparing downside changes the AI's first pick.
   3. Revisit a promising listing when the seller adds a previously missing back or angled holo photo. Reuse the existing sales and check whether the new photo changes the maximum purchase price.
-  4. After two misses, compare another printing of the same Pokémon with a different liquid card from that era. Record which route found a qualifying copy within the buyer’s original constraints.
+  4. When another market looks more promising, compare another printing of the same Pokémon with a different liquid card from that era. Record which route found a qualifying copy within the buyer’s original constraints.
   The [fifteen eBay deal-finding tactics](LOCAL_PLAN.md#fifteen-ebay-tactics-for-the-deal-planner) cover additional discovery, collector and negotiation strategies for the planner.
   Completed the first collector-number comparison on November 24. At the same $33.85 item ceiling, both alternate queries found an older Leafeon V that the full-name search missed. The actual card was Evolving Skies 166/203. No photographed 167/203 qualified. The same fresh-grading hunt found seven eligible Base Set Mewtwo listings. Photos from three showed estimated grades 4, 4 and 3. No qualifying purchase was established.
 
@@ -644,7 +662,7 @@ no push was requested for the break.
 - [x] Give the AI the market choice after two misses. On the November 24 vintage holo hunt it chose Base Set Mewtwo PSA 7 for its stronger recent sales activity. It checked the final eligible market, then returned Wait. Repeating the hunt reused all three AI choices with zero additional AI spend. Research steps also identify checks required by the app.
 - [x] Let collectors hunt fairly priced slab auctions and flippers hunt liquid resale opportunities. Test different bid limits on the same slab. In an auction with multiple copies, the AI can select independent checks together, revisit printing from original photos, or try selling raw when grading misses the target.
 - [ ] After an unsuccessful auction search, start with a bounded page of auctions actually closing inside ten hours. Let the AI pick promising copies within the buyer’s preferences and verify exact sales, the legal next bid and delivered cost. Compare the number of supported recommendations and research cost against starting from previously priced cards.
-- [ ] Let a buyer type “vintage 1999 to 2003 holo” into the search bar and see every qualifying flip the hunt checks. Apply the inclusive release years and holo finish to every candidate. After two misses in the same hunt, try another printing of the same Pokémon, another card from around the same release year, or a card matching both. Stay inside the buyer’s explicit years, finish and budget. Replay two misses followed by a qualifying alternative and verify that every displayed flip has matching recent sales and positive profit after costs.
+- [ ] Let a buyer type “vintage 1999 to 2003 holo” into the search bar and see every qualifying flip the hunt checks. Apply the inclusive release years and holo finish to every candidate. When the remaining copies look weaker, try another printing of the same Pokémon, another card from around the same release year, or a card matching both. Stay inside the buyer’s explicit years, finish and budget. Replay an early switch and a qualifying later copy and verify that every displayed flip has matching recent sales and positive profit after costs.
 - [ ] Measure how often resale-hunt recommendations actually sell at the projected profit and how long capital stays tied up. Compare observed rolling 60-day activity with realized outcomes for raw flips, slab resale and grading, without reinstating a hard transaction-count purchase veto.
 - [ ] Build sourced liquidity scores and resale-time ranges from exact sales,
   active supply and coverage. Include holding preferences, grading/shipping time
@@ -654,8 +672,12 @@ no push was requested for the break.
   America/Chicago, then compare newer and older BINs with defensible updated
   ceilings. One outlier or changing grade/condition mix is not market appreciation.
 - [x] The personal product importer is available via `npm run pricecharting:guide -- PRODUCT_ID PRODUCT_URL`. It verifies the product ID, canonical URL, USD currency and column labels and reuses a successful observation for the day.
-- [ ] Build the scheduled watchlist and Big Movers feed. Keep each batch small and space requests within the randomized morning window. Evaluate the [comic price updater](https://github.com/life423/comic-book-data) as a model for the Pokémon watchlist and Big Movers feed. Pilot a handful of variants against their PriceCharting product IDs. Test duplicate daily imports, missing prices, changed page structure and switching between standard and reverse holo before using a move to trigger eBay research.
+- [x] Import the personal Pokémon Big Movers table daily in the morning Central window, retaining non-card products and date-stamped guide changes. A durable claim prevents a second same-day request. Only mapped English singles can suggest buyer searches after authorization.
+- [ ] Schedule individual watchlist products. Keep each batch small and space requests within the randomized morning window. Evaluate the [comic price updater](https://github.com/life423/comic-book-data) as a model for the Pokémon watchlist and Big Movers feed. Pilot a handful of variants against their PriceCharting product IDs. Test duplicate daily imports, missing prices, changed page structure and switching between standard and reverse holo before using a move to trigger eBay research.
   The supplied [Google Cloud project](https://console.cloud.google.com/welcome?project=pokemon-flipper-trends-2026) remains a resource for this deferred work.
+- [ ] Verify a grading-company registry response against the photographed slab and cache its source and time. Show label evidence separately until official verification succeeds.
+- [ ] Include checkout-only mandatory charges and import costs for the buyer’s destination when a source can quote them. Backtest the exact-copy ceiling against final invoices.
+- [ ] Reconcile external vintage rankings against eligible transaction IDs, window and exact variant before showing a verified liquidity ranking. Cover promos, raw non-holos, editions combined by a provider and changes to the observed window.
 - [ ] Resolve documented access/permission for PriceCharting Big Movers before
   customer integration. It can supply ungraded leads; confirm movement with exact
   matched sold evidence rather than treating an asking-price spike as a trend.

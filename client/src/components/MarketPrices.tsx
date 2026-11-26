@@ -3,6 +3,8 @@ import { screeningSaleGroups, type BuyerPriceComparison, type ListingMarketPrice
 import { fetchMarketPrices } from "../api";
 import type { Screen } from "../../../shared/types.ts";
 import { dollars } from "../format";
+import { PriceTrajectory } from "./analysis/PriceHistory";
+import { median } from "../../../shared/sold-evidence.ts";
 import styles from "./MarketPrices.module.css";
 
 const saved = new Map<string, { until: number; result: BuyerPriceComparison }>();
@@ -77,9 +79,20 @@ export function MarketPrices({ prices, now, screen, loadAdditional = true }: { p
     const empty = !loadAdditional ? "Pending" : loading ? "Checking…" : problem ? "Unavailable" : current ? (market && !comparison ? "Not checked" : "No match") : "Unverified";
     const referenceOnly = !sold && groups.length > 0;
     const shown = new Set([estimate, tcgMarket, cardmarket]);
+    function observedDays(sales: TileSale[]) {
+        const days = new Map<string, number[]>();
+        for (const sale of sales) {
+            const day = sale.soldAt.slice(0, 10);
+            const prices = days.get(day) ?? [];
+            prices.push(sale.price);
+            days.set(day, prices);
+        }
+        return [...days.keys()].sort().map(day => ({ day, price: median(days.get(day)!) }));
+    }
     function saleGroup(group: typeof groups[number], index: number) {
         return <div key={group.scope || index}>
             {group.scope && <p className={styles.detail}>{group.scope} · Median {dollars(group.median)}</p>}
+            <PriceTrajectory points={observedDays(group.sales)} source="eBay sold · daily median" />
             <SaleList sales={group.sales.slice(0, 3)} />
             {group.sales.length > 3 && <details><summary>Show {group.sales.length - 3} more {group.sales.length === 4 ? "sale" : "sales"}</summary>
                 <SaleList sales={group.sales.slice(3)} /></details>}
@@ -110,6 +123,14 @@ export function MarketPrices({ prices, now, screen, loadAdditional = true }: { p
             {groups.length > 1 && <details><summary>Other comparable markets ({groups.length - 1})</summary>{groups.slice(1).map(saleGroup)}</details>}
         </div>}
         {!current && !groups.length && <p className={styles.empty}>Waiting for matching price evidence.</p>}
+        {comparison?.silphHistory && <details className={styles.history}>
+            <summary>Silph Co eBay sale records ({comparison.silphHistory.sales.length})</summary>
+            <PriceTrajectory points={comparison.silphHistory.points} source="Silph Co · daily median of linked eBay sales" />
+            <ul className={styles.sales}>{comparison.silphHistory.sales.map(sale => <li key={sale.url}>
+                <a href={sale.url} target="_blank" rel="noopener noreferrer">{sale.date}</a><strong>{dollars(sale.priceUsd)}</strong>
+            </li>)}</ul>
+        </details>}
+        {comparison?.context?.map(note => <p key={note} className={styles.detail}>{note}</p>)}
         {comparison?.notes.map(note => <p key={note} className={styles.empty}>{note}</p>)}
         {problem && <p className={styles.empty}>{problem}</p>}
         {loadAdditional && market && id && (!comparison || problem || !!comparison.notes.length) &&

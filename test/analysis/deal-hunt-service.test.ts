@@ -1122,14 +1122,15 @@ test("a reseller can consult price history, European offers or either supplement
     const hunt = service(f, { restoreRaw: async () => null, plan: (input, active) => runDealHunt(input, active, model),
         marketHistory: async () => { remember("history"); return {source:"TCGplayer", scope:"Lightly Played", points:[{day:"2026-11-23",price:45}],
             outlook:"Insufficient evidence", reason:"Sparse daily prices."}; },
+        silphComparison: async () => { remember("Silph Co"); return { prices:[], sales:[], points:[], context:["Silph Co returned no matched sales."], notes:[] }; },
         compareCardmarket: async () => { remember("offers"); return {checkedAt:stamp, currency:"EUR", basis:"ACTIVE_ASK", status:"UNAVAILABLE",
             reason:"No offers match this condition.", offers:[]}; },
         supplement: async (_value, options) => { assert.equal(options.comparePrices, true); if (!options.cacheOnly) remember(options.source!); return {}; },
     });
     const response = await hunt(searchId, { ...goal, goal:"resell" }, signal());
-    assert.deepEqual(calls, ["history", "offers", "web", "tracker"]);
+    assert.deepEqual(calls, ["history", "Silph Co", "offers", "web", "tracker"]);
     assert.equal(response.report.decision, "WAIT");
-    assert.match(response.report.steps.find(s => s.action === "check_price_history")!.observation, /TCGplayer.*Lightly Played.*\$45\.00/);
+    assert.match(response.report.steps.find(s => s.action === "check_price_history")!.observation, /TCGplayer.*Lightly Played.*\$45\.00.*Silph Co returned no matched sales/);
     assert.match(response.report.steps.find(s => s.action === "compare_cardmarket")!.observation, /No offers match/);
 });
 
@@ -1693,9 +1694,12 @@ test("Buy It Now widens Dark Gengar, resumes a cited sale after an outage and di
     const photoEvidence = { condition: "LIGHTLY_PLAYED" as const, evidence: ["The original front and back show light edge wear."], photoCount: 2 };
     const reviewed = new Set<number>();
     const model = createModelExperimentRunner({ cached: async () => null, save: async () => {}, run: async request => {
-        const { menu } = JSON.parse(request.prompt) as { menu: { key: string }[] };
+        const { menu, inventory } = JSON.parse(request.prompt) as { menu: { key: string }[], inventory: { index: number; title: string }[] };
+        const olderCopy = inventory.find(row => row.title.includes(older.name));
+        const nextMarket = inventory.length && inventory.every(row => row.title.includes(dark.name)) && menu.find(r => r.key.endsWith("/find_listings"));
+        const available = olderCopy ? menu.filter(row => row.key.startsWith(olderCopy.index + "/")) : menu;
         const priorities = ["check_listing", "inspect_photos", "check_sales", "verify_sold_listing", "search_web_sales", "check_price_tracker", "check_raw_resale", "move_on"];
-        const choice = priorities.map(action => menu.find(r => r.key.endsWith("/" + action))).find(Boolean) ?? menu[0];
+        const choice = nextMarket || priorities.map(action => available.find(r => r.key.endsWith("/" + action))).find(Boolean) || menu[0];
         return { result: { choice: choice.key, reason: "Compare completed sales for this condition before choosing another copy." },
             usage: { inputTokens: 1, outputTokens: 1 } };
     } });
@@ -1763,7 +1767,7 @@ test("Buy It Now widens Dark Gengar, resumes a cited sale after an outage and di
     const id = "ac6ef390-36e9-4195-88aa-877799aa5301";
     const held = await run(id, request, signal());
     assert.equal(held.report.decision, "WAIT");
-    assert.deepEqual(seen.slice(0, 3), [seeds[0].id, seeds[1].id, candidate.id], JSON.stringify({ seen, queries }));
+    assert.deepEqual(seen.slice(0, 2), [seeds[0].id, candidate.id], JSON.stringify({ seen, queries }));
     assert.deepEqual(checkedSales, [320, 100]);
     assert.equal(held.waitingFor, "provider");
     const reads = queries.length;
@@ -1852,5 +1856,42 @@ test("an exact guided copy resumes at its next action on restart and different a
         assert.equal(pages, 1);
         assert.equal(pictures, 1);
         assert.equal(comparisons, 1);
+    }
+});
+
+test("named Near Mint discovery resumes raw and slab searches after the broad page with one shared listing history", async () => {
+    const { inventory } = example();
+    const base = inventory.rows[0].listing;
+    const intent = { ...inventory.intent, cardName: "Dark Charizard", graded: null, cardNumber: "4/82", sets: ["Team Rocket"],
+        finish: "HOLO" as const, printing: "FIRST_EDITION" as const, titleWords: ["dark charizard"] };
+    const query = "Dark Charizard 4/82 Team Rocket 1st Edition holo";
+    const graded = { ...base, title: query + " CGC 7.5", id: "v1|200000000002|0", isGraded: true, currentPrice: 849.99, shipping: 5.73 };
+    const raw = { ...base, title: query, id: "v1|200000000001|0", currentPrice: 299, shipping: 5.65 };
+    for (const typeFilter of ["FIXED_PRICE", "AUCTION"] as const) {
+        const calls: string[] = [];
+        const scan = createHuntInventoryScanner(signal(), offlineSearchSteps([], {
+            search: async (q, options) => {
+                const kind = options?.filters?.kindFilter;
+                calls.push(String(kind));
+                assert.equal(options?.sort, typeFilter === "AUCTION" ? "endingSoonest" : "price");
+                assert.equal(options?.filters?.typeFilter, typeFilter);
+                assert.equal(options?.filters?.maxPrice, 1000);
+                if (kind === "raw") assert.match(q, /near mint/i);
+                else assert.doesNotMatch(q, /near mint/i);
+                const listings = (kind === "graded" ? [graded] : [raw]).map(row => ({ ...row, buyingOption: typeFilter,
+                    endTime: typeFilter === "AUCTION" ? new Date(Date.now() + 60 * 60_000).toISOString() : null }));
+                return { listings, total: listings.length, skipped: 0, rejections: [] };
+            },
+        }));
+        const start = Date.now();
+        const runPage = () => scan(query, intent, { typeFilter, kindFilter: "all", minPrice: 0, maxPrice: 1000 },
+            goal.targets, start, { excludeIds: new Set(), minimumCondition: "NEAR_MINT", freshGrading: false,
+                ...(typeFilter === "FIXED_PRICE" && { freshListings: true as const }) });
+        const broad = await runPage(), rawPage = await runPage(), gradedPage = await runPage();
+        assert.deepEqual(calls, ["all", "raw", "graded"]);
+        assert.deepEqual(broad.listings.map(row => row.id), [raw.id]);
+        assert.deepEqual(rawPage.listings, [], "same physical copy seen in the raw lane");
+        assert.deepEqual(gradedPage.listings.map(row => row.id), [graded.id]);
+        assert.equal(gradedPage.hasMore, false);
     }
 });

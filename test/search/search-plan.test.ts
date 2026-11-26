@@ -442,3 +442,16 @@ test("cancellation prevents interpretation dispatch", async () => {
     await assert.rejects(interpreter({ query: "Venusaur", filters }, controller.signal), /buyer cancelled/);
     assert.equal(calls, 0);
 });
+
+test("Near Mint or better applies to raw and graded exact searches without becoming an eBay keyword or numeric-grade requirement", () => {
+    const query = "Dark Charizard Team Rocket 4/82 first edition holo near mint or better, raw or graded";
+    const answer = reading({ cardName: "Dark Charizard", sets: ["Team Rocket"], cardNumber: "4/82", printing: "FIRST_EDITION", finish: "HOLO" },
+        { setMentions: [{ text: "Team Rocket", name: "Team Rocket" }] });
+    const plan = validateSearchPlan(answer, { query, filters }, [...knownSets, "Team Rocket"]);
+    assert.equal(plan.marketPreferences.minimumCondition, "NEAR_MINT");
+    assert.equal(plan.intent.graded, null);
+    assert.equal(plan.intent.minGrade, null);
+    assert.doesNotMatch(plan.query, /near mint|or better|graded/i);
+    assert.equal(validate(reading({ finish: "HOLO" }, { workflow: "market_hunt", goal: "resell" }), "find near mint or better holos").marketPreferences.minimumCondition, "NEAR_MINT");
+    assert.equal(validate(reading({ cardName: "Dark Charizard" }), "Dark Charizard").marketPreferences.minimumCondition, undefined);
+});

@@ -44,6 +44,8 @@ export interface BuyerPriceComparison {
     market: string;
     prices: ProviderPrice[];
     notes: string[];
+    context?: string[];
+    silphHistory?: { points: import("./price-history.ts").DailyPrice[]; sales: { date: string | null; priceUsd: number; url: string }[] };
     saleGroups?: ReturnType<typeof screeningSaleGroups>;
 }
 export interface ListingMarketPrices {

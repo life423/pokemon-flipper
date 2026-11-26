@@ -1,8 +1,10 @@
+import { parseListingLink } from "../../../shared/listing-link.ts";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type { AiUsageDay, HuntProgress } from "../../../shared/ai-usage.ts";
 import { DEAL_HUNT_LISTING_LIMIT, dealHuntGoals, type DealHuntGoal, type DealHuntReport, type DealHuntResponse, type DealHuntScope, type HuntMarketPreferences } from "../../../shared/deal-hunt.ts";
 import type { ListingFilters } from "../../../shared/listing-filters.ts";
 import { CONDITION_NAMES, isRawCondition } from "../../../shared/conditions.ts";
+import { observedCardKind, slabLabelConfidence } from "../../../shared/photo-evidence.ts";
 import { dollars } from "../../../shared/format.ts";
 import { MONEY_CONFIG } from "../../../shared/money/config.ts";
 import { acquisitionCost } from "../../../shared/money/underwriting.ts";
@@ -208,16 +210,26 @@ export function DealHuntResult({ result, now, targets, updatedTerms, currentList
     const terms = current?.currentTerms && current.listing.buyingOption === "FIXED_PRICE" && destinationReady &&
         result.evaluation && !result.evaluation.underwriting?.shippingUnconfirmed && (updatedTerms.get(current.listing.id) ?? 0) <= checked
         ? checkedTerms(current.listing, result.evaluation, now) : null;
+    const photoKind = observedCardKind(physical);
+    const rawCondition = photoKind === "raw" && physical?.condition;
+    const photographedGrade = physical && slabLabelConfidence(physical) && physical.slab;
     const explanation = <>
+        {rawCondition && isRawCondition(rawCondition.rawCondition) &&
+            <p>Photo assessment <strong>{CONDITION_NAMES[rawCondition.rawCondition]}</strong> · {(rawCondition.confidence ?? "unknown").toLowerCase()} confidence
+                {physical?.listing.cardCondition && ` · Seller describes the card as ${physical.listing.cardCondition}`}</p>}
+        {photographedGrade && <p>Photographed label <strong>{photographedGrade.grader} {photographedGrade.grade}</strong> · Registry unchecked</p>}
         {report.decision === "WAIT" && terms && !release && report.priceGap &&
             <p>Item price would need to drop <strong>{dollars(report.priceGap.drop)}</strong> to {dollars(report.priceGap.maxItemPrice)} to meet your targets.</p>}
         {resaleBid?.maxBid != null && <p>Recommended max snipe <strong>{dollars(resaleBid.maxBid)}</strong> item bid.
             {resaleBid.totalAtMaxBid != null && resaleBid.profitAtMaxBid != null &&
                 ` At that bid, you pay ${dollars(resaleBid.totalAtMaxBid)} delivered and project ${dollars(resaleBid.profitAtMaxBid)} profit after costs.`}</p>}
-        {terms && !grading && <p>Estimated total to buy <strong>{dollars(acquisitionCost(terms.price, terms.shipping, MONEY_CONFIG.buying))}</strong> including shipping and estimated tax.</p>}
-        {rawPrice && !expired && <p>Raw resale used for profit <strong>{dollars(rawPrice.price)}</strong>
+        {terms && !grading && <p>Estimated total to buy <strong>{dollars(acquisitionCost(terms.price, terms.shipping, MONEY_CONFIG.buying))}</strong> including shipping{current?.listing.shippingDestination ? " to " + current.listing.shippingDestination : ""} and estimated tax.</p>}
+        {receipt?.competition && exit?.salePrice != null && !expired && <p>Competitive resale estimate <strong>{dollars(exit.salePrice)}</strong>
+            {" · Lowest other checked Buy It Now with shipping "}<a href={parseListingLink(receipt.competition.listingId)?.url}
+                target="_blank" rel="noopener noreferrer">{dollars(receipt.competition.delivered)}</a></p>}
+        {rawPrice && !receipt?.competition && !expired && <p>Raw resale used for profit <strong>{dollars(rawPrice.price)}</strong>
             {isRawCondition(rawPrice.condition) && ` · ${CONDITION_NAMES[rawPrice.condition]}`} · {tcgplayerEstimateLabel(rawPrice.basis) ?? "Matched eBay sales"}</p>}
-        {exit?.path === "GRADED_RESALE" && exit.salePrice != null && !expired && <p>Slab resale used for profit <strong>{dollars(exit.salePrice)}</strong>
+        {exit?.path === "GRADED_RESALE" && !receipt?.competition && exit.salePrice != null && !expired && <p>Slab resale used for profit <strong>{dollars(exit.salePrice)}</strong>
             {" · "}{reviewed?.slab?.grader} {reviewed?.slab?.grade} · Matched eBay sales</p>}
         {exit?.path === "GRADE" && exit.expectedSale != null && !expired && <p>Estimated resale after {exit.grader} grading <strong>{dollars(exit.expectedSale)}</strong>
             {" · Weighted across the projected grades"}</p>}

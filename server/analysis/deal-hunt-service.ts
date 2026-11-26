@@ -1,3 +1,4 @@
+import { silphComparison } from "../pricing/silphco.ts";
 import { tcgplayerComparison } from "../../shared/money/price-evidence.ts";
 import { browsePressure } from "../lib/provider-usage.ts";
 import { createHash } from "node:crypto";
@@ -9,6 +10,7 @@ import { yearOf } from "../../shared/sets.ts";
 import { setYears } from "../pricing/price-tracker.ts";
 import { researchAuctionSellers, researchFreshRawSellers } from "../deals/auction-seller-research.ts";
 import { freshResaleCandidates } from "../deals/discovery-order.ts";
+import { nearMintEvidenceIssue } from "../../shared/photo-evidence.ts";
 import { createHuntInventoryScanner } from "../deals/find-deals.ts";
 import { listingMarketPrices, type ProviderPrice } from "../../shared/listing-market-prices.ts";
 import { chooseReviewSelection } from "../deals/search-review-selection.ts";
@@ -22,7 +24,9 @@ import { DEAL_HUNT_LISTING_LIMIT, dealHuntGoals, type DealHuntAction, type DealH
 import { buyerReviewBlock } from "../../shared/wait-skip-review.ts";
 import { listingEvidenceKey, searchPhotosFitDetails } from "../../shared/listing-evidence.ts";
 import { matchesListingFilters, type ListingFilters } from "../../shared/listing-filters.ts";
-import { applyVerifiedPurchase } from "../../shared/money/verified-purchase.ts";
+import { lowestComparableBin } from "./comparable-bin.ts";
+import { competitiveResalePath } from "../../shared/money/competitive-resale.ts";
+import { verifiedPurchase, applyVerifiedPurchase } from "../../shared/money/verified-purchase.ts";
 import { retargetEvaluation } from "../../shared/money/targets.ts";
 import { acquisitionCost } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
@@ -116,6 +120,7 @@ export function dealHuntRequest(input: unknown): DealHuntRequest {
             years.some(year => year !== undefined && (!Number.isInteger(year) || year < 1900 || year > 2100)) ||
             (preferences.minYear ?? 1900) > (preferences.maxYear ?? 2100) ||
             preferences.preferRecentSales !== undefined && typeof preferences.preferRecentSales !== "boolean" ||
+            preferences.minimumCondition !== undefined && preferences.minimumCondition !== "NEAR_MINT" ||
             ![undefined, "FIRST_EDITION", "SHADOWLESS", "UNLIMITED"].includes(preferences.printing) ||
             ![undefined, "PSA", "CGC", "BGS", "SGC", "TAG"].includes(preferences.grader) ||
             grades.some(grade => grade !== undefined && (!Number.isFinite(grade) || grade < 1 || grade > 10 || !Number.isInteger(grade * 2))) ||
@@ -132,6 +137,7 @@ export function dealHuntRequest(input: unknown): DealHuntRequest {
         filters: filters && { typeFilter: filters.typeFilter, kindFilter: filters.kindFilter, minPrice: filters.minPrice, maxPrice: filters.maxPrice },
         ...(preferences && { marketPreferences: { ...(seed && { seed: { name: seed.name?.trim() || null, number: seed.number?.trim() || null, expand: seed.expand } }), minYear: preferences.minYear, maxYear: preferences.maxYear, finish: preferences.finish,
             printing: preferences.printing, grader: preferences.grader, minGrade: preferences.minGrade, maxGrade: preferences.maxGrade,
+            ...(preferences.minimumCondition && { minimumCondition: preferences.minimumCondition }),
             ...(body.goal === "resell" && preferences.preferRecentSales && { preferRecentSales: true }),
             ...(preferences.sets && { sets: [...new Set(preferences.sets.map(set => set.trim()))] }) } }),
         listingIds: [...body.listingIds], ...(body.batchIds?.length && { batchIds: [...body.batchIds] }),
@@ -186,6 +192,7 @@ const defaults = {
     restoreRaw: restoreRawComparisons,
     supplement: supplementalResearch,
     priceCharting: priceChartingComparison,
+    silphComparison,
     verifyCitedSales,
     marketHistory,
     compareCardmarket,
@@ -255,6 +262,7 @@ interface CopyProgress {
     listing?: ListingSummary;
     european?: { market: string; comparison: CardmarketComparison };
     guide?: { market: string; prices: ProviderPrice[]; sales?: SoldCitation[] };
+    silph?: CopyProgress["guide"];
     verifiedCitations?: string[];
     rejectedCitations?: string[];
     retryAt?: number;
@@ -274,7 +282,7 @@ interface ScopedCandidate extends DealHuntCandidate {
 function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searchId: string, saved: PrivateEvaluationSnapshot | null,
     inventory: HuntInventory | null, row: HuntRow | undefined, evaluations: Map<string, Evaluation>, deps: Dependencies,
     filters: ListingFilters, minGrade: number, acceptsEvaluation: (evaluation: Evaluation) => boolean,
-    { markets = [], freshGrading = false, preferRecentSales = false, requireLiquid = false, verifyPhotoIdentity = false, rejectedSales = [] }: { markets?: HuntMarket[]; freshGrading?: boolean; preferRecentSales?: boolean; requireLiquid?: boolean; verifyPhotoIdentity?: boolean; rejectedSales?: string[] } = {}): ScopedCandidate | null {
+    { markets = [], freshGrading = false, preferRecentSales = false, requireLiquid = false, verifyPhotoIdentity = false, minimumCondition, rejectedSales = [] }: { markets?: HuntMarket[]; freshGrading?: boolean; preferRecentSales?: boolean; requireLiquid?: boolean; verifyPhotoIdentity?: boolean; minimumCondition?: "NEAR_MINT"; rejectedSales?: string[] } = {}): ScopedCandidate | null {
     // Never use an unrelated old version of a card simply because its eBay ID is the same.
     if (saved && (saved.evaluation.listing.id !== id || (row ? !rowMatches(row, saved) : saved.searchId !== searchId))) saved = null;
     const format = filters.typeFilter === "AUCTION" ? "AUCTION" : "FIXED_PRICE";
@@ -288,7 +296,9 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
         (!row || matchesListingFilters({ ...row.listing, currentPrice: e.listing.price }, filters, e));
     if (value && !matches(value)) return null;
     let guide: CopyProgress["guide"];
-    const guideSales = () => value && guide?.market === cardmarketComparisonKey(value) ? guide?.sales ?? [] : [];
+    let silph: CopyProgress["guide"];
+    const matchedGuides = () => [guide, silph].filter((g): g is NonNullable<CopyProgress["guide"]> => !!g && !!value && g.market === cardmarketComparisonKey(value));
+    const guideSales = () => matchedGuides().flatMap(g => g.sales ?? []);
     const reader = () => value && dealHuntCandidate(value, goal, deps.now, markets, targets, filters.maxPrice,
         { preferRecentSales, requireLiquid, hasGuideSales: guideSales().length > 0 });
     const initial = reader();
@@ -343,7 +353,7 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
     ].filter(Boolean).join(" ") : "";
     return {
         retire,
-        snapshot: () => ({ evaluation: value, listing: card, retired, retireReason, differentArtwork, artworkVerified, european, guide, checkFullListing,
+        snapshot: () => ({ evaluation: value, listing: card, retired, retireReason, differentArtwork, artworkVerified, european, guide, silph, checkFullListing,
             verifiedCitations: [...attemptedSales], rejectedCitations: [...rejected], retryAt }),
         restore(progress) {
             const other = progress.evaluation;
@@ -356,6 +366,7 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
             differentArtwork = progress.differentArtwork === true;
             ({ retired, retireReason, artworkVerified, european, checkFullListing } = progress);
             guide = progress.guide;
+            silph = progress.silph;
             for (const key of progress.verifiedCitations ?? []) attemptedSales.add(key);
             for (const key of progress.rejectedCitations ?? []) rejected.add(key);
             retryAt = progress.retryAt !== undefined && progress.retryAt > deps.now() ? progress.retryAt : undefined;
@@ -382,7 +393,7 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
             const now = deps.now(), prices = listingMarketPrices(value, listing, now);
             if (!prices || !value || retired || !artworkVerified) return;
             const matched = european?.market === cardmarketComparisonKey(value) ? european.comparison : undefined;
-            return { ...prices, additional: [...(prices.additional ?? []), ...providerPrices(value, now, matched), ...(guide?.market === cardmarketComparisonKey(value) ? guide.prices.filter(row => row.validUntil > now) : [])] };
+            return { ...prices, additional: [...(prices.additional ?? []), ...providerPrices(value, now, matched), ...matchedGuides().flatMap(g => g.prices.filter(row => row.validUntil > now))] };
         },
         available(checked) {
             if (retired || checked.has("move_on") || retryAt !== undefined && deps.now() < retryAt) return [];
@@ -408,6 +419,10 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
             const searched = checked.has("check_price_tracker") || checked.has("search_web_sales");
             const result = evidence?.outcome(searched ? new Set([...checked, "check_price_references"]) : checked);
             if (!result) return null;
+            if (minimumCondition) {
+                const issue = nearMintEvidenceIssue(value);
+                if (issue) return { decision: "WAIT", section: "photos", reason: issue };
+            }
             if (verifyPhotoIdentity && (result.decision === "BUY" || result.priceGap) || goal === "resell" && result.decision === "BID") {
                 const reason = huntPhotoIdentityIssue(value);
                 if (reason) return { decision: "WAIT", section: "photos", reason };
@@ -427,6 +442,18 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
                     reason: `${result.reason} A fresh grading buy requires front and back evidence, a supported value at the likely grade, and a profitable sale comparison one grade lower.` };
                 const activity = (quote: typeof opportunity.likely) => quote.sales60 === undefined ? `${quote.sales30} sales in 30 days` : `${quote.sales60} sales in 60 days`;
                 return { ...result, verifiedPurchase: opportunity.verifiedPurchase, section: "grading", reason: `Grading with ${opportunity.grader} costs ${dollars(opportunity.gradingCosts)} including submission shipping. Grade ${opportunity.likely.grade} projects ${dollars(opportunity.likely.profit)} profit after costs (${activity(opportunity.likely)}). One grade lower, grade ${opportunity.lower.grade} projects ${dollars(opportunity.lower.profit)} (${activity(opportunity.lower)}).` };
+            }
+            const purchase = result.verifiedPurchase;
+            if (goal === "resell" && purchase && purchase.path.path !== "GRADE") {
+                const now = deps.now();
+                const ask = lowestComparableBin(value, evaluations.values(), now);
+                const priced = ask && competitiveResalePath(value, purchase.path, ask, now, targets);
+                if (ask && priced) {
+                    const reason = `The cheapest other checked copy in the same condition or grade asks ${dollars(ask.delivered)} with shipping. Matched sales and that ask support a resale estimate of ${dollars(priced.salePrice!)} and ${dollars(priced.profit)} after costs.`;
+                    const receipt = priced.clears && priced.profit > 0 && verifiedPurchase(value, priced, targets, priced.maxBid, filters.maxPrice);
+                    if (!receipt) return { decision: "WAIT", section: "sales", reason };
+                    return { ...result, reason, verifiedPurchase: { ...receipt, path: purchase.path, competition: ask } };
+                }
             }
             return result;
         },
@@ -492,10 +519,15 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
                 } else if (action === "check_price_history" || action === "compare_cardmarket") {
                     if (!reader()?.available(referencePrerequisites).includes("check_price_references")) return "The current copy no longer needs this reference.";
                     if (action === "check_price_history") {
-                        const history = await deps.marketHistory(value, deps.now());
+                        const [history, external] = await Promise.all([deps.marketHistory(value, deps.now()),
+                            deps.silphComparison(value, signal, deps.now())]);
+                        if (external) silph = { market: cardmarketComparisonKey(value), prices: external.prices, sales: external.sales };
                         signal?.throwIfAborted();
                         const latest = history.points.at(-1);
-                        return latest ? `${history.source} for ${history.scope}. Observed ${history.points.length} days. Latest price ${dollars(latest.price)} on ${latest.day}. ${history.reason}` : history.reason;
+                        const summary = latest ? `${history.source} for ${history.scope}. Observed ${history.points.length} days. Latest price ${dollars(latest.price)} on ${latest.day}. ${history.reason}` : history.reason;
+                        return [summary, ...(external?.prices ?? []).map(p => p.source + " " + p.basis + " " + dollars(p.price) + "."),
+                            external?.sales.length ? external.sales.length + " linked Silph Co transactions available for verification." : "",
+                            ...(external?.context ?? []), ...(external?.notes ?? [])].filter(Boolean).join(" ");
                     }
                     const result = await deps.compareCardmarket(value, { now: deps.now });
                     signal?.throwIfAborted();
@@ -703,7 +735,7 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
             const filters: ListingFilters = { typeFilter: format, minPrice: Math.max(previous?.minPrice ?? 0, requested?.minPrice ?? 0),
                 kindFilter: freshGrading ? "raw" : previous?.kindFilter && previous.kindFilter !== "all" ? previous.kindFilter : requested?.kindFilter,
                 maxPrice: ceilings.length ? Math.min(...ceilings) : undefined };
-            const { minYear, maxYear, finish, sets, printing, grader, minGrade, maxGrade } = request.marketPreferences ?? {};
+            const { minYear, maxYear, finish, sets, printing, grader, minGrade, maxGrade, minimumCondition } = request.marketPreferences ?? {};
             const preferRecentSales = freshListings || request.marketPreferences?.preferRecentSales;
             const requireLiquid = standalone && goal === "resell" && preferRecentSales;
             const yearRange = minYear !== undefined || maxYear !== undefined;
@@ -807,7 +839,7 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                 batch.forEach((id, index) => {
                     const batchId = retainedBy.get(id)!;
                     const candidate = scopedCandidate(id, goal, targets, batchId, snapshots[index], inventories.get(batchId) ?? null,
-                        rows.get(id), evaluations, deps, filters, minPotentialGrade, acceptsEvaluation, { preferRecentSales });
+                        rows.get(id), evaluations, deps, filters, minPotentialGrade, acceptsEvaluation, { preferRecentSales, minimumCondition });
                     if (candidate) candidates.push(observeCandidate(batchId === searchId ? candidate : { ...candidate,
                         read: (action, signal) => withAiUsageContext({ searchId: batchId, watchBudgetId: searchId, listingId: id },
                             () => candidate.read(action, signal)) }));
@@ -906,7 +938,7 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                                 const saved = await deps.snapshot(listing.id);
                                 // Each candidate verifies the complete identity against its viable exits.
                                 const candidate = scopedCandidate(listing.id, goal, targets, searchId, saved, null,
-                                    row, evaluations, deps, filters, minPotentialGrade, acceptsEvaluation, { markets: leads, freshGrading, preferRecentSales, requireLiquid });
+                                    row, evaluations, deps, filters, minPotentialGrade, acceptsEvaluation, { markets: leads, freshGrading, preferRecentSales, requireLiquid, minimumCondition });
                                 if (!candidate) continue;
                                 const matched = saved ? leads.filter(lead => matchesHuntMarket(saved.evaluation, lead)) : [];
                                 const reason = (matched.length ? matched : leads).map(describeHuntMarket).join(" ");
@@ -993,7 +1025,7 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                         markets.push({ source: "inventory", title: freshListings ? "New Buy It Now listings" : "Current eBay inventory",
                             summary: "Search current listings within the buyer's filters. Check each copy and its matching prices before considering a purchase.",
                             hasMore: hasTargets,
-                            hasOtherMarket: () => !paused && (!guideEnded || allowFallback && fallbackIndex < releases.length ||
+                            hasOtherMarket: () => !paused && (Boolean(preparedMarkets) || !guideEnded || allowFallback && fallbackIndex < releases.length ||
                                 [...pendingTargets, ...continuedTargets].some(target => marketQuery(target) !== lastMarket)),
                             async discover(_signal, reportQueries, chooseMarket) {
                                 if (!hasTargets()) return [];
@@ -1084,7 +1116,7 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                                 const savedBacklog = watch?.backlogs?.[cursorKey]?.backlog;
                                 const { listings, summary, hasMore, sourcePages, backlog } = await scan(query, scanIntent,
                                     scanFilters, targets, scanStartedAt, { excludeIds: knownIds, freshGrading, diagnostic,
-                                        resumeBacklog: savedBacklog,
+                                        resumeBacklog: savedBacklog, minimumCondition,
                                         firstPhotoBatch: Boolean(watch && !watch.rounds && !batchesScanned && freshListings && !freshGrading),
                                         ...(freshListings && { freshListings, recoverTitles: Boolean(target.exactMarket || guided?.number && target.number === guided.number) }),
                                         ...((freshListings || watch) && { offset: pageOffset ?? (watch && watch.rounds % 3 !== 0 ? watch.offsets[cursorKey] : undefined),
@@ -1151,7 +1183,7 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                                             { exactCard: { name: target.name, cardNumber: target.number, set: target.set } }) }, evaluations, deps, inventoryFilters, minPotentialGrade,
                                         evaluation => acceptsEvaluation(evaluation) && (!release || sameSetFamily(evaluation.identity?.set, release)) &&
                                             (!target || !evaluatedCriteriaMismatch(evaluation, scanIntent)),
-                                        { freshGrading, preferRecentSales, requireLiquid, verifyPhotoIdentity: Boolean(freshListings || guided || rankBlank),
+                                        { freshGrading, preferRecentSales, requireLiquid, minimumCondition, verifyPhotoIdentity: Boolean(freshListings || guided || rankBlank),
                                             rejectedSales: deferred[listing.id] && listingFingerprint(deferred[listing.id].listing) === listingFingerprint(listing)
                                                 ? deferred[listing.id].rejectedSales : undefined });
                                     if (!candidate) continue;

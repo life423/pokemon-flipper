@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { cardEvaluation } from "./fixtures/card-evaluation.ts";
 import { planDeeperPhotos, photoReviewStatus } from "../shared/photo-review.ts";
-import { photoEvidence, slabLabelConfidence } from "../shared/photo-evidence.ts";
+import { nearMintEvidenceIssue, photoEvidence, slabLabelConfidence } from "../shared/photo-evidence.ts";
 import { retargetEvaluation } from "../shared/money/targets.ts";
 import { resultGroup } from "../shared/analysis.ts";
 import { auctionDecision } from "../shared/card-presentation.ts";
@@ -354,4 +354,26 @@ test("photo notes reconcile side availability across previously accepted stages"
     assert.match(notes, /Vertical scratch on holo/);
     assert.match(notes, /Fine back edge detail is limited/);
     assert.match(notes, /Angled holo/);
+});
+
+test("the requested condition floor uses independent photo evidence for raw copies and photographed numeric slab labels", () => {
+    const e = cardEvaluation();
+    Object.assign(e.identity!, { name: "Dark Charizard", set: "Team Rocket", cardNumber: "4/82", printing: "FIRST_EDITION" });
+    e.photoCheck!.cardCount = "ONE";
+    assert.match(nearMintEvidenceIssue(e)!, /below Near Mint/, "seller NM cannot raise photographed LP");
+    e.condition!.rawCondition = "NEAR_MINT";
+    assert.equal(nearMintEvidenceIssue(e), null);
+    e.condition!.surface.visibility = "NOT_VISIBLE";
+    assert.match(nearMintEvidenceIssue(e)!, /surface wear unclear/);
+    e.photoCheck!.images = e.photoCheck!.images.slice(0, 1);
+    assert.match(nearMintEvidenceIssue(e)!, /front and back/);
+    e.condition = null;
+    e.photoCheck!.holder = "GRADED_SLAB";
+    e.photoCheck!.slab = { present: true, grader: "CGC", grade: "7.5", gradeQualifier: null, certNumber: "fixture", labelText: "CGC 7.5", caseCondition: "INTACT", authenticity: "NONE_SEEN", concerns: [] };
+    e.slab = { status: "OK", grader: "CGC", grade: "7.5", gradeQualifier: null, certNumber: "fixture", certUrl: null, labelText: "CGC 7.5", caseCondition: "INTACT", reasons: [], concerns: [] };
+    assert.equal(nearMintEvidenceIssue(e), null);
+    e.photoCheck!.slab.grade = "6.5";
+    assert.match(nearMintEvidenceIssue(e)!, /label/);
+    e.slab.grade = "6.5";
+    assert.match(nearMintEvidenceIssue(e)!, /below Near Mint/);
 });

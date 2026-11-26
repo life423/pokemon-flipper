@@ -105,7 +105,7 @@ function namedSourceWithoutGoals(source: string, mentions: Reading["setMentions"
     let text = withoutSetMentions(source, mentions);
     const years = searchYears(text);
     if (years) text = text.replace(years.phrase, " ");
-    return normalizeWords(text.replace(/\$\s*\d+(?:,\d{3})*(?:\.\d{1,2})?/g, " ")).replace(LIQUIDITY_WORDING, " ").replace(/\bno more than\b/g, " ")
+    return normalizeWords(text.replace(/\$\s*\d+(?:,\d{3})*(?:\.\d{1,2})?/g, " ")).replace(LIQUIDITY_WORDING, " ").replace(/\b(?:near mint|nm) or (?:better|higher)\b/g, " ").replace(/\bno more than\b/g, " ")
         .replace(/\b(?:or|both|formats)\b/g, " ")
         .replace(/\b(?:find|show|search|look|looking|for|me|i|my|want|would|like|please|a|an|the|some|any|all|good|great|best|cheap|cheaper|expensive|card|cards|copy|copies|pok[eé]mon|tcg|trading|from|form|in|between|and|to|through|with|of|on|that|which|is|are|can|could|worth|deal|deals|bargain|bargains|opportunity|opportunities|liquid|profitable|profit|flip|flips|flipping|resell|resale|sell|selling|make|earn|at|least|most|minimum|maximum|under|up|budget|delivered|all|dollars|usd|holo|holos|holographic|reverse|non|rare|vintage|modern|raw|ungraded|grade|graded|grading|slab|slabs|collection|collect|auction|auctions|ending|hours|hour|hrs|left|remaining|less|than|buy|it|now|fixed|price|new|newly|fresh|freshly|listed|newest|first|edition|shadowless|unlimited|mint|near|nm|psa|cgc|bgs|sgc|tag|within|around)\b/g, " ")
         .replace(/\b\d+(?:\.\d+)?\b/g, " ").replace(/\s+/g, " ").trim();
@@ -151,6 +151,11 @@ function asksForLiquidity(source: string) {
     return [...normalizeWords(source).matchAll(LIQUIDITY_WORDING)].some(([, negativePrefix, negativeSuffix]) => !negativePrefix && !negativeSuffix);
 }
 
+function requestsNearMintFloor(source: string) {
+    return /\b(?:at least (?:near[ -]mint|NM)\b|(?:near[ -]mint|NM)\s*(?:or better\b|or higher\b|\+))/i.test(source) &&
+        !/\b(?:not|ignore|skip|exclude|excluding|without)\s+(?:near[ -]mint|NM)\b/i.test(source);
+}
+
 function amountMentioned(query: string, amount: number, kind: "profit" | "budget") {
     const matches = [...query.matchAll(/\$\s*(\d+(?:,\d{3})*(?:\.\d{1,2})?)\b/g)];
     return matches.some(match => {
@@ -190,6 +195,11 @@ export function validateSearchPlan(value: unknown, input: SearchPlanInput, known
     // Some readings repeat the numerator of a printed collector number as a year.
     // Repair only that literal duplication when no release year was requested.
     const numerator = local.cardNumber?.match(/^(\d{1,3})\/\d+$/)?.[1];
+    const minimumCondition = requestsNearMintFloor(source) ? "NEAR_MINT" : undefined;
+    // A raw play condition is not a request to exclude slabs or require a numeric grade.
+    if (id && minimumCondition && !/\b(?:raw|ungraded|graded|slabs?|slabbed|grades?)\b/i.test(source) && !criteria.grader &&
+        criteria.minGrade == null && criteria.maxGrade == null)
+        id = { ...id, graded: null, minGrade: null, maxGrade: null };
     const numberAsYear = Boolean(numerator && !years && id?.cardNumber === local.cardNumber &&
         id.minYear === Number(numerator) && id.maxYear === id.minYear);
     if (numberAsYear) id = { ...id, minYear: null, maxYear: null };
@@ -237,10 +247,11 @@ export function validateSearchPlan(value: unknown, input: SearchPlanInput, known
     if (local.cardNumber ? !id.cardNumber || !sameCardNumber(local.cardNumber, id.cardNumber) : id.cardNumber !== null)
         return invalid("The AI changed the requested collector number. Please submit the printed number again.");
     const printing = printingClaimFromText(source);
+    const bothKinds = /\b(?:(?:raw|ungraded)\s*(?:or|and|\/)\s*(?:graded|slabbed)|(?:graded|slabbed)\s*(?:or|and|\/)\s*(?:raw|ungraded))\b/i.test(source);
     if (id.printing !== (isPrinting(printing) ? printing : null) || id.finish !== criteria.finish ||
         id.grader !== criteria.grader || id.minGrade !== criteria.minGrade || id.maxGrade !== criteria.maxGrade ||
         id.minYear !== (years?.minYear ?? null) || id.maxYear !== (years?.maxYear ?? null) ||
-        /\b(?:raw|ungraded)\b/i.test(source) && id.graded !== false || (id.grader || id.minGrade !== null || id.maxGrade !== null) && id.graded !== true)
+        (bothKinds ? id.graded !== null : /\b(?:raw|ungraded)\b/i.test(source) && id.graded !== false) || (id.grader || id.minGrade !== null || id.maxGrade !== null) && id.graded !== true)
         return invalid("The AI changed a requested finish, printing, grade or year. Please refine the request and try again.");
     if (r.minProfit !== null && !amountMentioned(source, r.minProfit, "profit") ||
         r.maxDelivered !== null && !amountMentioned(source, r.maxDelivered, "budget"))
@@ -278,6 +289,7 @@ export function validateSearchPlan(value: unknown, input: SearchPlanInput, known
         marketPreferences: { ...(workflow === "market_hunt" && r.goal === "resell" && asksForLiquidity(source) && { preferRecentSales: true }),
             ...(id.minYear !== null && { minYear: id.minYear }), ...(id.maxYear !== null && { maxYear: id.maxYear }),
             ...(id.finish && { finish: id.finish }), ...(id.sets.length && { sets: [...intent.sets] }),
+            ...(minimumCondition && { minimumCondition }),
             ...(id.printing && { printing: id.printing }), ...(id.grader && { grader: id.grader }),
             ...(id.minGrade !== null && id.minGrade !== undefined && { minGrade: id.minGrade }),
             ...(id.maxGrade !== null && id.maxGrade !== undefined && { maxGrade: id.maxGrade }) },

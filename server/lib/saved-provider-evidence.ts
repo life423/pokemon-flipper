@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-type Provider = "EBAY" | "PKMNPRICES" | "POKEMON_PRICE_TRACKER" | "OPENAI" | "TCGDEX";
+type Provider = "EBAY" | "PKMNPRICES" | "POKEMON_PRICE_TRACKER" | "OPENAI" | "TCGDEX" | "SILPHCO";
 const savedOnly = new AsyncLocalStorage<(provider: Provider) => void>();
 
 export function withSavedProviderEvidence<T>(onMissing: (provider: Provider) => void, work: () => T): T {

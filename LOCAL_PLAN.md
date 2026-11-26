@@ -1,6 +1,6 @@
 # Pokémon Flipper — current plan and resources
 
-Updated November 25, 2026. This file records current decisions and locates the
+Updated November 26, 2026. This file records current decisions and locates the
 resources behind them. [LOCAL_TODO.md](LOCAL_TODO.md) is the single active
 checklist. [AGENTS.md](AGENTS.md) contains the working agreement. Git retains
 earlier versions; obsolete planning reports are deleted rather than archived.
@@ -11,6 +11,12 @@ earlier versions; obsolete planning reports are deleted rather than archived.
 2. Give thin exact searches one bounded alternative using collector number and set. Verify the actual copy from its photos. An incomplete title can justify inspection.
 3. Use confirmed eBay transactions for liquidity. An isolated premium stays outside the price calculation. Match raw condition to the photographed copy. Keep TCGplayer offers and completed eBay sales separately labeled and compare supported exits after costs.
 4. Track work by copy and by original account. Show the remaining batch when more copies are queued. Measure time to a useful price, missed qualifying copies, provider cost, and live purchase terms.
+
+### Daily discovery and price comparisons
+
+Save daily PokéPrice rising-card research and, when configured, one Silph Co set activity board. Rank leads using same-grade asking and sold observations and repeated sales across weeks. A large percentage gain alone supplies no resale price. Recheck the individual listing, printing, language, assessed condition or holder, and its competition.
+
+Show collectors the cheapest checked eBay copy even above TCGplayer. For a flip, compare the other checked copy’s delivered ask with the range of recent matched transactions. A poorly presented copy can merit closer inspection. Give it a resale premium only when observed comparable sales support that price. Keep the underlying transaction dates, origin, sample count and trajectory visible. [Silph Co](https://silphcoanalytics.xyz/developers) · [PokéPrice](https://www.pokeprice.gg/movers)
 
 ## Buyer decisions and saved strategies
 
@@ -39,8 +45,7 @@ resale-step count cannot end a pass. Catalog suggestions rank the first queries;
 they are followed by independent inventory discovery. Keep unreviewed physical
 copies and source cursors under the original account, including later copies
 of the same provisional market. Rotate continued query backlogs so one popular
-card cannot monopolize the search. After two misses, a flexible search tries
-another eligible market. When related cards are enabled for a named card,
+card cannot monopolize the search. For a flexible search, the planner weighs another inspection against switching to a different eligible market after each completed copy. When related cards are enabled for a named card,
 widen to the confirmed set, then eligible same-year or older releases. Preserve the remaining copies for later. Batch/model/display windows bound work without
 discarding the remaining inventory. The provider's retrieval ceiling still
 requires honest partial-coverage reporting.
@@ -479,11 +484,11 @@ plan, checklist and guides are tracked for work across computers.
 ### Strategy references
 
 - Andrew’s [comic-book-data project](https://github.com/life423/comic-book-data) is the reference for a possible Pokémon PriceCharting importer. Its [scraper](https://github.com/life423/comic-book-data/blob/main/scraper/price_scraper.py) reads prices for owned Amazing Spider-Man issues, and its [scheduled workflow](https://github.com/life423/comic-book-data/blob/main/.github/workflows/daily-price-update.yml) updates collection data daily. Andrew reports it operated for over two years without a ban. For Pokémon, prototype a small watchlist keyed by exact release, number, language, finish and grade. Save dated source values, keep the prior observation on failure and check a price move against matched sales and live delivered prices.
-- The supplied [Pokémon Flipper Trends Google Cloud project](https://console.cloud.google.com/welcome?project=pokemon-flipper-trends-2026) is available to evaluate when the PriceCharting importer resumes. Save credentials outside Git. The manual importer now saves one observation per product per UTC day. The scheduled job is pending. Its eventual scheduler should use small batches, randomized request timing and one durable claim per product and observation window so overlapping jobs and restarts cannot duplicate a scrape.
+- The supplied [Pokémon Flipper Trends Google Cloud project](https://console.cloud.google.com/welcome?project=pokemon-flipper-trends-2026) is available to evaluate when the PriceCharting importer resumes. Save credentials outside Git. The manual importer now saves one observation per product per UTC day. Scheduling individual watchlist products is pending. That scheduler should use small batches, randomized request timing and one durable claim per product and observation window so overlapping jobs and restarts cannot duplicate a scrape.
 - [PriceCharting Pokémon big movers](https://www.pricecharting.com/big-movers?category=pokemon-cards):
-  future daily lead research at a random time between 5 and 6 a.m. Central.
-  A mover is a hypothesis to verify against exact sold evidence and current BIN
-  inventory; an aggregate raw increase does not establish a graded-market gain.
+  The personal importer saves each product, USD loose price, published change, source URL and observation time once per Central day. The app server can fetch once between 5 and 6 a.m. Central and catch up later the same day. Only mapped English singles can enter permissioned buyer discovery. Confirm current inventory and sales of the exact resale route before recommending a purchase.
+- Vintage discovery can include promos such as Ancient Mew and Entei and non-holo cards such as Fossil Gengar #20/62 when they fit the buyer’s request. The supplied [CardTrack leaderboard](https://cardtrack.com/pokemon/most-traded) aggregates printings and grades. The supplied November 24 comparison reported 3,082 Machamp transactions on the leaderboard, 836 across grades on the card page and six raw. Their eligibility and timing remain unreconciled. Keep each source, observation date, window and grouping with its count. The [Trading Card Axis vintage index](https://tradingcardaxis.com/pokemon/indexes/vintage/) separates raw/graded and printing for its fixed 90-day window. These sources suggest markets to investigate. Price and measure liquidity from deduplicated eligible transactions at the exact printing and condition.
+- Dark Charizard example for reviewing inexpensive conflicting listings. Use the original Team Rocket English holo #4/82 only when supported by the request or catalog evidence. Keep the requested First Edition and Near Mint floor explicit. Check the stamp on the inexpensive title/specifics conflict. Keep the one-photo seller NM claim unresolved. The photographed CGC 7.5 is a stronger condition match. Its historical $855.72 was item plus shipping before tax to the displayed destination. The supplied investigation established neither comparable sold value nor a $775 buying ceiling. Track photos, registry status, sold range and activity, destination and cost assumptions separately. Claim a supported opportunity within inspected inventory.
 - The buyer spotted a newly listed raw Shadowless Alakazam and judged it Mint
   from the photos. The seller listed it as Near Mint. The incorrect First
   Edition item detail played no part in the purchase. Replay the purchase as an

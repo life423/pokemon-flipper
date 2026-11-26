@@ -1,15 +1,16 @@
 import { Worker } from "node:worker_threads";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { DATA_DIR } from "../lib/paths.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
-import { storageBackend, StorageUnavailableError } from "../storage/index.ts";
+import { getSqlRepositories, storageBackend, StorageUnavailableError } from "../storage/index.ts";
 
 // A busy SQLite connection, including its lock timeout, runs off the HTTP event loop.
 let worker: Worker | undefined;
 let sequence = 0;
 const pending = new Map<number, { resolve(value: any): void; reject(error: Error): void }>();
 
-function marketRequest(request: { key: string; now: number; since?: number; body?: unknown }): Promise<any> {
+function marketRequest(request: { key: string; now: number; since?: number; body?: unknown; once?: boolean }): Promise<any> {
     if (!worker) {
         const started = new Worker(new URL("./market-cache-worker.mjs", import.meta.url),
             { workerData: path.join(DATA_DIR, "market-data.sqlite"), execArgv: [] });
@@ -54,4 +55,18 @@ export async function saveMarketData(key: string, body: unknown) {
     try {
         await marketRequest({ key, now: Date.now(), body });
     } catch (cause) { throw new StorageUnavailableError("Market history could not be saved.", { cause }); }
+}
+
+// Consume the day's request before dispatch, including across restarts or two app instances.
+export async function reserveMarketImport(key: string): Promise<boolean> {
+    const now = Date.now();
+    if (storageBackend() === "azure-sql") {
+        const repo = await getSqlRepositories();
+        const ownerId = randomUUID();
+        const claim = await repo.claimTask({ key, type: "MARKET_IMPORT_RESERVATION", inputHash: createHash("sha256").update(key).digest("hex"), ownerId });
+        if (!claim.claimed) return false;
+        await repo.completeTask(key, ownerId, { at: now });
+        return true;
+    }
+    return marketRequest({ key, now, body: { at: now }, once: true });
 }

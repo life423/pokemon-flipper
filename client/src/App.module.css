@@ -1016,3 +1016,8 @@
 .aiUsage summary { min-height: var(--tap); align-content: center; cursor: pointer; }
 .aiUsage ul { padding-left: var(--space-4); display: grid; gap: var(--space-3); font-size: var(--text-sm); overflow-wrap: anywhere; }
 .huntFilters > summary { width: fit-content; min-height: var(--tap); align-content: center; color: var(--text-muted); cursor: pointer; }
+
+.cheapestCopy { display: grid; gap: var(--space-2); padding: var(--space-4); margin-block: var(--space-3); background: var(--surface-feature); border: 1px solid var(--border); border-radius: var(--radius-card); }
+.cheapestCopy h2 { font-size: var(--text-lg); }
+.cheapestCopy a { color: var(--action-text); }
+.cheapestCopy p:last-child { font-size: var(--text-sm); color: var(--text-muted); }

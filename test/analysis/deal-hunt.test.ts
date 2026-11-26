@@ -647,7 +647,7 @@ test("Find a flip keeps researching an eligible auction when another copy alread
     assert.equal(result.destination?.listingId, "second");
 });
 
-test("a flexible resale search tries another market after two losses and can return to the remaining copies", async () => {
+for (const explore of [true, false]) test(`flexible resale can ${explore ? "switch after the first loss and return to saved copies" : "stay for a promising third copy"}`, async () => {
     const inspected: string[] = [];
     const market = (listingId: string): DealHuntCandidate => ({
         listingId, title: listingId, summary: "Eligible copy",
@@ -657,13 +657,24 @@ test("a flexible resale search tries another market after two losses and can ret
             section: "sales", reason: listingId === "third A" ? "Profitable after costs." : "Delivered cost exceeds the exit." },
     });
     let page = 0;
-    const chooser = planner(({ menu }) => menu[0].key);
+    const decisions: string[] = [];
+    const chooser = planner(({ menu, observed }) => {
+        const market = menu.find(option => option.key.endsWith("/find_listings"));
+        const copy = menu.find(option => option.key.endsWith("/inspect_photos"))!;
+        if (market && copy) {
+            decisions.push(observed.at(-1)!.listingId!);
+            if (explore) return market.key;
+        }
+        return copy.key;
+    });
     const report = await runDealHunt({ searchId, goal: "resell", freshListings: true, guidedResale: true, rotateMarkets: true,
         candidates: [], markets: [{ source: "inventory", title: "Eligible markets", summary: "Current copies.",
             hasMore: () => page < 2,
             discover: async () => (page++ === 0 ? ["first A", "second A", "third A"] : ["first B"]).map(market) }] }, undefined, chooser.choose);
     assert.equal(report.decision, "BUY");
-    assert.deepEqual(inspected, ["first A", "second A", "first B", "third A"]);
+    assert.deepEqual(decisions, explore ? ["first A"] : ["first A", "second A"]);
+    assert.deepEqual(inspected, explore ? ["first A", "first B", "second A", "third A"] : ["first A", "second A", "third A"]);
+    assert.equal(page, explore ? 2 : 1);
 });
 
 test("resale scheduling grows linearly across a 100-copy and a 1,600-copy losing page", async t => {

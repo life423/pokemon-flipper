@@ -127,6 +127,7 @@ interface InventoryScan {
     previouslyChecked?: (row: ListingSummary) => boolean;
     freshGrading: boolean;
     freshListings?: true;
+    minimumCondition?: "NEAR_MINT";
     recoverTitles?: boolean;
     firstPhotoBatch?: boolean;
     offset?: number;
@@ -223,6 +224,16 @@ async function findDealsBatch(search: string, {
         const next = { query: sourceQuery, filters: sourceFilters, sort, offset: page.nextOffset, total: page.total };
         const key = (row: DiscoverySourceCursor) => JSON.stringify([row.query, row.filters, row.sort, row.offset]);
         if (!sources.some(row => key(row) === key(next))) sources.push(next);
+    }
+    if (inventoryScan?.minimumCondition && !resume && !inventoryScan.offset &&
+        intent.cardName && marketCeiling !== 0 && (firstFilters.maxPrice === undefined || firstFilters.minPrice <= firstFilters.maxPrice)) {
+        // The broad first page can recover miscategorizations. Each additional lane starts
+        // at its cheapest copy and shares the same seen IDs, allowance and saved queue.
+        const sort = filters?.typeFilter === "AUCTION" ? "endingSoonest" : "price";
+        if (firstFilters.kindFilter !== "graded" && intent.graded !== true)
+            sources.push({ query: query + " near mint", filters: { ...firstFilters, kindFilter: "raw" }, sort, offset: 0, total: 0 });
+        if ((!firstFilters.kindFilter || firstFilters.kindFilter === "all") && intent.graded !== false)
+            sources.push({ query, filters: { ...firstFilters, kindFilter: "graded" }, sort, offset: 0, total: 0 });
     }
     if (!resume?.pending.length && !sourceBlocked) retainCursor(firstPage, cursor?.query ?? query, cursor?.filters ?? firstFilters, cursor?.sort ?? sourceSort[sourceOrder]);
     if (signal?.aborted) return [];
@@ -373,7 +384,7 @@ async function findDealsBatch(search: string, {
 
     let matching: ListingSummary[];
     try {
-        const first = await screenPage(firstPage, firstFilters, MIN_NEWEST_CANDIDATES);
+        const first = await screenPage(firstPage, cursor?.filters ?? firstFilters, MIN_NEWEST_CANDIDATES);
         matching = first.matching;
         const kind = listingFilters.kindFilter;
         const numbered = !!intent.cardNumber?.includes("/");
@@ -589,6 +600,7 @@ export function createHuntInventoryScanner(signal: AbortSignal, dependencies = d
         let sourcePages = 0;
         let summary: SearchSummary | undefined;
         const listings = await findDealsBatch(query, { signal: active, filters, targets, asOf,
+            ...(scan.freshListings && intent.cardName && { marketplaceOrder: "lowest" as const }),
             onSourceDisposition: row => dispositions.push(row),
             onPriceExcluded: row => excludedPrices.push(row),
             onScreenedOverflow: row => overflow.push(row),

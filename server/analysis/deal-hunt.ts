@@ -83,7 +83,7 @@ const toolDescriptions: Record<Option["action"], string> = {
     check_price_tracker: "Look up the matching Pokémon Price Tracker reference for this copy’s market.",
     verify_sold_listing: "Verify an individual cited eBay sale against a completed transaction and the exact physical market. Use confirmed comparisons to reprice this copy.",
     search_web_sales: "Look up cited individual prices or transactions for the exact card. The app validates the returned evidence.",
-    check_price_history: "Read dated price history for the identified market.",
+    check_price_history: "Read dated price history, Silph Co sales and Buy It Now references for the identified market.",
     compare_cardmarket: "Read matching European asking prices. These are active offers.",
     move_on: "Leave this copy when further price research is unlikely to establish a liquid, profitable exit. Continue searching other copies.",
     finish: "Open the checked listing and selected evidence section. The app supplies the verified decision and amounts.",
@@ -176,6 +176,9 @@ async function selectOption(options: Option[], searchId: string, goal: DealHuntG
         ? "Direct the research for the buyer's goal. Choose a primary check and optionally an independent check on another listing."
         : "Direct the research for the buyer's goal. Choose exactly one option from the supplied menu on each turn.";
     const guidance: string[] = [];
+    if (guidedResale && checks.length && options.some(option => option.action === "find_listings")) {
+        guidance.push("Compare the remaining copies with searching another eligible card. Use delivered cost, photo condition, realistic profit after costs and recent comparable sales. Look for weak titles or poor presentation where the original photos can still establish superior condition. Attribute a premium only to observed quality and matching sales. Stay with a card while a specific copy has a credible advantage. Switch when another eligible market looks more promising. Explain the evidence for that choice.");
+    }
     if (preferRecentSales) guidance.push("The buyer asked for a liquid card. Prefer frequent sales spread across different days and a tight typical price range for the exact resale route. Treat sampled coverage as a lower bound. Prioritize recent matched sales ahead of larger projected profit, while preserving the buyer's profit and ROI targets. A price estimate alone does not establish liquidity.");
     if (auction) {
         guidance.push("Only consider active auctions ending in under ten hours. Compare the next legal bid, destination shipping, estimated tax and time remaining.");
@@ -219,10 +222,10 @@ async function selectOption(options: Option[], searchId: string, goal: DealHuntG
         ? " check_price_references checks additional price sources when exact sales are sparse. Use it to resolve a missing price. A provider estimate or asking price cannot substitute for a completed matching sale."
         : "";
     if (options.some(option => option.action === "verify_sold_listing" || option.action === "check_price_tracker" || option.action === "search_web_sales")) {
-        guidance.push("Choose the check most likely to settle resale value or trading frequency. Consider the observed dates, typical spread and asking competition. Use move_on when the remaining checks are unlikely to change the decision. check_price_tracker requests the exact product or grade reference. search_web_sales looks for cited individual transactions. check_price_history examines dated prices for this market. compare_cardmarket checks competing European asking prices. Only matched completed transactions establish sales activity.");
+        guidance.push("Choose the check most likely to settle resale value or trading frequency. Consider the observed dates, typical spread and asking competition. Use move_on when the remaining checks are unlikely to change the decision. check_price_tracker requests the exact product or grade reference. search_web_sales looks for cited individual transactions. check_price_history examines dated prices, condition-matched Silph Co sold medians and competitor asks. Its individual eBay sale links can be verified. compare_cardmarket checks competing European asking prices. Only matched completed transactions establish sales activity.");
     }
     const offeredCopies = new Set(checks.map(check => check.index));
-    const shownInventory = afterMiss || steps.length > 24 ? inventory.filter(row => offeredCopies.has(row.index)) : inventory;
+    const shownInventory = afterMiss || steps.length > 24 ? [...offeredCopies].map(index => inventory[index]) : inventory;
     const answer = await withAiUsageContext({ searchId }, () => choose<{
         choice: string; also?: ResearchChoice; reason: string; fallback: boolean;
     }>({
@@ -307,9 +310,6 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
     const copiesCheckedSinceDiscovery = new Set<number>();
     let firstNewCopy: number | undefined;
     let reconsiderCopies = false;
-    const batchMisses = new Set<number>();
-    let batchStart = 0;
-    let emptyBatch = false;
 
     try {
         while (true) {
@@ -372,7 +372,6 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                 // Otherwise-supported stale quotes stay open for their one refresh.
                 if (!closed && outcome?.decision === "WAIT" && !available.length && !needsTermsRefresh)
                     closedWaits.set(index, outcome);
-                if (rotateMarkets && index >= batchStart && checked.size && !available.length && outcome?.decision !== "BUY" && outcome?.decision !== "BID") batchMisses.add(index);
                 if (incremental && !available.length && !needsTermsRefresh && (!outcome || outcome.decision === "WAIT")) {
                     activeCopies.delete(index);
                     initialActions.delete(index);
@@ -404,12 +403,12 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             const lastCopy = steps.at(-1)?.listingId;
             // Rotate discovery after the first group of copies. Finish the current
             // copy's primary checks before rotating, and keep the pending queue.
-            const discoveryTurn = guidedResale && copiesCheckedSinceDiscovery.size >= FIRST_REVIEW_COUNT &&
-                !options.some(option => isPrimaryCheck(option) && candidates[option.index].listingId === lastCopy);
+            const currentPrimary = !!lastCopy && options.some(option => isPrimaryCheck(option) && candidates[option.index].listingId === lastCopy);
+            const discoveryTurn = guidedResale && !rotateMarkets && copiesCheckedSinceDiscovery.size >= FIRST_REVIEW_COUNT && !currentPrimary;
             const canVerifyNewCopy = remainingChecks > verificationSteps;
-            const otherMarket = rotateMarkets && markets.some(m => m.hasOtherMarket?.() ?? m.hasMore?.());
-            const widen = otherMarket && (emptyBatch || batchMisses.size >= 2);
-            const canBrowse = huntMarketsForBuyer ? canVerifyNewCopy && (discoveryTurn || !hasUncheckedMarketCopy || canSwitchCopy || widen)
+            const otherMarket = rotateMarkets && markets.some((market, index) => !searchedMarkets.has(index) || (market.hasOtherMarket?.() ?? market.hasMore?.()));
+            const compareMarkets = otherMarket && !currentPrimary && (!!lastCopy || steps.at(-1)?.action === "find_listings" && firstNewCopy === undefined);
+            const canBrowse = huntMarketsForBuyer ? canVerifyNewCopy && (discoveryTurn || !hasUncheckedMarketCopy || canSwitchCopy || compareMarkets)
                 : steps.length < researchLimit && searchedMarkets.size < 2;
             if (canBrowse) {
                 markets.forEach(({ title, summary, source }, index) => {
@@ -435,25 +434,18 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             const buys = options.filter((option): option is DestinationChoice => option.action === "finish" && option.decision !== "WAIT");
             const resalePriority = (option: DestinationChoice) => option.resalePriority ?? (option.recentSales ?? 0) / 60;
             const highestPriority = Math.max(0, ...buys.map(resalePriority));
-            let eligible = buys.length ? preferRecentSales ? buys.filter(option => resalePriority(option) === highestPriority) : buys :
+            const eligible = buys.length ? preferRecentSales ? buys.filter(option => resalePriority(option) === highestPriority) : buys :
                 huntMarketsForBuyer && (hasUncheckedMarketCopy || options.some(option => option.action === "find_listings" || guidedResale && isListingCheck(option)))
                 ? options.filter(option => option.action !== "finish") : options;
-            if (rotateMarkets && !buys.length) {
-                const broaden = widen && eligible.filter(option => option.action === "find_listings");
-                const newCopies = eligible.filter(option => isListingCheck(option) && option.index >= batchStart &&
-                    (!otherMarket || option.index < batchStart + 2));
-                if (broaden && broaden.length) eligible = broaden;
-                else if (newCopies.length && (otherMarket || batchStart > 0)) eligible = newCopies;
-            }
             const discoveryChoices = discoveryTurn && !buys.length ? eligible.filter(option => option.action === "find_listings") : [];
             const nextOptions = discoveryChoices.length ? discoveryChoices : guidedResale && eligible.some(isPrimaryCheck)
-                ? eligible.filter(option => !isListingCheck(option) || isPrimaryCheck(option)) : eligible;
+                ? eligible.filter(option => !isListingCheck(option) || !supplementalChecks.has(option.action) ||
+                    rotateMarkets && !currentPrimary && candidates[option.index].listingId === lastCopy) : eligible;
             // Give the first newly ranked copy a turn before returning to the existing queue.
             const freshChecks = firstNewCopy !== undefined && !copiesCheckedSinceDiscovery.size
                 ? nextOptions.filter(option => isPrimaryCheck(option) && option.index === firstNewCopy) : [];
-            // After two unsuccessful markets, reserve the remaining checks for a new copy.
-            // Let the planner compare every unsearched eligible market, including another printing.
-            const pivot = huntMarketsForBuyer && searchedMarkets.size >= 2 && nextOptions.some(option => option.action === "find_listings") &&
+            // When only discovery remains, give the planner market identities and release years.
+            const pivot = huntMarketsForBuyer && (rotateMarkets ? searchedMarkets.size > 0 : searchedMarkets.size >= 2) && nextOptions.some(option => option.action === "find_listings") &&
                 nextOptions.every(option => option.action === "find_listings" || option.action === "finish" && option.decision === "WAIT");
             const menu = pivot ? nextOptions.filter((option): option is MarketChoice => option.action === "find_listings").map(option => {
                 const { cardKey, releaseYear } = markets[option.index];
@@ -467,7 +459,8 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             // New listings arrive in screened market order. Complete one copy's physical and
             // financial checks without buying a separate planning call for each observation.
             const pendingCopies = menu.filter(isListingCheck);
-            const chooseAfterMiss = freshListings && reconsiderCopies && lastCopy && !buys.length &&
+            const marketOrCopy = compareMarkets && pendingCopies.length > 0 && menu.some(option => option.action === "find_listings");
+            const chooseAfterMiss = marketOrCopy || freshListings && (rotateMarkets || reconsiderCopies) && lastCopy && !buys.length &&
                 !pendingCopies.some(option => inventory[option.index].listingId === lastCopy) &&
                 new Set(pendingCopies.map(option => option.index)).size > 1;
             let choiceMenu = menu;
@@ -489,7 +482,8 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             const chooseRoute = routes.length > 1 && !chooseAfterMiss && !providerDecision &&
                 routes.some(option => option.action === "calculate_grading" || option.action === "resolve_printing");
             if (chooseRoute) choiceMenu = routes;
-            const nextFresh = freshListings && !chooseAfterMiss && !providerDecision && !chooseRoute && discoveryChoices.length <= 1 && (nextCopy ?? menu[0]);
+            const nextFresh = freshListings && !chooseAfterMiss && !providerDecision && !chooseRoute && !(rotateMarkets && pivot && menu.length > 1) &&
+                discoveryChoices.length <= 1 && (nextCopy ?? menu[0]);
             const { selected, also, reason, reused, fallback } = nextFresh
                 ? { selected: nextFresh, also: undefined, reason: nextFresh.action === "find_listings" ? "Check newly listed Buy It Now cards." :
                     nextFresh.action === "finish" ? "Use the checked purchase evidence." : "Verify this copy against the purchase criteria.", reused: null, fallback: false }
@@ -525,7 +519,6 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                 reconsiderCopies = guidedResale;
                 signal?.throwIfAborted();
                 const previousCount = candidates.length;
-                if (rotateMarkets) { batchStart = previousCount; batchMisses.clear(); }
                 let added = 0;
                 for (const candidate of discovered) {
                     if (copyIds.has(candidate.listingId)) continue;
@@ -536,7 +529,6 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                     completed.push(new Set(candidate.resumedActions));
                     added++;
                 }
-                emptyBatch = added === 0;
                 firstNewCopy = guidedResale && added ? previousCount : undefined;
                 const observation = [selected.summary, ...queries, `Found ${added} additional eligible ${format} ${added === 1 ? "listing" : "listings"} to check.`].join(" ");
                 steps.push({ listingId: null, title: selected.title, action: selected.action, reason: choiceReason, observation,

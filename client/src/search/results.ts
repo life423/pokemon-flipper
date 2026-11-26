@@ -1,3 +1,4 @@
+import { releaseIssue } from "../../../shared/base-set-release.ts";
 import type { BuyerListingReview } from "../../../shared/wait-skip-review.ts";
 import type { CompSummary, Evaluation, ListingSummary, RatingLevel, SearchIntent, Targets } from "../types.ts";
 import type { AnalysisState } from "../analysis-state.ts";
@@ -21,6 +22,8 @@ import { CONDITION_NAMES, conditionGap, isRawCondition, sellerDisclosedCreasing,
 import { isPrinting } from "../../../shared/identity.ts";
 import { soldMarketPrice } from "../../../shared/sold-evidence.ts";
 import { obscuredDisclosedWear, observedCardKind, photoCoverage } from "../../../shared/photo-evidence.ts";
+import { searchPhotosFitDetails } from "../../../shared/listing-evidence.ts";
+import { verifiedSlabMarketKey } from "../../../shared/slab-market.ts";
 import { parseListingLink } from "../../../shared/listing-link.ts";
 
 export type View = ResultGroup | "all" | "new" | "losses" | "bids";
@@ -244,6 +247,27 @@ export function checkedTerms(listing: ListingSummary, evaluation: Evaluation, no
         price === null || !Number.isFinite(price) || price <= 0 || listing.currentPrice !== price ||
         shipping === null || !Number.isFinite(shipping) || shipping < 0 || listing.shipping !== shipping) return null;
     return { price, shipping };
+}
+
+// Collectors can compare the cost of a currently available copy even when its
+// assessed resale is lower than the ask or no matching sales were found.
+export function cheapestCheckedBin(listings: ListingSummary[], analyses: Record<string, AnalysisState>, intent: SearchIntent | null | undefined, now: number) {
+    const copies = listings.flatMap(listing => {
+        const value = eligibleAssessedListing(listing, analyses[listing.id], intent, now);
+        const link = parseListingLink(listing.url);
+        if (!value || !link || link.itemId !== parseListingLink(listing.id)?.itemId || releaseIssue(value) || unsupportedVariantReason(value) ||
+            listing.title.trim() !== value.listing.title.trim() || !listing.images.length || !searchPhotosFitDetails(listing.images, value.listing.photos ?? [])) return [];
+        const terms = checkedTerms(listing, value, now);
+        if (!terms) return [];
+        const kind = observedCardKind(value), condition = value.condition?.rawCondition;
+        const scope = kind === "graded" && verifiedSlabMarketKey(value) ? value.slab!.grader + " " + value.slab!.grade :
+            kind === "raw" && isRawCondition(condition) && value.condition?.authenticity.concern === "NONE_SEEN" &&
+                photoCoverage(value.photoCheck).clearFronts && photoCoverage(value.photoCheck).clearBacks ? CONDITION_NAMES[condition] + " raw" : null;
+        if (!scope) return [];
+        return [{ listing, scope, total: acquisitionCost(terms.price, terms.shipping, MONEY_CONFIG.buying), ...terms }];
+    });
+    copies.sort((a, b) => a.total - b.total || a.listing.id.localeCompare(b.listing.id));
+    return copies[0] ? { ...copies[0], checked: copies.length } : null;
 }
 
 // Each copy is valued against its own market. Relative savings let a broad

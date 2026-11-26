@@ -172,6 +172,25 @@ export function slabLabelConfidence(evaluation: Evaluation): "HIGH" | null {
         label.grader === slab.grader && label.grade === slab.grade ? "HIGH" : null;
 }
 
+export function nearMintEvidenceIssue(evaluation: Evaluation): string | null {
+    if (observedCardKind(evaluation) === "graded") {
+        if (!slabLabelConfidence(evaluation) || evaluation.slab?.gradeQualifier ||
+            !["PSA", "CGC", "BGS", "SGC", "TAG"].includes(evaluation.slab?.grader ?? ""))
+            return "The photographed slab label does not establish a qualifying standard grade.";
+        const grade = Number(evaluation.slab?.grade);
+        if (!Number.isFinite(grade) || grade < 1 || grade > 10) return "The photographed label needs a standard numeric grade.";
+        return grade >= 7 ? null : "The photographed slab grade is below Near Mint.";
+    }
+    const condition = evaluation.condition, coverage = photoCoverage(evaluation.photoCheck);
+    if (observedCardKind(evaluation) !== "raw" || !coverage.clearFronts || !coverage.clearBacks ||
+        !condition || !["HIGH", "MEDIUM"].includes(condition.confidence) || !isRawCondition(condition.rawCondition))
+        return "Clear front and back photos and a supported condition assessment are needed to confirm Near Mint.";
+    if (!["MINT", "NEAR_MINT"].includes(condition.rawCondition)) return "The assessed condition is below Near Mint.";
+    if ([condition.corners, condition.edges, condition.surface].some(area => area?.visibility !== "CLEAR"))
+        return "The photos leave corners, edges or surface wear unclear for a Near Mint purchase.";
+    return null;
+}
+
 // A rough reference for older readings that only described visible wear.
 // These ranges are for display and never enter purchase math or grade filters.
 export const gradesFromWear: Readonly<Record<RawCondition, GradeRange>> = {

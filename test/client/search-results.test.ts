@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-    countSearchResults, filterSearchResults, groupSearchResults, sortSearchResults, selectDealAlternatives, selectBestCurrentBuy, selectRawBuyingComparison, rawComparisonQuoteIds,
+    cheapestCheckedBin, countSearchResults, filterSearchResults, groupSearchResults, sortSearchResults, selectDealAlternatives, selectBestCurrentBuy, selectRawBuyingComparison, rawComparisonQuoteIds,
     type SearchFilters,
 } from "../../client/src/search/results.ts";
 import { competingAuctions } from "../../client/src/search/competing-auctions.ts";
@@ -656,6 +656,24 @@ function currentBuy(item: ListingSummary, resale: number, grade?: string): Evalu
     value.underwriting = underwrite(value, { ...MONEY_CONFIG, targets });
     return value;
 }
+
+test("cheapest checked Buy It Now ranks delivered cost even above a guide and excludes a stale or wrong listing", () => {
+    function copy(id: string, price: number, shipping: number) {
+        const item = listing(id, { title: "Neo Genesis Pikachu 70/111", currentPrice: price, shipping, url: "https://www.ebay.com/itm/" + id,
+            images: ["fixture-front", "fixture-back"] });
+        const value = currentBuy(item, 10);
+        Object.assign(value.identity!, { name: "Pikachu", set: "Neo Genesis", cardNumber: "70/111", finish: "NON_HOLO" });
+        value.photoCheck!.images.push({ number: 2, view: "BACK", usable: true, isStockImage: false, issues: [] });
+        return { item, value };
+    }
+    const a = copy("123456789012", 25, 10), b = copy("123456789013", 30, 1);
+    const analyses = { [a.item.id]: done(a.value), [b.item.id]: done(b.value) };
+    const selected = cheapestCheckedBin([a.item,b.item], analyses, null, NOW);
+    assert.equal(selected?.listing.id,b.item.id);
+    assert.equal(selected?.checked,2);
+    assert.equal(cheapestCheckedBin([a.item,b.item], analyses, null, NOW + BEST_BUY_TERMS_MAX_AGE_MS),null);
+    assert.equal(cheapestCheckedBin([{ ...a.item, url:b.item.url }], analyses, null, NOW),null);
+});
 
 test("best current buy can show a verified loss without adding it to Deals or purchasing more research", t => {
     const requests = t.mock.method(globalThis, "fetch", () => assert.fail("best buy reuses accepted evidence"));

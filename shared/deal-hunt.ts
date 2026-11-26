@@ -25,6 +25,7 @@ export interface HuntMarketPreferences {
     maxYear?: number;
     finish?: "HOLO" | "REVERSE_HOLO" | "NON_HOLO";
     preferRecentSales?: boolean;
+    minimumCondition?: "NEAR_MINT";
 }
 export interface DealHuntRequest {
     goal: DealHuntGoal;

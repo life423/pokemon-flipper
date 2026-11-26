@@ -4,7 +4,7 @@ import { createSharedWork } from "../lib/shared-work.ts";
 const source = "https://pokeforecast.com/most-traded/";
 const key = "pokeforecast:most-traded:v1";
 const share = createSharedWork();
-export interface TradedCard { name: string; set: string; number: string }
+export interface TradedCard { name: string; set: string; number: string; mover?: "Silph Co set activity" | "PriceCharting Big Movers" | "PokéPrice rising card" }
 
 export function tradedCardSeeds(html: string): TradedCard[] {
     const cards: TradedCard[] = [];
