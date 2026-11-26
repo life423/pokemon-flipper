@@ -1,3 +1,4 @@
+import { validShippingZip } from "../../shared/shipping-zip.ts";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { dollars, percent } from "./format";
 import { prefersReducedMotion, transitionName, withViewTransition } from "./motion";
@@ -41,6 +42,7 @@ import type { SearchPlan } from "../../shared/search-plan.ts";
 import { currentHuntBid, expiredGradingReason, reconcileHuntListing, supportsCrossCardHunt } from "./search/hunt-result";
 import { GradingWatch } from "./components/GradingWatch";
 import { GuidedFlip } from "./components/GuidedFlip";
+import { readFlipSession } from "./search/flip-session";
 import { DealHunt } from "./components/DealHunt";
 import { SHIPPING_DESTINATION_REVISION, SHIPPING_DESTINATION_SAVED } from "./components/ShippingDestination";
 import type { DealHuntReport, DealHuntResponse, DealHuntScope } from "../../shared/deal-hunt.ts";
@@ -112,7 +114,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
         if (restored?.newIds) restoreWatchBudget(restored.lastBatchId, restored.request.rootId);
     }, [restored]);
     const [page, setPage] = useState<SearchPage>(initialPage);
-    const [flipEntry, setFlipEntry] = useState(false);
+    const [flipEntry, setFlipEntry] = useState(() => initialPage === "search" && Boolean(readFlipSession()));
     const showingFlip = flipEntry && page === "search";
     const toolPage = page === "sniper" || page === "camera";
     const [sniperDraft, setSniperDraft] = useState<SniperDraft | null>(null);
@@ -277,6 +279,9 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
         fetchAiUsage(id).then(value => { if (searchRunId.current === id) setAiUsage(value); }, () => {});
     }, []);
 
+    const acceptGuidedUsage = useCallback((value: AiUsageDay) => {
+        if (value.searchId === searchRunId.current) setAiUsage(value);
+    }, []);
     useEffect(refreshUsage, [refreshUsage]);
 
     // How many automatic analyses this search may still start.
@@ -290,7 +295,8 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
 
     const [rawAnalyses, setAnalyses] = useState<Record<string, AnalysisState>>(restored?.analyses ?? {});
     useEffect(() => {
-        if (searchStatus !== "checking" && linkStatus !== "loading" && !pricingBusy && !huntBusy && !guidedBusy && !Object.values(rawAnalyses).some(analysis => analysis.status === "loading")) return;
+        if (guidedBusy) return;
+        if (searchStatus !== "checking" && linkStatus !== "loading" && !pricingBusy && !huntBusy && !Object.values(rawAnalyses).some(analysis => analysis.status === "loading")) return;
         let active = true;
         let reading = false;
         // This endpoint reads local accounting only; it never calls providers.
@@ -1546,7 +1552,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
         setDestinationError(false);
         void fetchShippingDestination(controller.signal).then(value => {
             if (controller.signal.aborted) return;
-            if (value?.zip !== null && (typeof value?.zip !== "string" || !/^\d{5}(?:-\d{4})?$/.test(value.zip))) {
+            if (value?.zip !== null && !validShippingZip(value?.zip)) {
                 throw new Error("Invalid shipping destination");
             }
             confirmDestination.current(value.zip);
@@ -1722,7 +1728,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
                         The shipping destination changed. Run the search again for current delivery quotes.
                     </p>}
                     <div hidden={!showingFlip}>
-                        <GuidedFlip onSnipe={planAuction} active={showingFlip} onBusyChange={setGuidedBusy}
+                        <GuidedFlip onSnipe={planAuction} onUsage={acceptGuidedUsage} active={showingFlip} onBusyChange={setGuidedBusy}
                             onStart={id => { stopSearch(); cancelLink(); cancelPricing(); searchRunId.current = id; setAiUsage(null); }} onDestinationSaved={zip => confirmDestination.current(zip)}
                             filters={currentFilters} targets={targets} minGrade={minGrade} destination={destination} ready={destinationReady}
                             now={now} latest={latestListings.current} updated={auctionUpdates} shortlist={listing => {

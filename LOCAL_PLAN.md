@@ -5,6 +5,13 @@ resources behind them. [LOCAL_TODO.md](LOCAL_TODO.md) is the single active
 checklist. [AGENTS.md](AGENTS.md) contains the working agreement. Git retains
 earlier versions; obsolete planning reports are deleted rather than archived.
 
+## Find a flip discovery and purchase evidence
+
+1. Start a blank Buy It Now flip with fresh listings. Use repeated, recent, exact-printing sales to target other queries under a conservative item ceiling. Keep general inventory eligible as the search advances.
+2. Give thin exact searches one bounded alternative using collector number and set. Verify the actual copy from its photos. An incomplete title can justify inspection.
+3. Use confirmed eBay transactions for liquidity. An isolated premium stays outside the price calculation. Match raw condition to the photographed copy. Keep TCGplayer offers and completed eBay sales separately labeled and compare supported exits after costs.
+4. Track work by copy and by original account. Show the remaining batch when more copies are queued. Measure time to a useful price, missed qualifying copies, provider cost, and live purchase terms.
+
 ## Buyer decisions and saved strategies
 
 - The first milestone is one available eBay copy a buyer can acquire and resell profitably after costs. A collector can instead ask for a specific copy at a good delivered price. Pilot results should distinguish an alert, a purchase and money received on resale.
@@ -23,9 +30,10 @@ earlier versions; obsolete planning reports are deleted rather than archived.
 ## November 25 continuous Find a flip
 
 The buyer’s goal is to keep Find a flip searching until a verified flip is found
-or the buyer presses Stop. Today a pass can also end when current inventory runs
-out or a provider, quota, storage or accounting issue prevents more research.
-Automatic waiting and resumption under the original budget are open work.
+or the buyer presses Stop. While open, it waits between inventory passes and through
+recoverable quota resets. A server-owned local queue restores accepted work, source
+cursors, pending copies and the original account after a reload or process restart.
+The buyer can resume a disconnected session. A spending or storage hold needs attention.
 Use “Find a flip” and “search” in the buyer interface. A fixed card, market or total
 resale-step count cannot end a pass. Catalog suggestions rank the first queries;
 they are followed by independent inventory discovery. Keep unreviewed physical
@@ -51,6 +59,57 @@ workspace cancellation, semantic subject evidence for ordinary-language goals,
 an otherwise-supported final BIN terms refresh and likely-grade target
 consistency. The current checklist and maintained audit record offline
 acceptance; a new live profitable deal remains unproved.
+
+## First verified guided flip
+
+The first milestone is an available eBay copy that a buyer can acquire within a defensible ceiling and resell on eBay for a projected profit after costs. Record a subsequent actual purchase and resale separately if the buyer chooses to share them. The live broad hunt, costs and provider balances are recorded privately in LOCAL_HANDOFF.md.
+
+1. **Separate the two buyer questions.** Give Find a deal a named-card comparison. Use a printing with observed recent eBay sales for the online acceptance run. For the requested English printing it may surface the best supported graded copy, a cheaper raw copy and an eligible auction. Each needs its own terms, comparable market and purchase ceiling. Display the strongest choice and explain when the cheaper copy is worse value. Find a flip starts with a resale goal and may explore related cards. Both use the existing photo, pricing and cost calculations.
+2. **Start from a reproducible baseline.** Review the latest completed search diagnostic, replay its cited evidence and reconcile the in-progress liquidity and guided-routing changes with the local checkout. Verify the current Windows storage backend, saved assessments and spending accounts before paid work. Use the last measured broad hunt as the baseline for time, provider use and verified opportunities. Develop away from the server watching the buyer's active search.
+3. **Build the entry points first.** Keep Find a deal, Find a flip and Evaluate eBay link accessible above the results. Give Find a flip an optional textbox and Buy It Now, Auctions under ten hours and Both. Switching tabs preserves each draft, running search, results and stop action. Typing or opening a tab makes zero paid requests. Both uses the original hunt account and cancellation signal across the two formats.
+4. **Translate the submitted guidance into a route the buyer can see.** Interpret the text once on submission. Separate the starting card from hard constraints such as budget, set, date, finish, grade and exclusivity. For flexible Ampharos guidance, start with Ampharos, verify an Aquapolis printing in the catalog, then try other Aquapolis cards if the first stage produces no qualifying copy. Next try eligible vintage markets with measured sales. Show the active scope and why it changed. An exclusive Ampharos request stays there. Blank guidance starts directly with liquid markets from a diverse catalog sample.
+5. **Price the targets before calling eBay.** Use dated sale counts and recency to rank the sample. Record the source, currency, period, coverage and whether volume includes multiple grades or finishes. Use exact transactions or explicitly labeled pricing evidence to estimate a resale range and provisional ceiling. Store scoped observations and timestamps in SQL, verify that identical lookups reuse them, and refresh listing terms separately. The ranking answers where to search. The pictured copy still needs its own price.
+6. **Choose the next eBay request deliberately.** Start with one summary page for the strongest eligible query. Screen and deduplicate its copies locally. Favor plausible margin and a clue that a photo could resolve, such as a collector number in a vague title. The AI can choose among supported queries or close candidates. Spend a detail call when its answer could change the decision. Preserve the shared daily reserve, pacing and original request ledger through retries, both formats and other open tabs. Under quota pressure, finish the strongest affordable candidate before looking for more inventory.
+7. **Prove the copy and its economics.** Use the seller's originals to identify the card, release marks, collector number, finish, language, condition and actual slab grade where relevant. Verify sales for that market, compute acquisition and exit costs and show the maximum item price, net dollars and ROI. Keep raw resale, slab resale and viable grading scenarios distinct. A weak listing can conceal upside when its pictured copy matches a stronger market. A seller's claim or an assumed premium for better photography cannot establish it. For auctions show the next legal bid and private ceiling. An unaccepted offer remains conditional.
+8. **Run one online acceptance hunt starting in a liquid market.** Use blank guidance in the normal Find a flip tab so the highest observed seven-day sales count in the sampled catalog selects the first market. Use a separate session, fresh Buy It Now listings, the saved delivery destination and positive after-cost profit. Both receives offline coverage first. Record time to first useful result, total time, markets searched, distinct listings, copies checked, Browse calls, pricing credits and AI spend. Verify current terms for a qualifying Buy. If none qualifies, explain the closest copy's all-in cost, maximum payable price, shortfall or unresolved evidence. Diagnose whether discovery, identification, valuation or available inventory limited the result before spending on another hunt.
+9. **Verify the buyer experience and replay the live findings.** Use photo tiles with green for supported profit, purple for active evaluation, lavender for selection and amber for missing evidence. Show the active card or market, completed checks, elapsed time and Stop. Replay an exact named-card comparison, anniversary Charizard, strict and flexible Ampharos, a blank hunt, changed shipping, cancellation, restart and a partial network failure. Check Both, keyboard operation and phone, tablet and desktop layouts. Run the isolated suite, type checks and build.
+10. **Add history and test the next strategy against that baseline.** Chart USD TCGplayer history for the matching raw variant and condition, or dated eBay sales for the same slab grade. Label the period, source and sample. Test a short-term directional estimate on held-out dates against a flat baseline and suppress it with sparse or stale coverage. Next test collector-number queries and one seller-inventory follow-up against the baseline. Lots, bundles, auction clusters, alerts and tracking actual resale proceeds follow as evidence warrants. A daily best-buy view would rank still-available copies among the listings checked that day. [PKMNPrices history and sales volume](https://www.pkmnprices.com/docs/price-history)
+
+The full [twenty deal-finding ideas](#twenty-deal-finding-ideas-to-test), [fifteen eBay tactics](#fifteen-ebay-tactics-for-the-deal-planner) and [collector experiments](#collector-features-worth-paying-for) remain below. Experiment with seller inventory, small lots, bundles, competing auctions and alerts after establishing the single-copy baseline.
+
+## November 25 local reliability pass
+
+The current local changes bind purchase advice to the buyer review's verified
+resale route and preserve conservative lower-condition sold floors. Catalog
+matching, continuation membership, quota recovery and global holds have focused
+regressions. At the user's later request, per-search Browse and PKMNPrices
+ceilings and preliminary pricing sublimits are removed. Historical limits and
+attempts remain recorded; current requests preserve the eBay daily reserve,
+provider pacing, cancellation and accepted evidence reuse. Broad automatic
+searches diversify provisional markets before researching repeated copies.
+Submitted natural language is validated against literal constraints, including
+one-sided release years ("no newer than 2020" means through 2020). Explicit
+liquidity requests prioritize recent matched sales and cannot produce a liquid
+Buy/Bid from zero observed selected-route activity. Broad inventory uses a
+Pokémon-anchored collectible-card query; exact-card alias recovery retains its
+existing coverage. Typed accounting and input-verification failures preserve
+their original reason and permit safe explicit recovery under the same account.
+Buyers can save a US delivery ZIP in the app. Destination changes invalidate
+browser quote advice while retaining accepted photos and prices. These fixes
+are not committed or pushed. Cold live search quality and a qualifying deal
+remain acceptance work, as recorded in the checklist.
+
+The reseller's primary workflow should find a specific liquid copy within their
+budget, regardless of card or set. Favor a short ranked buying list showing the
+exact copy, delivered cost, supported resale value, all costs, net profit,
+private purchase limit and observed recent matched activity. Keep verified
+purchase opportunities, conditional offers and watches distinct. A sale count
+is evidence of activity, not a promised resale date. Saved evaluations now seed
+broad hunts on file storage as well as SQL; expansion beyond saved markets
+remains necessary. Fresh-listing alerts and purchase-to-realized-resale feedback
+are proposed next steps after the live deal milestone, not implemented promises.
+Evaluate usefulness with actual buying decisions and a five-buyer pilot before
+expanding features or redesigning the whole interface.
 
 ## November 24 pricing and recovery checkpoint
 
@@ -327,9 +386,11 @@ flat subscriptions; their requests and credits are separate from OpenAI dollars.
 The user specifically wants more useful data coverage and AI at the right stage.
 Zero calls or an arbitrarily cheap search is not the goal.
 
-Production searches have no per-search Browse or PKMNPrices request ceiling.
-Existing ledgers preserve historical limits, spent counts and unresolved state;
-they are never reset to continue a hunt.
+Per-search Browse and PKMNPrices ceilings are removed by the November 25 user
+instruction, including old exhausted accounts. Existing ledgers retain their
+historical ceilings, counters and unresolved attempts; compatible migration
+never clears consumption. All production Browse calls protect the last 10% of
+the daily allowance. Provider pacing, bounded page walks and cancellation remain.
 PKMNPrices supplies 20,000 daily credits on this subscription. Preserve rate
 limits, daily reserves, shared response reuse and rapid-depletion warnings.
 
@@ -462,6 +523,19 @@ Let the AI also choose the existing page or panel that best explains its finding
 Expose each supported function and view by name, with the inputs it accepts. The app executes the selected function, supplies the result and opens the selected view for the same listing. Reuse paid evidence, enforce the search budget and calculate money in code. Record the steps and why the AI chose them so the buyer can see what led to the decision. Purchases, bids and seller contact remain buyer actions.
 
 ### Andrew’s seller research and offer ideas
+
+November 25 clarification: the fifteen supplied eBay tactics are options to
+consider, not approval to implement every one. For the reseller pilot, the
+current proposed first group is collector-number discovery, photo-confirmed
+variant corrections, prepared ceilings for fresh listings, and same-seller
+inventory research after a real pricing opportunity. The user's strongest
+combination is number search → exact photographed variant → seller inventory →
+one conservatively priced bundle. Bundle/lot advice needs independently
+identified cards, verified combined delivery, selling costs and zero value for
+unidentified extras. Photograph requests, offers, bids and seller messages still
+require their existing explicit authorization; saving tactics does not send them.
+Keep same-art and multilingual alternatives as distinct collector markets;
+the current English-only scope is unchanged.
 
 - **Find mispriced cards from sellers who rarely list Pokémon.** Open the seller’s other items. A store full of tools or clothes with a few vaguely titled Pokémon singles is a reason to look more closely. Sample across categories, save how many items were checked and reuse that sample across the seller’s listings. Inspect plausible cards for overlooked printings or unusually good condition, check exact completed sales, then calculate what the buyer could make after costs. The inventory mix sets research priority. Feedback measures a different kind of risk.
 - **Compare how the seller photographs condition.** If the seller discloses edge or corner wear and the sleeve hides the affected area in every photo, pass. If their other cards have unsleeved closeups, report that observable difference without speculating about motive.

@@ -35,8 +35,9 @@ async function withSearchAllowance(usage: EbayUsage | null): Promise<EbayUsage |
     return usage && searchBudget ? { ...usage, searchBudget } : usage;
 }
 
-export async function ebayUsage({ fresh = false }: { fresh?: boolean } = {}): Promise<EbayUsage | null> {
+export async function ebayUsage({ fresh = false, cachedOnly = false }: { fresh?: boolean; cachedOnly?: boolean } = {}): Promise<EbayUsage | null> {
     if (saved?.usage.resetsAt && Date.parse(saved.usage.resetsAt) <= Date.now()) saved = null;
+    if (cachedOnly) return withSearchAllowance(saved && Date.now() - saved.at < MAX_AGE_MS ? saved.usage : null);
     if (!fresh && saved && Date.now() - saved.at < MAX_AGE_MS) return withSearchAllowance(saved.usage);
     const usage = await share("usage", async () => {
     try {

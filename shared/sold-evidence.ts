@@ -76,3 +76,10 @@ export function hasExactSoldScope(evidence: ScreeningSoldEvidence, printing?: Pr
         new Set(evidence.references.map(soldReferenceScope)).size === 1 &&
         (!printing || printing === "UNKNOWN" || evidence.references.every(reference => reference.printing === printing));
 }
+
+// Use the lower observation when a pair is too far apart to establish a typical price.
+export function comparablePriceBounds(prices: number[]): { low: number; high: number } {
+    const typical = median(prices);
+    return prices.length === 2 ? { low: 0, high: Math.min(...prices) * 2.5 } :
+        { low: typical / 2.5, high: typical * 2.5 };
+}

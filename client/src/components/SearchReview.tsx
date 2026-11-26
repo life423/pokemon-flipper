@@ -51,11 +51,11 @@ export function SearchReview({ ready, onReview }: {
         }
     }
 
+    if (!result?.review && !error) return null;
     return <section className={styles.panel} aria-label="Search review">
         <div className={styles.header}>
             <div>
                 <h2>Search review</h2>
-                <p>The app records why listings stopped and suggests checks for Codex. Review costs are tracked separately.</p>
             </div>
             {result && <button type="button" onClick={() => void copy()}>Copy review for Codex</button>}
         </div>

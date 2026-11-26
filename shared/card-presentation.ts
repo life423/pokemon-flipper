@@ -18,10 +18,10 @@ export function scenarioAt(path: PricedPath, price: number) {
 }
 
 export function auctionDecision(evaluation: Evaluation, targets: Targets = MONEY_CONFIG.targets, now = Date.now()) {
-    const best = evaluation.underwriting?.best;
+    const selected = evaluation.underwriting?.best;
+    const best = selected?.path === "RAW" && !rawPriceForPath(evaluation.rawPricing, selected) ? null : selected;
     const current = evaluation.listing.price;
-    const quoteOnly = best && rawPriceForPath(evaluation.rawPricing, best)?.basis?.startsWith("TCGPLAYER_");
-    const ceiling = best && !quoteOnly && Number.isFinite(best.maxBid) && best.maxBid > 0 ? best.maxBid : null;
+    const ceiling = best && Number.isFinite(best.maxBid) && best.maxBid > 0 ? best.maxBid : null;
     const provisional = !evaluation.photoCheck || photoReviewStatus(evaluation).needsYourReview || (!evaluation.slab && evaluation.condition?.rawCondition === "UNKNOWN");
     const ended = evaluation.listing.availability === "UNAVAILABLE" || Boolean(evaluation.listing.endTime && Date.parse(evaluation.listing.endTime) <= now);
     const overLimit = ceiling !== null && current !== null && current > ceiling;
@@ -41,7 +41,7 @@ export function auctionDecision(evaluation: Evaluation, targets: Targets = MONEY
         low: sorted[0], high: sorted.at(-1)!, count: sorted.length, source: "Dated sold comps",
     } : evaluation.slab?.status === "OK" && evaluation.slabPricing?.activeReference ? {
         price: evaluation.slabPricing.activeReference.lowestTotal, low: null, high: null, count: null, source: "Photo-checked current Buy It Now competition, including shipping",
-    } : !evaluation.slab && evaluation.identity?.status === "IDENTIFIED" && evaluation.condition && evaluation.condition.confidence !== "LOW" && evaluation.condition.authenticity.concern === "NONE_SEEN" && raw?.status === "PRICED" && raw.salePrice && evaluation.condition.rawCondition !== "UNKNOWN" ? {
+    } : !evaluation.slab && evaluation.identity?.status === "IDENTIFIED" && evaluation.condition && evaluation.condition.confidence !== "LOW" && evaluation.condition.authenticity.concern === "NONE_SEEN" && raw?.status === "PRICED" && rawPriceForPath(evaluation.rawPricing, raw) && raw.salePrice && evaluation.condition.rawCondition !== "UNKNOWN" ? {
         price: raw.salePrice, low: null, high: null, count: null, source: `Raw market quote${raw.priceCondition ? ` · ${raw.priceCondition.toLowerCase().replaceAll("_", " ")}` : ""}`,
     } : null;
     return { ceiling, provisional, ended, overLimit, status, anyTargets, benchmark,

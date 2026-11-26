@@ -17,7 +17,7 @@ const share = createSharedWork();
 export async function restoreRawComparisons(e: Evaluation, now: number, signal?: AbortSignal): Promise<RawPricing | null> {
     const id = e.identity, raw = e.rawPricing, wear = e.condition?.rawCondition;
     if (!readyForPricing(id) || !id?.recordId || !isRawCondition(wear) || !raw?.variant || raw.source !== "pkmnprices" ||
-        raw.printing !== id.printing || raw.finish !== id.finish || (raw.conditionEvidence !== "AI_PHOTOS" && !raw.tcgplayerComparison) ||
+        raw.printing !== id.printing || raw.finish !== id.finish || (raw.conditionEvidence !== "AI_PHOTOS" && !raw.tcgplayerReference && !raw.tcgplayerComparison) ||
         e.photoCheck?.cardMatch?.verdict !== "MATCH" || e.slab || e.frontPhotoStop || e.pricingDeferred ||
         e.condition?.authenticity.concern !== "NONE_SEEN" || e.condition.creases === "SUSPECTED" ||
         sellerCreaseOverridesCondition(wear, e.listing.conditionNotes) || unsupportedVariantReason(e) ||

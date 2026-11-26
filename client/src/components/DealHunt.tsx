@@ -122,6 +122,7 @@ export function HuntProgressPanel({ searchId, startedAt, usage, onStop }: { sear
         count(live.discovered, "listing found", "listings found"),
         count(live.screened, "pricing check"),
         count(live.retained, "candidate"),
+        count(live.queuedInLastQuery ?? 0, "queued from the last query", "queued from the last query"),
         count(live.reviewed, "copy checked", "copies checked"),
         count(live.photos, "copy with photos checked", "copies with photos checked"),
     ].filter(Boolean) : [count(calls, "AI request logged", "AI requests logged"),
@@ -148,7 +149,7 @@ export function HuntProgressPanel({ searchId, startedAt, usage, onStop }: { sear
 }
 
 export function HuntCandidateCards({ listings, now, active, shortlistButton }: {
-    listings: ListingSummary[]; now: number; active: boolean; shortlistButton: (listing: ListingSummary) => ReactNode;
+    listings: NonNullable<HuntProgress["candidates"]>; now: number; active: boolean; shortlistButton: (listing: ListingSummary) => ReactNode;
 }) {
     if (!listings.length) return null;
     return <section aria-label={active ? "Candidates being checked" : "Other listings found"}>
@@ -156,7 +157,8 @@ export function HuntCandidateCards({ listings, now, active, shortlistButton }: {
         <p className={styles.note}>{active ? "Checking these listings against your criteria. A purchase decision is not ready." :
             "These listings also appeared in the search. They do not have a verified purchase recommendation."}</p>
         <div className={styles.tileGrid}>{listings.map(listing => <HuntListingCard key={listing.id} listing={listing} now={now}
-            shortlist={shortlistButton(listing)} />)}</div>
+            shortlist={shortlistButton(listing)}><MarketPrices prices={listing.marketPrices} screen={!listing.marketPrices ? listing.screen : undefined}
+                loadAdditional={!active} now={now} /></HuntListingCard>)}</div>
     </section>;
 }
 
@@ -184,7 +186,8 @@ export function DealHuntResult({ result, now, targets, updatedTerms, currentList
     const physical = result.evaluation && withReleaseEvidence(result.evaluation);
     const selectedPrices = current && listingMarketPrices(physical, current.listing, now);
     const savedPrices = current && result.candidatePrices?.[current.listing.id];
-    if (selectedPrices?.lookup && selectedPrices.lookup.market === savedPrices?.lookup?.market) selectedPrices.additional = savedPrices.additional;
+    if (selectedPrices?.lookup && selectedPrices.lookup.market === savedPrices?.lookup?.market && savedPrices.additional)
+        selectedPrices.additional = savedPrices.additional;
     const mismatch = physical?.identity?.notThisCard;
     const release = mismatch || (physical && releaseIssue(physical));
     const unverifiedResaleBid = report.decision === "BID" && report.goal === "resell" &&
@@ -206,6 +209,8 @@ export function DealHuntResult({ result, now, targets, updatedTerms, currentList
         result.evaluation && !result.evaluation.underwriting?.shippingUnconfirmed && (updatedTerms.get(current.listing.id) ?? 0) <= checked
         ? checkedTerms(current.listing, result.evaluation, now) : null;
     const explanation = <>
+        {report.decision === "WAIT" && terms && !release && report.priceGap &&
+            <p>Item price would need to drop <strong>{dollars(report.priceGap.drop)}</strong> to {dollars(report.priceGap.maxItemPrice)} to meet your targets.</p>}
         {resaleBid?.maxBid != null && <p>Recommended max snipe <strong>{dollars(resaleBid.maxBid)}</strong> item bid.
             {resaleBid.totalAtMaxBid != null && resaleBid.profitAtMaxBid != null &&
                 ` At that bid, you pay ${dollars(resaleBid.totalAtMaxBid)} delivered and project ${dollars(resaleBid.profitAtMaxBid)} profit after costs.`}</p>}
@@ -219,7 +224,10 @@ export function DealHuntResult({ result, now, targets, updatedTerms, currentList
         <p>{release || (expiredGrading ? expiredGradingReason : expired ? bid
             ? "The next search checks the auction terms before calculating a bid limit."
             : "The next search checks current prices and availability before recommending a buy." : report.reason)}</p>
-        {!expired && reviewed?.underwriting?.best && <p>Max item price {dollars(reviewed.underwriting.best.maxBid)} before shipping and estimated tax.</p>}
+        {!expired && reviewed?.underwriting?.best && <p>Max item price {dollars(reviewed.underwriting.best.maxBid)} before shipping and estimated tax.
+            {report.verifiedPurchase?.maxDelivered !== undefined && report.verifiedPurchase.marketMaxItemPrice !== undefined &&
+                <><br /><small>Your {dollars(report.verifiedPurchase.maxDelivered)} delivered budget sets this limit.
+                    The resale evidence supports up to {dollars(report.verifiedPurchase.marketMaxItemPrice)} before delivery.</small></>}</p>}
         {resaleBid && <p>{dollars(resaleBid.marketValue)} · {resaleBid.marketLabel} · {quoteSource ?? "resale estimate"}
             {resaleBid.marketBasis === "EBAY_SOLD" && ` from ${resaleBid.sampleSize} matching ${resaleBid.sampleSize === 1 ? "sale" : "sales"}`}.
             {" "}The next bid costs {dollars(resaleBid.nextTotal)} delivered.</p>}
@@ -237,7 +245,7 @@ export function DealHuntResult({ result, now, targets, updatedTerms, currentList
             shortlist={<>{resaleBid && <AuctionReminderButton listing={current.listing} now={now} flipOffer={resaleBid}
                 targets={targets ?? MONEY_CONFIG.targets} searchId={report.searchId} onSnipe={onSnipe} />}{shortlistButton(selected)}</>}>{explanation}<MarketPrices prices={selectedPrices ?? undefined} now={now} /></HuntListingCard>}
         {otherListings.map(row => <HuntListingCard key={row.id} listing={row} now={now} shortlist={shortlistButton(row)}>
-            <MarketPrices prices={result.candidatePrices?.[row.id]} now={now} />
+            <MarketPrices prices={result.candidatePrices?.[row.id]} screen={result.candidatePrices?.[row.id] ? undefined : row.screen} now={now} />
         </HuntListingCard>)}
         </div>}
         {!release && (report.steps.length > 0 || discoveryReason) && <details>
@@ -337,11 +345,11 @@ export function DealHunt({ searchId, listings, listingOwners, latestListings, de
             const { report, evaluation, alternative } = response;
             const listing = selectedHuntListing(response, searchId, goal, scope, candidates, format);
             if (listing && evaluation && start.current && !onOpen(report, listing, evaluation, start.current, scope, alternative, !standalone, response.gradingOpportunity?.validUntil, response.auctionOpportunity)) {
-                throw new Error("The listing changed while the hunt was running. Run it again with the latest evidence.");
+                throw new Error("The listing changed during the search. Search again to check its current price.");
             }
             setResult({ ...response, listing });
         } catch (err) {
-            if (!controller.signal.aborted) setError(err instanceof Error ? err.message : "The deal hunt could not finish.");
+            if (!controller.signal.aborted) setError(err instanceof Error ? err.message : "The search was interrupted.");
         } finally {
             if (pending.current === controller) {
                 pending.current = null;
@@ -362,7 +370,7 @@ export function DealHunt({ searchId, listings, listingOwners, latestListings, de
     }
     function viewEvidence(opener: HTMLElement) {
         if (result?.listing && result.evaluation && !onOpen(result.report, result.listing, result.evaluation, opener, scope, result.alternative, true, result.gradingOpportunity?.validUntil, result.auctionOpportunity)) {
-            setError("The listing changed. Run the hunt again to check the latest evidence.");
+            setError("The listing changed. Search again to check its current price.");
         }
     }
     const choices = (Object.keys(dealHuntGoals) as DealHuntGoal[]).filter(key => !standalone ||
@@ -372,9 +380,9 @@ export function DealHunt({ searchId, listings, listingOwners, latestListings, de
         marketPreferences?.preferRecentSales && "Recent matched sales prioritized",
         filters.maxPrice !== undefined && `Up to ${dollars(filters.maxPrice)} delivered`,
         marketPreferences && (goal === "resell" || freshGrading) && (targets.minProfit > 0 ? `Minimum profit ${dollars(targets.minProfit)}` : "Positive profit after costs")].filter(Boolean);
-    return <section className={styles.hunt} aria-label="Deal hunt">
+    return <section className={styles.hunt} aria-label="Search these results">
         {busy ? <HuntProgressPanel searchId={searchId} startedAt={pending.current?.startedAt} usage={usage} onStop={cancel} /> : <>
-            <h2>{format === "AUCTION" ? "Find an auction to bid on" : freshGrading ? "Find newly listed cards worth grading" : standalone ? "Find a card to flip" : "Deal hunt"}</h2>
+            <h2>{format === "AUCTION" ? "Find an auction to bid on" : freshGrading ? "Find newly listed cards worth grading" : standalone ? "Find a card to flip" : "Search these results"}</h2>
             {!standalone && <p className={styles.note}>Starting with {candidates.length}{matching.length > candidates.length && ` of ${matching.length}`} matching {candidates.length === 1 ? "listing" : "listings"}.</p>}
         </>}
         {result && <DealHuntResult result={result} now={now} targets={targets} updatedTerms={updatedTerms}
@@ -387,7 +395,7 @@ export function DealHunt({ searchId, listings, listingOwners, latestListings, de
         {criteria.length > 0 && <p>{criteria.join(" · ")}</p>}
         <form onSubmit={hunt}>
             <div className={styles.controls}>
-                {(filters.typeFilter === "all" || standalone) && <label>Hunt format<select value={format} disabled={busy} onChange={event => {
+                {(filters.typeFilter === "all" || standalone) && <label>Listing format<select value={format} disabled={busy} onChange={event => {
                     const next = event.target.value === "AUCTION" ? "AUCTION" : "FIXED_PRICE";
                     setMixedFormat(next);
                     if (standalone) onFormatChange?.(next);
@@ -406,7 +414,7 @@ export function DealHunt({ searchId, listings, listingOwners, latestListings, de
                         <option value="same_set">Other cards in the same set</option>
                         {(goal === "resell" || goal === "collect_slab" && format === "AUCTION") && <option value="any_card">Any card across sets</option>}
                     </select></label>}
-                <button type="submit" ref={start} className={styles.run} aria-disabled={busy || noMatches}>{format === "AUCTION" ? "Find auction opportunities" : freshGrading ? "Find grading opportunities" : standalone ? "Find a flip" : "Run deal hunt"}</button>
+                <button type="submit" ref={start} className={styles.run} aria-disabled={busy || noMatches}>{format === "AUCTION" ? "Find auction opportunities" : freshGrading ? "Find grading opportunities" : standalone ? "Find a flip" : "Search for a deal"}</button>
             </div>
         </form>
         {error && <p role="alert" className={styles.error}>{error}</p>}

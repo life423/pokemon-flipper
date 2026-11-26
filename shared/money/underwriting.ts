@@ -4,7 +4,7 @@ import { MONEY_CONFIG, type BuyingConfig, type GradingConfig, type MoneyConfig, 
 import { RAW_CONDITIONS, isRawCondition, sellerCreaseOverridesCondition } from "../conditions.ts";
 import { dollars, round2 } from "../format.ts";
 import { cents, meetsMoneyTargets, minimumOfferPrice, money, sellingFeeCents, taxedCents } from "./cents.ts";
-import { isRawSoldPrice, isUsableRawPrice, PRICE_PRINTING_MISMATCH, pricePrintingMismatch, referencePriceReason, unsupportedVariantReason } from "./price-evidence.ts";
+import { isRawSoldPrice, PRICE_PRINTING_MISMATCH, pricePrintingMismatch, referencePriceReason, unsupportedVariantReason } from "./price-evidence.ts";
 import { soldMarketPrice } from "../sold-evidence.ts";
 import { hasSavedConditionExamples } from "../ebay-condition-notes.ts";
 import { photoFinishConflictReason, obscuredDisclosedWear } from "../photo-evidence.ts";
@@ -277,7 +277,7 @@ export function rawPath(input: UnderwritingInput, listing: PricedListing, shippi
     // Use the closest condition with sold evidence, at or below the assessed
     // condition. A saved asking or market quote cannot hide a matched sale.
     const entry = RAW_CONDITIONS.slice(RAW_CONDITIONS.indexOf(condition.rawCondition))
-        .map(name => rawPricing.prices?.find(price => price.condition === name && isUsableRawPrice(price)))
+        .map(name => rawPricing.prices?.find(price => price.condition === name && isRawSoldPrice(price)))
         .find(price => price !== undefined);
 
     if (!entry || !isRawCondition(entry.condition)) return unavailablePath("RAW", label, "No matched condition price supports the assessed condition or a lower one.");
@@ -735,4 +735,15 @@ export function underwrite(input: UnderwritingInput, config: MoneyConfig = MONEY
         ...result, verdict: "CANT_PRICE", reasons: [deferred.note],
     };
     return result;
+}
+
+// Compare the rounded, tax-inclusive purchase in whole cents, including bids exactly at the cap.
+export function affordableItemLimit(limit: number, shipping: number, budget: number) {
+    let low = 0, high = cents(limit);
+    while (low < high) {
+        const middle = low + Math.ceil((high - low) / 2);
+        if (cents(acquisitionCost(middle / 100, shipping, MONEY_CONFIG.buying)) <= cents(budget)) low = middle;
+        else high = middle - 1;
+    }
+    return low / 100;
 }

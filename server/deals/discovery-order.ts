@@ -2,7 +2,7 @@ import { resaleActivity } from "../analysis/resale-activity.ts";
 import { observedSoldSales } from "../../shared/sales-activity.ts";
 import { analysisPriority, comparePriority } from "../../shared/analysis-priority.ts";
 import { cents, meetsMoneyTargets } from "../../shared/money/cents.ts";
-import { acquisitionCost, netFromSale } from "../../shared/money/underwriting.ts";
+import { acquisitionCost, maxBid, netFromSale } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { hasExactSoldScope, soldMarketPrice, usableGradingLead, usableSoldReference } from "../../shared/sold-evidence.ts";
 import type { ListingSummary, Targets } from "../../shared/types.ts";
@@ -62,9 +62,17 @@ export function freshResaleCandidates(rows: ListingSummary[], targets: Targets, 
         const exact = evidence && hasExactSoldScope(evidence, row.screen?.card?.printing);
         for (const ref of exact ? references : []) {
             if (!usableSoldReference(ref, row.isGraded) || !row.isGraded && !ref.condition) continue;
-            const activity = resaleActivity(observedSoldSales(ref.summary.activitySales ?? ref.summary.sales ?? [], now,
+            const activity = resaleActivity(observedSoldSales(ref.summary.sales ?? [], now,
                 { maxDays: 60, slab: row.isGraded }));
-            if (activity) priorities.set(row.id, Math.max(priorities.get(row.id) ?? 0, activity.priority));
+            if (!activity) continue;
+            // Rank potential buying room at the lower quartile of this market.
+            // Never turn preliminary condition or a premium printing into a buy.
+            const ceiling = row.shipping === null ? 0 : maxBid({
+                expectedNet: netFromSale(activity.low, row.isGraded ? "graded" : "raw", MONEY_CONFIG.selling),
+                fixedCosts: 0, shipping: row.shipping,
+            }, { ...MONEY_CONFIG, targets });
+            const headroom = ceiling > 0 ? Math.max(0, (ceiling - row.currentPrice) / ceiling) : 0;
+            priorities.set(row.id, Math.max(priorities.get(row.id) ?? 0, activity.priority * (1 + headroom)));
         }
         if (potential || usableGradingLead(row)) funded.push(row);
         else if (row.mistakes?.length || row.screen?.priceAnomaly ||
@@ -75,7 +83,25 @@ export function freshResaleCandidates(rows: ListingSummary[], targets: Targets, 
     // Its condition may make it the profitable one even when its title and
     // provisional market match a copy already checked. The caller's bounded
     // review batch controls concurrency; it is not a lifetime candidate limit.
-    for (const tier of [funded, overlooked, other]) tier.sort((a, b) => (priorities.get(b.id) ?? 0) - (priorities.get(a.id) ?? 0));
+    for (const tier of [funded, overlooked, other]) {
+        tier.sort((a, b) => (priorities.get(b.id) ?? 0) - (priorities.get(a.id) ?? 0));
+        // Preserve each market's turns. Prefer the cheaper copy only among
+        // otherwise identical seller claims with comparable research evidence.
+        const slots = new Map<string, number[]>();
+        tier.forEach((row, index) => {
+            if (row.shipping === null || !row.screen?.card?.cardNumber) return;
+            const key = JSON.stringify([discoveryMarketKey(row), row.title.trim().toLowerCase(), row.cardCondition,
+                row.screen.status, row.screen.soldEvidence?.status, priorities.get(row.id), row.conditionNotes]);
+            const group = slots.get(key) ?? [];
+            group.push(index);
+            slots.set(key, group);
+        });
+        for (const group of slots.values()) {
+            if (group.length < 2) continue;
+            const ordered = group.map(index => tier[index]).sort((a,b) => (a.currentPrice! + a.shipping!) - (b.currentPrice! + b.shipping!));
+            group.forEach((slot, index) => { tier[slot] = ordered[index]; });
+        }
+    }
     const priority = [...funded.slice(0, 8), ...overlooked.slice(0, 2), ...other.slice(0, 1)];
     const selected = new Set(priority.map(row => row.id));
     return [...priority, ...[...funded, ...overlooked, ...other].filter(row => !selected.has(row.id))];

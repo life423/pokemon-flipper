@@ -32,6 +32,8 @@ test("a raw result keeps independent eBay, TCGplayer, Tracker and cited prices w
     const e = raw(), prices = inspect(e)!;
     assert.equal(prices.scope, "Lightly Played"); assert.equal(prices.printing, "Unlimited");
     assert.equal(prices.sold?.price, 80); assert.equal(prices.sold?.count, 3); assert.equal(prices.sold?.sellerCondition, true);
+    assert.deepEqual(prices.sold?.sales?.map(sale => [sale.url, sale.price, sale.method]), [75, 80, 300].map((price, i) =>
+        ["https://www.ebay.com/itm/" + (120000000000 + i), price, "fixed_price"]));
     assert.equal(prices.tcg?.market, 79); assert.equal(prices.tcg?.marketRecordAt, stamp);
     assert.deepEqual(providerPrices(e, now).map(r => [r.source, r.basis, r.price]), [
         ["Pokémon Price Tracker", "TCGplayer market", 82], ["Cited web price", "ebay.com sale", 77]]);
@@ -39,6 +41,18 @@ test("a raw result keeps independent eBay, TCGplayer, Tracker and cited prices w
     e.webPriceResearch!.market!.printingLabel = "1st Edition";
     assert.deepEqual(providerPrices(e, now), []);
     assert.equal(listingMarketPrices(e, { ...e.listing, images: ["different front"] }, now), undefined);
+});
+
+test("tile sale history preserves accepted offers and excludes unconfirmed amounts and currencies", () => {
+    const e = raw(), sales = e.rawPricing!.sellerConditionComps!.sales;
+    sales[0].saleType = "best_offer_accepted";
+    delete sales[1].saleType;
+    Object.assign(sales[2], {currency: "EUR"});
+    const price = inspect(e)!;
+    assert.equal(price.sold?.price, 75);
+    assert.deepEqual(price.sold?.sales, [{price: 75, method: "best_offer_accepted", title: sales[0].title,
+        soldAt: sales[0].soldAt, url: sales[0].url}]);
+    assert.equal(price.tcg?.market, 79);
 });
 
 test("one expired TCGplayer offer does not erase a current market quote or an eBay sale", () => {
@@ -66,24 +80,29 @@ test("CGC 8.5 with no eBay sales still gets both Tracker estimates and matched E
     const deps = { supplement: async () => { providers.push("references"); return { trackerPriceReference: track }; },
         european: async () => { providers.push("Europe"); return { status: "AVAILABLE" as const, reason: null, currency: "EUR" as const, basis: "ACTIVE_ASK" as const,
             checkedAt: stamp, offers: [{ articleId: "a", priceEur: 71, updatedAt: stamp, condition: null, variant: "Unlimited Holofoil", grader: "CGC", grade: "8.5", sellerCountry: "DE" }] }; },
-        rawQuote: unexpected, record: unexpected };
+        priceCharting: async () => {
+            providers.push("guide");
+            return { observation: "Grade guide", prices: [{ source: "PriceCharting", basis: "Grade 9 guide · mixed graders", price: 120, currency: "USD" as const,
+                asOf: stamp, validUntil: now + 86_400_000 }] };
+        },
+        rawQuote: unexpected, record: unexpected, recentSales: async () => [] };
     const before = structuredClone(e);
     const comparison = await buyerMarketPrices(e, lookup.market, signal, deps, () => now);
     assert.deepEqual(comparison?.prices.map(row => [row.source, row.price, row.currency]), [
-        ["Pokémon Price Tracker", 90, "USD"], ["Pokémon Price Tracker", 82, "USD"], ["Cardmarket", 71, "EUR"]]);
+        ["Pokémon Price Tracker", 90, "USD"], ["Pokémon Price Tracker", 82, "USD"], ["Cardmarket", 71, "EUR"], ["PriceCharting", 120, "USD"]]);
     assert.deepEqual(e, before);
     track.gradedMarket.grade = "9";
     assert.deepEqual(providerPrices({ ...e, trackerPriceReference: track }, now), []);
     track.gradedMarket.grade = "8.5"; track.printingLabel = "1st Edition Holofoil";
     assert.deepEqual(providerPrices({ ...e, trackerPriceReference: track }, now), []);
     assert.equal(await buyerMarketPrices(e, "earlier assessment", signal, deps, () => now), null);
-    assert.deepEqual(providers, ["references", "Europe"]);
+    assert.deepEqual(providers, ["references", "Europe", "guide"]);
 });
 
 test("one unavailable source preserves the other returned prices and a note", async () => {
     const e = raw();
     const result = await buyerMarketPrices(e, inspect(e)!.lookup!.market, signal, { supplement: async () => ({}),
-        european: async () => { throw new Error("offline provider"); }, rawQuote: unexpected, record: unexpected }, () => now);
+        european: async () => { throw new Error("offline provider"); }, rawQuote: unexpected, record: unexpected, recentSales: unexpected }, () => now);
     assert.equal(result?.prices.length, 2);
     assert.deepEqual(result?.notes, ["Cardmarket is unavailable for this check."]);
 });

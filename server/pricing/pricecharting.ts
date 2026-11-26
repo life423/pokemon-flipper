@@ -21,7 +21,7 @@ interface HistoricalSale {
 }
 interface Observation extends Product {
     observedAt: string; currency: "USD"; prices: Record<string, number>;
-    history: { coverage: "PRODUCT_PAGE"; advertised: Record<string, number>; unreadableRows: number; sales: HistoricalSale[] };
+    history: { coverage: "PRODUCT_PAGE"; advertised: Record<string, number>; unreadableRows: number; unpublishedRows?: number; sales: HistoricalSale[] };
 }
 type GuideDatabase = Pick<SqlRepositories, "claimTask" | "completeTask" | "releaseTask" | "importCacheEntries">;
 class GuideSourceError extends Error {}
@@ -45,7 +45,7 @@ function publishedHistory(doc: ReturnType<typeof parseDocument>): Observation["h
     const selector = DomUtils.findOne(el => el.attribs.id === "completed-auctions-condition", doc);
     if (!selector) throw new Error("Missing sales history index.");
     const sales = new Map<string, HistoricalSale>(), advertised: Record<string, number> = {};
-    let unreadableRows = 0;
+    let unreadableRows = 0, unpublishedRows = 0;
     for (const [tab, bucket] of Object.entries(saleTabs)) {
         const key = "completed-auctions-" + tab;
         const option = DomUtils.findOne(el => el.name === "option" && el.attribs.value === key, selector);
@@ -67,7 +67,7 @@ function publishedHistory(doc: ReturnType<typeof parseDocument>): Observation["h
             const priceText = sold && DomUtils.textContent(sold).trim();
             const price = priceText && /^\$(?:\d+|\d{1,3}(?:,\d{3})+)\.\d{2}$/.test(priceText) ? Number(priceText.slice(1).replaceAll(",", "")) : 0;
             const saleTitle = title && DomUtils.textContent(link ?? title).replace(/\s+/g, " ").trim();
-            if (!id || !saleTitle || !soldOn || !/^\d{4}-\d{2}-\d{2}$/.test(soldOn) || !Number.isFinite(Date.parse(soldOn)) || price <= 0) {
+            if (!id || !saleTitle || !soldOn || !/^\d{4}-\d{2}-\d{2}$/.test(soldOn) || !(Number.isFinite(Date.parse(soldOn)) && new Date(soldOn).toISOString().slice(0, 10) === soldOn) || price <= 0) {
                 unreadableRows++; continue;
             }
             const previous = sales.get(id[0]);
@@ -77,13 +77,13 @@ function publishedHistory(doc: ReturnType<typeof parseDocument>): Observation["h
             } else sales.set(id[0], { source: id[1], transactionId: id[2], soldOn, price, title: saleTitle,
                 url: link?.attribs.href ?? null, guideBuckets: [bucket] });
         }
-        unreadableRows += Math.max(0, advertised[bucket] - rows.length);
+        unpublishedRows += Math.max(0, advertised[bucket] - rows.length);
     }
     for (const sale of sales.values()) {
         const grade = /\b(?:PSA|CGC|BGS|SGC|TAG)\s*(10|[1-9](?:\.5)?)\b/i.exec(sale.title);
         if (sale.guideBuckets.length > 1 || grade && sale.guideBuckets[0] !== "Grade " + grade[1]) sale.bucketConflict = true;
     }
-    return { coverage: "PRODUCT_PAGE", advertised, unreadableRows, sales: [...sales.values()] };
+    return { coverage: "PRODUCT_PAGE", advertised, unreadableRows, unpublishedRows, sales: [...sales.values()] };
 }
 
 export function readPriceChartingGuide(html: string, product: Product, observedAt: string): Observation {
@@ -221,17 +221,18 @@ export async function priceChartingComparison(identity: Identity, signal?: Abort
     load = importPriceChartingGuide,
 } = {}): Promise<{ observation: string; prices: ProviderPrice[]; sales?: SoldCitation[] } | null> {
     if (!authorized || !catalog || identity.status !== "IDENTIFIED" || identity.notThisCard) return null;
-    const products: CatalogProduct[] = JSON.parse(catalog);
-    if (!Array.isArray(products)) throw new Error("PRICECHARTING_PRODUCT_MAP must be a JSON array.");
+    let products: CatalogProduct[];
+    try { products = JSON.parse(catalog); } catch { return null; }
+    if (!Array.isArray(products)) return null;
     const matches = products.filter(p => p && identityFields.every(field =>
         normalize(identity[field]) && normalize(identity[field]) !== "unknown" && normalize(identity[field]) === normalize(p[field])));
     if (matches.length !== 1) return null;
     const { id, url } = matches[0];
-    validateProduct({ id, url });
+    try { validateProduct({ id, url }); } catch { return null; }
     try {
         const guide = await shareGuide(url + "#" + id, active => load({ id, url }, { signal: active }), signal);
-        const prices: ProviderPrice[] = Object.values(saleTabs).filter(label => guide.prices[label]).map(label => ({
-            source: "PriceCharting", basis: label === "Ungraded" ? "Ungraded guide · mixed conditions" : label + " guide · mixed graders",
+        const prices: ProviderPrice[] = Object.keys(priceColumns).filter(label => guide.prices[label]).map(label => ({
+            source: "PriceCharting", basis: label === "Ungraded" ? "Ungraded guide · mixed conditions" : label === "PSA 10" ? "PSA 10 guide" : label + " guide · mixed graders",
             price: guide.prices[label], currency: "USD", asOf: guide.observedAt, validUntil: Date.parse(guide.observedAt) + 86_400_000, url,
         }));
         const labels = prices.map(row => row.basis + " $" + row.price.toFixed(2));
@@ -242,9 +243,9 @@ export async function priceChartingComparison(identity: Identity, signal?: Abort
                 !link || (sale.url && parseListingLink(sale.url)?.itemId !== link.itemId)) return [];
             return [{ url: link.url, date: sale.soldOn, priceUsd: sale.price }];
         });
-        return { prices, sales, observation: `PriceCharting guide (${guide.observedAt.slice(0, 10)}), ${labels.join(", ")}. Published product-page history includes ${guide.history.sales.length} distinct transactions, ${conflicts} with conflicting grade labels and ${guide.history.unreadableRows} unreadable rows. ${publishedActivity(guide)} Ungraded spans conditions and numeric grades can span graders. Verify individual sales before using them to price this copy. ${guide.url}` };
-    } catch (error) {
-        if (error instanceof GuideSourceError) return { prices: [], observation: "The PriceCharting page could not supply a verified guide for this check." };
-        throw error;
+        return { prices, sales, observation: `PriceCharting guide (${guide.observedAt.slice(0, 10)}), ${labels.join(", ")}. Published product-page history includes ${guide.history.sales.length} distinct transactions, ${conflicts} with conflicting grade labels and ${guide.history.unreadableRows} unreadable or unavailable rows.${guide.history.unpublishedRows ? " Another " + guide.history.unpublishedRows + " advertised rows were absent from the page." : ""} ${publishedActivity(guide)} Ungraded spans conditions and numeric grades can span graders. Verify individual sales before using them to price this copy. ${guide.url}` };
+    } catch {
+        signal?.throwIfAborted();
+        return { prices: [], observation: "The PriceCharting comparison is unavailable for this check." };
     }
 }

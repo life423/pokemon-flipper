@@ -22,7 +22,7 @@ export function createListingResolver({ details = getListingDetails, now = () =>
         if (!listing.images.length) throw new ListingLinkError("This listing has no photos to assess. No AI analysis was started.", 422);
         return { id: listing.id, title: listing.title, url: parsed.url, images: listing.images, currentPrice: listing.price,
             listedAttributes: searchAttributes(listing.title, listing.aspects),
-            shipping: listing.shipping, bids: listing.bids, buyingOption: listing.buyingOption, endTime: listing.endTime,
+            shipping: listing.shipping, shippingDestination: listing.shippingDestination, bids: listing.bids, buyingOption: listing.buyingOption, endTime: listing.endTime,
             seller: listing.seller, bestOffer: listing.bestOffer, availability: listing.availability ?? "UNKNOWN",
             termsCheckedAt: listing.retrievedAt ?? new Date(now()).toISOString(),
             listedAt: listing.listedAt, createdAt: listing.createdAt,

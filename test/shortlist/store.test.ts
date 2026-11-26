@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
@@ -14,7 +16,8 @@ test("saving, editing and removing are durable and concurrent saves do not lose 
     const folder = await fs.mkdtemp(path.join(os.tmpdir(), "pokemon-shortlist-"));
     t.after(() => fs.rm(folder, { recursive: true, force: true }));
     const file = path.join(folder, "shortlist.json"); const store = createShortlistStore(file);
-    await Promise.all(Array.from({ length: 20 }, (_, i) => store.save(savedListing(`v1|${i}|0`), null)));
+    const second = createShortlistStore(file);
+    await Promise.all(Array.from({ length: 20 }, (_, i) => (i % 2 ? store : second).save(savedListing(`v1|${i}|0`), null)));
     await store.update("v1|1|0", (entry) => ({ ...entry, notes: "Check back corner", ceiling: 21.5 }));
     await store.save(savedListing("v1|1|0"), null);
     const reopened = createShortlistStore(file); const entries = await reopened.list();
@@ -22,6 +25,21 @@ test("saving, editing and removing are durable and concurrent saves do not lose 
     await reopened.remove("v1|1|0"); assert.equal((await store.list()).length, 19);
     assert.equal(await store.update("removed", (entry) => entry), null);
 });
+test("acknowledged shortlist saves survive two app processes writing together", async t => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "shortlist-processes-"));
+    t.after(() => fs.rm(dir, { recursive: true, force: true }));
+    const file = path.join(dir, "shortlist.json");
+    const worker = [
+        'import {createShortlistStore} from "./server/shortlist/store.ts";',
+        'const store=createShortlistStore(process.argv[1]), row=JSON.parse(process.argv[2]);',
+        'for (let i=0;i<10;i++) await store.save({...row,id:row.id+i},null);',
+    ].join("\n");
+    await Promise.all(["one", "two"].map(key => promisify(execFile)(process.execPath,
+        ["--import", "tsx", "--input-type=module", "--eval", worker, file, JSON.stringify(savedListing(key))])));
+    const entries = await createShortlistStore(file).list();
+    assert.equal(new Set(entries.map(row => row.id)).size, 20);
+});
+
 test("a corrupt saved file is preserved rather than silently replaced", async (t) => {
     const folder = await fs.mkdtemp(path.join(os.tmpdir(), "pokemon-corrupt-"));t.after(() => fs.rm(folder, { recursive: true, force: true }));
     const file = path.join(folder, "shortlist.json");await fs.writeFile(file, "broken user data");const store=createShortlistStore(file);

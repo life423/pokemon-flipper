@@ -1,13 +1,14 @@
 import type { CompSale, CompSummary, GradedPricing, RawPrice, RawPricing } from "../../types";
 import { dollars, name } from "../../format";
 import { RAW_CONDITIONS, CONDITION_NAMES } from "../../../../shared/conditions.ts";
-import { isUsableRawPrice } from "../../../../shared/money/price-evidence.ts";
+import { isUsableRawPrice, tcgplayerComparison } from "../../../../shared/money/price-evidence.ts";
 import { Pairs, Section } from "./primitives";
 import styles from "../DetailPanel.module.css";
 
 export function soldEstimateBasis(summary?: CompSummary): string {
     const estimate = summary?.marketEstimate;
     switch (estimate?.method) {
+        case "FIXED_PRICE_AVERAGE": case "SOLD_AVERAGE": return `average of ${estimate.sampleSize} matched eBay ${estimate.method === "FIXED_PRICE_AVERAGE" ? "fixed-price sales including confirmed offers" : "sales"}${estimate.windowDays ? " within " + estimate.windowDays + " days" : " in the comparison window"}`;
         case "RECENT_FIXED_PRICE_MEDIAN": return `median of the ${estimate.sampleSize ?? 5} latest matched Buy It Now sales within 30 days`;
         case "FILTERED_SOLD_MEAN": return "average of photo-matched eBay sales after excluding extreme prices";
         case "RECENT_FOUR": return "median of the four latest matched eBay sales across available formats within 48 hours";
@@ -108,6 +109,9 @@ export function PricesSection({
     raw: RawPricing | null;
     graded: Record<string, GradedPricing> | null;
 }) {
+    const quotes = new Map((raw?.prices ?? []).flatMap(price => price.offers ? [[price.condition, price.offers] as const] : []));
+    const reference = tcgplayerComparison(raw);
+    if (reference) quotes.set(reference.condition, reference);
     return (
         <Section title="Prices">
             {raw && (
@@ -130,10 +134,10 @@ export function PricesSection({
                         <CompsRow summary={raw.sellerConditionComps} />
                     </>}
                     {raw.evidenceNote && <p className={styles.small}>{raw.evidenceNote}</p>}
-                    {raw.prices?.filter(price => price.offers).map(price => <details key={price.condition}>
-                        <summary>TCGplayer {CONDITION_NAMES[price.offers!.condition]} prices</summary>
-                        <p className={styles.small}>TCGplayer estimate {dollars(price.offers!.price)}. {price.offers!.printing}. Checked {price.offers!.checkedAt}; marketplace snapshot {price.offers!.snapshotAt}. Asking prices are active competition.</p>
-                        <ul>{price.offers!.offers.map(offer => <li key={offer.id}>{offer.sellerName || "Seller"}: {dollars(offer.price)} + {dollars(offer.shipping)} shipping = {dollars(offer.total)}</li>)}</ul>
+                    {[...quotes.values()].map(quote => <details key={quote.condition}>
+                        <summary>TCGplayer {CONDITION_NAMES[quote.condition]} prices</summary>
+                        <p className={styles.small}>TCGplayer estimate {dollars(quote.price)}. {quote.printing}. Checked {quote.checkedAt.slice(0, 10)}. Marketplace snapshot {quote.snapshotAt.slice(0, 10)}. Asking prices are active competition.</p>
+                        <ul>{quote.offers.map(offer => <li key={offer.id}>{offer.sellerName || "Seller"}: {dollars(offer.price)} + {dollars(offer.shipping)} shipping = {dollars(offer.total)}</li>)}</ul>
                     </details>)}
                     {raw.ebayComps?.filter(summary => summary.count > 0).map(summary => <CompsRow key={String(summary.grade)} summary={summary} />)}
                 </>

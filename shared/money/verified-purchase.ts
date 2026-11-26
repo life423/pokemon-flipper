@@ -2,7 +2,7 @@ import { cents } from "./cents.ts";
 import { releaseIssue } from "../base-set-release.ts";
 import { MONEY_CONFIG } from "./config.ts";
 import { rateDeal } from "./rating.ts";
-import { acquisitionCost } from "./underwriting.ts";
+import { acquisitionCost, affordableItemLimit } from "./underwriting.ts";
 import { currentPriceEvidence } from "../pricing-freshness.ts";
 import { BEST_BUY_TERMS_MAX_AGE_MS } from "../search-diagnostic.ts";
 import type { Evaluation, PricedPath, Targets } from "../types.ts";
@@ -16,22 +16,30 @@ export interface VerifiedPurchase {
     targets: Targets;
     path: PricedPath;
     maxItemPrice: number;
+    maxDelivered?: number;
+    marketMaxItemPrice?: number;
 }
 
 export const PURCHASE_RECHECK_MESSAGE = "The verified price or purchase terms need a fresh check before buying.";
 
-export function verifiedPurchase(evaluation: Evaluation, path: PricedPath, targets: Targets, maxItemPrice = path.maxBid): VerifiedPurchase | undefined {
+export function verifiedPurchase(evaluation: Evaluation, path: PricedPath, targets: Targets, maxItemPrice = path.maxBid, maxDelivered?: number): VerifiedPurchase | undefined {
     const { id, price, termsCheckedAt, buyingOption } = evaluation.listing;
     const { pricesCheckedAt } = evaluation;
     if (releaseIssue(evaluation) || evaluation.identity?.notThisCard || buyingOption !== "FIXED_PRICE" || price === null || !termsCheckedAt || !pricesCheckedAt ||
         !Number.isFinite(maxItemPrice) || maxItemPrice < price || maxItemPrice > path.maxBid) return;
-    return { listingId: id, itemPrice: price, termsCheckedAt, pricesCheckedAt, shippingDestination: evaluation.listing.shippingDestination,
+    const marketLimit = maxItemPrice;
+    if (maxDelivered !== undefined) {
+        if (!Number.isFinite(maxDelivered) || maxDelivered < 0 || evaluation.listing.shipping === null ||
+            cents(acquisitionCost(price, evaluation.listing.shipping, MONEY_CONFIG.buying)) > cents(maxDelivered)) return;
+        maxItemPrice = affordableItemLimit(maxItemPrice, evaluation.listing.shipping, maxDelivered);
+    }
+    return { ...(maxDelivered !== undefined && { maxDelivered }), ...(marketLimit > maxItemPrice && { marketMaxItemPrice: marketLimit }), listingId: id, itemPrice: price, termsCheckedAt, pricesCheckedAt, shippingDestination: evaluation.listing.shippingDestination,
         targets, path, maxItemPrice };
 }
 
 // Bind the decision to the reviewed copy, terms, prices, targets and modeled route.
 // Repricing may still show alternatives, but cannot reuse an earlier approval.
-export function applyVerifiedPurchase(evaluation: Evaluation | null, purchase: VerifiedPurchase | undefined, targets: Targets, now: number): Evaluation | null {
+export function applyVerifiedPurchase(evaluation: Evaluation | null, purchase: VerifiedPurchase | undefined, targets: Targets, now: number, maxDelivered?: number): Evaluation | null {
     if (!evaluation || !purchase || !evaluation.underwriting?.verdict.startsWith("BUY") || evaluation.identity?.notThisCard || releaseIssue(evaluation)) return null;
     const { listing, underwriting } = evaluation;
     const age = now - Date.parse(purchase.termsCheckedAt);
@@ -47,6 +55,12 @@ export function applyVerifiedPurchase(evaluation: Evaluation | null, purchase: V
         purchase.maxItemPrice < purchase.itemPrice || path.shipping !== listing.shipping) return null;
 
     const cap = purchase.maxItemPrice;
+    if (purchase.marketMaxItemPrice !== undefined && (!Number.isFinite(purchase.marketMaxItemPrice) ||
+        purchase.marketMaxItemPrice < cap || purchase.marketMaxItemPrice > path.maxBid)) return null;
+    for (const budget of [purchase.maxDelivered, maxDelivered]) {
+        if (budget !== undefined && (!Number.isFinite(budget) || budget < 0 ||
+            cents(acquisitionCost(cap, path.shipping, MONEY_CONFIG.buying)) > cents(budget))) return null;
+    }
     const cost = cents(acquisitionCost(cap, path.shipping, MONEY_CONFIG.buying)) + cents(path.fixedCosts);
     const profit = cents(path.expectedNet) - cost;
     const best: PricedPath = { ...path, maxBid: cap, costAtMaxBid: cost / 100, profitAtMaxBid: profit / 100,

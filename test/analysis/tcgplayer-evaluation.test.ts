@@ -1,10 +1,10 @@
 import '../fixtures/isolated-data.ts';
+import { currentPriceEvidence } from '../../shared/pricing-freshness.ts';
+import { listingMarketPrices } from '../../shared/listing-market-prices.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createBoundedEvaluator, type BoundedReading } from '../../server/analysis/bounded-evaluate.ts';
 import { cardEvaluation, clearReleaseFixture } from '../fixtures/card-evaluation.ts';
-import { listingMarketPrices } from '../../shared/listing-market-prices.ts';
-import { currentPriceEvidence } from '../../shared/pricing-freshness.ts';
 import { tcgplayerRawPrice } from '../../server/pricing/tcgplayer-raw.ts';
 import type { ListingDetails } from '../../server/ebay/listings.ts';
 import type { CardRecord, PricedCard } from '../../server/pricing/types.ts';
@@ -17,9 +17,7 @@ const record: CardRecord = { source: 'pkmnprices', id: 123, name: 'Alakazam', se
 const card: PricedCard = { source: 'pkmnprices', name: record.name, cardNumber: record.cardNumber, records: [record],
     variants: record.variants.map(v => ({ ...v, recordId: record.id, setName: record.setName })) };
 
-async function evaluateWithQuote(soldPrices: number[] = [], observedWear: 'LIGHTLY_PLAYED' | 'MODERATELY_PLAYED' | 'MIXED' | null = 'LIGHTLY_PLAYED', acquireWear = false) {
-    let acquisitions = 0, tcgCalls = 0;
-    const saved = new Map<string, any>();
+function listingFixture() {
     const listing: ListingDetails = { id: 'v1|123456789012|0', title: 'Alakazam Base Set 1/102 Unlimited Holo',
         url: 'https://www.ebay.com/itm/123456789012', price: 20, shipping: 0, buyingOption: 'FIXED_PRICE', bestOffer: false,
         bids: 0, endTime: null, images: photos, seller: null, availability: 'ACTIVE', condition: 'Ungraded',
@@ -31,6 +29,42 @@ async function evaluateWithQuote(soldPrices: number[] = [], observedWear: 'LIGHT
         images: photos.map((_,i) => ({ number: i+1, view: ['FRONT','BACK','FRONT_DETAIL','BACK_DETAIL'][i], usable: true, isStockImage: false, issues: [], obscuresCondition: false })),
         printingMarks: { firstEditionStamp: 'NOT_PRESENT', artBoxShadow: 'PRESENT', reprintMark: 'NONE_SEEN', evidence: ['Edition marks visible.'] },
         cardMatch: { verdict: 'MATCH', problems: [] }, missingViews: [], problems: [], slab: null } };
+    return { listing, reading };
+}
+
+for (const scenario of ["confirmed competition", "lower verified eBay sale", "higher verified eBay sale", "single seller", "no condition quote"] as const)
+test("bounded raw resale pricing with " + scenario, async () => {
+    let acquisitions = 0, tcgCalls = 0;
+    const saved = new Map<string, any>();
+    const { listing, reading } = listingFixture();
+    const quote = await tcgplayerRawPrice(card, identity, 'LIGHTLY_PLAYED', { now,
+        fetchMarket: async () => ({ id: 123, name: 'Alakazam', number: '1', total_set_number: '102', set: { name: 'Base Set' }, prices: [] }),
+        fetchOffers: async () => ({ data: (scenario === 'single seller' ? ['one'] : scenario === 'no condition quote' ? [] : ['one', 'two']).map((seller, i) => ({ listing_id: i+1, seller_id: seller, seller_name: seller, price: 70+i, shipping_price: 0, quantity: 1,
+            condition: 'Lightly Played', printing: 'Unlimited Holofoil', language: 'English', snapshot_at: new Date(now).toISOString() })) }) });
+    const sale = { id: "sold", title: "Alakazam 1/102 Base Set Unlimited Holo LP English", price: scenario === "higher verified eBay sale" ? 90 : 60,
+        sold_at: new Date(now - 86400000).toISOString(), variant: "Unlimited Holofoil", currency: "USD", attribution: "exact" as const,
+        sale_type: "fixed_price" as const, listing_url: "https://www.ebay.com/itm/223456789012", grader: null, grade: null, grade_qualifier: null };
+    const evidence = { condition: "LIGHTLY_PLAYED", evidence: ["Wear visible in the sold front and back."], photoCount: 2 } as const;
+    const evaluate = createBoundedEvaluator({ release: async e => clearReleaseFixture(e), now: () => now, details: async () => listing, saved: async () => null,
+        cached: async key => saved.get(key) ?? null, save: async (key,value) => { saved.set(key, structuredClone(value)); }, assertPriceAvailable: async () => {},
+        assess: async (_listing,selected) => ({ result: { ...reading, photoCheck: { ...reading.photoCheck, images: selected.map((photo,i) => ({ ...reading.photoCheck.images[photos.indexOf(photo.url)], number: i+1 })) } }, usage: { inputTokens: 1, outputTokens: 1 } }), identify: async () => ({ identity: structuredClone(identity), card }),
+        lookup: async () => [record], fetchRawComps: async () => scenario === "confirmed competition" ? [] : [sale], fetchComps: async () => [], fetchCachedComps: async () => [], compChecks: async () => new Map(),
+        soldCondition: _options => ({ read: async () => scenario === "lower verified eBay sale" ? evidence : null, status: () => 'UNREVIEWED', usage: [], acquire: async () => { acquisitions++; return evidence; } }) as any,
+        tcgplayer: async (_card,_identity,wear) => { tcgCalls++; assert.equal(wear,'LIGHTLY_PLAYED'); return quote; } });
+    const e = await evaluate(listing.id, { targets: { minProfit: 0, minRoi: 0 } });
+    assert.ok(tcgCalls > 0);
+    assert.equal(acquisitions, scenario === "single seller" || scenario === "no condition quote" || scenario === "higher verified eBay sale" ? 1 : 0);
+    const usesTcg = scenario === "confirmed competition";
+    assert.equal(e.rawPricing?.conditionEvidence, 'AI_PHOTOS');
+    assert.equal(e.rawPricing?.prices?.[0]?.price, usesTcg ? undefined : sale.price);
+    assert.equal(e.rawPricing?.tcgplayerReference?.price, scenario === "no condition quote" ? undefined : 70);
+    assert.equal(e.underwriting?.verdict, usesTcg ? 'CANT_PRICE' : 'BUY_RAW');
+});
+
+async function evaluateWithQuote(soldPrices: number[] = [], observedWear: 'LIGHTLY_PLAYED' | 'MODERATELY_PLAYED' | 'MIXED' | null = 'LIGHTLY_PLAYED', acquireWear = false) {
+    let acquisitions = 0, tcgCalls = 0;
+    const saved = new Map<string, any>();
+    const { listing, reading } = listingFixture();
     const quote = await tcgplayerRawPrice(card, identity, 'LIGHTLY_PLAYED', { now,
         fetchMarket: async () => ({ id: 123, name: 'Alakazam', number: '1', total_set_number: '102', set: { name: 'Base Set' }, prices: [] }),
         fetchOffers: async () => ({ data: [{ listing_id: 1, seller_id: 'one', seller_name: 'One', price: 70, shipping_price: 0, quantity: 1,
@@ -54,15 +88,15 @@ async function evaluateWithQuote(soldPrices: number[] = [], observedWear: 'LIGHT
         tcgplayer: async (_card,_identity,wear) => { tcgCalls++; assert.equal(wear,'LIGHTLY_PLAYED'); return quote; } });
     const e = await evaluate(listing.id, { targets: { minProfit: 0, minRoi: 0 } });
     assert.ok(tcgCalls > 0);
-    if (acquireWear) assert.ok(acquisitions > 0);
+    if (acquireWear) assert.equal(acquisitions, soldPrices.length === 1 ? 0 : Math.min(3, soldPrices.length));
     if (observedWear || !soldPrices.length) assert.equal(acquisitions, 0);
     return e;
 }
 
-test('bounded evaluation uses AI wear with TCGplayer pricing and does not acquire sold-copy photos', async () => {
+test('a TCGplayer-only quote is retained as a comparison', async () => {
     const e = await evaluateWithQuote();
-    assert.equal(e.rawPricing?.conditionEvidence,'TCGPLAYER'); assert.equal(e.rawPricing?.prices?.[0].price,70);
-    assert.equal(e.underwriting?.verdict,'BUY_RAW'); assert.ok(e.underwriting!.best!.profit > 0);
+    assert.equal(e.rawPricing?.tcgplayerReference?.price,70);
+    assert.equal(e.underwriting?.verdict,'CANT_PRICE');
 });
 
 test('a high TCGplayer ask cannot turn a loss at matched raw eBay sales into a flip', async () => {
@@ -79,6 +113,8 @@ test('a high TCGplayer ask cannot turn a loss at matched raw eBay sales into a f
     assert.ok(currentPriceEvidence(e, now));
 
     const old = await evaluateWithQuote();
+    old.rawPricing!.prices = [{ condition: 'LIGHTLY_PLAYED', basis: 'TCGPLAYER_OFFERS', price: 70, offers: old.rawPricing!.tcgplayerReference }];
+    old.pricingVersion = 'condition-resale-19';
     old.rawPricing!.ebayComps = e.rawPricing!.ebayComps;
     assert.equal(currentPriceEvidence(old, now), false, 'refresh an older stored flip based on the higher ask');
 });
@@ -92,7 +128,11 @@ test('photo-matched eBay sales lead even when TCGplayer has a lower asking price
     const display = listingMarketPrices(e, { ...e.listing, images: e.listing.photos! }, now);
     assert.equal(display?.sold?.price, 101);
     assert.equal(display?.sold?.filteredMean, true);
+    assert.deepEqual(display?.sold?.average, { count: 3, fixedPrice: true, days: 30 });
+    assert.equal(display?.sold?.sales30, 4);
     const previous = await evaluateWithQuote();
+    previous.rawPricing!.prices = [{ condition: 'LIGHTLY_PLAYED', basis: 'TCGPLAYER_OFFERS', price: 70, offers: previous.rawPricing!.tcgplayerReference }];
+    previous.pricingVersion = 'condition-resale-19';
     previous.rawPricing!.ebayComps = e.rawPricing!.ebayComps;
     assert.equal(currentPriceEvidence(previous, now), false);
     assert.equal(display?.tcg?.delivered, 70);
@@ -101,8 +141,8 @@ test('photo-matched eBay sales lead even when TCGplayer has a lower asking price
 test('seller descriptions and photo-verified worse wear cannot replace the assessed condition price', async () => {
     for (const wear of [null, 'MODERATELY_PLAYED'] as const) {
         const e = await evaluateWithQuote([14, 15, 16], wear);
-        assert.equal(e.rawPricing?.prices?.[0].price, 70);
-        assert.equal(e.rawPricing?.prices?.[0].condition, 'LIGHTLY_PLAYED');
+        assert.equal(e.rawPricing?.tcgplayerReference?.price, 70);
+        assert.equal(e.rawPricing?.prices?.find(row => row.condition === 'LIGHTLY_PLAYED'), undefined);
         assert.ok(currentPriceEvidence(e, now));
         const comparisons = listingMarketPrices(e, { ...e.listing, images: e.listing.photos! }, now);
         assert.equal(comparisons?.tcg?.delivered, 70);
@@ -110,10 +150,10 @@ test('seller descriptions and photo-verified worse wear cannot replace the asses
     }
 });
 
-test('an apparent TCGplayer flip triggers a photo check even when the reported eBay sale would lose money', async () => {
+test('an active ask cannot trigger a paid photo check of an otherwise losing sale', async () => {
     const e = await evaluateWithQuote([15], null, true);
-    assert.equal(e.rawPricing?.prices?.[0].price, 15);
-    assert.equal(e.rawPricing?.prices?.[0].offers?.price, 70);
+    assert.equal(e.rawPricing?.prices?.length ?? 0, 0);
+    assert.equal(e.rawPricing?.tcgplayerReference?.price, 70);
     assert.ok(!e.underwriting!.verdict.startsWith('BUY'));
 });
 
@@ -123,7 +163,7 @@ test('a lone photo-matched premium prompts checks of the cheaper cluster before 
     assert.equal(price.price, 49.5);
     assert.equal(price.comps?.count, 2);
     assert.equal(price.comps?.activitySales?.length, 3);
-    assert.equal(price.offers?.price, 70);
+    assert.equal(e.rawPricing?.tcgplayerReference?.price, 70);
 });
 
 test('the high sale of a cleaner copy stays in its own condition market', async () => {

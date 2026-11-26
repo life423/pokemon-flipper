@@ -5,14 +5,41 @@ import { auctionPhotoPriority } from "../../shared/auction-research.ts";
 import type { DealHuntGoal } from "../../shared/deal-hunt.ts";
 import type { ListingFilters } from "../../shared/listing-filters.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
-import { acquisitionCost } from "../../shared/money/underwriting.ts";
+import { acquisitionCost, affordableItemLimit } from "../../shared/money/underwriting.ts";
 import type { ListingSummary, SearchIntent, Targets } from "../../shared/types.ts";
-import { marketIntent, marketItemLimit, shortlistMarketCopies } from "./deal-hunt-market-checks.ts";
+import { keepsSetSearchPreferences, marketIntent, marketItemLimit, shortlistMarketCopies } from "./deal-hunt-market-checks.ts";
 import { marketBrowseQuery } from "./same-set-listings.ts";
-import type { HuntMarket } from "./same-set-markets.ts";
+import { findHuntMarkets, type HuntMarket } from "./same-set-markets.ts";
+import type { InventoryTarget } from "./guided-inventory.ts";
+import { dollars } from "../../shared/format.ts";
 
 export function huntMarketCardKey(m: HuntMarket) {
     return JSON.stringify([setKey(m.set), canonicalCatalogName(m.name), normalizeCardNumber(m.cardNumber)]);
+}
+
+// A small second lane for blank searches. Only physically scoped, recent eBay sales
+// can supply an entry ceiling. Catalog volume and active offers cannot supply one.
+export async function pricedInventoryTargets(filters: ListingFilters, targets: Targets, signal: AbortSignal, preferences: SearchIntent,
+    read = findHuntMarkets): Promise<InventoryTarget[]> {
+    const markets = await read(null, "resell", "any_card", signal);
+    const choices: InventoryTarget[] = [];
+    const seen = new Set<string>();
+    for (const m of markets.filter(m => m.comparableActivity && m.comparableActivity.count >= 2)
+        .sort((a, b) => b.comparableActivity!.priority - a.comparableActivity!.priority)) {
+        if (!keepsSetSearchPreferences(m, preferences)) continue;
+        const intent = marketIntent(m);
+        if (filters.kindFilter === "raw" && intent.graded || filters.kindFilter === "graded" && !intent.graded) continue;
+        const key = huntMarketCardKey(m);
+        if (seen.has(key)) continue;
+        const marketLimit = marketItemLimit(m, "resell", targets, 0);
+        const maxItem = filters.maxPrice === undefined ? marketLimit : affordableItemLimit(marketLimit, 0, filters.maxPrice);
+        if (!(maxItem > 0 && maxItem >= (filters.minPrice ?? 0))) continue;
+        seen.add(key);
+        const reason = m.comparableActivity!.count + " matched sales in 60 days · item price up to " + dollars(maxItem) + " before checking shipping";
+        choices.push({ name: m.name, number: m.cardNumber, set: m.set, stage: "Recent matched sales", exactMarket: { intent, maxItem, reason } });
+        if (choices.length === 3) break;
+    }
+    return choices;
 }
 
 interface MarketGroup {

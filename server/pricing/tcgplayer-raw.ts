@@ -2,9 +2,8 @@ import { CONDITION_NAMES, isRawCondition, type RawCondition } from '../../shared
 import { sameCardNumber } from '../../shared/card-number.ts';
 import { readyForPricing } from '../../shared/identity.ts';
 import { money } from '../../shared/money/cents.ts';
-import { photoMatchedRawPrice } from '../../shared/money/price-evidence.ts';
 import { median } from '../../shared/sold-evidence.ts';
-import type { Identity, RawPrice, RawPricing, TcgplayerRawOffer } from '../../shared/types.ts';
+import type { Identity, RawPrice, TcgplayerRawOffer } from '../../shared/types.ts';
 import { sameNumberedCatalogName } from '../identity/catalog-name.ts';
 import { finishOfVariant, mapVariantPrintings, sameSetFamily } from '../identity/card-identity.ts';
 import { storageFailure } from '../lib/storage-failure.ts';
@@ -21,8 +20,8 @@ interface Dependencies { offers: typeof fetchTcgplayerConditionData; market: typ
 
 /** Price an AI-assessed raw condition from that exact TCGplayer market. No sold-photo prerequisite. */
 export async function tcgplayerRawPrice(card: PricedCard | null, identity: Identity, condition: RawCondition,
-    { signal, now = Date.now(), fetchOffers = fetchTcgplayerConditionData, fetchMarket = fetchTcgplayerMarketData }:
-    { signal?: AbortSignal; now?: number; fetchOffers?: Dependencies['offers']; fetchMarket?: Dependencies['market'] } = {}): Promise<RawPrice | null> {
+    { signal, now = Date.now(), cachedOnly = false, fetchOffers = fetchTcgplayerConditionData, fetchMarket = fetchTcgplayerMarketData }:
+    { signal?: AbortSignal; now?: number; cachedOnly?: boolean; fetchOffers?: Dependencies['offers']; fetchMarket?: Dependencies['market'] } = {}): Promise<RawPrice | null> {
     signal?.throwIfAborted();
     if (!readyForPricing(identity) || !identity.name || !isRawCondition(condition) || !card) return null;
     const selected = variantFor(card, identity).variant;
@@ -36,7 +35,7 @@ export async function tcgplayerRawPrice(card: PricedCard | null, identity: Ident
         mapVariantPrintings([...card.variants.map(v => v.name), label], identity.set)[label] === identity.printing;
     let marketPrice: number | undefined, marketRecordAt: string | null = null;
     try {
-        const detail = await fetchMarket(selected.recordId);
+        const detail = await fetchMarket(selected.recordId, cachedOnly);
         signal?.throwIfAborted();
         const body = detail?.data && !Array.isArray(detail.data) ? detail.data : detail;
         const number = body?.total_set_number ? `${body.number}/${body.total_set_number}` : body?.number;
@@ -53,7 +52,7 @@ export async function tcgplayerRawPrice(card: PricedCard | null, identity: Ident
     let cursor: string | undefined;
     for (let page = 0; page < 4; page++) {
         let response;
-        try { response = await fetchOffers(selected.recordId, marketCondition, selected.name, cursor); }
+        try { response = await fetchOffers(selected.recordId, marketCondition, selected.name, cursor, cachedOnly); }
         catch (error) { signal?.throwIfAborted(); if (storageFailure(error) || error instanceof PriceResearchBudgetError && error.reason !== 'LIMIT') throw error; break; }
         signal?.throwIfAborted();
         if (!Array.isArray(response?.data)) break;
@@ -88,14 +87,4 @@ export async function tcgplayerRawPrice(card: PricedCard | null, identity: Ident
         low: values[0] ?? price, median: values.length ? median(values) : price, high: values.at(-1) ?? price,
         sellerCount: new Set(sorted.map(row => row.sellerId)).size, offers: sorted,
     } };
-}
-
-export function withTcgplayerPrice(raw: RawPricing, quote: RawPrice): RawPricing {
-    const verified = raw.prices?.find(row => row.condition === quote.condition && photoMatchedRawPrice(row.comps, row.condition) === row.price);
-    const selected = verified ? { ...verified, offers: quote.offers } : quote;
-    const source = quote.basis === 'TCGPLAYER_OFFERS' ? 'asking-price competition' : 'condition market estimate';
-    const comparison = verified ? ' Profit uses the photo-matched eBay sales.' : '';
-    return { ...raw, status: 'PRICED', reason: undefined, conditionEvidence: verified ? 'AI_PHOTOS' : 'TCGPLAYER',
-        prices: [selected, ...(raw.prices ?? []).filter(row => row.condition !== quote.condition)],
-        evidenceNote: `TCGplayer ${source} for ${quote.offers?.marketCondition ?? quote.condition}.${comparison} ${raw.evidenceNote ?? ''}`.trim() };
 }

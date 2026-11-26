@@ -108,6 +108,108 @@ requests. Both TypeScript checks and the production build passed.
 - [x] Replay Buy It Now with two Dark Gengar misses, an older Base Set
   candidate, an isolated premium sale, a recoverable pricing outage, and
   shipping that wipes out the margin. Verify the displayed source prices.
+- [x] Replay guided resale with per-copy reasons, a lower-cost equivalent copy, an exact-printing lookalike and a negative result. Check the price ceiling against the delivered budget and require an explicit action for supplemental tile research.
+- [x] Persist watched source cursors, accepted copy tasks and interrupted attempts under the original budget. Resume after reload, preserve ZIP+4, keep Stop available and retain the closest fully priced miss.
+- [x] On a blank Buy It Now flip, give fresh inventory the first turn and include exact printings with repeated, recent confirmed sales among the next choices. Compare their conservative item limits with the delivered budget. Show queued copies from the last query during research.
+- [x] Admit potentially miscategorized copies and run one reserve-protected number-and-set query on a thin guided or price-supported exact search. Require photo confirmation before using that identity.
+- [x] Keep isolated TCGplayer asks as references. Compare eligible exact-condition competition with physically matched eBay sales and use the lower supported exit. Check sold-copy evidence if competition is insufficient.
+- [x] Read daily AI usage incrementally, combine active flip status polls, move local SQLite market history to a worker, and read candidate snapshots in batches of four.
+- [x] Group frequent per-copy diagnostic events in append-only files. Preserve individually replayable pages and older pass recordings, and report gaps when a write is interrupted.
+- [ ] Measure missed deals against independently reviewed listings with poor titles, photos, or seller categories. Track calls and time per verified copy and compare with ordinary discovery.
+- [ ] Independently verify a purchasable live flip. Measure reviewed-candidate recall across more than one market, the cost to reach a supported decision and whether post-bid seller sampling finds any additional supported bids. Track unreviewed copies separately.
+- [ ] Validate deployment-specific recovery and accounting before running workers on multiple machines. The current queue and account authority belong to one installation.
+
+## Guided Find a flip milestone
+
+1. [x] Add independent Find a deal and Find a flip entries. The guided tab keeps its draft and results, accepts optional text and exposes its own buying filters. Named results can show a graded alternative, a raw comparison or an eligible auction when supported.
+2. [x] Replay strict and flexible Ampharos scopes. A flexible hunt may widen through a catalog-confirmed Aquapolis connection to eligible vintage releases. A blank hunt ranks recent recorded sales in a catalog sample.
+3. [x] Add Buy It Now, auctions under ten hours and Both. Verify the shared hunt account, cancellation before a second format and retention of the first result after a second-format failure.
+4. [x] Verify the Windows SQLite market cache and repeat reads without provider traffic. Keep the existing account-wide Browse reserve, pressure checks, counters and spending records. The live receipt is in the private handoff.
+5. [x] Check scope, progress, decision tiles, delivered cost, chart/table and keyboard operation at phone, tablet and desktop widths.
+6. [x] Run one live hunt for a liquid starting market. Record three markets, the closest miss, time and costs, and replay the false identity rejection discovered in that run.
+7. [x] Add on-demand price history for a photo-verified market, a sparse-data state and a seven-day outlook checked against historical flat forecasts.
+8. [ ] Find the first live, available copy with photo-confirmed positive profit after costs. Test which original photo views settle near-miss condition gaps, then compare collector-number and seller-inventory discovery against the live baseline. Validate directional accuracy on future observations. Record actual purchase and resale results separately if supplied.
+
+## November 25 local deal-finding repairs
+
+- [x] Keep a running flip hunt through same-ZIP focus refreshes. Show interruption counts and distinguish a confirmed destination change. Let the planner act on earlier misses to select among eligible copies and liquid markets, with its reason visible during the hunt.
+
+- [x] Keep named searches on their matching listings. Typing a new query hides
+  the previous hunt. An embedded hunt starts on “Only these results,” including
+  after an empty search. Broader markets require an explicit selection. The
+  interface reports progress, failures and next actions without cache notices.
+- [x] Bind a Buy's displayed strategy, profit and purchase limit to its verified
+  exit route. Keep modeled alternatives separate and withdraw approval after
+  changed terms, targets, destination or quote expiration.
+- [x] Preserve a supported lower-condition sold floor for a cleaner raw copy,
+  including activity counted at the modeled exit condition.
+- [x] Correct number-anchored catalog suffixes and source-backed title
+  descriptors without changing accepted paid evidence keys.
+- [x] Retain all continued rows in the root hunt, submit diagnostics per batch,
+  recover safely from a quota placeholder and preserve the original allowance.
+- [x] Stop new discovery/review on global accounting/storage holds; keep
+  per-copy holds local. Restore single-batch searches and pause dispatch away
+  from Results. Persist typed Wait blockers.
+- [x] Add saved local delivery ZIP input; keep quotes destination-specific and
+  clear browser advice on changes without erasing research or rerunning work.
+- [x] Give broad discovery distinct markets and both raw/slab review candidates;
+  retain cached research and every remaining copy in continuation. The later
+  user instruction removes preliminary and whole-search API ceilings while
+  preserving history, daily reserve, pacing and cancellation.
+- [ ] Measure cold live latency and useful decisions after these changes.
+  Offline acceptance does not establish a current qualifying deal or realized resale.
+- [x] Measure a real warm-cache Aquapolis search in the normal interface. It
+  produced zero verified Buys/Offers; timings and paid evidence stay in the
+  Git-excluded local handoff. Cold performance and the deal milestone remain open.
+- [x] Propagate shared eBay Browse exhaustion through buyer review and queue
+  cancellation; preserve cached-only decisions instead of recording budget
+  failures as financial outcomes or continuing paid research after the cap.
+- [x] Generalize verified collector-suffix matching beyond the original examples,
+  correct corroborated seller-name/set aliases, and keep catalog-backed printed
+  card names out of novelty filters. Freeze live counterexamples for offline replay.
+- [x] Normalize stream disconnections, retain earlier results and explicitly
+  resume the original continuation after a shared hold. Isolated browser tests
+  cover quota reset, active-stream cancellation and immediate retry.
+- [x] Start standalone fixed-price resale hunts from new listings across cards. Reuse accepted evidence for matching copies. Keep named searches scoped.
+- [x] Pace Browse across local searches when consumption accelerates or quota is low, defer extra pages and preserve the 10% daily reserve.
+- [x] Restore photo tiles in Results and Find a flip. Check original identity before a fresh resale recommendation and use the full front alongside the stamp detail for eligible Neo Genesis holos.
+- [ ] Validate a live liquid-card resale opportunity across sets. Report current
+  terms, exact-copy evidence, matched activity and after-cost margin; no forced
+  Deal verdict. Follow with budget-led ranked buying guidance, useful alerts and
+  purchase-to-realized-resale tracking as separate product work.
+- [ ] Reduce time to the first supported buying decision. The latest warm
+  Aquapolis rerun took 65.189 seconds before a visible decision and 177.099
+  seconds for 100 responses. Compare incremental useful results with waiting
+  for a whole screened batch; preserve verification and avoid duplicate work.
+- [x] Accept the user's exact conversational search for a liquid holographic
+  resale card from the years 1999–2003. Preserve release/finish constraints,
+  expose the interpreted criteria, and distinguish unverified liquidity from
+  observed activity without a universal three-sale rule.
+- [x] Support one-sided natural year bounds such as "holo card no newer than
+  2020" through interpretation, canonical query, discovery and displayed criteria.
+- [x] Keep broad set inventory in the correct card game before paid photos;
+  the first live broad test admitted sports cards through a generic set query.
+- [x] Replace the restored Charizard search's obsolete Windows accounting
+  failure with a fresh authority check under the same account. Preserve genuine
+  caps and unresolved charges; show the original cause once with a useful retry.
+- [x] Recover an output-truncated research-planning choice with the existing
+  host-selected safe action, record the paid negative outcome and reuse it.
+  Do not increase output caps or buy a replacement response automatically.
+- [x] Show actual ongoing hunt activity through the existing usage poll:
+  current market/check, listing/pricing/review/photo counts, elapsed time,
+  last activity and visible Stop. Verify normal/child account scope, stale
+  attempts, cancellation, keyboard/touch and real client hot updates.
+- [x] Trace and remove confirmed unused assessment helper, ranking argument,
+  language wrapper, trend icon and CSS rule; keep paid cache readers and
+  live retry/manual compatibility. All client modules still have entry paths.
+- [ ] Improve exact slab finish/price-gap resolution and initial review ordering
+  from live useful-decision evidence. Reconcile completed-response AI holds
+  without resetting accounting or repurchasing accepted work.
+- [ ] Extend the release-mark replay sample beyond the confirmed Base Set
+  lookalike and its unstamped control. Include obscured fronts and other sets
+  with same-art reprints before widening automatic focused checks.
+
+Private observed search evidence remains in the Git-excluded local handoff.
 
 ## November 24 stopping checkpoint
 
@@ -127,7 +229,7 @@ no push was requested for the break.
   temporary review failures with bounded retries under the original account.
 - [x] Add retained discovery continuation in batches of 50, with deduplication,
   original constraints, persistent ownership and visible coverage status.
-- [ ] Independently accept the automatic 51st-listing continuation through the
+- [x] Independently accept the automatic 51st-listing continuation through the
   browser, including cancellation, refresh, replay and quota exhaustion.
 - [ ] Expand broad hunts beyond markets seeded by saved accepted evaluations.
   Continuation and larger menus do not establish coverage of unresearched cards
@@ -169,9 +271,10 @@ no push was requested for the break.
 - Useful AI and data requests are authorized. Optimize useful decisions and avoid
   duplicate work; zero calls and an arbitrary cheap-search total are not goals.
   OpenAI runs uncapped on this installation with accounting and cancellation intact.
-- Production searches have no per-search Browse or PKMNPrices request ceiling.
-  Existing accounts retain historical limits, request counts, spend and unresolved
-  state. The subscription supplies 20,000 daily credits; preserve rate limits,
+- November 25: per-search eBay Browse and PKMNPrices ceilings are removed,
+  including exhausted older accounts. Preserve historical limits, attempts and
+  spending; all production Browse calls retain the 10% daily reserve. The
+  subscription supplies 20,000 daily PKMNPrices credits; preserve rate limits,
   shared cache reuse and rapid-depletion warnings when expanding useful research.
 - Reuse accepted photos and sold evidence. Refresh terms/prices independently;
   unchanged images must not incur repeated photo charges. Storage, accounting and
@@ -198,7 +301,8 @@ no push was requested for the break.
   matching, prices, photos, money, liquidity, auctions, budgets, recovery and UI.
 - [x] Remove the reproduced one-versus-three raw-sale dead-end. Supported
   condition-specific TCGplayer quotes can value raw resale; observed 60-day
-  transactions remain distinct and no hard three-sale veto applies.
+  transactions remain distinct and no hard three-sale veto applies. One accepted
+  condition-matched sale can support sparse pricing.
 - [x] Unify hunt and ordinary-review eligibility for repairable missing-price
   rows, and requeue typed temporary failures after finite cooldowns under the
   original account. These are confirmed integration gaps, not wrong API dollars.
@@ -593,9 +697,15 @@ no push was requested for the break.
 - [x] Filed the Application Growth Check for scheduled, buyer-authorized proxy
   bids on eBay US on November 24, 2026. eBay confirmed reference
   **261124-000020** and estimated a reply within 1–2 business days.
+- [ ] Respond to eBay Developer Support's November 25 follow-up. Review is
+  awaiting an end-to-end API flow (authentication, call sequence, inputs,
+  outputs and errors), a diagram or screenshots, and the eBay account used
+  for bidding. Production access and permission for scheduled bids remain pending.
 - **On hold at the owner’s request (November 24).** Resume sniper development and Sandbox testing when requested. The filed Growth Check remains with eBay.
 - [ ] Record eBay’s decision on Production Offer API access and its answer on
   scheduling bids shortly before close. [My Tickets](https://developer.ebay.com/my/support/tickets)
+- [x] Verify real Sandbox buyer OAuth on Windows. The local connection API and
+  scheduler both confirmed the linked Sandbox buyer on November 25.
 - [ ] Exercise a timed Sandbox bid and verify its receipt in the connected
   account. Obtain production Offer API approval before enabling real-money
   bidding. Keep ambiguous submissions from sending a second bid.

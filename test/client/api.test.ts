@@ -220,21 +220,18 @@ test("stream parsing errors cancel pending upstream work", async (t) => {
     assert.equal(cancelled, true);
 });
 
-test("an evaluation supplies current evidence hints without asking the server to fetch those image URLs", async (t) => {
+test("evaluation submits the listing ID while the server owns the price and photos", async (t) => {
     const { evaluateListing } = await import("../../client/src/api.ts");
-    let body: Record<string, unknown> = {};
+    let called = false;
     t.mock.method(globalThis, "fetch", async (url: unknown, init?: RequestInit) => {
+        called = true;
         assert.equal(url, "/api/listings/changed/evaluate?fresh=1");
-        body = JSON.parse(String(init?.body));
+        assert.equal(init?.body, undefined);
         return Response.json({});
     });
     const termsCheckedAt = "2026-11-03T12:00:00Z";
     await evaluateListing({ id: "changed", title: "New listing title", images: ["https://i.ebayimg.com/new.jpg"], currentPrice: 20, shipping: 0, bids: 1, endTime: null, isGraded: false, buyingOption: "FIXED_PRICE", bestOffer: false, termsCheckedAt, url: "", seller: null }, { fresh: true });
-    assert.equal(body.title, "New listing title");
-    assert.deepEqual(body.images, ["https://i.ebayimg.com/new.jpg"]);
-    assert.equal(body.termsCheckedAt, termsCheckedAt);
-    assert.equal(body.buyingOption, "FIXED_PRICE");
-    assert.equal(body.bestOffer, false);
+    assert.ok(called);
 });
 
 test("Any targets and offer settings reach both search endpoints as explicit zeroes", async (t) => {

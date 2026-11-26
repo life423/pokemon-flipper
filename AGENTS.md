@@ -25,13 +25,10 @@ Use buyer decisions, repeat payments and research costs to evaluate the pilot
 in LOCAL_TODO.md. A reseller Deal requires supported positive profit after
 costs. Keep that milestone alongside the collector guide.
 
-When improving search, read the latest completed automatic review in
-`data/search-diagnostics/index.json` before requesting another paid scan. Treat
-the review as a proposal, verify its cited listing IDs against saved evidence
-and code, and replay the relevant decisions before changing provider policy.
-The user wants this work to proceed without routine input. The app runs one
-short text review per completed search with retained listings and tracks its
-AI usage separately. Keep reports and listing evidence out of commits.
+When improving search, inspect recorded outcomes in `data/search-diagnostics/index.json`
+and verify listing IDs against saved evidence before a paid scan. A completed
+search records its outcome without purchasing a written review. Historical reviews
+and explicit diagnostic tools remain available. Keep reports outside commits.
 
 Prioritize raw resale, existing slab resale and raw-to-grade equally. Fresh
 underpriced Buy It Now listings and supported auction snipe limits are key.
@@ -162,12 +159,10 @@ Read docs/architecture.md for the source map and reading order.
   A compact request finding raw does not buy another raw assessment automatically.
   BGS/TAG resale is separate from configured PSA/CGC submission services.
 - Use the photographed set's edition marks. On English Neo Destiny, a clear empty stamp area establishes Unlimited. A manual assessment can resolve an ambiguous reading from the original front and a stamp detail in one metered check. Reuse the saved result on repeat assessment and price refresh. Automatic stamp research requires current terms and evidence that checking could change the purchase decision. Charge the original search account. Artwork-shadow checks apply to eligible original English Base Set cards.
-- Raw resale can use exact condition/printing TCGplayer offers after the live
-  copy's condition is assessed. Use the lowest valid delivered competition,
-  capped by exact condition market value when available; a labeled condition
-  market value can supply fallback pricing. Active offers never become sold
-  activity. Display rolling 60-day transactions separately, without a hard
-  three-sale purchase veto. Preserve exact identity, freshness and all costs.
+- Price raw resale from confirmed eBay transactions matched to the printing,
+  finish and assessed condition. Show TCGplayer offers and market values as
+  comparisons. PriceCharting supplies dated, labeled guides for mapped products.
+  Preserve purchase costs and show recent completed sales separately.
   Historical photo-condition evidence remains reusable. A
   same-condition seller-clue cohort, or otherwise an unspecified-condition
   cohort, merits research if any confirmed sale could cover current costs.
@@ -203,6 +198,19 @@ Read docs/architecture.md for the source map and reading order.
   sold screening, one bounded text request can reorder tied Buy It Now photo
   candidates when automatic photos are on. Neither request changes pricing
   or verification requirements.
+- Preserve natural-language release bounds through validation, compiled queries,
+  discovery and displayed criteria. "No newer than 2020" includes 2020 and
+  earlier; before/after exclude the boundary. A missing minimum or maximum is
+  valid. Keep collector numbers and prices separate from release years.
+- An explicit liquidity request prioritizes observed 60-day sales for the exact
+  selected exit. Zero observed activity stays Wait; one or two sales retain LOW
+  confidence, not a universal three-sale veto or a promised sale date. Broad
+  release inventory uses Pokémon and collectible-card scope before paid photos;
+  exact-card recovery retains useful all-category alias coverage.
+- Keep accounting, exact-input verification and genuine budget denials distinct.
+  Do not cache transient global authority errors as per-copy financial decisions.
+  Explicit same-account retry rechecks authority and reuses accepted answers;
+  genuine caps and unresolved-charge holds are never cleared to resume work.
 - Production Browse and PKMNPrices have no per-search request ceiling on this
   installation. Original search IDs retain request counts, historical limits,
   spending and unresolved state across retries, nested calls and restarts. The
@@ -219,7 +227,8 @@ Read docs/architecture.md for the source map and reading order.
   Price-only deferral stays Sorting while accepted photos and completed prices
   remain reusable; a supported profitable route can still reach Deals.
   The user authorizes broader PKMNPrices research as needed within reason.
-  Preserve provider limits, daily reserve, rate pacing and shared cache reuse.
+  Preserve provider pacing, bounded page walks, cancellation and shared cache
+  reuse; removed request ceilings do not authorize purposeless consumption.
 - Daily usage warnings appear outside the drawer at <=20% remaining or >=5% of
   an allowance observed consumed within 15 minutes. Account-keyed local samples
   persist across searches/restarts, expire when stale or reset, and do not

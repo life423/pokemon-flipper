@@ -17,6 +17,20 @@ function reading(intent = {}, rest = {}) {
 }
 const validate = (result: unknown, query: string) => validateSearchPlan(result, { query, filters }, knownSets);
 
+test("a collector fraction repeated as a release year is repaired from the submitted words", () => {
+    const query = "Charizard ex 199/165, Buy It Now only";
+    const answer = reading({ cardName: "Charizard ex", cardNumber: "199/165", minYear: 199, maxYear: 199 }, {
+        subjectMentions: [{ kind: "CARD", text: "Charizard ex 199/165", cardName: "Charizard ex" }],
+        maxDelivered: 250, summary: "Charizard ex from 199.",
+    });
+    const result = validateSearchPlan(answer, { query, filters: { ...filters, maxPrice: 250 } }, knownSets);
+    assert.equal(result.query, "Charizard ex 199/165");
+    assert.equal(result.intent.minYear, undefined);
+    assert.equal(result.summary, result.query);
+    assert.throws(() => validateSearchPlan(answer, { query, filters }, knownSets), /price or profit/);
+    assert.throws(() => validateSearchPlan(answer, { query: query + " from 2020", filters }, knownSets), /year/);
+});
+
 test("a search plan cannot shorten a requested Dark or owner-qualified card name", () => {
     for (const [name, shortened] of [["Dark Charizard", "Charizard"], ["Light Arcanine", "Arcanine"],
         ["Rocket's Mewtwo", "Mewtwo"], ["Charizard ex", "Charizard"]]) {

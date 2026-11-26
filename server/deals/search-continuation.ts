@@ -27,6 +27,7 @@ export interface DiscoveryBacklog {
     seenIds: string[];
     sources: DiscoverySourceCursor[];
     total: number;
+    ccgInventory?: true;
     sourceLimitReached?: boolean;
 }
 export interface DiscoveryBatchReceipt {

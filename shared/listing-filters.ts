@@ -31,7 +31,8 @@ export function listingFilterBlock(listing: ListingSummary, filters: ListingFilt
         const sameEvidence = evaluation?.listing.id === listing.id && evaluation.listing.title.trim() === listing.title.trim() &&
             searchPhotosFitDetails(listing.images, evaluation.listing.photos ?? []);
         const observed = sameEvidence ? observedCardKind(evaluation) : null;
-        const actual = observed ?? (listing.isGraded ? "graded" : "raw");
+        const actual = observed ?? (listing.researchKind ? (evaluation ? null : listing.researchKind)
+            : listing.isGraded ? "graded" : "raw");
         if (wantedKinds.some(kind => actual !== kind)) return "CARD_TYPE";
     }
     if (listing.currentPrice !== null && listing.currentPrice > (filters.maxPrice ?? Infinity)) return "ABOVE_MAX_PRICE";

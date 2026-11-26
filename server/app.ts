@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { setYears } from "./pricing/price-tracker.ts";
+import { savedSetYears, setYears } from "./pricing/price-tracker.ts";
 import { evaluationFailure } from "./analysis/failure.ts";
 import { CameraInputError, gradeCameraCard } from "./analysis/camera-grade.ts";
 import http from "node:http";
@@ -10,9 +10,9 @@ import { searchDeals } from "./deals/search.ts";
 import { discoveryContinuations } from "./deals/search-continuation.ts";
 import { evaluateBoundedListing, PriceOnlyEvidenceError } from "./analysis/bounded-evaluate.ts";
 import { EbayError } from "./ebay/api.ts";
-import { shippingDestinationRoutes, validShippingZip, withShippingDestination } from "./ebay/shipping-destination.ts";
+import { shippingDestinationRoutes, configuredShippingZip, withShippingDestination } from "./ebay/shipping-destination.ts";
 import { ebayUsage, EbayBudgetError } from "./ebay/usage.ts";
-import type { CurrentState } from "./analysis/types.ts";
+import { recentListingTerms } from "./listings/recent-terms.ts";
 import { MONEY_CONFIG } from "../shared/money/config.ts";
 import { ProviderError } from "./lib/http.ts";
 import { PhotoReviewError, reviewListingPhotos } from "./analysis/deeper-review.ts";
@@ -50,6 +50,7 @@ import { latestLiveCollector, LiveCollectorInputError, runLiveCollector } from "
 import { saveCollectorStrategyEvidence } from "./analysis/collector-strategy-evidence.ts";
 import { BuyerReviewInputError, reviewBuyerListing } from "./analysis/wait-skip-review.ts";
 import { DealHuntInputError, runSearchDealHunt, saveDealHuntInventory } from "./analysis/deal-hunt-service.ts";
+import { savedFlipOwner } from "./analysis/flip-run-store.ts";
 import { huntProgress } from "./analysis/deal-hunt-progress.ts";
 import type { ListingSummary } from "../shared/types.ts";
 import { readSniperQuote, sandboxBuyerId, sniperCapabilities, submitSandboxBid } from "./ebay/sniper.ts";
@@ -60,29 +61,6 @@ import { ebayConnectionRoutes } from "./ebay/connection-routes.ts";
 import { buyerConnection } from "./ebay/buyer-connection.ts";
 
 const app = express();
-
-// The listing's price, bid, and end time as the page last saw them, or
-// null when the request doesn't send them.
-function currentState(body: unknown): CurrentState | null {
-    const value = body as Partial<Record<keyof CurrentState, unknown>> | undefined;
-    const number = (field: unknown) => (typeof field === "number" && Number.isFinite(field) ? field : null);
-
-    if (!value || number(value.price) === null) return null;
-
-    return {
-        title: typeof value.title === "string" ? value.title.slice(0, 500) : undefined,
-        images: Array.isArray(value.images) && value.images.length <= 24 && value.images.every((image) => typeof image === "string" && image.length <= 2048)
-            ? value.images as string[] : undefined,
-        price: number(value.price),
-        shipping: number(value.shipping),
-        shippingDestination: value.shippingDestination === null || validShippingZip(value.shippingDestination) ? value.shippingDestination : undefined,
-        bids: number(value.bids) ?? 0,
-        endTime: typeof value.endTime === "string" ? value.endTime : null,
-        termsCheckedAt: typeof value.termsCheckedAt === "string" && Number.isFinite(Date.parse(value.termsCheckedAt)) ? value.termsCheckedAt : undefined,
-        buyingOption: value.buyingOption === "FIXED_PRICE" || value.buyingOption === "AUCTION" ? value.buyingOption : undefined,
-        bestOffer: typeof value.bestOffer === "boolean" ? value.bestOffer : undefined,
-    };
-}
 
 // The search text from ?q=, or empty.
 const searchText = (req: express.Request) => (typeof req.query.q === "string" ? req.query.q : "");
@@ -115,13 +93,17 @@ app.use("/api", (_req, res, next) => {
     if (shutdown.signal.aborted) { res.status(503).json({ error: "The app is shutting down." }); return; }
     next();
 });
-app.use("/api", async (req, _res, next) => {
+app.use("/api", async (req, res, next) => {
     const id = searchId(req.get("X-Pokemon-Flipper-Search-Id"));
     // Continuation ownership comes from a server-saved token, including for
     // later photo/price checks. A new batch does not mint new allowances.
-    const owner = await discoveryContinuations.budgetOwner(id);
-    withAiUsageContext({ searchId: id, watchBudgetId: owner ??
-        (isSearchDiagnosticId(req.get("X-Pokemon-Flipper-Watch-Budget")) ? req.get("X-Pokemon-Flipper-Watch-Budget") : undefined) }, next);
+    const owner = await discoveryContinuations.budgetOwner(id) ?? (id ? await savedFlipOwner(id) : null);
+    const header = req.get("X-Pokemon-Flipper-Watch-Budget");
+    if (owner && header && header !== owner) {
+        res.status(409).json({ error: "This search uses its original spending account." });
+        return;
+    }
+    withAiUsageContext({ searchId: id, watchBudgetId: owner ?? (isSearchDiagnosticId(header) ? header : undefined) }, next);
 });
 app.use("/api", (req, res, next) => {
     const stopped = new AbortController();
@@ -206,8 +188,10 @@ app.get("/api/ai-usage", async (req, res) => {
     try {
         const id = searchId(req.query.searchId);
         const [usage, budget, pricing, providers] = await Promise.all([aiUsageToday(id), aiSpending.summary(id), priceResearchSummary(id), dailyProviderUsage()]);
-        const hunt = huntProgress.read(id, searchId(req.query.huntId) ?? id);
-        res.set("Cache-Control", "no-store").json({ ...usage, budget, pricing, providers, ...(hunt && { hunt }) });
+        const legs = typeof req.query.legs === "string" ? req.query.legs.split(",").slice(0, 2).map(searchId) : undefined;
+        const hunts = legs?.flatMap(leg => leg && huntProgress.read(id, leg) || []);
+        const hunt = legs ? undefined : huntProgress.read(id, searchId(req.query.huntId) ?? id);
+        res.set("Cache-Control", "no-store").json({ ...usage, budget, pricing, providers, ...(hunt && { hunt }), ...(hunts && { hunts }) });
     }
     catch { res.status(500).json({ error: "Search usage could not be read. Provider operations are unchanged." }); }
 });
@@ -352,7 +336,7 @@ app.post("/api/listings/resolve", tracked(async (req, res) => {
     const signal = requestSignal();
     try {
         const listing = await resolveListingLink(req.body?.input, signal, req.body?.comparison === true);
-        if (!signal.aborted) res.json(listing);
+        if (!signal.aborted) { recentListingTerms.remember(getBudgetContext().searchId, listing); res.json(listing); }
     }
     catch (error) {
         if (signal.aborted) return;
@@ -413,7 +397,7 @@ app.post("/api/deals/new", tracked(async (req, res) => {
             onStart: (summary) => { discovery = summary; send({ type: "start", ...summary }); },
             onScreenedOverflow: row => { overflowRows.push(row); },
             onSourceDisposition: row => { sourceDispositions.push(row); },
-            onListing: (listing) => { retained.set(listing.id, listing); send({ type: "listing", listing }); } }, known as string[], req.body?.gradingWatch === true);
+            onListing: (listing) => { recentListingTerms.remember(getBudgetContext().searchId, listing); retained.set(listing.id, listing); send({ type: "listing", listing }); } }, known as string[], req.body?.gradingWatch === true);
         const coverage = searchCoverage(discovery, sourceDispositions, overflowRows);
         if (!signal.aborted) await recordDiagnosticDiscovery(req, discovery, retained, coverage);
         if (!signal.aborted) send({ type: "done", ...coverage });
@@ -423,7 +407,7 @@ app.post("/api/deals/new", tracked(async (req, res) => {
 
 // How much of today's eBay allowance is left.
 app.get("/api/ebay-usage", async (req, res) => {
-    res.json(await ebayUsage());
+    res.json(await ebayUsage({ cachedOnly: req.query.cachedOnly === "1" }));
 });
 
 // Current search pipeline: newest inventory, optional cheaper BINs, and sold evidence.
@@ -460,7 +444,7 @@ app.get("/api/deals", tracked(async (req, res) => {
                 const id = req.get("X-Pokemon-Flipper-Search-Id");
                 if (isSearchDiagnosticId(id)) await saveCollectorStrategyEvidence(id, evidence);
             },
-            onListing: (listing) => { seen.set(listing.id, listing); send({ type: "listing", listing }); },
+            onListing: (listing) => { recentListingTerms.remember(getBudgetContext().searchId, listing); seen.set(listing.id, listing); send({ type: "listing", listing }); },
         });
         const coverage = searchCoverage(discovery, sourceDispositions, overflowRows);
         if (!signal.aborted) await recordDiagnosticDiscovery(req, discovery, seen, coverage);
@@ -485,6 +469,10 @@ async function originalListingSearch(itemId: string, saved: Awaited<ReturnType<t
     if (!isSearchDiagnosticId(requested)) return undefined;
     const discovery = await loadDiagnosticDiscovery(requested);
     return discovery?.discovery.retainedIds.includes(itemId) ? requested : undefined;
+}
+
+async function evidenceOwner(account: string, saved: NonNullable<Awaited<ReturnType<typeof loadPrivateEvaluation>>>) {
+    return saved.budgetOwner ?? await discoveryContinuations.budgetOwner(account) ?? await savedFlipOwner(account) ?? account;
 }
 
 app.post("/api/listings/:id/buyer-review", tracked(async (req, res) => {
@@ -512,10 +500,10 @@ app.post("/api/listings/:id/buyer-review", tracked(async (req, res) => {
 app.post("/api/listings/:id/evaluate", tracked(async (req, res) => {
     const signal = requestSignal();
     try {
-        const current = currentState(req.body);
         const priceOnly = req.query.priceOnly === "1";
         const addedPhotosOnly = req.query.addedPhotosOnly === "1";
         let account = searchId(req.get("X-Pokemon-Flipper-Search-Id"));
+        let owner = getBudgetContext().searchId;
         if (priceOnly || addedPhotosOnly) {
             const saved = await loadPrivateEvaluation(req.params.id);
             account = await originalListingSearch(req.params.id, saved, account);
@@ -523,6 +511,7 @@ app.post("/api/listings/:id/evaluate", tracked(async (req, res) => {
                 res.status(409).json({ error: "The original search account could not be found for this saved assessment.", retryable: false });
                 return;
             }
+            owner = await evidenceOwner(account, saved!);
         }
         signal.throwIfAborted();
         const options = {
@@ -530,14 +519,14 @@ app.post("/api/listings/:id/evaluate", tracked(async (req, res) => {
             typeFilter: readListingFilters(req.query).typeFilter,
             includeOffers: req.query.offers !== "0",
             targets: searchTargets(req),
-            current: priceOnly || req.query.refreshTerms === "1" || req.query.fresh === "1" ? null : current,
+            current: priceOnly || req.query.refreshTerms === "1" || req.query.fresh === "1" ? null : recentListingTerms.read(owner, req.params.id, configuredShippingZip()),
             priceOnly, addedPhotosOnly,
             signal,
         };
-        const evaluation = await withAiUsageContext({ searchId: account }, () => evaluateBoundedListing(req.params.id, options));
+        const evaluation = await withAiUsageContext({ searchId: account, watchBudgetId: owner }, () => evaluateBoundedListing(req.params.id, options));
         signal.throwIfAborted();
-        const evidenceKey = listingEvidenceKey({ title: priceOnly || req.query.fresh === "1" ? evaluation.listing.title : current?.title ?? evaluation.listing.title,
-            images: priceOnly || req.query.fresh === "1" ? evaluation.listing.photos ?? [] : current?.images ?? evaluation.listing.photos ?? [] });
+        const evidenceKey = listingEvidenceKey({ title: options.current?.title ?? evaluation.listing.title,
+            images: options.current?.images ?? evaluation.listing.photos ?? [] });
         const remembered = shortlistService.remember(evaluation, evidenceKey);
         if (addedPhotosOnly) await remembered;
         else await remembered.catch((error) => console.error("Saved evaluation was not updated", error));
@@ -565,10 +554,10 @@ app.post("/api/listings/:id/market-prices", tracked(async (req, res) => {
         if (!saved || !account || typeof req.body?.market !== "string") {
             res.status(409).json({ error: "Open the current listing assessment to compare sources." }); return;
         }
-        const owner = saved.budgetOwner ?? await discoveryContinuations.budgetOwner(account);
+        const owner = await evidenceOwner(account, saved);
         const market: string = req.body.market;
-        const result = await shareMarketPrices(JSON.stringify([owner ?? account, account, req.params.id, market]), active =>
-            withAiUsageContext({ searchId: account, watchBudgetId: owner ?? account, listingId: req.params.id }, () =>
+        const result = await shareMarketPrices(JSON.stringify([owner, account, req.params.id, market]), active =>
+            withAiUsageContext({ searchId: account, watchBudgetId: owner, listingId: req.params.id }, () =>
                 withPriceResearchSignal(active, () => buyerMarketPrices(saved.evaluation, market, active))), signal);
         if (signal.aborted) return;
         if (!result) { res.status(409).json({ error: "This price comparison has expired or the assessment changed." }); return; }
@@ -590,7 +579,7 @@ app.post("/api/listings/:id/price-history", tracked(async (req, res) => {
             return;
         }
         signal.throwIfAborted();
-        const result = await withAiUsageContext({ searchId: account, listingId: req.params.id }, () => marketHistory(saved.evaluation));
+        const result = await withAiUsageContext({ searchId: account, watchBudgetId: await evidenceOwner(account, saved), listingId: req.params.id }, () => marketHistory(saved.evaluation));
         if (!signal.aborted) res.json(result);
     } catch (error) {
         if (signal.aborted) return;
@@ -613,7 +602,7 @@ app.post("/api/listings/:id/cardmarket", tracked(async (req, res) => {
             return;
         }
         signal.throwIfAborted();
-        const comparison = await withAiUsageContext({ searchId: account, listingId: req.params.id },
+        const comparison = await withAiUsageContext({ searchId: account, watchBudgetId: await evidenceOwner(account, saved), listingId: req.params.id },
             () => compareCardmarket(saved.evaluation));
         if (!signal.aborted) res.json(comparison);
     } catch (error) {
@@ -645,7 +634,7 @@ app.post("/api/listings/:id/photo-review", tracked(async (req, res) => {
 // Each set's release year, for the cards' subtitles. Saved for a month.
 app.get("/api/set-years", async (req, res) => {
     try {
-        res.json(await setYears());
+        res.json(req.query.cachedOnly === "1" ? await savedSetYears() : await setYears());
     } catch (error) {
         console.error(error);
         res.json({});

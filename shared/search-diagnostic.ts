@@ -111,7 +111,7 @@ export interface SearchDiagnosticReview {
 export interface SearchDiagnosticResult {
     searchId: string;
     savedAt: string;
-    status: "complete" | "skipped" | "unavailable";
+    status: "recorded" | "complete" | "skipped" | "unavailable";
     message?: string;
     review?: SearchDiagnosticReview;
     examples?: Record<string, string>;

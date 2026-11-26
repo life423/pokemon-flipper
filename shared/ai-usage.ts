@@ -32,6 +32,7 @@ export interface AiUsageDay {
     pricing?: PricingResearchUsage | null;
     providers?: ProviderUsageSnapshot[];
     hunt?: HuntProgress;
+    hunts?: HuntProgress[];
 }
 
 export interface HuntProgress {
@@ -46,6 +47,7 @@ export interface HuntProgress {
     /** Listing summaries loaded across queries, before candidate deduplication. */
     discovered: number;
     screened: number;
+    queuedInLastQuery?: number;
     retained: number;
     /** Distinct copies on which an evidence check completed. */
     reviewed: number;
@@ -53,7 +55,7 @@ export interface HuntProgress {
     photos: number;
     scans: number;
     /** A bounded window of provisional copies; these are not purchase approvals. */
-    candidates?: ListingSummary[];
+    candidates?: (ListingSummary & { marketPrices?: import("./listing-market-prices.ts").ListingMarketPrices })[];
 }
 
 export interface AiSearchBudget {

@@ -1,5 +1,6 @@
 import path from "node:path";
 import { DATA_DIR } from "../lib/paths.ts";
+import { withFileLease } from "../lib/file-lease.ts";
 import { jsonStore } from "../lib/json-store.ts";
 import { SHORTLIST_LIMIT, type ShortlistEntry } from "../../shared/shortlist.ts";
 import type { ListingSummary, Evaluation } from "../../shared/types.ts";
@@ -47,9 +48,12 @@ export function createShortlistStore(file = path.join(DATA_DIR, "shortlist.json"
         const file = value as File | null;
         return file?.version === 1 && Array.isArray(file.entries) && file.entries.length <= SHORTLIST_LIMIT && file.entries.every((entry) => entry && typeof entry.id === "string" && entry.listing?.id === entry.id && typeof entry.notes === "string" && typeof entry.savedAt === "string");
     });
+    const change = <T>(edit: (saved: File) => T) => withFileLease(file, () => data.change(edit), {
+        timeoutError: () => new ShortlistError("Another shortlist save is still in progress. Try again.", 503),
+    });
     return {
         list: async () => (await data.read()).entries,
-        save: (listing: ListingSummary, evaluation: Evaluation | null, now = new Date().toISOString()) => data.change((file) => {
+        save: (listing: ListingSummary, evaluation: Evaluation | null, now = new Date().toISOString()) => change((file) => {
             const existing = file.entries.find((entry) => entry.id === listing.id);
             if (existing) return existing;
             if (file.entries.length >= SHORTLIST_LIMIT) throw new ShortlistError(`Your shortlist holds up to ${SHORTLIST_LIMIT} listings. Remove one before saving another.`, 409);
@@ -57,13 +61,13 @@ export function createShortlistStore(file = path.join(DATA_DIR, "shortlist.json"
             file.entries.unshift(entry);
             return entry;
         }),
-        update: (id: string, edit: (entry: ShortlistEntry) => ShortlistEntry) => data.change((file) => {
+        update: (id: string, edit: (entry: ShortlistEntry) => ShortlistEntry) => change((file) => {
             const index = file.entries.findIndex((entry) => entry.id === id);
             if (index < 0) return null;
             file.entries[index] = edit(file.entries[index]);
             return file.entries[index];
         }),
-        remove: (id: string) => data.change((file) => { file.entries = file.entries.filter((entry) => entry.id !== id); }),
+        remove: (id: string) => change((file) => { file.entries = file.entries.filter((entry) => entry.id !== id); }),
     };
 }
 export const shortlistStore = createShortlistStore();

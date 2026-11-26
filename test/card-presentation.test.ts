@@ -119,3 +119,14 @@ test("raw resale does not demand a PSA grade, while global photo and purchase ho
     const incomplete = mixedCoverageEvaluation(); incomplete.photoCheck = null;
     assert.equal(auctionDecision(incomplete).provisional, true, "an absent photo assessment cannot support a confirmed bid limit");
 });
+
+test("a legacy raw auction priced only from an asking quote has no actionable ceiling in the detail view", () => {
+    const e = mixedCoverageEvaluation();
+    const raw = e.underwriting!.paths.find(route => route.path === "RAW" && route.status === "PRICED")!;
+    assert.ok(raw);
+    e.underwriting!.best = raw;
+    e.rawPricing!.prices = [{ ...e.rawPricing!.prices![0], basis: "TCGPLAYER_MARKET" }];
+    const bid = auctionDecision(e);
+    assert.equal(bid.ceiling, null);
+    assert.equal(bid.atCeiling, null);
+});

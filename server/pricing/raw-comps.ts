@@ -82,6 +82,7 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
         const sampledSoldCopies = sales.length;
         let sellerConditionComps: CompSummary | undefined;
         let cleanerSellerConditionComps: CompSummary | undefined;
+        let withheldPremium = false, reviewedSoldCopies = 0;
         let titleMatchedSoldCopies = 0, uncertainPhotoReviews = 0, unusableSoldCopies = 0;
         if (assessCondition) {
             const eligible = sales.filter(eligibleSale);
@@ -97,40 +98,44 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
             }));
             const matched = [...accepted.values()].filter(evidence => evidence.condition === requestedCondition).length;
             const unassessed = eligible.filter(sale => !accepted.has(sale));
-            if (acquireCondition && requestedCondition && RAW_CONDITIONS.includes(requestedCondition) && !cacheReadFailed) {
-                const inspect = async (offered: Comp[], checkPriceSpread = false) => {
-                    signal?.throwIfAborted();
-                    const result = await acquireCondition(Object.freeze(offered), identity, signal, checkPriceSpread);
-                    signal?.throwIfAborted();
-                    if (!result || !offered.includes(result.sale) || !RAW_CONDITIONS.includes(result.evidence.condition) ||
-                        !result.evidence.evidence.length || !Number.isSafeInteger(result.evidence.photoCount) || result.evidence.photoCount < 1) return false;
-                    accepted.set(result.sale, result.evidence);
-                    return true;
-                };
-                if (matched < MIN_MATCHED_SALES && unassessed.length) await inspect(unassessed);
-                // One premium copy might be cleaner than its seller indicated. When
-                // multiple other copies cluster elsewhere, inspect examples from that
-                // cluster before letting the premium set the price. Only confirmed
-                // physical matches can enter the resale average.
-                const cohort = eligible.filter(sale => {
-                    if (accepted.has(sale)) return accepted.get(sale)!.condition === requestedCondition;
-                    return titleMatches(sale) && claimedCondition(sale) === requestedCondition;
-                });
-                if (cohort.length >= 3) {
-                    const amounts = cohort.map(sale => sale.price);
-                    const middle = median(amounts), deviation = rawPriceDeviation(amounts, middle);
-                    const ordinary = cohort.filter(sale => Math.abs(sale.price - middle) <= deviation);
-                    const verifiedPremium = cohort.some(sale => accepted.has(sale) && sale.price > middle + deviation);
-                    if (verifiedPremium && ordinary.length >= 2) {
-                        const pending = ordinary.filter(sale => !accepted.has(sale));
-                        let confirmations = ordinary.filter(sale => accepted.has(sale)).length;
-                        while (confirmations < 2 && pending.length) {
-                            if (!await inspect([...pending], true)) break;
-                            const index = pending.findIndex(sale => accepted.has(sale));
-                            const [checked] = pending.splice(index, 1);
-                            if (accepted.get(checked)?.condition === requestedCondition) confirmations++;
-                        }
+            const inspect = async (offered: Comp[], checkPriceSpread = false) => {
+                signal?.throwIfAborted();
+                const result = await acquireCondition!(Object.freeze([...offered]), identity, signal, checkPriceSpread);
+                signal?.throwIfAborted();
+                if (!result || !offered.includes(result.sale) || !RAW_CONDITIONS.includes(result.evidence.condition) ||
+                    !result.evidence.evidence.length || !Number.isSafeInteger(result.evidence.photoCount) || result.evidence.photoCount < 1) return null;
+                accepted.set(result.sale, result.evidence);
+                return result;
+            };
+            if (acquireCondition && requestedCondition && RAW_CONDITIONS.includes(requestedCondition) && !cacheReadFailed && matched < MIN_MATCHED_SALES && unassessed.length) {
+                await inspect(unassessed);
+            }
+            const comparableAtCondition = (sale: Comp) => {
+                if (accepted.has(sale)) return accepted.get(sale)!.condition === requestedCondition;
+                const status = conditionStatus?.(sale, identity);
+                return status !== "OTHER_CARD" && status !== "SELLER_CONFLICT" && titleMatches(sale) && claimedCondition(sale) === requestedCondition;
+            };
+            const cohort = requestedCondition ? eligible.filter(comparableAtCondition) : [];
+            const premiums = new Set<Comp>();
+            if (cohort.length >= 3) {
+                const amounts = cohort.map(sale => sale.price);
+                const middle = median(amounts), deviation = rawPriceDeviation(amounts, middle);
+                const ordinary = cohort.filter(sale => Math.abs(sale.price - middle) <= deviation);
+                for (const sale of cohort) {
+                    if (accepted.has(sale) && sale.price > middle + deviation) premiums.add(sale);
+                }
+                if (premiums.size && ordinary.length >= 2) {
+                    const pending = ordinary.filter(sale => !accepted.has(sale));
+                    let confirmed = ordinary.length - pending.length;
+                    for (let attempt = 0; acquireCondition && !cacheReadFailed && attempt < 2 && confirmed < 2 && pending.length; attempt++) {
+                        const result = await inspect(pending, true);
+                        if (!result) break;
+                        pending.splice(pending.indexOf(result.sale), 1);
+                        if (result.evidence.condition === requestedCondition) confirmed++;
                     }
+                    // If the cheaper copies are still plausible, the isolated high sale
+                    // cannot set the exit. Keep its physical review for subsequent checks.
+                    withheldPremium = confirmed < 2 && ordinary.filter(comparableAtCondition).length >= 2;
                 }
             }
             if (requestedCondition && !cacheReadFailed) {
@@ -154,6 +159,7 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
                     }
                 }
             }
+            reviewedSoldCopies = accepted.size;
             sales = eligible.flatMap(sale => {
                 const assessed = accepted.get(sale);
                 if (!assessed) {
@@ -161,6 +167,7 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
                     if (status === "REVIEWED" || status === "CORROBORATABLE") uncertainPhotoReviews++;
                     if (status === "UNUSABLE") unusableSoldCopies++;
                 }
+                if (withheldPremium && premiums.has(sale)) return [];
                 return assessed ? [{ ...sale, photoCondition: assessed.condition, conditionEvidence: assessed.evidence, sellerCondition: compCondition(sale.title) }] : [];
             });
         }
@@ -215,7 +222,8 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
             .find(condition => prices.some(price => price.condition === condition));
         const photoNote = [
             `${titleMatchedSoldCopies} of ${sampledSoldCopies} sold records passed the title and sale checks.`,
-            `Photos verified the condition of ${sales.length} sold ${sales.length === 1 ? "copy" : "copies"}.`,
+            `Photos verified the condition of ${reviewedSoldCopies} sold ${reviewedSoldCopies === 1 ? "copy" : "copies"}.`,
+            withheldPremium ? "An isolated high sale was excluded while lower-priced copies await a condition match." : null,
             uncertainPhotoReviews > 0 ? `Photo reviews were inconclusive for ${uncertainPhotoReviews}.` : null,
             unusableSoldCopies > 0 ? `${unusableSoldCopies} had unavailable or unusable listing photos.` : null,
             requestedCondition && !atCondition ? `No verified sale established a ${CONDITION_NAMES[requestedCondition]} price.` : null,
@@ -225,7 +233,7 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
             status: "PRICE_UNAVAILABLE", reason: "The available eBay sales don't establish a raw resale price for this printing and condition.",
         }), ebayComps: summaries, ...(assessCondition && requestedCondition && {
             sellerConditionComps: sellerConditionComps ?? null, cleanerSellerConditionComps: cleanerSellerConditionComps ?? null }),
-            conditionEvidence: assessCondition ? "AI_PHOTOS" : "SELLER_TEXT", reviewedSoldCopies: assessCondition ? sales.length : undefined, sampledSoldCopies,
+            conditionEvidence: assessCondition ? "AI_PHOTOS" : "SELLER_TEXT", reviewedSoldCopies: assessCondition ? reviewedSoldCopies : undefined, sampledSoldCopies,
             evidenceNote: assessCondition ? photoNote
                 : "Screening uses seller-stated raw conditions. Final evaluations assess sold-copy photos where available. Up to 40 returned records over 90 days are sampled." };
     } catch (error) {

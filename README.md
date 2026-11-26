@@ -88,7 +88,7 @@ snapshot. Azure SQL also retains individual sales by product, marketplace and
 transaction ID across snapshots. File storage keeps a dated snapshot per product.
 
 Find a flip can request this comparison when it checks sales for a photo-identified
-card. Customer-facing use requires express written permission under PriceCharting's
+card. The buyer can also request a guide through **Check additional prices**. A guide uses the exact catalog mapping and keeps its source grade labels. Customer-facing use requires express written permission under PriceCharting's
 [terms](https://www.pricecharting.com/page/terms-of-service). With that permission,
 set `PRICECHARTING_BUYER_USE_AUTHORIZED=true` and supply validated product mappings
 as a JSON array in `PRICECHARTING_PRODUCT_MAP`. For example:

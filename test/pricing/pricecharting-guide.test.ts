@@ -93,7 +93,7 @@ test("on-demand lookup requires an authorized exact catalog match and separates 
     const quotes = await Promise.all([1, 2].map(() => priceChartingComparison(identity, undefined, options)));
     assert.equal(calls, 1);
     assert.deepEqual(quotes[0], quotes[1]);
-    assert.deepEqual(quotes[0].prices.map(row => [row.source, row.price]), [["PriceCharting", 24]]);
+    assert.deepEqual(quotes[0].prices.map(row => [row.source, row.price]), [["PriceCharting", 24], ["PriceCharting", 1200.25]]);
     assert.match(quotes[0].observation, /Ungraded guide · mixed conditions \$24.00.*2 distinct transactions, 1 with conflicting grade labels/);
     assert.match(quotes[0].observation, /Ungraded: 0 observed.*Grade 7: 1 observed, 1 selling day, 0.02\/day, median \$37.00/);
     const published = readPriceChartingGuide(html, product, at);
@@ -107,4 +107,27 @@ test("on-demand lookup requires an authorized exact catalog match and separates 
         .map((soldOn, i) => ({ ...sale, soldOn, transactionId: String(i), price: [1000, 21, 23, 999, 800][i] })) };
     const counted = await priceChartingComparison(identity, undefined, { ...options, load: async () => ({ ...published, history }) });
     assert.match(counted.observation, /Grade 7: 3 observed, 2 selling days, 0.05\/day, median \$23.00/);
+});
+
+test("an optional guide failure leaves the listing usable and respects cancellation", async () => {
+    const identity = { status: "IDENTIFIED", name: "Dark Gengar", set: "Neo Destiny", cardNumber: "6/105",
+        printing: "UNLIMITED", finish: "HOLO", language: "English" } as const;
+    let requests = 0;
+    const load = async () => { requests++; throw new Error("Guide store is unavailable"); };
+    for (const catalog of ["invalid JSON", "{}", JSON.stringify([{ ...identity, ...product, id: null }])]) {
+        assert.equal(await priceChartingComparison(identity, undefined, { authorized: true, catalog, load }), null);
+    }
+    assert.equal(requests, 0);
+    const options = { authorized: true, catalog: JSON.stringify([{ ...identity, ...product }]), load };
+    assert.deepEqual((await priceChartingComparison(identity, undefined, options))?.prices, []);
+    assert.equal(requests, 1);
+    await assert.rejects(priceChartingComparison(identity, AbortSignal.abort(), options), { name: "AbortError" });
+});
+test("invalid calendar dates cannot enter guide history", () => {
+    const quote = readPriceChartingGuide(html.replace("2026-11-20", "2026-02-30"), product, at);
+    assert.equal(quote.history.unreadableRows, 1);
+    assert.equal(quote.history.sales.length, 1);
+    const partial = readPriceChartingGuide(html.replace("Grade 7 (1)", "Grade 7 (500)"), product, at);
+    assert.equal(partial.history.unpublishedRows, 499);
+    assert.equal(partial.history.unreadableRows, 0);
 });

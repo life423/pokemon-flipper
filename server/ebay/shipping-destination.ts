@@ -1,12 +1,14 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { validShippingZip } from "../../shared/shipping-zip.ts";
 import { Router } from "express";
 import { DATA_DIR } from "../lib/paths.ts";
 import { writeJsonAtomic } from "../lib/atomic-json.ts";
 
 const destinationContext = new AsyncLocalStorage<{ zip: string | null }>();
-export const validShippingZip = (value: unknown): value is string => typeof value === "string" && /^\d{5}(?:-\d{4})?$/.test(value);
+export { validShippingZip };
+
 
 export function createShippingDestination(file = path.join(DATA_DIR, "shipping-destination.json")) {
     function read(): { zip: string | null } {

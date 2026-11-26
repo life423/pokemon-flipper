@@ -20,7 +20,8 @@ test("hunt progress reports observed work only under the owning search and expir
             updatedAt: new Date(now).toISOString(), cohort: "Base Set", action: "find_listings", discovered: 42,
             screened: 0, retained: 0, reviewed: 0, photos: 0, scans: 0 });
         observer.stage("pricing", "Base Set", "find_listings");
-        observer.source(12, 20, 1);
+        observer.source(12, 20, 1, 17);
+        assert.equal(progress.read("root", "child")?.queuedInLastQuery, 17);
         observer.retain(5);
         observer.stage("reviewing", "Real listing", "inspect_photos");
         observer.checked("copy-1", "inspect_photos");

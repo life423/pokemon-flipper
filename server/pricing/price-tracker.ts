@@ -58,6 +58,10 @@ const MOST_SET_PAGES = 20;
 
 // Each English set's release year, by set key (shared/sets.ts), for every
 // set PokemonPriceTracker knows. Saved for a month: sets don't change.
+export async function savedSetYears() {
+    return await readCache<Record<string, number>>(YEARS_KEY, Infinity) ?? {};
+}
+
 export async function setYears(): Promise<Record<string, number>> {
     return share(YEARS_KEY, async () => {
     const cached = await readCache<Record<string, number>>(YEARS_KEY, MONTH_HOURS);

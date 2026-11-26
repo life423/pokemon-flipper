@@ -182,7 +182,7 @@ test("best-buy comparison is still offered above the profitable ceiling and stor
 test("exact slab discovery accepts a short title number without weakening identity or the price ceiling", async () => {
     const query = "Rayquaza V Evolving Skies 194/203 PSA 9";
     const targets = { minProfit: 0, minRoi: 0 };
-    const purchaseCeiling = maxBid({ expectedNet: netFromSale(500, "graded", MONEY_CONFIG.selling), fixedCosts: 0, shipping: 0 },
+    const purchaseCeiling = maxBid({ expectedNet: netFromSale((500 * 4 + 300) / 5, "graded", MONEY_CONFIG.selling), fixedCosts: 0, shipping: 0 },
         { ...MONEY_CONFIG, targets });
     const { run, calls } = harness({
         cards: [card({ name: "Rayquaza V (Alternate Full Art)", setName: "Evolving Skies", cardNumber: "194/203" })],

@@ -56,7 +56,7 @@ export function collectorArtworkDecision(reference: Pick<CollectorReference, "ca
     const target = `${reference.cardName} ${reference.cardNumber}`;
     // A different illustration settles this comparison. A small-print reading
     // from the same model cannot establish which other card the seller has.
-    if (artwork === "DIFFERENT_ART") return { matches: false, reason: `The card in the listing photo has different artwork from the catalog front for ${target}.` };
+    if (artwork === "DIFFERENT_ART") return { matches: false, differentArtwork: true as const, reason: `The card in the listing photo has different artwork from the catalog front for ${target}.` };
     if (artwork === "UNCLEAR") return { matches: false, reason: `The original front did not show enough of the illustration to match ${target}.` };
     if (listingNumber !== null && compareCardNumbers(listingNumber, reference.cardNumber) !== true)
         return { matches: false, reason: `The collector number read from the listing photo does not agree with ${target}.` };

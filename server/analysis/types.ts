@@ -2,7 +2,7 @@ import type { BuyingOption, Condition, DeeperPhotoReview, PhotoCheck, Evaluation
 
 export type GradingMode = "FULL" | "LIMITED" | "BLOCKED";
 
-// Current purchase terms supplied by the browser; photo evidence is reused
+// Current purchase terms observed by the server; photo evidence is reused
 // independently from these changing listing facts.
 export interface CurrentState {
     shippingDestination?: string | null;

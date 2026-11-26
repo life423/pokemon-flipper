@@ -48,8 +48,12 @@ export interface DealHuntReport {
     reason: string;
     marketNote?: string;
     providerStop?: "daily_ebay" | "account";
+    /** The search needs an accounting or spending issue resolved before another pass. */
+    needsAttention?: true;
+    waitingForQuota?: true;
     destination: { listingId: string; section: DealHuntSection } | null;
     verifiedPurchase?: VerifiedPurchase;
+    priceGap?: { allIn: number; maxItemPrice: number; drop: number };
     steps: {
         listingId: string | null;
         title: string;
@@ -67,6 +71,7 @@ export interface DealHuntReport {
 export interface DealHuntResponse {
     nextCheckAt?: number;
     waitingFor?: "inventory" | "provider";
+    waitingForQuota?: true;
     gradingOpportunity?: import("./grading-watch.ts").GradingOpportunity;
     auctionOpportunity?: import("./auction-opportunity.ts").AuctionOpportunity;
     collectorAuction?: import("./collector-auction.ts").CollectorAuction;

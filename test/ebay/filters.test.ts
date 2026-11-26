@@ -11,6 +11,11 @@ test("keeps a single card whose title matches the search", () => {
     assert.equal(exclusionReason(item), null);
 });
 
+test("a card-shaped suncatcher is merchandise, but a card may include one as a gift", () => {
+    assert.match(exclusionReason(single('Charizard ex 199/165 SIR suncatcher 6"'))!, /Merchandise/);
+    assert.equal(exclusionReason(single("Charizard ex 199/165 with a suncatcher")), null);
+});
+
 test("drops pick-your-card listings even when an option matches", () => {
     const item = single(
         "Pokemon 151 Cards! Holo/Reverse Holo Ex Illustration Ultra Double Rare Card!",

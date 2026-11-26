@@ -50,7 +50,7 @@ export function reconcileHuntListing(original: ListingSummary, evaluation: Evalu
     return { compatible, currentTerms, listing };
 }
 
-export function selectedHuntListing(response: DealHuntResponse, searchId: string, goal: DealHuntGoal, scope: DealHuntScope, listings: ListingSummary[], format: BuyingOption = "FIXED_PRICE") {
+export function selectedHuntListing(response: DealHuntResponse, searchId: string, goal: DealHuntGoal, scope: DealHuntScope, listings: ListingSummary[], format: BuyingOption = "FIXED_PRICE", { allowExpiredBid = false } = {}) {
     const { report, evaluation, alternative } = response;
     const destination = report.destination;
     const mismatch = "The returned evidence does not match this search. Run it again on the current results.";
@@ -63,7 +63,8 @@ export function selectedHuntListing(response: DealHuntResponse, searchId: string
     if (!Object.hasOwn(huntSections, destination.section) || evaluation?.listing.id !== destination.listingId) throw new Error(mismatch);
     const bid = goal === "collect_slab" ? response.collectorAuction : response.auctionOpportunity;
     if (evaluation.listing.buyingOption !== format || report.decision === "BID" &&
-        (bid?.listingId !== destination.listingId || bid.status !== "BID" || !(bid.validUntil > Date.now()))) throw new Error(mismatch);
+        (bid?.listingId !== destination.listingId || bid.status !== "BID" || !Number.isFinite(bid.validUntil) ||
+            !allowExpiredBid && !(bid.validUntil > Date.now()))) throw new Error(mismatch);
     const retained = listings.find(row => row.id === destination.listingId);
     if (!alternative) {
         if (!retained || retained.buyingOption !== format) throw new Error(mismatch);

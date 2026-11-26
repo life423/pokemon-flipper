@@ -1,5 +1,6 @@
 import { sameCardNumber } from "../../shared/card-number.ts";
 import { normalizeSetName } from "../identity/card-identity.ts";
+import { isSv151Set } from "../identity/matches-label-text.ts";
 import { sameCatalogName } from "../identity/catalog-name.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { fetchJson } from "../lib/http.ts";
@@ -17,12 +18,13 @@ interface CatalogCard {
 const asset = /^https:\/\/assets\.tcgdex\.net\/en\/[a-z0-9][a-z0-9.-]*\/([a-z0-9][a-z0-9.-]*)\/([a-z0-9][a-z0-9-]*)$/i;
 const numbered = /^#?([a-z]{0,6}\d{1,4}[a-z]?)(?:\s*\/\s*([a-z]{0,6}\d{1,4}[a-z]?))?$/i;
 const share = createSharedWork();
+const catalogSetName = (set: string) => isSv151Set(set) ? "151" : normalizeSetName(set);
 
 function matchedReference(card: CatalogCard | null, target: Target): CollectorReference | null {
     const official = card?.set?.cardCount?.official;
     if (!card || !Number.isSafeInteger(official) || Number(official) <= 0 ||
         typeof card.name !== "string" || typeof card.set.name !== "string" || !sameCatalogName(card.name, target.name) ||
-        normalizeSetName(card.set.name) !== normalizeSetName(target.set) || typeof card.localId !== "string" ||
+        catalogSetName(card.set.name) !== catalogSetName(target.set) || typeof card.localId !== "string" ||
         card.id !== card.set.id + "-" + card.localId || typeof card.image !== "string") return null;
     const coordinates = asset.exec(card.image);
     const cardNumber = card.localId + "/" + official;
@@ -34,7 +36,7 @@ function matchedReference(card: CatalogCard | null, target: Target): CollectorRe
 // A seller's title, photo URL or suggested catalog match never supplies the reference.
 export async function resolveCollectorReference(target: Target, signal?: AbortSignal): Promise<CollectorReference | null> {
     signal?.throwIfAborted();
-    const set = normalizeSetName(target.set);
+    const set = catalogSetName(target.set);
     const number = numbered.exec(target.cardNumber.trim());
     if (!set || !target.name.trim() || !number) return null;
     // The catalog accepts unpadded lookup numbers for both old and modern sets.

@@ -119,37 +119,102 @@ function addReported(total: number | null | undefined, value: unknown): number |
     return total === null || reported === null ? null : (total ?? 0) + reported;
 }
 
+function addAttempt(stages: Map<string, AiUsageStage>, row: Partial<AiAttempt>) {
+    const step = text(row.step) ?? "unknown", model = text(row.model) ?? "unknown", serviceTier = text(row.serviceTier);
+    const key = JSON.stringify([step, model, serviceTier]);
+    const stage = stages.get(key) ?? { step, model, serviceTier, calls: 0, failed: 0, images: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0,
+        cacheWriteTokens: 0, cacheWrite30mTokens: 0, cacheWrite12hTokens: 0, reasoningOutputTokens: 0, unreportedUsageCalls: 0, unreportedCacheWriteCalls: 0 };
+    stage.calls++;
+    if (row.status === null || (row.status ?? 0) >= 400 || ["incomplete", "failed", "cancelled"].includes(row.responseStatus ?? "") || row.hasRefusal) stage.failed++;
+    stage.images += count(row.images) ?? 0;
+    stage.inputTokens += count(row.inputTokens) ?? 0;
+    stage.outputTokens += count(row.outputTokens) ?? 0;
+    stage.cachedInputTokens += count(row.cachedInputTokens) ?? 0;
+    stage.cacheWriteTokens = addReported(stage.cacheWriteTokens, row.cacheWriteTokens);
+    stage.cacheWrite30mTokens = addReported(stage.cacheWrite30mTokens, row.cacheWrite30mTokens);
+    stage.cacheWrite12hTokens = addReported(stage.cacheWrite12hTokens, row.cacheWrite12hTokens);
+    stage.reasoningOutputTokens = addReported(stage.reasoningOutputTokens, row.reasoningOutputTokens);
+    const legacyReported = row.status !== null && (row.status ?? 500) < 400 && count(row.inputTokens) !== null && count(row.outputTokens) !== null;
+    if (!(row.usageReported ?? legacyReported)) stage.unreportedUsageCalls!++;
+    if (count(row.cacheWriteTokens) === null) stage.unreportedCacheWriteCalls!++;
+    stages.set(key, stage);
+}
+
+function parseAttempt(line: string): Partial<AiAttempt> | null {
+    try {
+        const row = JSON.parse(line);
+        return row && typeof row.step === "string" && typeof row.model === "string" ? row : null;
+    } catch { return null; }
+}
+
+function emptyUsage() {
+    return { stages: new Map<string, AiUsageStage>(), searches: new Map<string, Map<string, AiUsageStage>>(), unattributed: 0 };
+}
+
+// The NDJSON log is append-only. This index is disposable and never authorizes spending.
+let index = { ...emptyUsage(), path: "", identity: "", offset: 0, size: 0, modified: 0, tail: "" };
+let refreshing: Promise<void> | undefined;
+
+async function refreshUsage(destination: string) {
+    let handle;
+    try {
+        handle = await fs.open(destination, "r");
+        const stat = await handle.stat();
+        const identity = [stat.dev, stat.ino, stat.birthtimeMs].join("/");
+        if (index.path !== destination || index.identity !== identity || stat.size < index.size ||
+            stat.size === index.size && stat.mtimeMs !== index.modified) {
+            index = { ...emptyUsage(), path: destination, identity, offset: 0, size: 0, modified: 0, tail: "" };
+        }
+        if (stat.size === index.size) return;
+        // Index only newline-terminated records. A legacy final line is overlaid on
+        // snapshots until completed, so a concurrent partial append cannot be counted twice.
+        let cursor = index.offset, carry = Buffer.alloc(0);
+        const chunk = Buffer.allocUnsafe(Math.min(256 * 1024, stat.size - cursor));
+        while (cursor < stat.size) {
+            const { bytesRead } = await handle.read(chunk, 0, Math.min(chunk.length, stat.size - cursor), cursor);
+            if (!bytesRead) throw new Error("The AI usage log changed during a read.");
+            cursor += bytesRead;
+            const data = carry.length ? Buffer.concat([carry, chunk.subarray(0, bytesRead)]) : chunk.subarray(0, bytesRead);
+            const last = data.lastIndexOf(10);
+            if (last >= 0) {
+                for (const line of data.toString("utf8", 0, last).split("\n")) {
+                    const row = parseAttempt(line);
+                    if (!row) continue;
+                    addAttempt(index.stages, row);
+                    if (typeof row.searchId === "string" && row.searchId) {
+                        let stages = index.searches.get(row.searchId);
+                        if (!stages) { stages = new Map(); index.searches.set(row.searchId, stages); }
+                        addAttempt(stages, row);
+                    } else index.unattributed++;
+                }
+            }
+            carry = Buffer.from(data.subarray(last + 1));
+            index.offset = cursor - carry.length;
+        }
+        index.tail = carry.toString("utf8");
+        index.size = stat.size;
+        index.modified = stat.mtimeMs;
+    } catch (error) {
+        index.path = "";
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        index = { ...emptyUsage(), path: destination, identity: "", offset: 0, size: 0, modified: 0, tail: "" };
+    } finally { await handle?.close(); }
+}
+
 export async function aiUsageToday(searchId?: string): Promise<AiUsageDay> {
-    let lines: string;
-    try { lines = await fs.readFile(file(), "utf8"); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") lines = ""; else throw error; }
-    const stages = new Map<string, AiUsageStage>();
-    let unattributedCalls = 0;
-    for (const line of lines.split("\n").filter(Boolean)) {
-        let row: Partial<AiAttempt>;
-        try { row = JSON.parse(line); } catch { continue; }
-        if (!row || typeof row !== "object" || Array.isArray(row) || typeof row.step !== "string" || typeof row.model !== "string") continue;
-        if (searchId !== undefined && row.searchId !== searchId) continue;
-        if (!row.searchId) unattributedCalls++;
-        const step = text(row.step) ?? "unknown", model = text(row.model) ?? "unknown", serviceTier = text(row.serviceTier);
-        const key = JSON.stringify([step, model, serviceTier]);
-        const stage = stages.get(key) ?? { step, model, serviceTier, calls: 0, failed: 0, images: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0,
-            cacheWriteTokens: 0, cacheWrite30mTokens: 0, cacheWrite12hTokens: 0, reasoningOutputTokens: 0, unreportedUsageCalls: 0, unreportedCacheWriteCalls: 0 };
-        stage.calls++;
-        if (row.status === null || (row.status ?? 0) >= 400 || ["incomplete", "failed", "cancelled"].includes(row.responseStatus ?? "") || row.hasRefusal) stage.failed++;
-        stage.images += count(row.images) ?? 0;
-        stage.inputTokens += count(row.inputTokens) ?? 0;
-        stage.outputTokens += count(row.outputTokens) ?? 0;
-        stage.cachedInputTokens += count(row.cachedInputTokens) ?? 0;
-        stage.cacheWriteTokens = addReported(stage.cacheWriteTokens, row.cacheWriteTokens);
-        stage.cacheWrite30mTokens = addReported(stage.cacheWrite30mTokens, row.cacheWrite30mTokens);
-        stage.cacheWrite12hTokens = addReported(stage.cacheWrite12hTokens, row.cacheWrite12hTokens);
-        stage.reasoningOutputTokens = addReported(stage.reasoningOutputTokens, row.reasoningOutputTokens);
-        const legacyReported = row.status !== null && (row.status ?? 500) < 400 && count(row.inputTokens) !== null && count(row.outputTokens) !== null;
-        if (!(row.usageReported ?? legacyReported)) stage.unreportedUsageCalls!++;
-        if (count(row.cacheWriteTokens) === null) stage.unreportedCacheWriteCalls!++;
-        stages.set(key, stage);
+    const destination = file();
+    do {
+        refreshing ??= refreshUsage(destination).finally(() => { refreshing = undefined; });
+        await refreshing;
+    } while (index.path !== destination);
+    const stages = new Map(Array.from(searchId === undefined ? index.stages : index.searches.get(searchId) ?? [],
+        ([key, stage]) => [key, { ...stage }]));
+    let unattributedCalls = searchId === undefined ? index.unattributed : 0;
+    const tail = index.tail && parseAttempt(index.tail);
+    if (tail && (searchId === undefined || tail.searchId === searchId)) {
+        addAttempt(stages, tail);
+        if (!tail.searchId) unattributedCalls++;
     }
-    return { dayUtc: new Date(Date.now()).toISOString().slice(0, 10), ...(searchId === undefined ? {} : { searchId }), unattributedCalls,
+    return { dayUtc: path.basename(destination, ".ndjson"), ...(searchId === undefined ? {} : { searchId }), unattributedCalls,
         calls: [...stages.values()].reduce((sum, stage) => sum + stage.calls, 0), stages: [...stages.values()] };
 }

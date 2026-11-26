@@ -243,11 +243,13 @@ async function finish(path: string, response: Response, body: ApiBody): Promise<
     return body;
 }
 
-export function catalogSample(params: URLSearchParams) { return apiGet("/cards?" + params, 24); }
-export function recentVolume(id: number, kind?: boolean) {
-    const query = new URLSearchParams({ currency: "usd", period: "7d", limit: "56" });
+export function catalogSample(params: URLSearchParams, cachedOnly = false) {
+    return (cachedOnly ? cachedApiGet : apiGet)("/cards?" + params, 24);
+}
+export function recentVolume(id: number, kind?: boolean, cachedOnly = false) {
+    const query = new URLSearchParams({ currency: "usd", period: "30d", limit: "64" });
     if (kind !== undefined) query.set("graded", String(kind));
-    return apiGet("/cards/" + id + "/sales/volume?" + query, 6);
+    return (cachedOnly ? cachedApiGet : apiGet)("/cards/" + id + "/sales/volume?" + query, 6);
 }
 export function dailyRawHistory(id: string, variant: string, condition: string) {
     const query = new URLSearchParams({ currency: "usd", period: "90d", variant, condition, limit: "90" });
@@ -600,16 +602,17 @@ export const fetchCachedRawComps: FetchRawComps = (recordId, variant, selection)
 
 // These use the same cache, pacing, cancellation and original-search accounting
 // as sold research. Live offers are not completed transactions.
-export async function fetchTcgplayerConditionData(recordId: CardRecord["id"], condition: string, printing: string, cursor?: string) {
+export async function fetchTcgplayerConditionData(recordId: CardRecord["id"], condition: string, printing: string, cursor?: string, cachedOnly = false) {
     const params = new URLSearchParams({ condition, language: "English", printing, sort: "total_asc", limit: "20" });
     if (cursor) params.set("cursor", cursor);
-    return apiGet(`/cards/${recordId}/listings/tcgplayer?${params}`, 1);
+    return (cachedOnly ? cachedApiGet : apiGet)(`/cards/${recordId}/listings/tcgplayer?${params}`, 1);
 }
-export async function fetchTcgplayerMarketData(recordId: CardRecord["id"]) {
-    return apiGet(`/cards/${recordId}`, DAY);
+export async function fetchTcgplayerMarketData(recordId: CardRecord["id"], cachedOnly = false) {
+    return (cachedOnly ? cachedApiGet : apiGet)(`/cards/${recordId}`, DAY);
 }
 
-export function createScreeningPriceSource({ signal: sourceSignal }: { signal?: AbortSignal } = {}) {
+export function createScreeningPriceSource({ signal: sourceSignal }: { signal?: AbortSignal } = {},
+    replay?: { read: typeof readApiCache }) {
     const signal = combinedSignal(sourceSignal, getPriceResearchSignal());
     let requests = 0;
     const queryCatalogs = new Map<string, CardRecord[]>();
@@ -623,7 +626,7 @@ export function createScreeningPriceSource({ signal: sourceSignal }: { signal?: 
         const key = JSON.stringify([path, maxAgeHours]);
         let pending = cachedResponses.get(key);
         if (!pending) {
-            pending = readApiCache(path, maxAgeHours);
+            pending = (replay?.read ?? readApiCache)(path, maxAgeHours);
             cachedResponses.set(key, pending);
             pending.then(value => { if (!value) cachedResponses.delete(key); }, () => { cachedResponses.delete(key); });
         }
@@ -634,6 +637,7 @@ export function createScreeningPriceSource({ signal: sourceSignal }: { signal?: 
     const get: typeof apiGet = async (path, maxAgeHours = DAY) => {
         const saved = await cached(path, maxAgeHours);
         if (saved) return saved;
+        if (replay) throw new PricingProviderError("No saved price response for this replay.", "TEMPORARY");
         const key = `${path}:${maxAgeHours}`;
         const sponsor = requestSponsor(signal, () => { requests += 1; });
         const detach = attachSponsor(requestSponsors, key, sponsor);
