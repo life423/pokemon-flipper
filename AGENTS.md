@@ -1,6 +1,6 @@
 # Project memory and working agreement
 
-Updated November 24, 2026. These are current requirements. Consult Git for
+Updated November 25, 2026. These are current requirements. Consult Git for
 branch and delivery state; obsolete planning reports are removed, not archived.
 
 ## Workspace and delivery
@@ -56,6 +56,15 @@ grading labels neutral so action emphasis does not imply a grading recommendatio
 
 Read docs/architecture.md for the source map and reading order.
 
+- Find a flip must not stop at a fixed total number of cards, markets, pages
+  or resale research steps. Catalog rankings and diversified first checks set
+  order; keep remaining copies and source cursors. Continue until a supported
+  opportunity, buyer cancellation, accessible inventory exhaustion, or a real
+  provider/quota/storage/accounting stop. Bound active batches, model context,
+  displayed cards and concurrency without silently discarding inventory. The
+  provider's own retrieval ceiling still requires partial-coverage disclosure.
+  Both formats share one original account and Stop; a verified current result
+  stops sibling work. Preserve likely-grade targets and fresh purchase terms.
 - Search and Find new listings share one bounded pipeline with up to 200 eBay
   summaries per source page and at most 50 retained matching rows per review
   batch. Preserve overflow, seen listing IDs and source offsets in server-owned
@@ -102,8 +111,8 @@ Read docs/architecture.md for the source map and reading order.
   Automatic auction searches and opportunities require more than zero and strictly less than 10 hours remaining.
   Minimum Buy It Now price does not exclude low auction starts. Widening a
   server-side filter requires an explicit rerun, never paid work while typing.
-- Sold screening shares catalog/market work across rows: four workers, 128
-  uncached PKMNPrices requests including catalog work. Sparse markets may follow
+- Sold screening shares catalog/market work across rows with four workers and
+  original-account request accounting. Sparse markets may follow
   up to four 20-sale pages, stopping once one eligible matched sale supports a
   scope; cached final-valuation pages are reused.
   Final pricing uses the same sold-target checks before windows/outliers and
@@ -194,15 +203,14 @@ Read docs/architecture.md for the source map and reading order.
   sold screening, one bounded text request can reorder tied Buy It Now photo
   candidates when automatic photos are on. Neither request changes pricing
   or verification requirements.
-- New searches allow **100 actual eBay Browse requests per search**, separate from daily
-  account quota/reserve. Retries, nested calls and restarts retain spent counts.
-  Cache hits, OAuth and Analytics are separate. The old expiring development
-  ledger is historical, not a daily app limit. Existing 25/50-request ledgers retain
-  their stored limits and counts; opening an old search never resets it.
-- PKMNPrices credits and eBay quota are separate from the AI ceiling. Screening
-  permits 128 uncached requests; final valuation and retries share one persistent
-  **256-request PKMNPrices allowance per new search UUID**. Existing 64/128-request
-  ledgers remain usable with their original limits and counts. Cache hits cost no new
+- Production Browse and PKMNPrices have no per-search request ceiling on this
+  installation. Original search IDs retain request counts, historical limits,
+  spending and unresolved state across retries, nested calls and restarts. The
+  daily eBay reserve, provider pacing and cancellation still apply. Cache hits,
+  OAuth and Analytics are separate; never reset a ledger to continue.
+- PKMNPrices credits and eBay quota are separate from the AI ceiling. Final
+  valuation and retries retain the original account. Legacy numeric limits are
+  preserved as historical metadata when accounting advances; cache hits cost no new
   request; failed/unknown attempts remain counted across restarts/days. Actual
   credits are read from provider headers separately from returned rows and USD.
   The user's subscription supplies 20,000 daily credits. Local request accounting
@@ -211,9 +219,7 @@ Read docs/architecture.md for the source map and reading order.
   Price-only deferral stays Sorting while accepted photos and completed prices
   remain reusable; a supported profitable route can still reach Deals.
   The user authorizes broader PKMNPrices research as needed within reason.
-  Treat 128/256 as tunable runaway safeguards, not desired consumption or a reason
-  to starve useful comparisons. Raise them when measured useful work is deferred
-  and provider capacity supports it; preserve rate limits and shared cache reuse.
+  Preserve provider limits, daily reserve, rate pacing and shared cache reuse.
 - Daily usage warnings appear outside the drawer at <=20% remaining or >=5% of
   an allowance observed consumed within 15 minutes. Account-keyed local samples
   persist across searches/restarts, expire when stale or reset, and do not
@@ -251,7 +257,8 @@ Read docs/architecture.md for the source map and reading order.
 ## Evidence and financial rules
 
 - Raw resale uses matched eBay sales at the assessed condition or a supported
-  lower condition. Discard saved raw estimates without sold provenance.
+  lower condition, or supported exact-condition/printing TCGplayer valuation.
+  Discard unsupported saved estimates; keep quotes distinct from transactions.
   Asking-only slab references retain labeled scenario math. Price-only gaps
   stay Sorting and material photo risks still need attention. A separately
   supported profitable route remains usable. Unknown downside stays null.
@@ -266,9 +273,11 @@ Read docs/architecture.md for the source map and reading order.
   requires actual final-sale provenance, not an old bid/asking snapshot or guess.
 - Prefer the 90-day graded market as soon as one valid current match exists;
   use the labeled 180-day fallback only if there are no eligible current sales.
-  One or two matched sales retain LOW confidence. Raw final prices require
+  One or two matched sales retain LOW confidence. A raw sold-price route requires
   physical condition evidence for the sold copy, including exact identity and
-  printing; one accepted condition match can price the route. Seller titles
+  printing; a TCGplayer route instead matches the live copy's assessed condition
+  to the exact quoted printing. One accepted condition match can price the sold
+  route. Seller titles
   remain research clues, never a substitute for that physical acceptance.
 - Corroborated physical identity can correct seller metadata. Readable slab-cert
   typos are informational; actual holder/identity/authenticity conflicts matter.

@@ -1,8 +1,10 @@
+import { resaleActivity } from "../analysis/resale-activity.ts";
+import { observedSoldSales } from "../../shared/sales-activity.ts";
 import { analysisPriority, comparePriority } from "../../shared/analysis-priority.ts";
 import { cents, meetsMoneyTargets } from "../../shared/money/cents.ts";
 import { acquisitionCost, netFromSale } from "../../shared/money/underwriting.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
-import { soldMarketPrice, usableGradingLead, usableSoldReference } from "../../shared/sold-evidence.ts";
+import { hasExactSoldScope, soldMarketPrice, usableGradingLead, usableSoldReference } from "../../shared/sold-evidence.ts";
 import type { ListingSummary, Targets } from "../../shared/types.ts";
 
 // These are provisional seller/catalog labels for ordering research, never
@@ -42,6 +44,7 @@ export function orderBroadDiscovery(rows: ListingSummary[], targets: Targets | u
 // never adds a premium to its estimated resale value.
 export function freshResaleCandidates(rows: ListingSummary[], targets: Targets, now: number) {
     const funded: ListingSummary[] = [], overlooked: ListingSummary[] = [], other: ListingSummary[] = [];
+    const priorities = new Map<string, number>();
     for (const row of orderBroadDiscovery(rows, targets, now)) {
         if (!row.images.some(Boolean) || row.currentPrice == null) continue;
         const cost = row.shipping === null ? null : acquisitionCost(row.currentPrice, row.shipping, MONEY_CONFIG.buying);
@@ -53,24 +56,27 @@ export function freshResaleCandidates(rows: ListingSummary[], targets: Targets, 
             const net = netFromSale(soldMarketPrice(ref.summary)!, row.isGraded ? "graded" : "raw", MONEY_CONFIG.selling);
             return meetsMoneyTargets(cents(net), cents(cost), targets.minProfit, targets.minRoi);
         });
+        // Compare transactions within one condition/grade and printing at a time.
+        // This only orders checks. The pictured copy still needs to match the market.
+        const evidence = row.screen?.soldEvidence;
+        const exact = evidence && hasExactSoldScope(evidence, row.screen?.card?.printing);
+        for (const ref of exact ? references : []) {
+            if (!usableSoldReference(ref, row.isGraded) || !row.isGraded && !ref.condition) continue;
+            const activity = resaleActivity(observedSoldSales(ref.summary.activitySales ?? ref.summary.sales ?? [], now,
+                { maxDays: 60, slab: row.isGraded }));
+            if (activity) priorities.set(row.id, Math.max(priorities.get(row.id) ?? 0, activity.priority));
+        }
         if (potential || usableGradingLead(row)) funded.push(row);
         else if (row.mistakes?.length || row.screen?.priceAnomaly ||
             row.screen?.incomplete && /\d+\s*\/\s*\d+/.test(row.title)) overlooked.push(row);
         else other.push(row);
     }
-    // Give imperfect listings a photo check while bounding speculative paid work.
-    // Use a fresh page for new opportunities after these hypotheses have been tested.
-    const seen = new Set<string>();
-    const distinct = (pool: ListingSummary[], count: number) => {
-        const picks: ListingSummary[] = [];
-        for (const row of pool) {
-            const key = discoveryMarketKey(row);
-            if (seen.has(key)) continue;
-            seen.add(key);
-            picks.push(row);
-            if (picks.length === count) break;
-        }
-        return picks;
-    };
-    return [...distinct(funded, 8), ...distinct(overlooked, 2), ...distinct(other, 1)];
+    // Diversify the first checks without discarding another physical copy.
+    // Its condition may make it the profitable one even when its title and
+    // provisional market match a copy already checked. The caller's bounded
+    // review batch controls concurrency; it is not a lifetime candidate limit.
+    for (const tier of [funded, overlooked, other]) tier.sort((a, b) => (priorities.get(b.id) ?? 0) - (priorities.get(a.id) ?? 0));
+    const priority = [...funded.slice(0, 8), ...overlooked.slice(0, 2), ...other.slice(0, 1)];
+    const selected = new Set(priority.map(row => row.id));
+    return [...priority, ...[...funded, ...overlooked, ...other].filter(row => !selected.has(row.id))];
 }

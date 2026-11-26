@@ -51,7 +51,7 @@ import { huntPrintingCheck, huntPrintingTerms } from "./deal-hunt-printing.ts";
 import { readStampCrop } from "./stamp-reading.ts";
 import { printingMarkConflicts, reconcileIdentityReadings, visibleReprintReading } from "./resolve-evidence.ts";
 import { assertPriceResearchAvailable, PriceResearchBudgetError, withPriceResearchSignal } from "../pricing/research-budget.ts";
-import { getAiUsageContext, withAiUsageContext, type AiUsageContext } from "../ai/usage-context.ts";
+import { getAiUsageContext, getBudgetContext, withAiUsageContext, type AiUsageContext } from "../ai/usage-context.ts";
 import { RejectedPhotoAssessmentError } from "./failure.ts";
 import { supplementalResearch } from "../pricing/supplemental-research.ts";
 import { tcgplayerRawPrice } from "../pricing/tcgplayer-raw.ts";
@@ -59,7 +59,7 @@ import { hasUnlocatedConcern } from "./authenticity.ts";
 
 const CACHE_HOURS = 24 * 365 * 10;
 interface SavedBoundedReading extends BoundedReading { version: string; answeredAt: string; usage: Usage }
-export interface BoundedOptions { automatic?: boolean; typeFilter?: ListingFilters["typeFilter"]; includeOffers?: boolean; targets?: Targets; signal?: AbortSignal; current?: import("./types.ts").CurrentState | null; priceOnly?: boolean; huntPrinting?: { maxDelivered?: number }; verifySoldCondition?: boolean; addedPhotosOnly?: boolean }
+export interface BoundedOptions { deferSupplemental?: boolean; automatic?: boolean; typeFilter?: ListingFilters["typeFilter"]; includeOffers?: boolean; targets?: Targets; signal?: AbortSignal; current?: import("./types.ts").CurrentState | null; priceOnly?: boolean; huntPrinting?: { maxDelivered?: number }; verifySoldCondition?: boolean; addedPhotosOnly?: boolean }
 export class PriceOnlyEvidenceError extends Error {}
 
 // A wider estimate can describe a photographed card, but it cannot support grading economics.
@@ -320,7 +320,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
     type ReadingConsumer = { needed: () => boolean; context: AiUsageContext };
     const neededReadings = new Map<string, Set<ReadingConsumer>>();
     const privateEvaluations = createPrivateEvaluationStore({ cached: deps.cached, save: deps.save });
-    return (itemId: string, options: BoundedOptions = {}): Promise<Evaluation> => share(JSON.stringify([getAiUsageContext().searchId ?? null, itemId, options.current ?? null, options.automatic ?? false, options.typeFilter ?? "all", options.includeOffers !== false, options.targets ?? null, options.priceOnly === true, options.huntPrinting ?? null, options.verifySoldCondition === true, options.addedPhotosOnly === true]), signal => withPriceResearchSignal(signal, async () => {
+    return (itemId: string, options: BoundedOptions = {}): Promise<Evaluation> => share(JSON.stringify([getAiUsageContext().searchId ?? null, itemId, options.current ?? null, options.automatic ?? false, options.typeFilter ?? "all", options.includeOffers !== false, options.targets ?? null, options.priceOnly === true, options.huntPrinting ?? null, options.verifySoldCondition === true, options.addedPhotosOnly === true, options.deferSupplemental === true]), signal => withPriceResearchSignal(signal, async () => {
         signal.throwIfAborted();
         const searchId = getAiUsageContext().searchId;
         const savedForRefresh = options.priceOnly ? await privateEvaluations.load(itemId) : null;
@@ -445,9 +445,14 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             if (deps.supplemental && scope && !ended && verifiedFixedPriceTerms() && !options.addedPhotosOnly && !releaseIssue(draft) && !result.identity?.notThisCard) {
                 const supplement = deps.supplemental;
                 Object.assign(result, await withAiUsageContext({ searchId: scope, listingId: itemId }, () =>
-                    supplement(result, { cacheOnly: Boolean(options.priceOnly && !options.verifySoldCondition), now: deps.now(), signal })));
+                    supplement(result, { cacheOnly: Boolean(options.deferSupplemental || options.priceOnly && !options.verifySoldCondition), now: deps.now(), signal })));
             }
-            if (result.photoCheck) await privateEvaluations.save(releaseIssue(draft) ? draft : result, { ...privateContext, searchId: scope });
+            if (result.photoCheck) {
+                const owner = scope && scope === priorSnapshot?.searchId ? priorSnapshot.budgetOwner ?? (scope === searchId ? getBudgetContext().searchId : scope)
+                    : getBudgetContext().searchId;
+                await privateEvaluations.save(releaseIssue(draft) ? draft : result, { ...privateContext, searchId: scope,
+                    ...(scope && isSearchDiagnosticId(owner) && owner !== scope && { budgetOwner: owner }) });
+            }
             // A tentative grade can turn an otherwise profitable purchase into a loss.
             // Save first: the reviewer checks the persisted gallery and owns its evidence cache.
             if (deps.secondOpinion && scope && result.photoReviewKey && !result.deeperPhotoReview && !result.slab &&

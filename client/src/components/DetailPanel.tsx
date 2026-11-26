@@ -1,3 +1,5 @@
+import { MarketPrices } from "./MarketPrices";
+import { listingMarketPrices } from "../../../shared/listing-market-prices.ts";
 import { MarketReferences } from "./analysis/MarketReferences";
 import { useEffect, useRef, type RefObject } from "react";
 import type { AnalysisState, PriceRefreshState } from "../analysis-state";
@@ -72,6 +74,7 @@ export function DetailPanel({ listing, analysis, automaticDecision: receipt, rev
     const showPurchaseScenarios = !collecting && !checking && !override;
     const comparisonMarket = evaluation && cardmarketComparisonKey(evaluation);
     const pricingExpired = analysis?.status === "done" && analysis.pricingExpired;
+    const prices = !checking && !pricingExpired && !unavailable && evaluation ? listingMarketPrices(evaluation, listing, now) : undefined;
     const canRefreshPrices = onRefreshPrices && !unavailable && evaluation?.photoCheck &&
         (readyForPricing(evaluation.identity) || evaluation.pricingDeferred?.identityLookupPending) &&
         (pricingExpired || priceEvidenceGap(evaluation) || evaluation.underwriting?.verdict === "CANT_PRICE");
@@ -85,7 +88,7 @@ export function DetailPanel({ listing, analysis, automaticDecision: receipt, rev
         !override.auctionOpportunity && !unavailable;
     const section = (collecting || showPurchaseScenarios || sameWaitDecision) && evaluation && destination?.listingId === listing.id ? destination.section : null;
     const label = section === "sales" ? "Price evidence" : section === "grading" ? "Grading breakdown" : "Photo evidence";
-    const actions = section === "sales" ? ["check_sales", "check_price_references", "check_raw_resale"] :
+    const actions = section === "sales" ? ["check_sales", "check_price_references", "check_price_tracker", "search_web_sales", "check_price_history", "compare_cardmarket", "check_raw_resale"] :
         section === "grading" ? ["calculate_grading"] : ["inspect_photos", "resolve_printing"];
     const observation = huntFocus?.report.steps.filter(step => step.listingId === listing.id && actions.includes(step.action)).at(-1)?.observation;
 
@@ -133,6 +136,7 @@ export function DetailPanel({ listing, analysis, automaticDecision: receipt, rev
                     {section === "grading" && <GradingComparison evaluation={evaluation} expanded verifiedPurchase={Boolean(reviewed)} />}
                     {section === "photos" && photoReview}
                     {section === "sales" && <>
+                        {prices && <MarketPrices prices={prices} now={now} />}
                         {evaluation.slab && <SlabSection slab={evaluation.slab} pricing={evaluation.slabPricing} showSales />}
                         {!evaluation.slab && (evaluation.rawPricing || evaluation.gradedPricing) &&
                             <PricesSection raw={evaluation.rawPricing} graded={evaluation.gradedPricing} />}
@@ -149,6 +153,7 @@ export function DetailPanel({ listing, analysis, automaticDecision: receipt, rev
                 {!checking && analysis?.status !== "done" && <SoldPriceScreening listing={listing} />}
 
                 {showPurchaseScenarios && evaluation && <FinancialDecision evaluation={evaluation} targets={targets} now={now} />}
+                {section !== "sales" && prices && <MarketPrices prices={prices} now={now} />}
                 {analysis?.status === "done" && section !== "sales" && <MarketReferences evaluation={analysis.evaluation} />}
                 {!checking && analysis?.status === "done" && comparisonMarket && <CardmarketComparisonPanel key={comparisonMarket}
                     listing={listing} state={analysis} now={now} market={comparisonMarket} />}

@@ -79,7 +79,10 @@ export async function interpretSearchRequest(input: SearchPlanInput, searchRunId
         headers: { ...searchHeaders(searchRunId), "Content-Type": "application/json" }, body: JSON.stringify(input), signal });
     signal.throwIfAborted();
     if (!plan || !["named_search", "market_hunt"].includes(plan.workflow) || !plan.query?.trim() ||
-        !plan.intent || !plan.marketPreferences || !["FIXED_PRICE", "AUCTION"].includes(plan.format) || !plan.summary?.trim())
+        !plan.intent || !plan.marketPreferences || !["FIXED_PRICE", "AUCTION"].includes(plan.format) || !plan.summary?.trim() ||
+        plan.listingFormats !== undefined && (!Array.isArray(plan.listingFormats) || plan.listingFormats.length < 1 || plan.listingFormats.length > 2 ||
+            new Set(plan.listingFormats).size !== plan.listingFormats.length || !plan.listingFormats.includes(plan.format) ||
+            plan.listingFormats.some(format => !["FIXED_PRICE", "AUCTION"].includes(format))))
         throw new ApiRequestError("The search interpretation was incomplete. Run the search again.");
     return plan;
 }
@@ -122,6 +125,11 @@ export function startLiveCollectorStrategy(sourceSearchId: string, maxTotal: num
 }
 export function fetchPriceHistory(listingId: string, market: string, signal: AbortSignal) {
     return request<import("../../shared/price-history.ts").MarketHistory>(`/api/listings/${encodeURIComponent(listingId)}/price-history`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ market }), signal,
+    });
+}
+export function fetchMarketPrices(listingId: string, market: string, signal: AbortSignal) {
+    return request<import("../../shared/listing-market-prices.ts").BuyerPriceComparison>(`/api/listings/${encodeURIComponent(listingId)}/market-prices`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ market }), signal,
     });
 }

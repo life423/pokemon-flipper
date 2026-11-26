@@ -12,6 +12,52 @@ replays and live-market searches are different kinds of evidence. Current flow
 and code ownership belong in [architecture.md](architecture.md); open work
 belongs in [LOCAL_TODO.md](../LOCAL_TODO.md).
 
+## November 25 Find a flip repair
+
+The audit of `9c8b69c` reproduced restrictions in the new guided flow, using
+controlled inputs and no live marketplace searches. The baseline suite passed
+1,621 tests, but did not cover these paths. Andrew then clarified the intended
+behavior: no fixed total-card stopping rule before a supported flip is found.
+
+| Reproduced restriction | Current local repair |
+| --- | --- |
+| A blank hunt with an empty sampled ranking made zero eBay scans. | Ranked catalog suggestions are priorities; independent inventory discovery remains available. |
+| Fifty distinct unpriced candidates were reduced to one; the sampler admitted at most 8+2+1 distinct markets. | Keep every eligible physical copy, using those priorities only for ordering. |
+| The hunt scanner discarded overflow and moved on after a source page. | Keep query-owned pending copies, seen IDs and cursors; drain retained batches before another source request. |
+| The service stopped after three pages and the planner after 128 checks. | No default total-check ceiling for resale; continue until purchase, Stop, accessible-source exhaustion or a real provider/accounting stop. |
+| Broad requests such as “find me an underpriced pokemon card” were rejected despite a correct model interpretation. | Source-linked CARD/DESCRIPTION interpretation distinguishes buying language from named subjects; explicit identity and constraints remain validated. |
+| A previously completed terms check could expire without becoming available again. | One explicitly eligible final BIN terms refresh, preserving accepted photos and price evidence. |
+| Weighted grading profit met a target that the likely-grade outcome missed. | Require likely-grade profit/ROI targets and preserve them in the purchase ceiling. |
+| Both formats ran sequentially; continuous BIN work could starve auctions. | Independent format legs share one original account and Stop; a verified current opportunity cancels sibling work. |
+| Only counters appeared until the complete response; hidden work could continue after navigation. | Publish a bounded provisional-card window and tie active work to the selected workspace. |
+| Soft usage warnings stopped the hunt before its actual daily reserve. | Preserve request pacing and warnings; continuous discovery stops at the protected daily reserve rather than a burst warning alone. |
+
+The real scanner replay retains 240 copies across review batches while fetching
+source pages only at offsets 0 and 200. A real service/planner replay continues
+after three ranked-market misses and three generic pages, then finds a supported
+synthetic purchase on physical copy 661 on the fourth generic page. All copies
+retain their original account, and the replay forbids external fetch calls.
+This proves reachability, not an available live deal or a realized resale.
+
+Long hunts keep model menus/history and displayed cards bounded without
+discarding the remaining inventory. Initial queries and independent inventory
+get a turn before a popular card's remaining batches monopolize the hunt;
+continued query backlogs then rotate without losing pending copies or cursors.
+Closed negative decisions are reused rather
+than recalculating their unchanged financial evidence on every later step.
+The isolated 661-copy replay fell from about 32 seconds to about 3 seconds;
+this is an offline computation result, not measured live-provider latency.
+
+Browser acceptance uses simulated API responses and blocks external requests.
+It covers visible candidates before completion, shared-account Both, Stop and
+navigation cancellation, temporary versus hard failures, a bound synthetic Buy
+and a stale Buy that must remain Wait. No new live deal was established.
+
+Remaining limits are explicit: the provider's per-query retrieval ceiling still
+exists, active-hunt backlog is currently in memory, and durable whole-hunt
+resume remains future work. Live acceptance must use another card, not Venusaur,
+with current quota and exact condition/printing/grade evidence.
+
 ## Central finding
 
 A completed listing stream does not mean that each discovered card received

@@ -30,7 +30,7 @@ const schema = { type: "object", additionalProperties: false, required: ["observ
             priceUsd: { type: "number" }, date: { type: ["string", "null"] }, url: stringField } } },
 } };
 
-function sourceUrl(raw: unknown): string | null {
+export function sourceUrl(raw: unknown): string | null {
     if (typeof raw !== "string") return null;
     let url;
     try { url = new URL(raw); } catch { return null; }

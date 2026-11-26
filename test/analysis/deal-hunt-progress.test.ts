@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHuntProgressStore } from "../../server/analysis/deal-hunt-progress.ts";
+import type { ListingSummary } from "../../shared/types.ts";
 
 test("hunt progress reports observed work only under the owning search and expires after completion", async () => {
     let now = Date.parse("2026-11-25T19:03:00.000Z");
@@ -88,4 +89,21 @@ test("unread progress stays bounded and inactive progress expires", async () => 
     assert.equal(progress.read("scope-0"), undefined);
     assert.equal(progress.read("scope-1")?.phase, "completed");
     assert.equal(progress.read("scope-128")?.phase, "completed");
+});
+
+test("provisional candidate snapshots stay bounded and cannot mutate accepted progress", async () => {
+    const progress = createHuntProgressStore();
+    const rows: ListingSummary[] = Array.from({ length: 65 }, (_, index) => ({ id: `copy-${index}`, title: `Copy ${index}`,
+        currentPrice: 25, shipping: 3, buyingOption: "FIXED_PRICE", isGraded: false, images: ["original"],
+        bids: 0, endTime: null, url: "#", seller: null }));
+    await progress.observe("root", "child", new AbortController().signal, async observer => {
+        observer.candidates?.(rows);
+        const snapshot = progress.read("root", "child")!;
+        assert.equal(snapshot.candidates?.length, 50);
+        assert.equal(snapshot.candidates?.[0].id, "copy-15");
+        rows[15].images[0] = "changed outside the store";
+        snapshot.candidates![0].images[0] = "changed by a reader";
+        assert.equal(progress.read("root", "child")?.candidates?.[0].images[0], "original");
+        assert.equal(progress.read("another-account", "child"), undefined);
+    });
 });

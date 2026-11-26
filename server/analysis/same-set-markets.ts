@@ -21,6 +21,8 @@ import { confirmedHuntPage, savedHuntSaleRows } from "../pricing/saved-hunt-sale
 import { readHuntEvaluations, recentHuntCardIndex } from "./private-evaluation.ts";
 import { createSearchDiagnosticStore } from "./search-diagnostic-store.ts";
 
+import { resaleActivity, type ResaleActivity } from "./resale-activity.ts";
+
 export interface HuntOrigin { name: string; set: string; cardNumber: string | null }
 interface ObservedAsk { listingId: string; price: number; shipping: number; potentialGrade: number }
 export interface HuntMarket {
@@ -32,6 +34,7 @@ export interface HuntMarket {
     activityScope?: "PHOTO_CONDITION" | "SELLER_CONDITION" | "GRADE";
     /** Actual distinct transaction dates, so a long-running hunt can recount its window. */
     activityDates?: string[];
+    activity?: ResaleActivity;
     /** Active fixed-price copies observed within the last day. Research leads only. */
     observedAsks?: ObservedAsk[];
     /** Legacy saved activity boundary. Never a purchase-volume requirement. */
@@ -176,7 +179,7 @@ export function rankHuntMarkets(evaluations: Evaluation[], origin: HuntOrigin | 
         const listings = [...copies].sort((a, b) => (b[1] ?? -Infinity) - (a[1] ?? -Infinity) || a[0].localeCompare(b[0]));
         ranked.push({ ...market, sales30: recent.filter(s => now - s.at <= 30 * day).length, sales60: recent.length,
             sales90: verified.filter(s => now - s.at <= 90 * day).length, medianUsd: money(median(values)),
-            activityDates: verified.map(sale => new Date(sale.at).toISOString()),
+            activity: resaleActivity(recent), activityDates: verified.map(sale => new Date(sale.at).toISOString()),
             latestSaleAt: verified.length ? new Date(Math.max(...verified.map(sale => sale.at))).toISOString() : "",
             listingIds: listings.map(([id]) => id), projectedProfit: listings[0]?.[1] ?? null });
     }
@@ -199,13 +202,14 @@ export function verifiedRawFloor(value: Evaluation, path: PricedPath, now: numbe
     return comparisons.length === summary.sales.length ? { row, summary } : null;
 }
 
-export function salesForExit(value: Evaluation, path: PricedPath, markets: HuntMarket[], now: number) {
+export function activityForExit(value: Evaluation, path: PricedPath, markets: HuntMarket[], now: number) {
     const id = value.identity;
-    if (!id?.name || !id.set || !id.cardNumber) return 0;
+    if (!id?.name || !id.set || !id.cardNumber) return { count: 0, activity: undefined };
     if (path.path === "RAW" && path.priceCondition !== value.condition?.rawCondition) {
         const floor = verifiedRawFloor(value, path, now);
-        return observedSoldSales(floor?.summary.activitySales ?? floor?.summary.sales ?? [], now, { maxDays: SALES_ACTIVITY_DAYS })
-            .filter(({ sale }) => sale.photoCondition === path.priceCondition && sale.conditionEvidence?.length).length;
+        const sales = observedSoldSales(floor?.summary.activitySales ?? floor?.summary.sales ?? [], now, { maxDays: SALES_ACTIVITY_DAYS })
+            .filter(({ sale }) => sale.photoCondition === path.priceCondition && sale.conditionEvidence?.length);
+        return { count: sales.length, activity: resaleActivity(sales) };
     }
     const slab = path.path === "GRADED_RESALE";
     const grade = slab ? Number(value.slab?.grade) : value.condition?.gradeRange?.likely;
@@ -216,9 +220,17 @@ export function salesForExit(value: Evaluation, path: PricedPath, markets: HuntM
         (path.path === "RAW" ? market.condition === value.condition?.rawCondition && market.condition === path.priceCondition && market.grader === null :
             market.condition === null && market.grader === grader && market.grade === grade));
     // A copy's own sales may already appear in discovery's market, so never add counts.
-    return Math.max(0, ...matching.map(market => market.activityDates
-        ? market.activityDates.filter(date => { const age = now - Date.parse(date); return age >= 0 && age <= SALES_ACTIVITY_MS; }).length
-        : market.sales60 ?? market.sales30));
+    const strongest = matching.map(market => {
+        const count = market.activityDates
+            ? market.activityDates.filter(date => { const age = now - Date.parse(date); return age >= 0 && age <= SALES_ACTIVITY_MS; }).length
+            : market.sales60 ?? market.sales30;
+        return { count, activity: market.activity?.count === count ? market.activity : undefined };
+    }).sort((a, b) => b.count - a.count || Number(!!b.activity) - Number(!!a.activity));
+    return strongest[0] ?? { count: 0, activity: undefined };
+}
+
+export function salesForExit(value: Evaluation, path: PricedPath, markets: HuntMarket[], now: number) {
+    return activityForExit(value, path, markets, now).count;
 }
 
 const index = createSearchDiagnosticStore();

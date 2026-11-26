@@ -39,8 +39,9 @@ import type { ScreenedOverflowRow, SearchCompetition, SearchSourceCoverage, Sour
 import { completeSearchDiagnostic, loadDiagnosticDiscovery, loadDiagnosticResult, saveDiagnosticDiscovery } from "./analysis/search-diagnostics.ts";
 import { isSearchDiagnosticId, SearchDiagnosticInputError } from "./analysis/search-diagnostic-store.ts";
 import { interpretSearchRequest, SearchPlanInputError } from "./search/search-plan.ts";
-import { drainSharedWork, trackSharedWork } from "./lib/shared-work.ts";
+import { createSharedWork, drainSharedWork, trackSharedWork } from "./lib/shared-work.ts";
 import { marketHistory } from "./pricing/price-history.ts";
+import { buyerMarketPrices } from "./pricing/buyer-market-prices.ts";
 import { compareCardmarket } from "./pricing/cardmarket.ts";
 import { cardmarketComparisonKey } from "../shared/cardmarket.ts";
 import { loadPrivateEvaluation } from "./analysis/private-evaluation.ts";
@@ -263,7 +264,7 @@ app.post("/api/deal-hunt", tracked(async (req, res) => {
         if (signal.aborted) return;
         if (error instanceof DealHuntInputError) { res.status(error.status).json({ error: error.message }); return; }
         const failure = evaluationFailure(error);
-        res.status(failure.status).json(failure.status === 500 ? { error: "The hunt could not complete." } : failure);
+        res.status(failure.status).json(failure.status === 500 ? { error: "The search could not complete." } : failure);
     }
 }));
 
@@ -550,6 +551,30 @@ app.post("/api/listings/:id/evaluate", tracked(async (req, res) => {
         }
         console.error(error);
 
+        const failure = evaluationFailure(error);
+        res.status(failure.status).json(failure);
+    }
+}));
+
+const shareMarketPrices = createSharedWork();
+app.post("/api/listings/:id/market-prices", tracked(async (req, res) => {
+    const signal = requestSignal();
+    try {
+        const saved = await loadPrivateEvaluation(req.params.id);
+        const account = await originalListingSearch(req.params.id, saved, req.get("X-Pokemon-Flipper-Search-Id"));
+        if (!saved || !account || typeof req.body?.market !== "string") {
+            res.status(409).json({ error: "Open the current listing assessment to compare sources." }); return;
+        }
+        const owner = saved.budgetOwner ?? await discoveryContinuations.budgetOwner(account);
+        const market: string = req.body.market;
+        const result = await shareMarketPrices(JSON.stringify([owner ?? account, account, req.params.id, market]), active =>
+            withAiUsageContext({ searchId: account, watchBudgetId: owner ?? account, listingId: req.params.id }, () =>
+                withPriceResearchSignal(active, () => buyerMarketPrices(saved.evaluation, market, active))), signal);
+        if (signal.aborted) return;
+        if (!result) { res.status(409).json({ error: "This price comparison has expired or the assessment changed." }); return; }
+        res.set("Cache-Control", "no-store").json(result);
+    } catch (error) {
+        if (signal.aborted) return;
         const failure = evaluationFailure(error);
         res.status(failure.status).json(failure);
     }

@@ -121,6 +121,8 @@ interface InventoryScan {
     onNextPage?: (offset: number | undefined) => void;
     onProgress?: SearchOptions["onProgress"];
     onStage?: (stage: "discovering" | "pricing") => void;
+    /** Keep unreached copies and source cursors with the owning hunt. */
+    onBacklog?: (backlog: DiscoveryBacklog | undefined) => void;
 }
 
 // Screen one page in the requested marketplace order. When the newest BIN page
@@ -388,6 +390,13 @@ async function findDealsBatch(search: string, {
         for (const id of deferred) { const listing = loaded.get(id); if (listing) pending.push(listing); }
         const rootSearchId = resume?.rootSearchId ?? getBudgetContext().searchId;
         if (inventoryScan && (pending.length || sources.length || sourceLimitReached)) completeCoverage = false;
+        if (inventoryScan) inventoryScan.onBacklog?.(pending.length || sources.length ? {
+            rootSearchId: rootSearchId ?? "", request: { search, minPrice, filters, targets, includeOffers, automaticPhotos, marketplaceOrder, asOf, newOnly },
+            pending: [...new Map(pending.map(row => [row.id, row])).values()],
+            seenIds: [...new Set([...(resume?.seenIds ?? []), ...considered, ...rejections.keys()])]
+                .filter(id => !pending.some(row => row.id === id)),
+            sources, total, ...(sourceLimitReached && { sourceLimitReached: true }),
+        } : undefined);
         if (!inventoryScan && (pending.length || sources.length || sourceLimitReached) && rootSearchId && /^[0-9a-f-]{36}$/i.test(rootSearchId)) {
             completeCoverage = false;
             if (sourceBlocked && continuationToken) continuation = { token: continuationToken, searchId: getAiUsageContext().searchId!,
@@ -493,17 +502,39 @@ export function createHuntInventoryScanner(signal: AbortSignal, dependencies = d
     const stopped = new AbortController();
     const active = AbortSignal.any([signal, stopped.signal]);
     let source: ReturnType<typeof createScreeningPriceSource> | undefined;
-    return async (query: string, intent: SearchIntent, filters: ListingFilters, targets: Targets, asOf: number, scan: InventoryScan) => {
+    const remaining = new Map<string, DiscoveryBacklog>();
+    const exhausted = new Set<string>();
+    const observed = new Map<string, Set<string>>();
+    return async (query: string, intent: SearchIntent, filters: ListingFilters, targets: Targets, asOf: number, scan: InventoryScan): Promise<{
+        listings: ListingSummary[]; summary: SearchSummary; hasMore?: boolean; sourcePages?: number;
+    }> => {
         active.throwIfAborted();
+        const key = JSON.stringify([query, intent, filters, targets, asOf]);
+        if (exhausted.has(key)) return { listings: [], hasMore: false, sourcePages: 0,
+            summary: { intent, mode: "development", deferred: 0, total: 0, found: 0, count: 0, skipped: 0 } };
+        const seen = observed.get(key) ?? new Set<string>();
+        observed.set(key, seen);
+        const found = new Set<string>();
+        let sourcePages = 0;
         let summary: SearchSummary | undefined;
-        const listings = await findDealsBatch(query, { signal: active, filters, targets, asOf, onProgress: scan.onProgress,
+        const listings = await findDealsBatch(query, { signal: active, filters, targets, asOf,
+            onProgress: value => scan.onProgress?.({ ...value, found: found.size }),
             onStart: value => { summary = value; } }, {
             ...dependencies, readIntent: async () => intent, releaseYears: async () => intent.releaseYears ?? null,
+            search: async (...args) => {
+                const page = await dependencies.search(...args);
+                sourcePages++;
+                for (const row of page.listings) if (!seen.has(row.id)) { found.add(row.id); seen.add(row.id); }
+                return page;
+            },
             ...(createSource && { priceSource: () => source ??= createSource({ signal: active }) }),
-        }, undefined, scan).catch(error => { stopped.abort(error); throw error; });
+        }, remaining.get(key), { ...scan, onBacklog: backlog => {
+            if (backlog) remaining.set(key, backlog);
+            else { remaining.delete(key); exhausted.add(key); }
+        } }).catch(error => { stopped.abort(error); throw error; });
         active.throwIfAborted();
         if (!summary) throw new Error("The inventory scan stopped before the listing summary finished.");
-        return { listings, summary };
+        return { listings, summary: { ...summary, found: found.size }, hasMore: remaining.has(key), sourcePages };
     };
 }
 

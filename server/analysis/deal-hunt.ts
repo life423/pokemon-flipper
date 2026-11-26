@@ -16,6 +16,7 @@ export interface DealHuntOutcome {
     alternateSections?: DealHuntSection[];
     verifiedPurchase?: DealHuntReport["verifiedPurchase"];
     recentSales?: number;
+    resalePriority?: number;
 }
 
 /** The service constructs these from the search's own saved evidence. */
@@ -26,6 +27,8 @@ export interface DealHuntCandidate {
     /** Host-screened, recently listed raw copy. Its condition and grading economics still need evidence. */
     freshRawGradingLead?: boolean;
     available(completed: ReadonlySet<DealHuntAction>): DealHuntAction[];
+    /** A previously completed terms check may be refreshed when otherwise-supported advice expires. */
+    canRepeat?(action: DealHuntAction, completed: ReadonlySet<DealHuntAction>): boolean;
     read(action: DealHuntAction, signal?: AbortSignal): Promise<string> | string;
     outcome(completed: ReadonlySet<DealHuntAction>): DealHuntOutcome | null;
 }
@@ -36,7 +39,7 @@ interface DealHuntInput {
     candidates: DealHuntCandidate[];
     markets?: DealHuntMarket[];
     auction?: boolean;
-    /** Host-level runaway safeguard, independent of provider request allowances. */
+    /** Optional diagnostic bound. Resale discovery has no default total-card/check ceiling. */
     maxSteps?: number;
     preferRecentSales?: boolean;
     freshListings?: boolean;
@@ -57,9 +60,27 @@ export interface DealHuntMarket {
 }
 
 type ResearchChoice = { action: DealHuntAction; index: number };
-type DestinationChoice = { action: "finish"; index: number; section: DealHuntSection; decision: DealHuntOutcome["decision"]; reason: string; recentSales?: number };
+type DestinationChoice = { action: "finish"; index: number; section: DealHuntSection; decision: DealHuntOutcome["decision"]; reason: string; recentSales?: number; resalePriority?: number };
 type MarketChoice = { action: "find_listings"; index: number; title: string; summary: string; source?: DealHuntMarket["source"]; differentCard?: boolean; releaseYear?: number };
 type Option = ResearchChoice | DestinationChoice | MarketChoice;
+
+// The validated menu binds a listing or market index to each of these operations.
+// Send only the contracts the current Find a flip decision can actually execute.
+const toolDescriptions: Record<Option["action"], string> = {
+    find_listings: "Search the selected market within the buyer’s filters. Returns eligible eBay copies or observations from the next inventory page.",
+    check_listing: "Read or refresh eBay availability, item price, shipping and delivered total. For an auction, check its end time and next legal bid.",
+    inspect_photos: "Assess this listing’s original photos or read its saved assessment. Returns visible identity, printing, raw condition or slab label evidence.",
+    resolve_printing: "Inspect the relevant marking on the original card photo when a focused check could resolve the printing.",
+    check_sales: "Read matched raw-condition or exact-grade sales and available price evidence. Refresh eligible stale pricing when needed.",
+    check_raw_resale: "Test selling the card in its assessed condition. Returns the supported raw price, recent activity and profit after costs when available.",
+    calculate_grading: "Compare the pictured card at the likely grade and one grade lower, including grading, shipping and resale costs.",
+    check_price_references: "Look up supplemental evidence for the exact market when direct pricing is incomplete.",
+    check_price_tracker: "Look up the matching Pokémon Price Tracker reference for this copy’s market.",
+    search_web_sales: "Look up cited individual prices or transactions for the exact card. The app validates the returned evidence.",
+    check_price_history: "Read dated price history for the identified market.",
+    compare_cardmarket: "Read matching European asking prices. These are active offers.",
+    finish: "Open the checked listing and selected evidence section. The app supplies the verified decision and amounts.",
+};
 
 const initialResearchLimit = 128;
 const gradingChecks: DealHuntAction[] = ["inspect_photos", "check_listing", "check_sales", "calculate_grading"];
@@ -84,6 +105,19 @@ function isListingCheck(option: Option): option is ResearchChoice {
     return option.action !== "find_listings" && option.action !== "finish";
 }
 
+// Limit one model decision's input, not the inventory it can eventually inspect.
+// Checked/exhausted entries leave the next menu, revealing the remaining copies.
+function planningWindow(options: Option[]): Option[] {
+    const pending = options.filter(isListingCheck);
+    const copies = new Set([...new Set((pending.length ? pending : options.filter(option => option.action === "finish"))
+        .map(option => option.index))].slice(0, FIRST_REVIEW_COUNT));
+    let markets = 0;
+    return options.filter(option => {
+        if (option.action === "find_listings") return markets++ < FIRST_REVIEW_COUNT;
+        return copies.has(option.index);
+    });
+}
+
 function affordableGradingChecks(available: DealHuntAction[], checked: ReadonlySet<DealHuntAction>, remaining: number) {
     // Printing or price evidence can become a prerequisite only after an earlier observation.
     const needed = gradingChecks.filter(action => !checked.has(action));
@@ -102,13 +136,15 @@ function inventoryEntry({ listingId, title, summary, freshRawGradingLead }: Deal
 
 async function selectOption(options: Option[], searchId: string, goal: DealHuntGoal,
     inventory: ReturnType<typeof inventoryEntry>[], steps: DealHuntReport["steps"],
-    choose: typeof experiment, remainingChecks: number, signal?: AbortSignal, auction = false, pivot = false, preferRecentSales = false, afterMiss = false) {
+    choose: typeof experiment, remainingChecks: number, signal?: AbortSignal, auction = false, pivot = false, preferRecentSales = false, afterMiss = false, guidedResale = false) {
     if (options.length === 1) return {
         selected: options[0], reason: pivot ? "Only one eligible market remains to search and verify." : "This is the next available check.", reused: null,
     };
     const choices = options.map(key);
     const researchRawGrading = !auction && (goal === "grade_raw" || goal === "resell" && inventory.some(row => row.freshRawGradingLead));
-    const observed = steps.map(({ listingId, title, action, observation, selectedBy, reason }) => ({ listingId, action, observation,
+    // Keep long hunts' model inputs bounded without abandoning their inventory.
+    // The report retains the complete history; decisions need the recent evidence.
+    const observed = steps.slice(-24).map(({ listingId, title, action, observation, selectedBy, reason }) => ({ listingId, action, observation,
         ...(researchRawGrading && selectedBy === "model" && { hypothesisTested: reason }),
         ...(pivot && action === "find_listings" && { market: title }) }));
     const menu = options.map(option => {
@@ -125,7 +161,7 @@ async function selectOption(options: Option[], searchId: string, goal: DealHuntG
         ? "Direct the research for the buyer's goal. Choose a primary check and optionally an independent check on another listing."
         : "Direct the research for the buyer's goal. Choose exactly one option from the supplied menu on each turn.";
     const guidance: string[] = [];
-    if (preferRecentSales) guidance.push("The buyer asked for a liquid card. Prioritize recent matched sales for the exact resale route ahead of larger projected profit, while preserving the buyer's profit and ROI targets. A price estimate alone does not establish liquidity.");
+    if (preferRecentSales) guidance.push("The buyer asked for a liquid card. Prefer frequent sales spread across different days and a tight typical price range for the exact resale route. Treat sampled coverage as a lower bound. Prioritize recent matched sales ahead of larger projected profit, while preserving the buyer's profit and ROI targets. A price estimate alone does not establish liquidity.");
     if (auction) {
         guidance.push("Only consider active auctions ending in under ten hours. Compare the next legal bid, destination shipping, estimated tax and time remaining.");
         guidance.push(goal === "collect_slab"
@@ -167,8 +203,11 @@ async function selectOption(options: Option[], searchId: string, goal: DealHuntG
     const referenceInstructions = options.some(option => option.action === "check_price_references")
         ? " check_price_references checks additional price sources when exact sales are sparse. Use it to resolve a missing price. A provider estimate or asking price cannot substitute for a completed matching sale."
         : "";
+    if (options.some(option => option.action === "check_price_tracker" || option.action === "search_web_sales")) {
+        guidance.push("Choose the source that answers the open question. check_price_tracker requests the exact product or grade reference. search_web_sales looks for cited individual transactions. check_price_history examines dated prices for this market. compare_cardmarket checks competing European asking prices. Only matched completed transactions establish sales activity.");
+    }
     const offeredCopies = new Set(checks.map(check => check.index));
-    const shownInventory = afterMiss ? inventory.filter(row => offeredCopies.has(row.index)) : inventory;
+    const shownInventory = afterMiss || steps.length > 24 ? inventory.filter(row => offeredCopies.has(row.index)) : inventory;
     const answer = await withAiUsageContext({ searchId }, () => choose<{
         choice: string; also?: ResearchChoice; reason: string; fallback: boolean;
     }>({
@@ -177,7 +216,10 @@ async function selectOption(options: Option[], searchId: string, goal: DealHuntG
             step: "Choose deal research", schemaName: "deal_hunt_action",
             instructions: [choiceInstruction, instructions, ...guidance].join(" ") + pivotInstructions + referenceInstructions,
             photos: [], maxOutputTokens: allowPair ? 240 : 160,
-            prompt: JSON.stringify({ goal: dealHuntGoals[goal], inventory: shownInventory, observed, remainingChecks, menu }),
+            prompt: JSON.stringify({ goal: dealHuntGoals[goal], inventory: shownInventory, observed,
+                ...(guidedResale && { tools: Object.fromEntries([...new Set(options.map(option => option.action))]
+                    .map(action => [action, toolDescriptions[action]])) }),
+                remainingChecks: Number.isFinite(remainingChecks) ? remainingChecks : "Continue until a verified purchase, inventory exhaustion, cancellation or provider stop.", menu }),
             schema: { type: "object", additionalProperties: false, required: allowPair ? ["choice", "reason", "also"] : ["choice", "reason"], properties: {
                 choice: { type: "string", enum: choices }, reason: { type: "string", maxLength: 240 },
                 ...(allowPair && { also: { type: ["string", "null"], enum: [...checks.map(key), null] } }),
@@ -215,7 +257,7 @@ async function selectOption(options: Option[], searchId: string, goal: DealHuntG
         reason: answer.result.reason, reused: answer.reused, fallback: answer.result.fallback };
 }
 
-export async function runDealHunt({ searchId, goal, candidates: initial, markets = [], auction = false, maxSteps = initialResearchLimit,
+export async function runDealHunt({ searchId, goal, candidates: initial, markets = [], auction = false, maxSteps,
     preferRecentSales = false, freshListings = false, guidedResale = false, progress }: DealHuntInput, signal?: AbortSignal, choose = experiment): Promise<DealHuntReport> {
     signal?.throwIfAborted();
     const format = auction ? "auction" : "Buy It Now";
@@ -224,10 +266,10 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
     const huntGradingMarkets = !auction && goal === "grade_raw" && markets.length > 0;
     const huntMarketsForBuyer = goal === "resell" || auction && goal === "collect_slab" || huntGradingMarkets;
     const verificationSteps = goal === "collect_slab" ? 3 : resaleVerificationSteps;
-    if (!Number.isSafeInteger(maxSteps) || maxSteps < 1 || maxSteps > 512 || !isSearchDiagnosticId(searchId) || !Object.hasOwn(dealHuntGoals, goal) || candidates.length > DEVELOPMENT_SEARCH_LIMIT ||
+    if (maxSteps !== undefined && (!Number.isSafeInteger(maxSteps) || maxSteps < 1 || maxSteps > 512) || !isSearchDiagnosticId(searchId) || !Object.hasOwn(dealHuntGoals, goal) || candidates.length > DEVELOPMENT_SEARCH_LIMIT ||
         new Set(candidates.map(candidate => candidate.listingId)).size !== candidates.length ||
         candidates.some(candidate => !candidate.listingId.trim() || !candidate.title.trim())) {
-        throw new Error("A deal hunt needs a valid search, a buyer goal and distinct listings.");
+        throw new Error("Choose a valid search, a buyer goal and distinct listings.");
     }
     const steps: DealHuntReport["steps"] = [];
     const wait = (reason: string): DealHuntReport => {
@@ -235,6 +277,8 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
         return { searchId, goal, decision: "WAIT", reason: photo ? `${reason} Photo check for ${photo.title}. ${photo.observation}` : reason, destination: null, steps };
     };
     const completed = candidates.map(() => new Set<DealHuntAction>());
+    const refreshedTerms = new Set<number>();
+    const closedWaits = new Map<number, DealHuntOutcome>();
     const inventory = candidates.map(inventoryEntry);
     let reconsiderCopies = false;
 
@@ -242,7 +286,8 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
         while (true) {
             signal?.throwIfAborted();
             // Once there is an auction to examine, leave room to reject its exit and verify another copy.
-            const researchLimit = maxSteps + (auction && candidates.length ? verificationSteps : 0);
+            const researchLimit = (maxSteps ?? (goal === "resell" ? Infinity : initialResearchLimit)) +
+                (auction && candidates.length ? verificationSteps : 0);
             const remainingChecks = researchLimit - steps.length;
             const options: Option[] = [];
             let hasUncheckedMarketCopy = false;
@@ -250,9 +295,13 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             let gradingChecksExceedLimit = false;
             for (const [index, candidate] of candidates.entries()) {
                 const checked = completed[index];
-                const outcome = checked.size ? candidate.outcome(checked) : null;
-                if (remainingChecks > 0 && !((huntGradingMarkets || freshListings) && outcome)) {
-                    const available = [...new Set(candidate.available(checked))].filter(action => !checked.has(action));
+                const closed = closedWaits.get(index);
+                const outcome = closed ?? (checked.size ? candidate.outcome(checked) : null);
+                const needsTermsRefresh = !closed && !refreshedTerms.has(index) && candidate.canRepeat?.("check_listing", checked) === true;
+                let available: DealHuntAction[] = [];
+                if (!closed && remainingChecks > 0 && (!((huntGradingMarkets || freshListings) && outcome) || needsTermsRefresh)) {
+                    available = [...new Set(candidate.available(checked))].filter(action => !checked.has(action) ||
+                        action === "check_listing" && needsTermsRefresh);
                     const affordable = huntGradingMarkets ? affordableGradingChecks(available, checked, remainingChecks) : available;
                     if (available.length && !affordable.length && !outcome) gradingChecksExceedLimit = true;
                     for (const action of affordable) {
@@ -265,10 +314,16 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                         }
                     }
                 }
+                // An unchanged copy with a completed negative decision cannot turn
+                // into a Buy merely because another copy is being researched. Avoid
+                // recalculating its full financial evidence on every later step.
+                // Otherwise-supported stale quotes stay open for their one refresh.
+                if (!closed && outcome?.decision === "WAIT" && !available.length && !needsTermsRefresh)
+                    closedWaits.set(index, outcome);
                 if (outcome) {
                     for (const section of new Set([outcome.section, ...(outcome.alternateSections ?? [])])) {
                         options.push({ action: "finish", index, section, decision: outcome.decision, reason: outcome.reason,
-                            ...(outcome.recentSales !== undefined && { recentSales: outcome.recentSales }) });
+                            ...(outcome.recentSales !== undefined && { recentSales: outcome.recentSales, resalePriority: outcome.resalePriority }) });
                     }
                 }
             }
@@ -284,11 +339,11 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             }
             if (!options.length) {
                 if (gradingChecksExceedLimit) return wait("The remaining checks cannot verify a grading purchase with matched sales and profit one grade lower.");
-                if (steps.length === researchLimit) return wait("The hunt reached its research limit before it could support a purchase for this goal.");
+                if (steps.length === researchLimit) return wait("The search reached its research limit before it could support a purchase for this goal.");
                 if (huntMarketsForBuyer && !canVerifyNewCopy && searchedMarkets.size < markets.length) {
                     const finding = !candidates.length && searchedMarkets.size
                         ? `No eligible ${format} copy turned up in the ${searchedMarkets.size} markets checked. ` : "";
-                    return wait(finding + "Other markets remain. This hunt has too few research steps left to check another one and verify a copy.");
+                    return wait(finding + "Other markets remain. Too few research steps remain to check another one and verify a copy.");
                 }
                 if (!candidates.length && searchedMarkets.size) return wait(`The markets checked returned no eligible ${format} listings within your limits.`);
                 const last = steps.at(-1);
@@ -297,9 +352,10 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             }
             // A supported buy for this goal has precedence over reporting a different copy's WAIT.
             const buys = options.filter((option): option is DestinationChoice => option.action === "finish" && option.decision !== "WAIT");
-            const mostRecentSales = Math.max(0, ...buys.map(option => option.recentSales ?? 0));
-            const eligible = buys.length ? preferRecentSales ? buys.filter(option => (option.recentSales ?? 0) === mostRecentSales) : buys :
-                huntMarketsForBuyer && (hasUncheckedMarketCopy || options.some(option => option.action === "find_listings"))
+            const resalePriority = (option: DestinationChoice) => option.resalePriority ?? (option.recentSales ?? 0) / 60;
+            const highestPriority = Math.max(0, ...buys.map(resalePriority));
+            const eligible = buys.length ? preferRecentSales ? buys.filter(option => resalePriority(option) === highestPriority) : buys :
+                huntMarketsForBuyer && (hasUncheckedMarketCopy || options.some(option => option.action === "find_listings" || guidedResale && isListingCheck(option)))
                 ? options.filter(option => option.action !== "finish") : options;
             // After two unsuccessful markets, reserve the remaining checks for a new copy.
             // Let the planner compare every unsearched eligible market, including another printing.
@@ -327,15 +383,26 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                 const nextIndices = new Set([...new Set(pendingCopies.map(option => option.index))].slice(0, FIRST_REVIEW_COUNT));
                 choiceMenu = menu.filter(option => !isListingCheck(option) || nextIndices.has(option.index));
             }
-            const nextFresh = freshListings && !chooseAfterMiss && (buys.at(0) ??
-                pendingCopies.find(option => inventory[option.index].listingId === lastCopy) ?? pendingCopies.at(0) ?? menu[0]);
+            if (candidates.length > DEVELOPMENT_SEARCH_LIMIT || steps.length > 24)
+                choiceMenu = planningWindow(choiceMenu);
+            const providerDecision = pendingCopies.some(option => option.action === "check_price_tracker" || option.action === "search_web_sales");
+            const nextCopy = pendingCopies.find(option => inventory[option.index].listingId === lastCopy) ?? pendingCopies.at(0);
+            // Routine prerequisites stay inexpensive. Once terms and photos are checked,
+            // the model can pick the evidence or resale route that would change the decision.
+            const routes = guidedResale && freshListings && nextCopy && completed[nextCopy.index].has("inspect_photos") &&
+                completed[nextCopy.index].has("check_listing") ? pendingCopies.filter(option => option.index === nextCopy.index &&
+                    ["check_sales", "resolve_printing", "check_raw_resale", "calculate_grading"].includes(option.action)) : [];
+            const chooseRoute = routes.length > 1 && !chooseAfterMiss && !providerDecision &&
+                routes.some(option => option.action === "calculate_grading" || option.action === "resolve_printing");
+            if (chooseRoute) choiceMenu = routes;
+            const nextFresh = freshListings && !chooseAfterMiss && !providerDecision && !chooseRoute && (nextCopy ?? menu[0]);
             const { selected, also, reason, reused, fallback } = nextFresh
                 ? { selected: nextFresh, also: undefined, reason: nextFresh.action === "find_listings" ? "Check newly listed Buy It Now cards." :
                     nextFresh.action === "finish" ? "Use the checked purchase evidence." : "Verify this copy against the purchase criteria.", reused: null, fallback: false }
                 : await selectOption(choiceMenu, searchId, goal, inventory, chooseAfterMiss ? steps.slice(-6) : steps, choose,
-                remainingChecks, signal, auction, pivot, preferRecentSales, Boolean(chooseAfterMiss));
+                remainingChecks, signal, auction, pivot, preferRecentSales, Boolean(chooseAfterMiss), guidedResale);
             const selectedBy = reused === null || fallback ? "app" : "model";
-            if (chooseAfterMiss && selectedBy === "model") progress?.guidance?.(reason);
+            if ((chooseAfterMiss || chooseRoute) && selectedBy === "model") progress?.guidance?.(reason);
             signal?.throwIfAborted();
             if (selected.action === "find_listings") {
                 searchedMarkets.add(selected.index);
@@ -350,7 +417,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                     const decision = await selectOption(options, searchId, goal, [], [
                         ...steps.filter(step => step.action === "find_listings").slice(-3),
                         ...steps.filter(step => step.listingId).slice(-4),
-                    ], choose, remainingChecks, signal, auction, true, preferRecentSales);
+                    ], choose, remainingChecks, signal, auction, true, preferRecentSales, false, guidedResale);
                     signal?.throwIfAborted();
                     choiceReason = decision.reason;
                     choiceReused = decision.reused;
@@ -378,7 +445,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             const candidate = candidates[selected.index];
             if (selected.action === "finish") {
                 const current = candidate.outcome(completed[selected.index]);
-                if (!current) return wait("The checked evidence expired before the hunt finished.");
+                if (!current) return wait("The checked evidence expired before the search finished.");
                 const section = current.section === selected.section || current.alternateSections?.includes(selected.section)
                     ? selected.section : current.section;
                 return { searchId, goal, steps, decision: current.decision,
@@ -390,6 +457,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             progress?.stage("reviewing", candidate.title, selected.action);
             const results = await Promise.allSettled(checks.map(async ({ index, action }) => {
                 const listing = candidates[index];
+                if (action === "check_listing" && completed[index].has(action)) refreshedTerms.add(index);
                 const observation = await withAiUsageContext({ searchId, listingId: listing.listingId }, () => listing.read(action, signal));
                 if (typeof observation !== "string" || !observation.trim()) throw new Error("The research function returned no observation.");
                 progress?.checked(listing.listingId, action);
@@ -411,7 +479,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
         signal?.throwIfAborted();
         let reason: string;
         if (error instanceof EbayBudgetError && error.reason === "QUOTA") {
-            reason = "The eBay listing allowance ran out before the hunt could verify a purchase.";
+            reason = "The eBay listing allowance ran out before the search could verify a purchase.";
         } else if (error instanceof PriceResearchBudgetError && error.reason === "LIMIT") {
             reason = "The search reached its pricing allowance before the evidence supported a decision.";
         } else {

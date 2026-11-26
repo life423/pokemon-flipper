@@ -1,9 +1,95 @@
 # Pokémon Flipper — current checklist
 
-Updated November 24, 2026. This is the active work list. Current decisions and
+Updated November 25, 2026. This is the active work list. Current decisions and
 resource locations are in [LOCAL_PLAN.md](LOCAL_PLAN.md); verified audit findings
 are in [the maintained audit](docs/deal-search-audit.md). Git retains removed
 reports. Provider payloads, paid evidence, credentials and user data stay private.
+
+## November 25 Find a flip repair
+
+Andrew clarified that a hunt must not stop at a fixed number of cards. Continue
+within the buyer's filters until a verified profitable opportunity is found,
+the buyer stops, the accessible inventory is exhausted, or a real provider,
+quota, storage or accounting stop prevents further work. Page sizes, concurrent
+workers and visible-card windows bound resource use; they must not silently
+discard the remaining physical copies or become lifetime search limits.
+
+The audit of `9c8b69c` reproduced these issues without paid searches: a blank
+hunt could perform zero eBay scans when its small ranked catalog sample was
+empty; fifty distinct unpriced candidates became one; the hunt scanner omitted
+ordinary search's overflow continuation; ordinary broad phrases were rejected
+after a correct interpretation; an expired otherwise-supported quote had no
+refresh action; and a grading purchase could miss the likely-grade target.
+The original 1,621-test suite passed despite those missing cases.
+
+- [x] Keep every eligible/deferred copy and source cursor in the active hunt's
+  backlog. Rank the first fifteen, then continue instead of dropping the rest.
+- [x] Keep broad inventory discovery available beyond ranked card suggestions,
+  including empty samples; preserve explicit set, year and exact-card limits.
+- [x] Remove the default total-step ceiling for resale hunts; retain Stop,
+  bounded model context, provider pacing, the daily reserve and accounting.
+- [x] Show provisional listing cards during research and prevent hidden searches
+  from continuing when the buyer switches workspaces. Both formats must not let
+  a continuous BIN hunt starve auctions; stop sibling work on a verified flip.
+- [x] Preserve natural-language meaning with source-linked subject evidence and
+  support explicit Both-format requests without contradictory validation.
+- [x] Refresh an otherwise-supported expired BIN quote once without repeating
+  accepted photo work, and apply likely-grade profit/ROI targets consistently.
+- [x] Complete offline service/browser acceptance, full tests, type checks and
+  production build before claiming the repair works. No live Venusaur testing.
+  Verification: 1,645 automated tests, both TypeScript checks, production build
+  and whitespace checks passed. Nine isolated browser scenarios passed with no
+  provider requests or page errors. The build retains its bundle-size advisory.
+- [ ] Validate a current live profitable copy through the repaired normal UI.
+  The 661-copy service replay and nine browser scenarios use controlled inputs;
+  they establish behavior, not a live buying opportunity. Preserve the eBay
+  reserve and inspect current usage before another live scan.
+- [x] For a general Find a flip request, let the AI choose which card to research
+  and when to switch. Honor the buyer's explicit filters. Prioritize copies with
+  frequent daily sales, stable resale prices and a profit after all costs.
+  Use completed sales of the same printing, language, finish and condition or slab
+  grade. Show observed sales per day, how many days had sales, and the typical
+  sold-price range. Distinguish steady demand from a one-day spike and account
+  for incomplete sales coverage. Use these signals to order research without
+  imposing a fixed sales-count cutoff.
+- [x] When a buyer names a card in Find a flip, search that card first. If the
+  hunt needs alternatives, use the named printing's release era to bound them.
+  Favor another liquid card from the same set or the same Pokémon from around
+  the same year. Apply the buyer's explicit years, set, finish and budget to
+  every suggestion, and honor an exact-copy-only request. Verify that a vintage
+  seed cannot lead to a 2025 reprint, even when the reprint sells more often.
+  Use the printing's release year, since a Pokémon can appear in many eras.
+- [x] Let the hunt planner choose an app function, a lookup through a connected
+  API, or a targeted web search according to the question it needs answered.
+  For example, use eBay Browse for current listings and terms, PKMNPrices for
+  matching sold listings, volume, history or condition-specific TCGplayer asks,
+  and Pokémon Price Tracker for set years or supplemental grade data. Reuse
+  each integration's cache, quota tracking and original search account. Keep
+  the source and evidence type with each result. Extend the existing cited price
+  lookup to questions such as which release a printing belongs to or which
+  same-era cards to investigate. Return the source and finding to the planner
+  so it can choose its next call. Keep the buyer's filters and reuse existing
+  evidence. Verify a discovered listing and its comparable sales with the app's
+  existing checks before calculating profit or recommending a purchase.
+
+Local acceptance covers a one-day sales spike against steady selling days, a
+vintage seed with a modern reprint, a wrong-number web suggestion, the planner's
+choice of source on a sparse market, and a general hunt opening an additional
+market after its eBay queries run out. A cited suggestion still needs catalog
+confirmation before eBay discovery. Only the existing listing and underwriting
+checks can issue a buying recommendation. The full suite passed 1,654 tests.
+All 81 focused hunt, catalog-web and price-source tests passed on the final
+planner change. Nine isolated browser scenarios passed with zero provider
+requests. Both TypeScript checks and the production build passed.
+
+- [x] Give the Find a flip planner descriptions of the functions available for
+  its current decision. After checking the listing and photos, let it pick a
+  supported raw-resale or grading check on a fixed-price copy. Preserve which
+  function the model chose in Research steps.
+- [ ] Keep Find a flip active between inventory passes. Wait for new eligible
+  listings or a recoverable provider reset and resume from saved progress with
+  the original filters and budget. Stop on the buyer’s request. Treat a closest
+  priced miss as optional feedback within the search.
 
 ## November 24 stopping checkpoint
 
@@ -65,10 +151,9 @@ no push was requested for the break.
 - Useful AI and data requests are authorized. Optimize useful decisions and avoid
   duplicate work; zero calls and an arbitrary cheap-search total are not goals.
   OpenAI runs uncapped on this installation with accounting and cancellation intact.
-- New searches retain 100 actual eBay Browse requests, 128 uncached screening
-  PKMNPrices requests and 256 all-stage PKMNPrices requests. Existing accounts keep
-  their recorded limits and spend. These are tunable runaway safeguards, not desired
-  consumption. The subscription supplies 20,000 daily credits; preserve rate limits,
+- Production searches have no per-search Browse or PKMNPrices request ceiling.
+  Existing accounts retain historical limits, request counts, spend and unresolved
+  state. The subscription supplies 20,000 daily credits; preserve rate limits,
   shared cache reuse and rapid-depletion warnings when expanding useful research.
 - Reuse accepted photos and sold evidence. Refresh terms/prices independently;
   unchanged images must not incur repeated photo charges. Storage, accounting and
@@ -93,14 +178,13 @@ no push was requested for the break.
 - [x] Audit every explicit gate from eBay discovery to the Deal label. The
   [complete blocker audit](docs/deal-blockers-audit.md) covers source admission,
   matching, prices, photos, money, liquidity, auctions, budgets, recovery and UI.
-- [ ] Fix the reproduced raw evidence dead-end: pricing stops after one accepted
-  condition-matched sale, while final resale requires three recent matched
-  exits and never requests the missing two. Preserve condition correctness and
-  make the evidence deficit an actionable bounded research continuation.
-- [ ] Unify hunt and ordinary-review eligibility for repairable missing-price
+- [x] Remove the reproduced one-versus-three raw-sale dead-end. Supported
+  condition-specific TCGplayer quotes can value raw resale; observed 60-day
+  transactions remain distinct and no hard three-sale veto applies.
+- [x] Unify hunt and ordinary-review eligibility for repairable missing-price
   rows, and requeue typed temporary failures after finite cooldowns under the
   original account. These are confirmed integration gaps, not wrong API dollars.
-- [ ] Expand the AI's offered markets beyond saved accepted research and expose
+- [x] Expand the AI's offered markets beyond saved accepted research and expose
   continuation beyond eight grouped markets/six copies and after number-alias
   verification misses. Record each gate and recovery action in diagnostics.
 
@@ -109,16 +193,20 @@ no push was requested for the break.
   eligible auction, matching price evidence, recent relevant sales activity and
   a supported after-cost purchase limit. Andrew reaffirmed that comparisons,
   completed research and engineering progress alone have not delivered this.
+  For the next live validation use Find a flip across Buy It Now and auctions
+  under ten hours, with the saved destination and a stated profit target. Record
+  time to the first assessed copy, the price source used for each promising exit,
+  recent matched sales, and the delivered cost and net profit. If the hunt ends
+  without a qualifying copy, keep the closest priced miss and its gap to target,
+  and record the reason the hunt stopped.
 
-- [ ] After completing the search interpretation and speed fixes, show prices
-  from all connected pricing providers whenever presenting a card's value.
-  Andrew requested PKMNPrices, Pokémon Price Tracker and OpenAI price research
-  together, plus applicable Cardmarket comparisons. Include PriceCharting when
-  that paused integration resumes. Display each source's returned price, date,
-  currency and matching condition or grader/grade. Identify a sale, asking price
-  or aggregate estimate so the buyer can compare the figures. Reuse accepted
-  source responses and preserve the existing purchase-ceiling math. This request
-  is deferred until the active search fixes are complete.
+- [x] Show dated, labeled provider prices together on assessed listing cards, flip
+  results and in the listing analysis. Compare the eBay sold sample, exact
+  TCGplayer condition market and delivered asks, Pokémon Price Tracker, cited web
+  observations, and applicable Cardmarket asks in EUR. Load additional providers
+  when the buyer sees the card and reuse the original research account. A slab
+  with no eBay sample can still show exact-grade estimates.
+- [ ] Add a separate PriceCharting guide row when that paused integration resumes.
 
 - [x] Complete OpenAI interpretation before discovery for every newly submitted
   search. Send the original wording, resolve its meaning into a typed search
@@ -218,7 +306,7 @@ no push was requested for the break.
 - [ ] Measure watch alerts against fresh eBay listings, recording the number screened, the copies that qualify, the evidence behind each alert, and the cost per watch.
 - [ ] Measure photo coverage, decision quality, runtime and cost on fresh live 50-listing searches with the new queue. Record provider or evidence gaps separately.
 
-- [ ] Add explicit continuation beyond the retained 50 using saved overflow and
+- [x] Add explicit continuation beyond the retained 50 using saved overflow and
   the original search allowances. Preserve exclusions, deferred reasons, accepted
   findings and spent counts; do not restart the same paid research as a new search.
 - [ ] Freeze minimal versioned inputs, clock, settings and outcomes for the

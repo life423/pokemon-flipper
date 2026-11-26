@@ -29,6 +29,17 @@ test("research checks both providers for the photographed condition and keeps co
     assert.equal(value.underwriting?.verdict, "CANT_PRICE");
 });
 
+test("an adaptive lookup dispatches only the provider the planner selected", async () => {
+    for (const source of ["tracker", "web"] as const) {
+        const calls: string[] = [];
+        await supplementalResearch(candidate(), { ...options, source }, {
+            tracker: async () => { calls.push("tracker"); return null; },
+            web: async () => { calls.push("web"); return null; },
+        });
+        assert.deepEqual(calls, [source]);
+    }
+});
+
 test("price refresh and sufficient exact condition sales only read cached references", async () => {
     for (const cacheOnly of [true, false]) {
         const value = candidate();
@@ -41,6 +52,17 @@ test("price refresh and sufficient exact condition sales only read cached refere
         });
         assert.deepEqual(requested, [true, true]);
     }
+});
+
+test("the buyer comparison requests fresh sources even when matched sales already price the copy", async () => {
+    const value = candidate(), modes: boolean[] = [];
+    value.rawPricing = { status: "PRICED", prices: [{ condition: "LIGHTLY_PLAYED", price: 45, updatedAt: null,
+        basis: "EBAY_SOLD", comps: salesSummary("RAW", "LIGHTLY_PLAYED", [41, 45, 48]) }] };
+    await supplementalResearch(value, { ...options, comparePrices: true }, {
+        tracker: async (_e, _sig, opts) => { modes.push(opts!.cacheOnly!); return null; },
+        web: async (_target, opts) => { modes.push(opts!.cacheOnly!); return null; },
+    });
+    assert.deepEqual(modes, [false, false]);
 });
 
 test("unresolved printing skips secondary pricing and a storage failure blocks subsequent paid calls", async () => {

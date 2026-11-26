@@ -127,7 +127,7 @@ export async function runStructured<T>({
     maxOutputTokens?: number;
     // One compact immutable assessment for the bounded search workflow.
     bounded?: boolean;
-    webPriceSearch?: boolean;
+    webPriceSearch?: boolean | "catalog";
     // Explicit bounded comparisons/refinements can select a verified model.
     // Normal callers keep their configured policy; the spending guard still
     // requires exact model rates, immutable input and the original search cap.
@@ -170,7 +170,7 @@ export async function runStructured<T>({
             ...(instructions ? { instructions } : {}),
             max_output_tokens: bounded ? Math.min(maxOutputTokens ?? policy.maxOutputTokens, BOUNDED_MAX_OUTPUT_TOKENS) : maxOutputTokens ?? policy.maxOutputTokens,
             ...(policy.supportsReasoning ? { reasoning: { effort: webPriceSearch ? "low" : policy.effort } } : {}),
-            ...(webPriceSearch ? priceSearchTools() : {}),
+            ...(webPriceSearch ? priceSearchTools(webPriceSearch === "catalog") : {}),
             metadata: { app_step: step },
             input: [{ role: "user" as const, content: [{ type: "input_text" as const, text: prompt }, ...photoInputs(immutablePhotos)] }],
             text: { format: { type: "json_schema" as const, name: schemaName, strict: true, schema } },

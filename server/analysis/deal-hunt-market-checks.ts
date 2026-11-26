@@ -13,6 +13,7 @@ import type { Evaluation, ListingSummary, SearchIntent, Targets } from "../../sh
 import { sameSetFamily } from "../identity/card-identity.ts";
 import { sameCatalogName } from "../identity/catalog-name.ts";
 import { matchesGallerySubset } from "../identity/screening-name.ts";
+import { activityDescription } from "./resale-activity.ts";
 import type { HuntMarket, HuntOrigin } from "./same-set-markets.ts";
 
 export function huntOrigin(intent: SearchIntent | undefined, evaluations: Iterable<Evaluation>): HuntOrigin | null {
@@ -104,7 +105,8 @@ export function describeHuntMarket(m: HuntMarket) {
     const value = m.valueBasis?.startsWith("TCGPLAYER_") ? "TCGplayer estimate" : "matched sale estimate";
     return count + (count === 1 ? " observed matching sale" : " observed matching sales") + " in " + days + " days for " + m.name + " " + m.cardNumber + " (" + m.set + ", " + printing + " " + finish + ", " +
         condition + " " + route + "), with a " + value + " of " + dollars(m.medianUsd) + "." +
-        (m.valueBasis?.startsWith("TCGPLAYER_") ? " Current offers are not counted as sales." : "");
+        (m.valueBasis?.startsWith("TCGPLAYER_") ? " Current offers are not counted as sales." : "") +
+        (m.activity ? " " + activityDescription(m.activity) : "");
 }
 
 // A market median guides where to spend research. Each actual Buy still has to

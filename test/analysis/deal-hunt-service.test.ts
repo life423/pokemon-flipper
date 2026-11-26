@@ -18,6 +18,9 @@ import type { ListingDetails } from "../../server/ebay/listings.ts";
 import { EbayBudgetError } from "../../server/ebay/usage.ts";
 import { cardEvaluation, clearReleaseFixture, salesSummary } from "../fixtures/card-evaluation.ts";
 import { offlineSearchSteps } from "../fixtures/search-steps.ts";
+import { tcgplayerRawEstimate } from "../fixtures/tcgplayer-raw-estimate.ts";
+import { configuredShippingZip } from "../../server/ebay/shipping-destination.ts";
+import { PricingProviderError } from "../../server/pricing/errors.ts";
 
 const searchId = "348cae85-377d-44a4-9436-25a311eb2d4c";
 const listingId = "v1|120000000001|0";
@@ -567,7 +570,7 @@ test("a broad hunt with no saved markets screens new releases under its original
     assert.deepEqual(snapshots, [lugia.id, gengar.id]);
     assert.equal(priceSources, 1, "release queries share one price-screening allowance");
     assert.match(notes[0], /loaded 3 distinct listing summaries.*part of the source results/);
-    assert.match(result.report.marketNote!, /Completed 2 of 2 broader eBay queries\. More results remained/);
+    assert.match(result.report.marketNote!, /2 eBay source pages.*2 inventory queries.*Coverage remains partial/);
     assert.equal(result.report.decision, "WAIT");
     assert.equal(result.evaluation, null);
     assert.deepEqual(result.candidates?.map(listing => listing.id), [lugia.id, gengar.id]);
@@ -588,7 +591,7 @@ test("quota and cancellation stop an unseeded inventory hunt before photos", asy
     assert.equal(scans, 1);
     assert.equal(limited.report.decision, "WAIT");
     assert.match(limited.report.reason, /eBay listing allowance ran out/);
-    assert.match(limited.report.marketNote!, /Completed 0 of 1 broader eBay query/);
+    assert.match(limited.report.marketNote!, /0 eBay source pages.*0 review batches/);
     assert.deepEqual(limited.candidates, []);
 
     const { promise: dispatched, resolve } = Promise.withResolvers<void>();
@@ -957,6 +960,65 @@ test("the planner recovers a sparse slab reference under the hunt allowance and 
     assert.equal(hadAlternative, true, "the planner could instead choose the other copy’s photos");
 });
 
+test("a reseller can consult price history, European offers or either supplemental provider under the initiating account", async () => {
+    const f = example();
+    f.e.listing.endTime = null;
+    f.e.identity!.recordId = "1234";
+    f.e.rawPricing = { status: "PRICE_UNAVAILABLE" };
+    f.e.gradedPricing = null;
+    const calls: string[] = [];
+    const model = createModelExperimentRunner({ cached: async () => null, save: async () => {},
+        run: async request => {
+            const { menu } = JSON.parse(request.prompt) as { menu: {key: string}[] };
+            const order = ["check_listing", "inspect_photos", "check_sales", "check_price_history", "compare_cardmarket", "search_web_sales", "check_price_tracker"];
+            const pick = order.map(action => "0/" + action).find(key => menu.some(m => m.key === key)) ?? menu[0].key;
+            return { result: { choice: pick, reason: "Check the available evidence." }, usage: {inputTokens: 1, outputTokens: 1} };
+        },
+    });
+    const remember = (source: string) => {
+        assert.equal(getBudgetContext().searchId, searchId);
+        assert.equal(getAiUsageContext().listingId, listingId);
+        calls.push(source);
+    };
+    const hunt = service(f, { restoreRaw: async () => null, plan: (input, active) => runDealHunt(input, active, model),
+        marketHistory: async () => { remember("history"); return {source:"TCGplayer", scope:"Lightly Played", points:[{day:"2026-11-23",price:45}],
+            outlook:"Insufficient evidence", reason:"Sparse daily prices."}; },
+        compareCardmarket: async () => { remember("offers"); return {checkedAt:stamp, currency:"EUR", basis:"ACTIVE_ASK", status:"UNAVAILABLE",
+            reason:"No offers match this condition.", offers:[]}; },
+        supplement: async (_value, options) => { if (!options.cacheOnly) remember(options.source!); return {}; },
+    });
+    const response = await hunt(searchId, { ...goal, goal:"resell", marketPreferences:{preferRecentSales:true} }, signal());
+    assert.deepEqual(calls, ["history", "offers", "web", "tracker"]);
+    assert.equal(response.report.decision, "WAIT");
+    assert.match(response.report.steps.find(s => s.action === "check_price_history")!.observation, /TCGplayer.*Lightly Played.*\$45\.00/);
+    assert.match(response.report.steps.find(s => s.action === "compare_cardmarket")!.observation, /No offers match/);
+});
+
+test("an open resale hunt can use a cited catalog lead after its current eBay queries are exhausted", async () => {
+    const queries: string[] = [];
+    const hunt = service(example(), { discovery: unexpected, inventory: unexpected, snapshot: unexpected, markets: unexpected,
+        browsePressure: async () => null, liquidMarkets: async () => [],
+        inventoryScanner: () => async (query, intent) => { queries.push(query); return emptyInventory()(query, intent); },
+        webInventoryTargets: async (_seed, permitted, kind, _now, _active, _accepts, report) => {
+            assert.deepEqual(permitted, []); assert.equal(kind, "raw");
+            report?.("The catalog confirmed the cited printing.");
+            return [{name:"Lapras", number:"10/62", set:"Fossil", stage:"Catalog-checked web lead"}];
+        },
+        plan: (input, active) => runDealHunt(input, active, createModelExperimentRunner({cached: async () => null, save: async () => {},
+            run: async request => {
+                const {menu} = JSON.parse(request.prompt);
+                const pick = menu.find((m: {market?:string}) => m.market?.includes("on the web")) ?? menu[0];
+                return {result:{choice:pick.key, reason:"Find another eligible printing."},usage:{inputTokens:1,outputTokens:1}};
+            },
+        })),
+    });
+    const response = await hunt(searchId, {goal:"resell",scope:"any_card",standalone:true,listingIds:[],freshListings:true,
+        targets:goal.targets,filters:{typeFilter:"FIXED_PRICE",kindFilter:"raw"},marketPreferences:{preferRecentSales:true}}, signal());
+    assert.deepEqual(queries, ["Pokemon","Lapras 10/62 Fossil"]);
+    assert.equal(response.report.decision, "WAIT");
+    assert.ok(response.report.steps.some(s => s.observation.includes("confirmed the cited printing")));
+});
+
 test("a collector can pursue an under-market auction that fails resale targets using existing slab evidence", async () => {
     const f = example();
     const listing = f.inventory.rows[0].listing;
@@ -1052,6 +1114,155 @@ test("fresh fixed-price resale starts with current inventory even when past rese
     assert.equal(response.report.decision, "WAIT");
 });
 
+test("blank liquid hunts still inspect independent inventory when the sampled ranking is empty or temporarily unavailable", async () => {
+    for (const unavailable of [false, true]) {
+        const queries: string[] = [];
+        const hunt = service(example(), {
+            discovery: unexpected, inventory: unexpected, snapshot: unexpected, markets: unexpected,
+            liquidMarkets: async () => {
+                if (unavailable) throw new PricingProviderError("Offline temporary ranking failure", "TEMPORARY", now + 30_000);
+                return [];
+            },
+            inventoryScanner: () => async (query, intent) => { queries.push(query); return emptyInventory()(query, intent); },
+        });
+        const result = await hunt(searchId, { goal: "resell", scope: "any_card", standalone: true, freshListings: true,
+            listingIds: [], targets: goal.targets, filters: { typeFilter: "FIXED_PRICE" }, marketPreferences: { preferRecentSales: true } }, signal());
+        assert.deepEqual(queries, ["Pokemon"]);
+        assert.equal(result.report.decision, "WAIT");
+        assert.doesNotMatch(result.report.marketNote ?? "", /Try a named card/);
+    }
+    for (const kind of ["CONFIG", "CREDITS", "RATE_LIMIT"] as const) {
+        const stop = new PricingProviderError("Offline provider stop", kind);
+        const hunt = service(example(), { liquidMarkets: async () => { throw stop; }, inventoryScanner: unexpected });
+        await assert.rejects(hunt(searchId, { goal: "resell", scope: "any_card", standalone: true, freshListings: true,
+            listingIds: [], targets: goal.targets, filters: { typeFilter: "FIXED_PRICE" }, marketPreferences: { preferRecentSales: true } }, signal()),
+            error => error === stop);
+    }
+});
+
+test("a blank flip hunt passes sampled markets and three source pages to find a profitable later physical copy", async t => {
+    t.mock.method(globalThis, "fetch", unexpected);
+    const queries: [string, number][] = [], assessed: string[] = [], owners = new Set<string | undefined>();
+    const root = "fb81c58b-7b64-4d58-bb77-dc67334c1048";
+    const rows: ListingSummary[] = Array.from({ length: 800 }, (_, i) => ({
+        id: `v1|${120000020000 + i}|0`, title: "Nidoking 11/102 Base Set Unlimited Holo English",
+        currentPrice: i === 660 ? 5 : 90, shipping: 0, buyingOption: "FIXED_PRICE", bids: 0, endTime: null,
+        images: [`offline-front-${i}`, `offline-back-${i}`], isGraded: false, seller: null,
+        url: `https://www.ebay.com/itm/${120000020000 + i}`,
+    }));
+    const winning = rows[660];
+    const model = createModelExperimentRunner({ cached: async () => null, save: async () => {}, run: async request => {
+        const { menu } = JSON.parse(request.prompt);
+        return { result: { choice: menu[0].key, reason: "Check the next remaining physical copy." }, usage: { inputTokens: 1, outputTokens: 1 } };
+    } });
+    const hunt = service(example(), {
+        discovery: unexpected, inventory: unexpected, snapshot: async () => null, markets: unexpected,
+        browsePressure: async () => ({ provider: "EBAY", label: "eBay Browse", limit: 5000, remaining: 4000,
+            observedAt: stamp, resetsAt: new Date(now + 3_600_000).toISOString(), usedInWindow: 300, windowMinutes: 10, warning: "FAST" }),
+        liquidMarkets: async () => [
+            { id: 1, name: "Mew", number: "25/53", set: "Wizards Black Star Promos", sales: 30 },
+            { id: 2, name: "Dragonite", number: "4/62", set: "Fossil", sales: 20 },
+            { id: 3, name: "Pikachu", number: "58/102", set: "Base Set", sales: 10 },
+        ],
+        selectReviews: async copies => ({ source: "rules", listingIds: copies.slice(0, 15).map(row => row.id) }),
+        inventoryScanner: active => createHuntInventoryScanner(active, offlineSearchSteps([], {
+            search: async (query, options) => {
+                queries.push([query, options?.offset ?? 0]); owners.add(getBudgetContext().searchId);
+                assert.equal(options?.filters?.maxPrice, 150);
+                const offset = options?.offset ?? 0;
+                return { listings: query.toLowerCase() === "pokemon" ? rows.slice(offset, offset + 200) : [],
+                    total: query.toLowerCase() === "pokemon" ? rows.length : 0, skipped: 0, rejections: [],
+                    ...(query.toLowerCase() === "pokemon" && offset + 200 < rows.length && { nextOffset: offset + 200 }) };
+            },
+        })),
+        evaluate: async id => {
+            owners.add(getBudgetContext().searchId); assessed.push(id);
+            const row = rows.find(row => row.id === id)!;
+            const e = example().e;
+            Object.assign(e.listing, { id, title: row.title, url: row.url, price: row.currentPrice, shipping: 0, endTime: null,
+                photos: row.images, shippingDestination: configuredShippingZip(), seller: { username: "offline-seller", feedbackScore: 100, feedbackPercentage: 100 } });
+            Object.assign(e.identity!, { name: "Nidoking", cardNumber: "11/102", evidence: { photo: "UNLIMITED" } });
+            const card = { name: "Nidoking", cardNumber: "11/102", set: "Base Set", finish: "HOLO" as const,
+                language: "English", confidence: "HIGH" as const, evidence: ["Readable name, number and set on the original front."] };
+            Object.assign(e.photoCheck!, { cardIdentity: card, printedName: card.name, printedNumber: card.cardNumber });
+            clearReleaseFixture(e);
+            e.gradedPricing = null;
+            const comp = salesSummary("RAW", "LIGHTLY_PLAYED", [100]);
+            Object.assign(comp, { median: 100, newestSale: old });
+            Object.assign(comp.sales[0], { title: row.title, saleType: "fixed_price", soldAt: old,
+                url: "https://www.ebay.com/itm/120000029999" });
+            e.rawPricing = { status: "PRICED", printing: "UNLIMITED", finish: "HOLO", variant: "holo", conditionEvidence: "TCGPLAYER",
+                prices: [tcgplayerRawEstimate(100, stamp)], sellerConditionComps: comp };
+            return retargetEvaluation(e, goal.targets);
+        },
+        plan: (input, active) => runDealHunt(input, active, model),
+    });
+    const result = await withAiUsageContext({ searchId: root }, () => hunt(searchId, {
+        goal: "resell", scope: "any_card", standalone: true, freshListings: true, listingIds: [], targets: goal.targets,
+        filters: { typeFilter: "FIXED_PRICE", maxPrice: 150 }, marketPreferences: { preferRecentSales: true },
+    }, signal()));
+    assert.equal(result.report.decision, "BUY", JSON.stringify({ report: result.report, queries, assessed }));
+    assert.equal(result.report.destination?.listingId, winning.id);
+    assert.equal(assessed.length, 661, "the profitable later physical copy must survive all earlier misses");
+    assert.equal(new Set(assessed).size, assessed.length, "accepted photos must not be repurchased in later batches");
+    assert.equal(queries.length, 7, "deferred copies drain without repeating source work or stopping at three pages");
+    assert.deepEqual(queries.filter(([query]) => query.toLowerCase() === "pokemon").map(([, offset]) => offset), [0, 200, 400, 600]);
+    assert.equal(queries.at(-1)?.[0].toLowerCase(), "pokemon", "the independent query remains available after sampled priorities fail");
+    assert.deepEqual([...owners], [root]);
+    assert.ok((result.candidates?.length ?? 0) <= 50);
+    assert.match(result.report.marketNote ?? "", /across 4 inventory queries/);
+});
+
+test("ranked queries and independent inventory share turns without losing their pending physical copies", async t => {
+    t.mock.method(globalThis, "fetch", unexpected);
+    const priorities = [
+        { id: 1, name: "Nidoking", number: "11/102", set: "Base Set", sales: 30 },
+        { id: 2, name: "Espeon", number: "11/147", set: "Aquapolis", sales: 20 },
+        { id: 3, name: "Dark Alakazam", number: "1/82", set: "Team Rocket", sales: 10 },
+    ];
+    const sourceQueries: string[] = [], batches: string[][] = [], accounts = new Set<string | undefined>();
+    const root = "fb81c58b-7b64-4d58-bb77-dc67334c1048";
+    const hunt = service(example(), {
+        discovery: unexpected, inventory: unexpected, snapshot: async () => null, markets: unexpected,
+        browsePressure: async () => null, liquidMarkets: async () => priorities,
+        selectReviews: async copies => ({ source: "rules", listingIds: copies.slice(0, 15).map(row => row.id) }),
+        inventoryScanner: active => createHuntInventoryScanner(active, offlineSearchSteps([], {
+            search: async (query, options) => {
+                sourceQueries.push(query); accounts.add(getBudgetContext().searchId);
+                assert.equal(options?.offset ?? 0, 0, "no query may fetch its next page before draining its own pending copies");
+                const market = priorities.find(target => query.toLowerCase().includes(target.name.toLowerCase())) ??
+                    { id: 4, name: "Gengar", number: "5/62", set: "Fossil", sales: 0 };
+                const listings = Array.from({ length: 200 }, (_, i): ListingSummary => ({
+                    id: `v1|${120000030000 + market.id * 1000 + i}|0`,
+                    title: `${market.name} ${market.number} ${market.set} Unlimited Holo English`,
+                    currentPrice: 10, shipping: 0, buyingOption: "FIXED_PRICE", bids: 0, endTime: null,
+                    images: [`offline-${market.id}-${i}`], isGraded: false, seller: null, url: "#",
+                }));
+                return { listings, total: 400, nextOffset: 200, skipped: 0, rejections: [] };
+            },
+        })),
+        plan: async ({ markets, goal }, active) => {
+            const inventory = markets!.find(market => market.source === "inventory")!;
+            for (let turn = 0; turn < 5; turn++) {
+                const copies = await inventory.discover(active);
+                batches.push(copies.map(copy => copy.listingId));
+                assert.equal(copies.length, 50);
+                assert.equal(inventory.hasMore?.(), true);
+            }
+            return { searchId, goal, decision: "WAIT", destination: null, steps: [], reason: "Offline scheduling observation only." };
+        },
+    });
+    await withAiUsageContext({ searchId: root }, () => hunt(searchId, { goal: "resell", scope: "any_card", standalone: true,
+        freshListings: true, listingIds: [], targets: goal.targets, filters: { typeFilter: "FIXED_PRICE" },
+        marketPreferences: { preferRecentSales: true } }, signal()));
+    assert.equal(sourceQueries.length, 4, "the fifth turn must reuse the first market's saved backlog");
+    assert.equal(sourceQueries[3].toLowerCase(), "pokemon", "independent discovery must start before one popular market monopolizes the hunt");
+    assert.ok(batches[0][0].includes("120000031000"));
+    assert.ok(batches[4][0].includes("120000031050"), "the first market's later physical copies remain available in a later round");
+    assert.equal(new Set(batches.flat()).size, 250);
+    assert.deepEqual([...accounts], [root]);
+});
+
 test("the photographed release, name and number must agree before a fresh resale buy", () => {
     const value = example().e;
     const card = { name: "Charizard", cardNumber: "4/102", set: "Base Set", finish: "HOLO",
@@ -1103,7 +1314,8 @@ test("new quota pressure between stages prevents both the guided pivot and its n
     const queries: string[] = [];
     let checks = 0;
     const hunt = service(example(), {
-        browsePressure: async () => ++checks === 1 ? null : "QUOTA_LOW",
+        browsePressure: async () => ++checks === 1 ? null : { provider: "EBAY", label: "eBay Browse", limit: 5000, remaining: 500,
+            observedAt: stamp, resetsAt: new Date(now + 3_600_000).toISOString(), usedInWindow: 300, windowMinutes: 10, warning: "LOW_AND_FAST" },
         liquidMarkets: async () => ["A","B","C"].map((name,index) => ({name,id:index+1,set:"Aquapolis",number:"1/147",sales:9-index})),
         inventoryScanner: () => async (query, intent) => { queries.push(query); return emptyInventory()(query, intent); },
         plan: (input, active) => runDealHunt(input, active, async () => assert.fail("A protected pivot must make no model request")),

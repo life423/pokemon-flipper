@@ -15,6 +15,26 @@ Start with the [current plan and supplied resources](LOCAL_PLAN.md),
 
 ## November 25 local progress
 
+Find a flip continues through retained copies and source pages until it finds
+a supported opportunity, the buyer stops, accessible inventory is exhausted,
+or a provider/accounting stop prevents further work. Catalog suggestions affect
+search order; they do not restrict the hunt to three cards. Review batches and
+visible candidate windows remain bounded, without a total resale-card/check cap.
+Candidates appear while research continues. Both formats run together under
+one original account, and a verified current opportunity stops sibling work.
+The hunt preserves the daily eBay reserve, request pacing, exact identity and
+after-cost financial requirements. It does not claim exhaustive eBay coverage
+when the provider's own retrieval ceiling is reached.
+
+A general flip hunt now ranks measured markets by selling frequency. For the
+specific resale route it reports observed sales per day, distinct selling days
+and the middle half of comparable sold prices over 60 days. A flexible named
+hunt starts with the card and can expand to its confirmed set or nearby releases
+within two years. For sparse markets the planner can consult price history,
+Cardmarket offers, Pokémon Price Tracker or cited web sales. It can also research
+additional printings on the web and verify them in the catalog before searching
+eBay.
+
 The latest checkpoint adds condition-specific TCGplayer raw resale estimates,
 rolling 60-day sales activity without a hard three-sale purchase veto, bounded
 recovery from temporary review failures, and discovery continuation in batches

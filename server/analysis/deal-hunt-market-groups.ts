@@ -24,7 +24,11 @@ interface MarketGroup {
 
 export function groupMarketSearches(leads: HuntMarket[], goal: DealHuntGoal, targets: Targets, filters: ListingFilters,
     minGrade: number, knownIds: ReadonlySet<string> = new Set(), preferRecentSales = false) {
-    const activity = (lead: HuntMarket) => lead.sales60 ?? lead.sales30;
+    const activity = (lead: HuntMarket) => {
+        const count = lead.sales60 ?? lead.sales30;
+        if (!preferRecentSales) return count;
+        return lead.activity?.count === count ? lead.activity.priority : count / 60;
+    };
     const rankedLeads = preferRecentSales ? [...leads].sort((a, b) => activity(b) - activity(a)) : leads;
     const groups = new Map<string, MarketGroup>();
     for (const lead of rankedLeads) {

@@ -8,9 +8,10 @@ export const PRICE_SEARCH_DOMAINS = ["ebay.com", "psacard.com", "pricecharting.c
 export const WEB_SEARCH_FEE_NANO_USD = 10_000_000;
 export const WEB_SEARCH_CONTEXT_BOUND = 128 * 1024;
 
-export function priceSearchTools() {
+export const CATALOG_SEARCH_DOMAINS = ["pokemon.com", "tcgplayer.com", "psacard.com", "pkmnprices.com"];
+export function priceSearchTools(catalog = false) {
     return {
-        tools: [{ type: "web_search" as const, search_context_size: "low" as const, filters: { allowed_domains: [...PRICE_SEARCH_DOMAINS] } }],
+        tools: [{ type: "web_search" as const, search_context_size: "low" as const, filters: { allowed_domains: [...(catalog ? CATALOG_SEARCH_DOMAINS : PRICE_SEARCH_DOMAINS)] } }],
         tool_choice: "required" as const,
         max_tool_calls: 1,
         parallel_tool_calls: false,
@@ -19,8 +20,10 @@ export function priceSearchTools() {
 }
 
 export function isBoundedPriceSearch(body: any): boolean {
-    const options = priceSearchTools();
+    const catalog = body?.metadata?.app_step === "Web catalog research" && body.text?.format?.name === "web_catalog_research";
+    const price = body?.metadata?.app_step === "Web price research" && body.text?.format?.name === "web_price_research";
+    const options = priceSearchTools(catalog);
     return body?.model === PRICE_SEARCH_MODEL && body.max_output_tokens === PRICE_SEARCH_OUTPUT_TOKENS &&
-        body.metadata?.app_step === "Web price research" && body.text?.format?.name === "web_price_research" &&
+        (catalog || price) &&
         Object.entries(options).every(([key, value]) => isDeepStrictEqual(body[key], value));
 }

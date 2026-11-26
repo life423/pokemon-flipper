@@ -17,6 +17,24 @@ acceptance beyond listing 50, per-batch diagnostics, root-wide hunt ownership,
 single-batch refresh and global hold propagation. Broad hunts may also scan
 unseeded inventory; live market coverage remains unproven.
 
+The continuous Find a flip path keeps a query-owned in-memory backlog in
+`createHuntInventoryScanner`, including pending summaries, seen IDs and source
+cursors. A batch of 50 and a small model menu bound active work, not the total
+copies the hunt may consider. Ranked catalog markets are priorities followed by
+independent inventory queries. Resale planning has no default total-step ceiling;
+Stop, accessible-source exhaustion and real provider/accounting stops remain.
+Closed negative outcomes are retained without repeated financial recalculation.
+`canRepeat` can explicitly authorize one otherwise-supported expired BIN terms
+refresh. Neither that preview nor provisional progress cards authorize buying.
+
+Both format legs use separate hunt IDs under the same root budget. The client
+shows provisional summaries from the bounded `HuntProgress.candidates` window,
+aborts work when its workspace becomes inactive, and cancels sibling work only
+after current purchase/bid evidence validates. Ordinary broad descriptions use
+source-linked CARD/DESCRIPTION spans in the search interpreter; compatible v1
+interpretations are read with their exact original cache key before a new
+semantic request is allowed. Durable whole-hunt restart recovery remains open.
+
 Fixed-price Buy receipts carry a verified purchase route and ceiling through
 `shared/money/verified-purchase.ts`. Cards, inspectors, sorting and hunt results
 use that route. Quote age, terms, targets, destination and price evidence bind

@@ -5,6 +5,7 @@ import { createSearchInterpreter, SearchPlanInputError, validateSearchPlan } fro
 import { createModelExperimentRunner } from "../../server/analysis/model-experiment.ts";
 import { withAiUsageContext } from "../../server/ai/usage-context.ts";
 import { AiSpendingError } from "../../server/ai/spending.ts";
+import { TEXT_MODEL } from "../../server/ai/policy.ts";
 
 const knownSets = ["Base Set", "Base Set 2", "Neo Genesis", "Neo Revelation", "Neo Discovery", "Neo Destiny", "Evolving Skies", "Aquapolis", "Skyridge"];
 const filters = { typeFilter: "FIXED_PRICE" as const, kindFilter: "all" as const };
@@ -54,6 +55,47 @@ test("broad liquid-card wording preserves years and finish without becoming lite
     assert.equal(result.workflow, "market_hunt");
     assert.equal(result.query, "1999-2003 holo");
     assert.deepEqual(result.marketPreferences, { minYear: 1999, maxYear: 2003, finish: "HOLO", preferRecentSales: true });
+});
+
+test("source-linked descriptions let AI interpret unfamiliar buying goals without inventing a card", () => {
+    for (const [query, description] of [
+        ["find me an underpriced pokemon card", "underpriced"],
+        ["find a pokemon card with resale potential", "resale potential"],
+        ["find pokemon cards I can make money on", "make money"],
+        ["find me a card with a good margin", "good margin"],
+    ]) {
+        const result = reading({}, { workflow: "market_hunt", goal: "resell",
+            subjectMentions: [{ kind: "DESCRIPTION", text: description, cardName: null }] });
+        const plan = validate(result, query);
+        assert.equal(plan.workflow, "market_hunt", query);
+        assert.equal(plan.query, "pokemon", query);
+        assert.equal(plan.intent.cardName, null, query);
+        assert.equal(plan.goal, "resell", query);
+    }
+});
+
+test("semantic descriptions cannot invent source words or remove a named form, collector number or typed constraint", () => {
+    const description = (text: string) => ({ kind: "DESCRIPTION", text, cardName: null });
+    const broad = (subjectMentions: unknown[]) => reading({}, { workflow: "market_hunt", goal: "resell", subjectMentions });
+    assert.throws(() => validate(broad([description("resale potential")]), "find an underpriced pokemon card"), /original words/);
+    for (const [query, mentions] of [
+        ["find Dark Charizard", [description("Dark Charizard")]],
+        ["find Dark Charizard", [description("Dark"), description("Charizard")]],
+        ["find Rocket's Mewtwo", [description("Rocket's Mewtwo")]],
+        ["find Charizard ex", [description("Charizard ex")]],
+        ["find a card 15/102", [description("15/102")]],
+    ] as const) assert.throws(() => validate(broad([...mentions]), query), /name|form|number/, query);
+    const card = { kind: "CARD", text: "Dark Charizard", cardName: "Dark Charizard" };
+    const query = "find an underpriced Dark Charizard holo from 1999-2003 under $100 delivered";
+    const response = reading({ cardName: "Dark Charizard", finish: "HOLO", minYear: 1999, maxYear: 2003 },
+        { goal: "resell", maxDelivered: 100, subjectMentions: [description("underpriced"), card] });
+    const plan = validate(response, query);
+    assert.equal(plan.query, "1999-2003 Dark Charizard holo");
+    assert.equal(plan.maxDelivered, 100);
+    assert.throws(() => validate({ ...response, intent: { ...response.intent, cardName: "Charizard" } }, query), /omitted.*card|name|form/);
+    assert.throws(() => validate({ ...response, intent: { ...response.intent, maxYear: null } }, query), /year/);
+    assert.throws(() => validate(broad([description("underpriced"), card]), "find underpriced Dark Charizard"), /omitted.*card/);
+    assert.throws(() => validate(broad([]), "Ancient Years holo from the years 1999-2003"), /card|year/);
 });
 
 test("positive buyer liquidity wording sets the preference and model prose cannot add it", () => {
@@ -272,6 +314,61 @@ test("explicit auction wording overrides the selected default and an unrequested
     const good = reading({ cardName: "Venusaur" }, { format: "AUCTION" });
     assert.equal(validate(good, "Venusaur auctions").format, "AUCTION");
     assert.throws(() => validate(good, "Venusaur"), /format/);
+});
+
+test("Both retains executable Buy It Now and auction formats without requiring an impossible single format", () => {
+    const broad = reading({ finish: "HOLO" }, { workflow: "market_hunt", goal: "resell" });
+    for (const format of ["FIXED_PRICE", "AUCTION"] as const) {
+        const plan = validate({ ...broad, format }, "find holo cards in buy it now or auctions");
+        assert.deepEqual(plan.listingFormats, ["FIXED_PRICE", "AUCTION"]);
+        assert.equal(plan.format, format, "legacy consumers retain a valid primary format");
+    }
+    const all = { ...filters, typeFilter: "all" as const };
+    assert.deepEqual(validateSearchPlan(broad, { query: "find holo cards", filters: all }, knownSets).listingFormats,
+        ["FIXED_PRICE", "AUCTION"]);
+    assert.deepEqual(validateSearchPlan({ ...broad, format: "AUCTION" }, { query: "find holo auctions", filters: all }, knownSets).listingFormats,
+        ["AUCTION"], "an explicit single format takes precedence over the Both control");
+    assert.deepEqual(validate(broad, "find holo cards in both formats").listingFormats, ["FIXED_PRICE", "AUCTION"]);
+    assert.throws(() => validate({ ...broad, format: "AUCTION" }, "find holo buy it now cards"), /format/);
+});
+
+test("compatible accepted v1 interpretations are read without dispatching the new semantic request", async () => {
+    const saved = reading({ cardName: "Venusaur", minYear: 1999, maxYear: 1999 });
+    const original = structuredClone(saved);
+    let calls = 0, reads = 0;
+    const interpret = createSearchInterpreter({ setNames: async () => knownSets,
+        cached: async key => { reads++; return { version: 1, key, model: TEXT_MODEL, answeredAt: new Date().toISOString(), result: saved,
+            usage: { inputTokens: 100, outputTokens: 100 } }; },
+        run: async () => { calls++; throw new Error("A compatible accepted answer must not be bought again"); } });
+    const plan = await interpret({ query: "1999 Venusaur", filters });
+    assert.equal(plan.intent.cardName, "Venusaur");
+    assert.equal(reads, 1); assert.equal(calls, 0);
+    assert.deepEqual(saved, original);
+});
+
+test("an incompatible legacy wording uses the new subject contract, while corrupt accepted records fail closed", async () => {
+    const old = reading({}, { workflow: "market_hunt", goal: "resell" });
+    let calls = 0;
+    const interpret = createSearchInterpreter({ setNames: async () => knownSets,
+        cached: async key => ({ version: 1, key, model: TEXT_MODEL, answeredAt: new Date().toISOString(), result: old,
+            usage: { inputTokens: 100, outputTokens: 100 } }),
+        run: async options => {
+            calls++;
+            assert.equal(options.sourceKey, "submitted-search-plan:v2");
+            assert.ok(options.request.schema.required.includes("subjectMentions"));
+            return { result: { ...old, subjectMentions: [{ kind: "DESCRIPTION", text: "underpriced", cardName: null }] },
+                usage: { inputTokens: 100, outputTokens: 100 }, reused: false, answeredAt: new Date().toISOString(), key: "mock" };
+        } });
+    assert.equal((await interpret({ query: "find an underpriced pokemon card", filters })).workflow, "market_hunt");
+    assert.equal(calls, 1);
+    const corrupt = createSearchInterpreter({ setNames: async () => knownSets, cached: async () => ({ version: 1, key: "wrong" }),
+        run: async () => { throw new Error("Corrupt saved evidence cannot authorize new work"); } });
+    await assert.rejects(corrupt({ query: "find an underpriced pokemon card", filters }), { code: "STORAGE_UNAVAILABLE" });
+    const malformed = createSearchInterpreter({ setNames: async () => knownSets,
+        cached: async key => ({ version: 1, key, model: TEXT_MODEL, answeredAt: new Date().toISOString(), result: null,
+            usage: { inputTokens: 100, outputTokens: 100 } }),
+        run: async () => { throw new Error("A malformed paid response cannot authorize replacement work"); } });
+    await assert.rejects(malformed({ query: "find an underpriced pokemon card", filters }), /incomplete search plan/);
 });
 
 test("the exact raw submission goes to OpenAI and identical submissions reuse their accepted answer", async () => {

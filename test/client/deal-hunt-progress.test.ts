@@ -23,7 +23,7 @@ test("hunt progress reports current observations and keeps timers out of the liv
     ));
 
     const active = render(hunt);
-    assert.match(active, /role="progressbar" aria-label="Hunt activity"/);
+    assert.match(active, /role="progressbar" aria-label="Search activity"/);
     assert.match(active, /<h2[^>]*>Reading the listing photos<\/h2>/);
     assert.match(active, /Charizard Base Set/);
     assert.match(render({ ...hunt, guidance: "The last copy had a crease. Check the next photographed copy." }), /last copy had a crease/);
@@ -45,7 +45,7 @@ test("hunt progress reports current observations and keeps timers out of the liv
     }
     assert.doesNotMatch(render(undefined, { ...usage, searchId: "other" }), /7 AI requests logged/);
     const held = render({ ...hunt, phase: "failed", completedAt: hunt.updatedAt });
-    assert.match(held, /Hunt interrupted/);
+    assert.match(held, /Search interrupted/);
     assert.doesNotMatch(held, /role="progressbar"/);
     assert.doesNotMatch(held, /Reading the listing photos|>Stop<\/button>/);
 });

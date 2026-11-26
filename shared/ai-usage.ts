@@ -1,6 +1,7 @@
 import type { PricingResearchUsage } from "./pricing-usage.ts";
 import type { ProviderUsageSnapshot } from "./provider-usage.ts";
 import type { DealHuntAction } from "./deal-hunt.ts";
+import type { ListingSummary } from "./types.ts";
 
 export interface AiUsageStage {
     step: string;
@@ -51,6 +52,8 @@ export interface HuntProgress {
     /** Distinct copies whose photo-evidence check completed, including saved evidence. */
     photos: number;
     scans: number;
+    /** A bounded window of provisional copies; these are not purchase approvals. */
+    candidates?: ListingSummary[];
 }
 
 export interface AiSearchBudget {

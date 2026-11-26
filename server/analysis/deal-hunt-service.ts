@@ -37,6 +37,8 @@ import { exclusionReason } from "../ebay/filters.ts";
 import { aiSpendingFailure } from "../ai/spending.ts";
 import { getBudgetContext, withAiUsageContext } from "../ai/usage-context.ts";
 import { getListingDetails } from "../ebay/listings.ts";
+import { configuredShippingZip } from "../ebay/shipping-destination.ts";
+import { dailyBrowseReserve } from "../ebay/daily-budget.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { createSharedWork } from "../lib/shared-work.ts";
 import { evaluateBoundedListing, PriceOnlyEvidenceError } from "./bounded-evaluate.ts";
@@ -47,7 +49,7 @@ import { verifyCollectorArtwork } from "./collector-artwork.ts";
 import { huntPrintingCheck, huntPrintingTerms } from "./deal-hunt-printing.ts";
 import { dealHuntCandidate, newGradingOpportunity } from "./deal-hunt-evidence.ts";
 import { evaluationContextKey, loadPrivateEvaluation, type PrivateEvaluationSnapshot } from "./private-evaluation.ts";
-import { guidedInventoryTargets, type InventoryTarget } from "./guided-inventory.ts";
+import { guidedInventoryTargets, webInventoryTargets, type InventoryTarget } from "./guided-inventory.ts";
 import { liquidMarkets } from "../pricing/liquid-markets.ts";
 import { loadDiagnosticDiscovery } from "./search-diagnostics.ts";
 import { isSearchDiagnosticId } from "./search-diagnostic-store.ts";
@@ -56,7 +58,13 @@ import { findHuntMarkets, restoreSavedHuntSales, type HuntMarket } from "./same-
 import { discoverMarketListings, type MarketQueryObservation } from "./same-set-listings.ts";
 import { describeHuntMarket, huntOrigin, huntPhotoIdentityIssue, keepsSetSearchPreferences, marketItemLimit, marketIntent, matchesHuntMarket, photoMatchesCollectorMarket, shortlistMarketCopies } from "./deal-hunt-market-checks.ts";
 import { groupMarketCopies, groupMarketSearches, huntMarketCardKey } from "./deal-hunt-market-groups.ts";
+import { marketHistory } from "../pricing/price-history.ts";
+import { providerPrices } from "../pricing/buyer-market-prices.ts";
+import { compareCardmarket } from "../pricing/cardmarket.ts";
+import { withPriceResearchSignal } from "../pricing/research-budget.ts";
+import { sameCatalogName } from "../identity/catalog-name.ts";
 import { supplementalResearch } from "../pricing/supplemental-research.ts";
+import { PricingProviderError } from "../pricing/errors.ts";
 import { restoreRawComparisons } from "../pricing/saved-raw-comparisons.ts";
 import { sameSetFamily } from "../identity/card-identity.ts";
 
@@ -109,7 +117,7 @@ export function dealHuntRequest(input: unknown): DealHuntRequest {
         body.listingIds.some(id => typeof id !== "string" || !/^[\w|-]{1,120}$/.test(id)) ||
         new Set(body.listingIds).size !== body.listingIds.length || !targets ||
         ![targets.minProfit, targets.minRoi].every(amount => Number.isFinite(amount) && amount >= 0)) {
-        throw new DealHuntInputError("Choose a hunt goal, valid profit and ROI targets, and listings from one completed search.");
+        throw new DealHuntInputError("Choose a buying goal, valid profit and ROI targets, and listings from one completed search.");
     }
     return { goal: body.goal, scope, ...(body.watch && { watch: true }), ...(body.freshListings && { freshListings: true }), standalone: body.standalone === true, minPotentialGrade: minimumGrade,
         filters: filters && { typeFilter: filters.typeFilter, kindFilter: filters.kindFilter, minPrice: filters.minPrice, maxPrice: filters.maxPrice },
@@ -163,6 +171,8 @@ const defaults = {
     details: getListingDetails,
     restoreRaw: restoreRawComparisons,
     supplement: supplementalResearch,
+    marketHistory,
+    compareCardmarket,
     evaluate: evaluateBoundedListing,
     verifyCollectorArtwork,
     plan: runDealHunt,
@@ -170,6 +180,7 @@ const defaults = {
     inventoryScanner: createHuntInventoryScanner,
     liquidMarkets,
     guidedInventoryTargets,
+    webInventoryTargets,
     discoverMarket: discoverMarketListings,
     now: Date.now,
     setYears,
@@ -178,6 +189,10 @@ const defaults = {
     selectReviews: chooseReviewSelection,
 };
 type Dependencies = typeof defaults;
+function catalogActivity(target: InventoryTarget) {
+    const pace = target.activeDays === undefined ? "" : ` Observed ${((target.sales ?? 0) / 7).toFixed(2)} per day, across ${target.activeDays} selling days.`;
+    return `${target.sales} recorded USD eBay sales across the selected card types in seven calendar days.${pace}`;
+}
 const referencePrerequisites = new Set<DealHuntAction>(["inspect_photos", "check_listing", "check_sales"]);
 
 function fits(value: Evaluation, row?: HuntRow, inventory?: HuntInventory | null) {
@@ -260,13 +275,24 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
                 freshGrading && freshListingTime(latest, deps.now()) === null) return null;
             return latest;
         },
-        available: checked => retired ? [] : !artworkVerified ? ["inspect_photos"] : reader()?.available(checked) ??
-            (auction && !checked.has("check_listing") ? ["check_listing", "inspect_photos"] : ["inspect_photos"]),
+        available(checked) {
+            if (retired) return [];
+            if (!artworkVerified) return ["inspect_photos"];
+            const actions = reader()?.available(checked);
+            if (!actions) return auction && !checked.has("check_listing") ? ["check_listing", "inspect_photos"] : ["inspect_photos"];
+            if (!preferRecentSales || goal !== "resell" || !actions.includes("check_price_references")) return actions;
+            const sources: DealHuntAction[] = ["check_price_tracker", "search_web_sales"];
+            if (value?.identity?.recordId) sources.push("check_price_history", "compare_cardmarket");
+            return [...actions.filter(action => action !== "check_price_references"), ...sources.filter(source => !checked.has(source))];
+        },
+        canRepeat: (action, checked) => !retired && artworkVerified && reader()?.canRepeat?.(action, checked) === true,
         outcome(checked) {
             if (!value || retired || !artworkVerified) return null;
             const evidence = reader();
-            if (evidence?.available(checked).includes("check_price_references")) return null;
-            const result = evidence?.outcome(checked);
+            if (evidence?.available(checked).includes("check_price_references") &&
+                !(checked.has("check_price_tracker") && checked.has("search_web_sales"))) return null;
+            const searched = checked.has("check_price_tracker") || checked.has("search_web_sales");
+            const result = evidence?.outcome(searched ? new Set([...checked, "check_price_references"]) : checked);
             if (!result) return null;
             if (verifyPhotoIdentity && result.decision === "BUY") {
                 const reason = huntPhotoIdentityIssue(value);
@@ -293,7 +319,7 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
         },
         async read(action, signal) {
             signal?.throwIfAborted();
-            if (retired) return "This copy was excluded from the hunt.";
+            if (retired) return "This copy was excluded from the search.";
             if (!artworkVerified && action !== "inspect_photos") return "Check the original front against the catalog first.";
             const checkRaw = action === "check_raw_resale" || action === "check_sales" && value?.underwriting?.verdict === "CANT_PRICE";
             if (checkRaw && value) {
@@ -320,7 +346,7 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
                         return `eBay shows the next bid at ${dollars(next)} and the total with shipping and estimated tax at ${dollars(total)}. The original photos can now be assessed.`;
                     }
                     if (action !== "inspect_photos" || !row?.assessable) return retire("This copy has no eligible photo check.");
-                    value = await deps.evaluate(id, { automatic: true, typeFilter: format, targets, signal });
+                    value = await deps.evaluate(id, { automatic: true, ...(preferRecentSales && goal === "resell" && { deferSupplemental: true }), typeFilter: format, targets, signal });
                     if (row.listing.title.trim() !== value.listing.title.trim() ||
                         !searchPhotosFitDetails(row.listing.images, value.listing.photos ?? [])) {
                         return retire("The listing or gallery changed since this search. Its original evidence cannot support a buy.");
@@ -337,11 +363,24 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
                         JSON.stringify(focused.listing.conditionNotes) !== JSON.stringify(value.listing.conditionNotes))
                         return retire("The listing changed during its printing check. Its previous evidence no longer applies.");
                     value = focused;
-                } else if (action === "check_price_references") {
+                } else if (action === "check_price_history" || action === "compare_cardmarket") {
+                    if (!reader()?.available(referencePrerequisites).includes("check_price_references")) return "The current copy no longer needs this reference.";
+                    if (action === "check_price_history") {
+                        const history = await deps.marketHistory(value, deps.now());
+                        signal?.throwIfAborted();
+                        const latest = history.points.at(-1);
+                        return latest ? `${history.source} for ${history.scope}. Observed ${history.points.length} days. Latest price ${dollars(latest.price)} on ${latest.day}. ${history.reason}` : history.reason;
+                    }
+                    const result = await deps.compareCardmarket(value, { now: deps.now });
+                    signal?.throwIfAborted();
+                    return result.offers.length ? `Cardmarket has ${result.offers.length} matched active offers, starting at €${result.offers[0].priceEur.toFixed(2)} before delivery. These are European asking prices.`
+                        : result.reason ?? "Cardmarket returned no matching offers.";
+                } else if (action === "check_price_references" || action === "check_price_tracker" || action === "search_web_sales") {
                     const eligible = () => reader()?.available(referencePrerequisites).includes("check_price_references");
                     if (!eligible()) return "The current listing terms or market evidence no longer warrant a supplemental lookup.";
                     const now = deps.now();
-                    const options = { now, signal: signal ?? new AbortController().signal };
+                    const source = action === "check_price_tracker" ? "tracker" as const : action === "search_web_sales" ? "web" as const : undefined;
+                    const options = { now, signal: signal ?? new AbortController().signal, source };
                     const cached = await deps.supplement(value, { ...options, cacheOnly: true });
                     value = { ...value, ...cached };
                     if (eligible()) {
@@ -350,7 +389,8 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
                     }
                 } else if (action === "check_listing" && value.listing.availability !== "UNAVAILABLE") {
                     const age = deps.now() - Date.parse(value.listing.termsCheckedAt ?? "");
-                    if (checkFullListing || !(age >= 0 && age <= BEST_BUY_TERMS_MAX_AGE_MS) || auction && nextAuctionBid(value.listing, deps.now()) === null) {
+                    if (checkFullListing || !(age >= 0 && age < BEST_BUY_TERMS_MAX_AGE_MS) ||
+                        (value.listing.shippingDestination ?? null) !== configuredShippingZip() || auction && nextAuctionBid(value.listing, deps.now()) === null) {
                         const details = await deps.details(id, { maxAgeHours: auction ? 0 : BEST_BUY_TERMS_MAX_AGE_MS / 3_600_000, keepReserve: true, signal });
                         if (details.id !== id || details.buyingOption !== format || exclusionReason({ title: details.title, itemId: id, itemGroupType: details.itemGroupType }) ||
                             evaluationContextKey(details) !== evaluationContextKey({ title: value.listing.title, images: value.listing.photos ?? [], aspects: value.listing.aspects })) {
@@ -383,13 +423,15 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
                 }
             } catch (error) {
                 signal?.throwIfAborted();
+                if ((action === "check_price_history" || action === "compare_cardmarket") && error instanceof PricingProviderError && error.kind === "TEMPORARY")
+                    return "This source was temporarily unavailable. Other sources remain available.";
                 if (error instanceof EbayError && [404, 410].includes(error.status)) return retire("This copy is no longer available on eBay.");
                 if (error instanceof TypeError && /body is unusable.*already been read/i.test(error.message))
                     return retire("This listing’s provider response could not be read. Checking the next copy.");
                 if (aiSpendingFailure(error)?.code === "AI_EVIDENCE_HELD")
                     return retire("The photo or price check for this copy is unresolved. Checking the next listing.");
                 if (error instanceof EnglishOnlyError || error instanceof PriceOnlyEvidenceError || error instanceof RejectedPhotoAssessmentError) {
-                    return retire("The updated listing could not be matched to eligible photo and price evidence. The hunt can check another copy.");
+                    return retire("The updated listing could not be matched to eligible photo and price evidence.");
                 }
                 if (!(error instanceof EbayBudgetError && error.reason === "QUOTA" && value &&
                     (action === "check_sales" || action === "check_raw_resale" || action === "check_listing"))) throw error;
@@ -438,7 +480,7 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
         const request = dealHuntRequest(input);
         const { listingIds, batchIds = [], goal, targets, scope, standalone, freshListings, minPotentialGrade = 0 } = request;
         const budgetSearchId = getBudgetContext().searchId ?? searchId;
-        return share(JSON.stringify([searchId, request]), active => huntProgress.observe(budgetSearchId, searchId, active, async progress => {
+        return share(JSON.stringify([budgetSearchId, searchId, request]), active => withPriceResearchSignal(active, () => withAiUsageContext({ searchId, ...(budgetSearchId !== searchId && { watchBudgetId: budgetSearchId }) }, () => huntProgress.observe(budgetSearchId, searchId, active, async progress => {
             const watchKey = request.watch ? "private-hunt-watch:v1:" + createHash("sha256")
                 .update(JSON.stringify([budgetSearchId, searchId, request])).digest("hex") : null;
             const watch: WatchCheckpoint | null = watchKey ? await readCache<WatchCheckpoint>(watchKey, 24) ??
@@ -458,12 +500,12 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
             for (const batchId of batchIds) {
                 active.throwIfAborted();
                 if (batchId === searchId || await deps.batchOwner(batchId) !== searchId)
-                    throw new DealHuntInputError("The hunt contains a discovery batch from another search.", 409);
+                    throw new DealHuntInputError("The search contains a discovery batch from another search.", 409);
                 const batch = await deps.discovery(batchId);
                 if (!batch) throw new DealHuntInputError("A saved discovery batch is no longer available.", 404);
                 for (const id of batch.discovery.retainedIds) if (!retainedBy.has(id)) retainedBy.set(id, batchId);
             }
-            if (listingIds.some(id => !retainedBy.has(id))) throw new DealHuntInputError("The hunt contains a listing outside this search.", 409);
+            if (listingIds.some(id => !retainedBy.has(id))) throw new DealHuntInputError("The search contains a listing outside this search.", 409);
             const inventory = standalone ? null : await deps.inventory(searchId);
             const inventories = new Map([[searchId, inventory]]);
             for (const batchId of batchIds) {
@@ -507,6 +549,14 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
             const evaluations = new Map<string, Evaluation>();
             const candidates: DealHuntCandidate[] = [];
             const alternatives = new Map<string, { candidate: ScopedCandidate; leads: HuntMarket[]; reason: string }>();
+            const observeCandidate = (candidate: ScopedCandidate): ScopedCandidate => ({ ...candidate,
+                async read(action, signal) {
+                    const observation = await candidate.read(action, signal);
+                    const listing = candidate.liveListing();
+                    if (listing) progress.candidates?.([listing]);
+                    return observation;
+                },
+            });
             // Keep private SQL reads bounded. Preserve display order even if reads finish out of order.
             for (let offset = 0; offset < listingIds.length; offset += 4) {
                 active.throwIfAborted();
@@ -516,9 +566,9 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                     const batchId = retainedBy.get(id)!;
                     const candidate = scopedCandidate(id, goal, targets, batchId, snapshots[index], inventories.get(batchId) ?? null,
                         rows.get(id), evaluations, deps, filters, minPotentialGrade, acceptsEvaluation, { preferRecentSales });
-                    if (candidate) candidates.push(batchId === searchId ? candidate : { ...candidate,
+                    if (candidate) candidates.push(observeCandidate(batchId === searchId ? candidate : { ...candidate,
                         read: (action, signal) => withAiUsageContext({ searchId: batchId, watchBudgetId: searchId, listingId: id },
-                            () => candidate.read(action, signal)) });
+                            () => candidate.read(action, signal)) }));
                 });
                 progress.retain(candidates.length);
             }
@@ -619,83 +669,140 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                                 const matched = saved ? leads.filter(lead => matchesHuntMarket(saved.evaluation, lead)) : [];
                                 const reason = (matched.length ? matched : leads).map(describeHuntMarket).join(" ");
                                 knownIds.add(listing.id);
-                                alternatives.set(listing.id, { candidate, leads, reason });
-                                discovered.push({ ...candidate, summary: `${candidate.summary} ${reason} Item ${dollars(listing.currentPrice)}.` });
+                                const observed = observeCandidate(candidate);
+                                alternatives.set(listing.id, { candidate: observed, leads, reason });
+                                discovered.push({ ...observed, summary: `${candidate.summary} ${reason} Item ${dollars(listing.currentPrice)}.` });
                             }
                             progress.retain(candidates.length + alternatives.size);
+                            progress.candidates?.(discovered.flatMap(candidate => alternatives.get(candidate.listingId)?.candidate.liveListing() ?? []));
                             await assessFirstFreshCopies(discovered, fresh.length, reference.name);
                             return discovered;
                         } });
                 }
                 const wantsSlabs = goal === "collect_slab" || preferenceIntent.graded === true;
                 if (scope === "any_card" && (!wantsSlabs || filters.kindFilter !== "raw")) {
-                    const releases = sets?.length ? sets.filter(acceptsSet) : yearRange && !freshListings
+                    const releases = sets?.length ? sets.filter(acceptsSet) : yearRange
                         ? Object.keys(years).filter(acceptsSet).sort((a, b) => years[a] - years[b] || a.localeCompare(b)) : [null];
                     if (guided || freshListings && !sets?.length && !yearRange) progress.stage("planning",
                         guided ? [guided.name, guided.number].filter(Boolean).join(" ") : "Ranking catalog cards by seven days of recorded eBay sales");
-                    const guide = guided && deps.guidedInventoryTargets(guided, sets ?? [], filters.kindFilter, deps.now(), active, acceptsSet);
-                    const ranked = !guided && (rankBlank || freshListings) && !sets?.length && !yearRange && !finish && !printing
-                        ? await deps.liquidMarkets(filters.kindFilter, deps.now(), active) : [];
-                    const totalQueries = guide ? guided?.expand && !guided.number ? Infinity : Math.max(1, sets?.length ?? 0) :
-                        rankBlank ? ranked.length : ranked.length || releases.length;
+                    let chooseRoute: Parameters<DealHuntMarket["discover"]>[2];
+                    let reportGuidance: Parameters<DealHuntMarket["discover"]>[1];
+                    const guide = guided && deps.guidedInventoryTargets(guided, sets ?? [], filters.kindFilter, deps.now(), active, acceptsSet, undefined, undefined, {
+                        years: yearRange ? async () => years : deps.setYears,
+                        observedSet: () => {
+                            const origin = huntOrigin(undefined, [...evaluations.values()].filter(e => !huntPhotoIdentityIssue(e) && sameCatalogName(e.identity?.name, guided.name)));
+                            return origin?.set ?? null;
+                        },
+                        report: note => reportGuidance?.(note),
+                        chooseWeb: async releases => !!chooseRoute && (await chooseRoute([
+                            { title: "Continue catalog discovery", summary: "Search the remaining eligible release inventory directly." },
+                            { title: "Research related printings on the web", summary: `Look for cited cards in ${releases.slice(0, 6).join(", ")}. Check each lead against the catalog, then compare recorded sales.` },
+                        ])) === 1,
+                    });
+                    let ranked: Awaited<ReturnType<typeof deps.liquidMarkets>> = [];
+                    if (!guided && (rankBlank || freshListings) && !sets?.length && !yearRange && !finish && !printing) {
+                        try { ranked = await deps.liquidMarkets(filters.kindFilter, deps.now(), active); }
+                        catch (error) {
+                            active.throwIfAborted();
+                            if (!(error instanceof PricingProviderError && error.kind === "TEMPORARY")) throw error;
+                            marketNote = "The sampled market ranking was temporarily unavailable. Checking independent eBay inventory.";
+                        }
+                    }
                     const pendingTargets: InventoryTarget[] = [...ranked];
-                    let guideEnded = false;
-                    if (totalQueries) {
+                    const continuedTargets: InventoryTarget[] = [];
+                    let guideEnded = !guide;
+                    const allowFallback = !guided;
+                    let offerWebDiscovery = !guided && standalone && goal === "resell" && preferRecentSales && releases.length > 0;
+                    let fallbackIndex = 0;
+                    let currentTarget: InventoryTarget | undefined;
+                    let paused = false;
+                    const exhaustedQueries = new Set<string>();
+                    const checkedQueries = new Set<string>();
+                    const queryOffsets = new Map<string, number | undefined>();
+                    const hasTargets = () => !paused && Boolean(currentTarget || pendingTargets.length || continuedTargets.length || !guideEnded || offerWebDiscovery || allowFallback && fallbackIndex < releases.length);
+                    if (hasTargets()) {
                         const scan = deps.inventoryScanner(active);
                         const scanStartedAt = deps.now();
                         const inventoryFilters = wantsSlabs ? { ...filters, kindFilter: "graded" as const } : filters;
                         const intent: SearchIntent = { ...preferenceIntent, minYear, maxYear, releaseYears: years,
                             graded: inventoryFilters.kindFilter === "graded" ? true : inventoryFilters.kindFilter === "raw" ? false : preferenceIntent.graded };
-                        let completed = 0;
-                        let pageOffset: number | undefined;
-                        let pagesForRelease = 0;
                         let pagesScanned = 0;
+                        let batchesScanned = 0;
                         let started = false;
                         let partial = false;
-                        inventoryCoverage = () => guided && started ? `Checked ${pagesScanned} guided inventory ${pagesScanned === 1 ? "page" : "pages"}.` : freshListings && started
-                            ? `Checked ${pagesScanned} newest-first eBay ${pagesScanned === 1 ? "page" : "pages"}.`
-                            : !started ? "Broader eBay inventory remains unchecked."
-                            : `Completed ${completed} of ${totalQueries} broader eBay ${totalQueries === 1 ? "query" : "queries"}.${partial
-                                ? " More results remained within the checked inventory." : ""}`;
+                        inventoryCoverage = () => !started ? "Broader eBay inventory remains unchecked."
+                            : `Checked ${pagesScanned} eBay source ${pagesScanned === 1 ? "page" : "pages"} in ${batchesScanned} review ${batchesScanned === 1 ? "batch" : "batches"} across ${checkedQueries.size} ${guided ? "guided " : ""}inventory queries.${partial
+                                ? " Coverage remains partial for the source results." : ""}`;
                         markets.push({ source: "inventory", title: freshListings ? "New Buy It Now listings" : "Current eBay inventory",
                             summary: "Search current listings within the buyer's filters. Check each copy and its matching prices before considering a purchase.",
-                            hasMore: () => completed < totalQueries && (!guideEnded || pendingTargets.length > 0),
+                            hasMore: hasTargets,
                             async discover(_signal, reportQueries, chooseMarket) {
-                                if (completed >= totalQueries) return [];
-                                if (pagesScanned && (guided || rankBlank) && await deps.browsePressure()) {
-                                    completed = totalQueries;
+                                if (!hasTargets()) return [];
+                                const beforeScanPressure = pagesScanned && (guided || rankBlank) ? await deps.browsePressure() : null;
+                                if (beforeScanPressure && beforeScanPressure.remaining <= dailyBrowseReserve(beforeScanPressure.limit)) {
+                                    paused = true;
                                     marketNote = "Further market searches paused to preserve the daily eBay allowance.";
                                     return [];
                                 }
-                                if (guide && !guideEnded && !pendingTargets.length) {
-                                    // Leave the seed and its related sets lazy. The final stage already ranked
-                                    // a small batch of eligible vintage markets using recorded sales.
-                                    do {
-                                        active.throwIfAborted();
-                                        const next = await guide.next();
-                                        if (next.done) { guideEnded = true; break; }
-                                        pendingTargets.push(next.value);
-                                        if (next.value.sales === undefined) break;
-                                    } while (pendingTargets.length < 3);
+                                chooseRoute = chooseMarket;
+                                reportGuidance = reportQueries;
+                                while (!currentTarget) {
+                                    if (guide && !guideEnded && !pendingTargets.length) {
+                                        // Keep seed and set discovery lazy. Group measured markets for the next model choice.
+                                        do {
+                                            active.throwIfAborted();
+                                            const next = await guide.next();
+                                            if (next.done) { guideEnded = true; break; }
+                                            pendingTargets.push(next.value);
+                                            if (next.value.sales === undefined) break;
+                                        } while (pendingTargets.length < 3);
+                                    }
+                                    while (!pendingTargets.length && guideEnded && allowFallback && fallbackIndex < releases.length) {
+                                        const fallback = { name: null, number: null, set: releases[fallbackIndex++] };
+                                        const query = fallback.set || "Pokemon";
+                                        if (!checkedQueries.has(JSON.stringify([query, format]))) pendingTargets.push(fallback);
+                                    }
+                                    // Give each priority and independent query a first turn before
+                                    // revisiting a popular card. Later rounds retain every backlog.
+                                    if (!pendingTargets.length && continuedTargets.length)
+                                        pendingTargets.push(...continuedTargets.splice(0));
+                                    if (!pendingTargets.length && offerWebDiscovery) {
+                                        offerWebDiscovery = false;
+                                        if (chooseMarket && await chooseMarket([
+                                            { title: "Finish this inventory search", summary: "The scanned queries have no remaining copies or pages." },
+                                            { title: "Find additional card markets on the web", summary: "Look up cited English printings and check their catalog identities before searching eBay within the buyer's original filters." },
+                                        ]) === 1) {
+                                            const allowed = releases.filter((set): set is string => set !== null);
+                                            const seed = [finish, printing, "Pokémon cards with frequent sales and stable resale prices"].filter(Boolean).join(" ");
+                                            pendingTargets.push(...await deps.webInventoryTargets(seed, allowed, inventoryFilters.kindFilter, deps.now(), active, acceptsSet, reportQueries));
+                                        }
+                                    }
+                                    if (!pendingTargets.length) return [];
+                                    let targetIndex = 0;
+                                    if (chooseMarket && pagesScanned && pendingTargets.length > 1) {
+                                        targetIndex = await chooseMarket(pendingTargets.map(target => ({
+                                            title: [target.name, target.number, target.set].filter(Boolean).join(" ") || "Current eBay inventory",
+                                            summary: target.sales === undefined ? "Continue the retained copies and remaining source pages within the buyer's filters."
+                                                : catalogActivity(target),
+                                        })));
+                                    }
+                                    active.throwIfAborted();
+                                    const [next] = pendingTargets.splice(targetIndex, 1);
+                                    const nextQuery = [next.name, next.number, next.set].filter(Boolean).join(" ") || "Pokemon";
+                                    if (!exhaustedQueries.has(JSON.stringify([nextQuery, format]))) currentTarget = next;
                                 }
-                                if (guide && !pendingTargets.length) return [];
-                                let targetIndex = 0;
-                                if (chooseMarket && pagesScanned && pendingTargets.length > 1) {
-                                    targetIndex = await chooseMarket(pendingTargets.map(target => ({
-                                        title: [target.name, target.number, target.set].filter(Boolean).join(" "),
-                                        summary: target.sales + " recorded USD eBay sales across the selected card types in seven days.",
-                                    })));
-                                }
-                                active.throwIfAborted();
-                                const [target] = pendingTargets.splice(targetIndex, 1);
-                                const release = target ? target.set : releases[completed];
-                                const query = target ? [target.name, target.number, release].filter(Boolean).join(" ") : release ?? "Pokemon";
+                                const target = currentTarget;
+                                const release = target.set;
+                                const query = [target.name, target.number, release].filter(Boolean).join(" ") || "Pokemon";
                                 const cursorKey = JSON.stringify([query, format]);
+                                let pageOffset = queryOffsets.get(cursorKey);
                                 const stageLabel = target?.stage ? target.stage + " · " + query : query === "Pokemon" ? "Newly listed singles across sets" : query;
-                                const cohort = target?.sales ? stageLabel + " · " + target.sales + " recorded eBay sales in 7 days" : stageLabel;
+                                const cohort = target.sales ? stageLabel + " · " + target.sales + " recorded eBay sales in 7 days" +
+                                    (target.activeDays === undefined ? "" : ` on ${target.activeDays} selling days`) : stageLabel;
                                 const scanIntent = { ...intent, sets: release ? [release] : [],
                                     ...(target && { cardName: target.name, cardNumber: target.number, titleWords: target.name ? [target.name] : [] }) };
                                 started = true;
+                                checkedQueries.add(cursorKey);
                                 progress.stage("discovering", cohort, "find_listings");
                                 let observedFound = 0, observedScreened = 0;
                                 const recordSourceCounts = ({ found, screened }: { found: number; screened: number }) => {
@@ -705,31 +812,36 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                                     observedFound += added;
                                     observedScreened += priced;
                                 };
-                                const { listings, summary } = await scan(query, scanIntent,
+                                const { listings, summary, hasMore, sourcePages } = await scan(query, scanIntent,
                                     inventoryFilters, targets, scanStartedAt, { excludeIds: knownIds, freshGrading,
                                         ...(freshListings && { freshListings }),
                                         ...((freshListings || watch) && { offset: pageOffset ?? (watch && watch.rounds % 3 !== 0 ? watch.offsets[cursorKey] : undefined),
                                             onNextPage: offset => {
                                                 pageOffset = offset;
+                                                queryOffsets.set(cursorKey, offset);
                                                 if (watch) watch.offsets[cursorKey] = offset ?? 0;
                                             } }),
                                         ...(watch && { previouslyChecked: row => (watch.checked[listingFingerprint(row)] ?? 0) > deps.now() }),
                                         onStage: stage => progress.stage(stage, cohort, "find_listings"), onProgress: recordSourceCounts });
                                 recordSourceCounts({ found: summary.found, screened: summary.screened ?? 0 });
-                                progress.source(0, 0, 1);
-                                pagesScanned++;
-                                pagesForRelease++;
-                                // Sample up to three newest pages per query. Advance only with an actual eBay cursor.
+                                progress.source(0, 0, sourcePages ?? 1);
+                                pagesScanned += sourcePages ?? 1;
+                                batchesScanned++;
+                                // Rotate after a review batch while the scanner retains this query's
+                                // copies and cursor. Returning later drains its pending copies first.
                                 const pressure = (freshListings || guide || rankBlank) && await deps.browsePressure();
-                                if (pressure && target) marketNote = "Further market searches paused to preserve the daily eBay allowance.";
-                                if (target || !freshListings || pageOffset === undefined || pagesForRelease >= 3 || pressure) {
-                                    completed = pressure && target ? totalQueries : completed + 1;
-                                    pageOffset = undefined;
-                                    pagesForRelease = 0;
+                                if (pressure && pressure.remaining <= dailyBrowseReserve(pressure.limit)) {
+                                    paused = true; marketNote = "Further market searches paused to preserve the daily eBay allowance.";
                                 }
+                                if (hasMore ?? pageOffset !== undefined) continuedTargets.push(target);
+                                else {
+                                    exhaustedQueries.add(cursorKey);
+                                    queryOffsets.delete(cursorKey);
+                                }
+                                currentTarget = undefined;
                                 partial ||= summary.sourceCoverage === "PARTIAL";
                                 if (target?.stage) reportQueries?.(cohort);
-                                if (target?.sales) reportQueries?.(`${target.name} ${target.number} · ${target.sales} recorded USD eBay sales across the selected card types in seven calendar days. Ranked among sampled catalog cards.`);
+                                if (target?.sales) reportQueries?.(`${target.name} ${target.number} · ${catalogActivity(target)} Ranked among sampled catalog cards.`);
                                 reportQueries?.(`“${query}” loaded ${summary.found} distinct listing summaries and screened prices for ${summary.screened ?? 0}.${summary.sourceCoverage === "PARTIAL"
                                     ? " This scan covered part of the source results." : " Coverage applies to this eBay query."}`);
                                 const discovered: DealHuntCandidate[] = [];
@@ -750,15 +862,17 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                                     if (!candidate) continue;
                                     const reason = target?.stage ? cohort : freshListings ? "Found in current Buy It Now listings." : `Found in the broader eBay search for ${query}.`;
                                     knownIds.add(listing.id);
-                                    alternatives.set(listing.id, { candidate, leads: [], reason });
-                                    discovered.push(candidate);
+                                    const observed = observeCandidate(candidate);
+                                    alternatives.set(listing.id, { candidate: observed, leads: [], reason });
+                                    discovered.push(observed);
                                 }
                                 progress.retain(candidates.length + alternatives.size);
+                                progress.candidates?.(discovered.flatMap(candidate => alternatives.get(candidate.listingId)?.candidate.liveListing() ?? []));
                                 await assessFirstFreshCopies(discovered, copies.length, release ?? "the broader eBay search");
                                 return discovered;
                             } });
                     } else {
-                        marketNote = rankBlank ? "No recent eBay sales could be confirmed for the sampled catalog cards. Try a named card or set." : "The release catalog supplied no broader inventory queries within your year and set filters.";
+                        marketNote = "The release catalog supplied no broader inventory queries within your year and set filters.";
                     }
                 }
                 if (!markets.length) marketNote ??= scope === "same_set" && !origin
@@ -776,15 +890,26 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
             let alternative: DealHuntResponse["alternative"];
             const otherCopies: ListingSummary[] = [];
             const candidatePrices: NonNullable<DealHuntResponse["candidatePrices"]> = {};
-            for (const [id, { candidate, leads, reason }] of alternatives) {
+            const visibleAlternatives = [...alternatives].slice(-(DEVELOPMENT_SEARCH_LIMIT + 1));
+            const selectedAlternative = report.destination && alternatives.get(report.destination.listingId);
+            if (report.destination && selectedAlternative && !visibleAlternatives.some(([id]) => id === report.destination!.listingId))
+                visibleAlternatives.unshift([report.destination.listingId, selectedAlternative]);
+            const capturePrices = (id: string, listing: ListingSummary) => {
+                const assessment = evaluations.get(id), now = deps.now();
+                const prices = listingMarketPrices(assessment, listing, now);
+                if (prices && assessment) candidatePrices[id] = { ...prices, additional: [...(prices.additional ?? []), ...providerPrices(assessment, now)] };
+            };
+            for (const [id, { candidate, leads, reason }] of visibleAlternatives) {
                 const listing = candidate.liveListing();
                 if (!listing) continue;
-                if (id === report.destination?.listingId) alternative = { listing, reason };
+                if (id === report.destination?.listingId) {
+                    alternative = { listing, reason };
+                    capturePrices(id, listing);
+                }
                 else if (standalone && otherCopies.length < DEVELOPMENT_SEARCH_LIMIT &&
                     (!leads.length || leads.some(lead => shortlistMarketCopies([listing], lead, goal, targets, filters).length))) {
                     otherCopies.push(listing);
-                    const prices = listingMarketPrices(evaluations.get(id), listing, deps.now());
-                    if (prices) candidatePrices[id] = prices;
+                    capturePrices(id, listing);
                 }
             }
             if (watch && watchKey) {
@@ -801,13 +926,13 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
             const copies = { ...(watch && { nextCheckAt: watch.nextCheckAt }), ...(alternative && { alternative }), ...(standalone && { candidates: otherCopies }),
                 ...(Object.keys(candidatePrices).length > 0 && { candidatePrices }) };
             if (standalone && report.destination && !alternative) {
-                return { report: { ...report, decision: "WAIT", destination: null, reason: "The selected listing became unavailable before the hunt finished." },
+                return { report: { ...report, decision: "WAIT", destination: null, reason: "The selected listing became unavailable before the search finished." },
                     evaluation: null, ...copies };
             }
             const gradingOpportunity = freshGrading && report.decision === "BUY" && evaluation && alternative
                 ? newGradingOpportunity(evaluation, deps.now(), targets, alternative.listing) : undefined;
             if (freshGrading && report.decision === "BUY" && !gradingOpportunity) {
-                return { report: { ...report, decision: "WAIT", reason: "The grading comparisons or listing terms expired before the hunt finished.", marketNote },
+                return { report: { ...report, decision: "WAIT", reason: "The grading comparisons or listing terms expired before the search finished.", marketNote },
                     evaluation: evaluation ?? null, ...copies };
             }
             if (searchedPrices.length && !report.destination && !marketNote && report.steps.length && report.steps.every(step => step.action === "find_listings")) {
@@ -817,14 +942,14 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
             const collector = selectedBid && goal === "collect_slab" ? collectorAuction(selectedBid, deps.now(), filters.maxPrice) : null;
             const opportunity = selectedBid && goal !== "collect_slab" ? auctionOpportunity(selectedBid, targets, deps.now(), filters.maxPrice) : null;
             if (report.decision === "BID" && (collector ?? opportunity)?.status !== "BID") {
-                return { report: { ...report, decision: "WAIT", reason: "The auction terms expired before the hunt finished.", marketNote }, evaluation: evaluation ?? null,
+                return { report: { ...report, decision: "WAIT", reason: "The auction terms expired before the search finished.", marketNote }, evaluation: evaluation ?? null,
                     ...copies };
             }
             return { ...(collector && { collectorAuction: collector }), ...(opportunity && { auctionOpportunity: opportunity }),
                 ...(gradingOpportunity && { gradingOpportunity }),
                 report: marketNote ? { ...report, marketNote } : report, evaluation: evaluation ?? null,
                 ...copies };
-        }), signal);
+        }))), signal);
     };
 }
 export const runSearchDealHunt = createDealHuntService();

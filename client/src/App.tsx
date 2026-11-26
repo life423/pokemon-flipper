@@ -166,6 +166,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
     const [standaloneHuntId, setStandaloneHuntId] = useState<string>(() => crypto.randomUUID());
     const [startedHuntScope, setStartedHuntScope] = useState<string | null>(null);
     const [huntBusy, setHuntBusy] = useState(false);
+    const [guidedBusy, setGuidedBusy] = useState(false);
     const [huntPrompt, setHuntPrompt] = useState<HuntGoalPrompt | null>(null);
     const [searchPlan, setSearchPlan] = useState<SearchPlan | null>(restored?.plan ?? null);
     const [searchInterpreting, setSearchInterpreting] = useState(false);
@@ -289,7 +290,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
 
     const [rawAnalyses, setAnalyses] = useState<Record<string, AnalysisState>>(restored?.analyses ?? {});
     useEffect(() => {
-        if (searchStatus !== "checking" && linkStatus !== "loading" && !pricingBusy && !huntBusy && !Object.values(rawAnalyses).some(analysis => analysis.status === "loading")) return;
+        if (searchStatus !== "checking" && linkStatus !== "loading" && !pricingBusy && !huntBusy && !guidedBusy && !Object.values(rawAnalyses).some(analysis => analysis.status === "loading")) return;
         let active = true;
         let reading = false;
         // This endpoint reads local accounting only; it never calls providers.
@@ -303,7 +304,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
             }, () => {}).finally(() => { reading = false; });
         }, 1500);
         return () => { active = false; window.clearInterval(timer); };
-    }, [rawAnalyses, searchStatus, linkStatus, pricingBusy, huntBusy]);
+    }, [rawAnalyses, searchStatus, linkStatus, pricingBusy, huntBusy, guidedBusy]);
     const pricingAnalyses = useRef(rawAnalyses);
     pricingAnalyses.current = rawAnalyses;
     const [analysisOutcomes, setAnalysisOutcomes] = useState<boolean[]>([]);
@@ -934,6 +935,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
         pendingAnalyses.current.clear();
         for (const controller of analysisControllers.current.values()) controller.abort();
         searchAbort.current?.abort();
+        continuationAbort.current?.abort();
         continuationAbort.current = null;
         setContinuingDiscovery(false);
         setDiscoveryProgress(null);
@@ -958,7 +960,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
     // Promising candidates go first, up to the shared concurrency ceiling and
     // the user's selected full-analysis setting.
     useEffect(() => {
-        if (summary?.reviewSelection || completedSearchRunId || page !== "search" || searchStatus === "error" || analysisPaused.current) return;
+        if (showingFlip || summary?.reviewSelection || completedSearchRunId || page !== "search" || searchStatus === "error" || analysisPaused.current) return;
         const running = Object.values(analyses).filter((analysis) => analysis.status === "loading").length;
         let remaining = budget - autoQueued.current.size;
         if (remaining <= 0) return;
@@ -977,7 +979,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
             remaining -= 1;
             void runAnalysis(listing, { automatic: true });
         }
-    }, [listings, analyses, budget, runAnalysis, analysisOutcomes, targets, photoReviews, page, listingBlock, searchStatus, summary?.reviewSelection, completedSearchRunId]);
+    }, [showingFlip, listings, analyses, budget, runAnalysis, analysisOutcomes, targets, photoReviews, page, listingBlock, searchStatus, summary?.reviewSelection, completedSearchRunId]);
 
     function changeAutoSetting(value: number) {
         setAutoSetting(value);
@@ -1024,7 +1026,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
     const buyerReviews = useBuyerReviews({
         auctionUpdates,
         searchId: continuationRequest.current?.rootId ?? completedSearchRunId, owners: discoveryRunByItem.current,
-        enabled: page === "search" && automaticReviews && !stopped && !needsWiderSearch && !analysisBlocked,
+        enabled: page === "search" && !showingFlip && automaticReviews && !stopped && !needsWiderSearch && !analysisBlocked,
         ready: lastDestination.current !== undefined && researchTargetsReady && searchStatus === "done" && !pricingBusy, allowResearch: true,
         targets, offers: includeOffers, listings, queue: reviewQueue, evaluations: reviewEvaluations, now,
         busy: new Set([...activeAnalyses.current, ...activePhotoReviews.current]),
@@ -1160,10 +1162,10 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
     }
     useEffect(() => {
         const next = summary?.continuation;
-        if (!destinationReady || !next || next.blocked || autoSetting === 0 || stopped || needsWiderSearch || analysisBlocked || continuingDiscovery ||
+        if (showingFlip || !destinationReady || !next || next.blocked || autoSetting === 0 || stopped || needsWiderSearch || analysisBlocked || continuingDiscovery ||
             page !== "search" || searchStatus !== "done" || buyerReviews.unreviewed !== 0 || buyerReviews.active !== 0 || huntBusy) return;
         void continueDiscovery(next);
-    }, [destinationReady, summary?.continuation, autoSetting, stopped, needsWiderSearch, analysisBlocked, continuingDiscovery,
+    }, [showingFlip, destinationReady, summary?.continuation, autoSetting, stopped, needsWiderSearch, analysisBlocked, continuingDiscovery,
         page, searchStatus, buyerReviews.unreviewed, buyerReviews.active, huntBusy]);
 
     const visible = useMemo(() => sortSearchResults(groups[view], analyses, sort, targets, now, buyerDecisions), [groups, view, sort, analyses, targets, now, buyerDecisions]);
@@ -1473,7 +1475,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
         target: { targets, targetInputs, changeTarget },
         settings: { includeOffers, autoSetting, changeIncludeOffers, changeAutoSetting },
         shipping: {
-            busy: searchStatus === "checking" || aiBusy || pricingBusy || huntBusy || linkStatus === "loading" ||
+            busy: searchStatus === "checking" || aiBusy || pricingBusy || huntBusy || guidedBusy || linkStatus === "loading" ||
                 activeAnalyses.current.size > 0 || activePhotoReviews.current.size > 0 || refreshingSaved,
             onSaved: (zip: string) => {
                 destinationRequest.current?.abort();
@@ -1631,7 +1633,10 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
                         {!toolPage && <div className={styles.topRow}>
                             <div className={styles.entryModes} role="group" aria-label="Search mode">
                                 <button type="button" aria-pressed={!showingFlip && !linkInput} onClick={() => chooseEntry(false)}>Find a deal</button>
-                                <button type="button" aria-pressed={showingFlip} onClick={() => { setFlipEntry(true); setSelectedId(null); setPage("search"); }}>Find a flip</button>
+                                <button type="button" aria-pressed={showingFlip} onClick={() => {
+                                    stopSearch(); cancelLink(); cancelPricing(); watchSearch.current++;
+                                    setFlipEntry(true); setSelectedId(null); setPage("search");
+                                }}>Find a flip</button>
                                 <button type="button" aria-pressed={!showingFlip && linkInput} onClick={() => chooseEntry(true)}>Evaluate eBay link</button>
                             </div>
                             <div hidden={showingFlip}><form className={styles.searchRow} role="search" onSubmit={submitSearch}>
@@ -1717,7 +1722,9 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
                         The shipping destination changed. Run the search again for current delivery quotes.
                     </p>}
                     <div hidden={!showingFlip}>
-                        <GuidedFlip filters={currentFilters} targets={targets} minGrade={minGrade} destination={destination} ready={destinationReady}
+                        <GuidedFlip active={showingFlip} onBusyChange={setGuidedBusy}
+                            onStart={id => { stopSearch(); cancelLink(); cancelPricing(); searchRunId.current = id; setAiUsage(null); }} onDestinationSaved={zip => confirmDestination.current(zip)}
+                            filters={currentFilters} targets={targets} minGrade={minGrade} destination={destination} ready={destinationReady}
                             now={now} latest={latestListings.current} updated={auctionUpdates} shortlist={listing => {
                                 const saved = shortlist.some(entry => entry.id === listing.id);
                                 return <button type="button" aria-pressed={saved} disabled={savingIds.has(listing.id)}
@@ -1794,7 +1801,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
                             canScan={reviewReady && selectedId === null && !drawerOpen && !sniperDraft}
                             onScan={scanGradingWatch} onOpen={openPanel} onRecheck={buyerReviews.recheckQuote} />}
                     {huntId && (standaloneHunt && activeHuntPrompt || sameSearchText && huntReady && page === "search" && !needsWiderSearch) &&
-                        <DealHunt key={huntScope} searchId={huntId} standalone={standaloneHunt} now={now} updatedTerms={auctionUpdates} filters={huntFilters} usage={aiUsage}
+                        <DealHunt active={!showingFlip && page === "search"} key={huntScope} searchId={huntId} standalone={standaloneHunt} now={now} updatedTerms={auctionUpdates} filters={huntFilters} usage={aiUsage}
                             latestListings={latestListings.current} destinationReady={destinationReady}
                             initialGoal={activeHuntPrompt?.goal} marketPreferences={activeHuntPrompt?.marketPreferences}
                             onFormatChange={format => { setHuntPrompt(null); setTypeFilter(format); }}

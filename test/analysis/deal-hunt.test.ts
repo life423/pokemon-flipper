@@ -11,7 +11,7 @@ import { createModelExperimentRunner } from "../../server/analysis/model-experim
 const searchId = "addc12de-bbbe-4f5a-bae0-9a369a92ced2";
 type Prompt = { inventory: { index: number; title: string; listingId: string; freshRawGradingLead?: boolean }[];
     observed: { listingId: string | null; action: DealHuntAction | "find_listings"; observation: string; hypothesisTested?: string }[];
-    menu: { key: string }[]; remainingChecks: number };
+    menu: { key: string }[]; tools?: Record<string, string>; remainingChecks: number };
 function planner(select: (prompt: Prompt) => string | { choice: string; reason: string }) {
     const cache = new Map();
     let dispatches = 0;
@@ -513,4 +513,136 @@ test("guided fresh resale uses the failed copy to choose the next copy and finis
     assert.match(guidance[0], /third copy/);
     assert.equal(report.destination?.listingId, "third");
     assert.equal(report.decision, "BUY");
+});
+
+test("resale continues past fifty copies and 128 checks until a supported purchase is found", async () => {
+    let discovered = 0;
+    const checked: string[] = [];
+    const report = await runDealHunt({ searchId, goal: "resell", candidates: [], freshListings: true,
+        markets: [{ title: "Continuing live inventory", summary: "More distinct physical copies remain.",
+            hasMore: () => discovered < 80,
+            discover: async () => {
+                const number = ++discovered;
+                return [{ listingId: `copy-${number}`, title: `Copy ${number}`, summary: "Same market, independent condition.",
+                    available: () => ["inspect_photos"],
+                    read: () => { checked.push(`copy-${number}`); return "Observed the actual copy."; },
+                    outcome: completed => completed.has("inspect_photos") ? {
+                        decision: number === 75 ? "BUY" : "WAIT", section: "photos", reason: number === 75
+                            ? "This copy has a verified profitable route." : "This copy does not meet the target.",
+                    } : null }];
+            } }],
+    }, undefined, planner(() => assert.fail("The next bounded inventory check is already determined.")).choose);
+    assert.equal(report.decision, "BUY");
+    assert.equal(report.destination?.listingId, "copy-75");
+    assert.equal(discovered, 75, "stop discovery as soon as a supported flip is found");
+    assert.equal(checked.length, 75);
+    assert.equal(new Set(checked).size, 75);
+    assert.ok(report.steps.length > 128, "the old total research-step ceiling cannot end a resale hunt");
+});
+
+test("a continuing resale hunt still stops immediately on buyer cancellation", async () => {
+    const stop = new AbortController();
+    let discovered = 0;
+    await assert.rejects(runDealHunt({ searchId, goal: "resell", candidates: [], freshListings: true,
+        markets: [{ title: "Live inventory", summary: "Source has more copies.", hasMore: () => true,
+            discover: async () => {
+                const number = ++discovered;
+                return [{ listingId: `copy-${number}`, title: `Copy ${number}`, summary: "Needs review.",
+                    available: () => ["inspect_photos"],
+                    read: () => { if (number === 3) stop.abort(); return "No profitable route."; },
+                    outcome: completed => completed.has("inspect_photos") ? { decision: "WAIT", section: "photos", reason: "Not a flip." } : null }];
+            } }],
+    }, stop.signal, planner(() => assert.fail("No planning request is needed.")).choose), { name: "AbortError" });
+    assert.equal(discovered, 3);
+});
+
+test("an explicit otherwise-supported stale-terms check can refresh once without repeating photos", async () => {
+    const reads: string[] = [];
+    let termsFresh = true;
+    const candidate: DealHuntCandidate = {
+        listingId: "stale-copy", title: "Promising copy", summary: "Saved photos and supported resale.",
+        available: completed => ["check_listing", "inspect_photos", "check_sales"].filter(action =>
+            !completed.has(action as DealHuntAction) || action === "check_listing" && !termsFresh) as DealHuntAction[],
+        canRepeat: action => action === "check_listing" && !termsFresh,
+        read(action) {
+            reads.push(action);
+            if (action === "check_listing") termsFresh = true;
+            if (action === "check_sales") termsFresh = false; // Long research expired the earlier quote.
+            return "Accepted evidence retained.";
+        },
+        outcome: completed => ["check_listing", "inspect_photos", "check_sales"].every(action => completed.has(action as DealHuntAction))
+            ? { decision: termsFresh ? "BUY" : "WAIT", section: "sales", reason: termsFresh ? "Fresh terms support the purchase." : "Terms need refreshing." } : null,
+    };
+    const report = await runDealHunt({ searchId, goal: "resell", candidates: [candidate], freshListings: true },
+        undefined, planner(() => assert.fail("The next verification is determined.")).choose);
+    assert.equal(report.decision, "BUY");
+    assert.deepEqual(reads, ["check_listing", "inspect_photos", "check_sales", "check_listing"]);
+});
+
+test("a terms refresh that still cannot support buying cannot become an endless retry loop", async () => {
+    let reads = 0;
+    const report = await runDealHunt({ searchId, goal: "resell", freshListings: true, candidates: [{
+        listingId: "unrefreshable", title: "Terms still unavailable", summary: "Saved evidence cannot settle current shipping.",
+        available: () => ["check_listing"], canRepeat: () => true,
+        read: () => { reads++; return "Fresh purchase terms could not be established."; },
+        outcome: checked => checked.has("check_listing") ? { decision: "WAIT", section: "listing", reason: "Current terms remain unavailable." } : null,
+    }] }, undefined, planner(() => assert.fail("No model call is needed.")).choose);
+    assert.equal(report.decision, "WAIT");
+    assert.equal(reads, 2, "one original terms check and one explicitly eligible refresh");
+});
+
+test("closed Waits cannot hide a later initial copy from the bounded planning menu", async () => {
+    let reads = 0;
+    const candidates: DealHuntCandidate[] = Array.from({ length: 40 }, (_, index) => ({
+        listingId: `retained-${index}`, title: `Retained copy ${index}`, summary: "An independent physical copy.",
+        available: () => ["inspect_photos"], read: () => { reads++; return "Copy-specific condition checked."; },
+        outcome: completed => completed.has("inspect_photos") ? {
+            decision: index === 27 ? "BUY" : "WAIT", section: "photos", reason: index === 27 ? "Supported flip." : "Not a flip.",
+        } : null,
+    }));
+    const model = planner(({ menu }) => menu.find(option => option.key.endsWith("/inspect_photos"))?.key ?? menu[0].key);
+    const report = await runDealHunt({ searchId, goal: "resell", candidates }, undefined, model.choose);
+    assert.equal(report.decision, "BUY");
+    assert.equal(report.destination?.listingId, "retained-27");
+    assert.equal(reads, 28);
+});
+
+test("Find a flip dispatches the model's chosen resale route after the same listing prerequisites", async () => {
+    for (const route of ["check_raw_resale", "calculate_grading"] as const) {
+        const reads: DealHuntAction[] = [];
+        const copy: DealHuntCandidate = {
+            listingId: "raw-copy", title: "Ampharos", summary: "Raw copy with graded and condition-matched sales",
+            available: checked => checked.has("check_sales") ? ["check_raw_resale", "calculate_grading"] :
+                ["check_listing", "inspect_photos", "check_sales"],
+            read(action) { reads.push(action); return "Evidence recorded for " + action; },
+            outcome: checked => checked.has(route) ? { decision: "BUY", section: route === "calculate_grading" ? "grading" : "sales",
+                reason: "The checked route meets the resale target." } : null,
+        };
+        const model = planner(({ menu, tools, observed }) => {
+            assert.deepEqual(Object.keys(tools ?? {}).sort(), ["calculate_grading", "check_raw_resale"]);
+            assert.match(tools!.calculate_grading, /one grade lower/);
+            assert.match(tools!.check_raw_resale, /assessed condition/);
+            assert.ok(observed.some(step => step.action === "inspect_photos"));
+            assert.deepEqual(menu.map(option => option.key).sort(), ["0/calculate_grading", "0/check_raw_resale"]);
+            return "0/" + route;
+        });
+        const result = await runDealHunt({ searchId, goal: "resell", freshListings: true, guidedResale: true,
+            candidates: [copy] }, undefined, model.choose);
+        assert.equal(model.dispatches(), 1);
+        assert.deepEqual(reads, ["check_listing", "inspect_photos", "check_sales", route]);
+        assert.equal(result.steps.at(-1)?.selectedBy, "model");
+        assert.equal(result.decision, "BUY");
+    }
+});
+
+test("Find a flip keeps researching an eligible auction when another copy already has a Wait", async () => {
+    const model = planner(({ menu }) => menu.find(row => row.key.includes("/finish/"))?.key ?? menu[0].key);
+    const candidates: DealHuntCandidate[] = ["first", "second"].map((listingId, index) => ({
+        listingId, title: listingId, summary: "Auction within ten hours", available: () => ["check_listing"],
+        read: () => "Next bid and costs verified.",
+        outcome: checked => checked.size ? { decision: index ? "BID" : "WAIT", section: "sales", reason: "Checked bid and resale." } : null,
+    }));
+    const result = await runDealHunt({ searchId, goal: "resell", guidedResale: true, auction: true, candidates }, undefined, model.choose);
+    assert.equal(result.decision, "BID");
+    assert.equal(result.destination?.listingId, "second");
 });

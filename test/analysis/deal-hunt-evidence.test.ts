@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DealHuntAction } from "../../shared/deal-hunt.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
-import { underwrite } from "../../shared/money/underwriting.ts";
+import { acquisitionCost, underwrite } from "../../shared/money/underwriting.ts";
+import { cents, meetsMoneyTargets } from "../../shared/money/cents.ts";
 import { PRICING_VERSION } from "../../shared/pricing-freshness.ts";
 import { dealHuntCandidate } from "../../server/analysis/deal-hunt-evidence.ts";
 import { rankHuntMarkets } from "../../server/analysis/same-set-markets.ts";
@@ -110,6 +111,97 @@ test("grade research uses photo and sales observations and distinguishes likely 
 
     e.gradedPricing!.PSA!.byGrade![0].sales.forEach(sale => { delete sale.saleType; });
     assert.equal(dealHuntCandidate(e, "grade_raw", now)!.outcome(checked)?.decision, "WAIT");
+});
+
+test("grading purchases meet the buyer's targets at the likely grade, not just a higher weighted estimate", () => {
+    function graded(prices: number[], targets: { minProfit: number; minRoi: number }) {
+        const e = rawCard();
+        e.gradedPricing = { CGC: { status: "PRICED", printing: "UNLIMITED", variant: "holo",
+            byGrade: prices.map((price, i) => {
+                const summary = salesSummary("CGC", 6 + i, [price, price, price]);
+                summary.sales.forEach((sale, j) => Object.assign(sale, { saleType: "fixed_price",
+                    url: `https://www.ebay.com/itm/${123000010000 + i * 10 + j}` }));
+                return summary;
+            }) } };
+        e.underwriting = underwrite(e, { ...MONEY_CONFIG, targets });
+        return e;
+    }
+    for (const targets of [{ minProfit: 100, minRoi: 0 }, { minProfit: 0, minRoi: 1 }]) {
+        const e = graded([160, 180, 1000], targets);
+        assert.equal(e.underwriting!.verdict, "BUY_AND_GRADE", "the high outcome makes the weighted estimate attractive");
+        const outcome = dealHuntCandidate(e, "resell", now, undefined, targets)!.outcome(checked)!;
+        assert.equal(outcome.decision, "WAIT");
+        assert.equal(outcome.verifiedPurchase, undefined);
+        assert.match(outcome.reason, /likely-grade return falls short of your profit or ROI target/);
+
+        e.rawPricing = { status: "PRICED", printing: "UNLIMITED", variant: "Unlimited Holofoil", finish: "HOLO",
+            conditionEvidence: "TCGPLAYER", prices: [tcgplayerRawEstimate(300, stamp)] };
+        e.underwriting = underwrite(e, { ...MONEY_CONFIG, targets });
+        const raw = dealHuntCandidate(e, "resell", now, undefined, targets)!.outcome(checked)!;
+        assert.equal(raw.decision, "BUY", "an independently profitable raw exit remains usable");
+        assert.equal(raw.verifiedPurchase?.path.path, "RAW");
+    }
+    const targets = { minProfit: 100, minRoi: 0 };
+    const e = graded([250, 275, 1000], targets);
+    const result = dealHuntCandidate(e, "resell", now, undefined, targets)!.outcome(checked)!;
+    assert.equal(result.decision, "BUY");
+    const purchase = result.verifiedPurchase!, path = purchase.path;
+    const likely = path.outlook!.find(row => row.grade === e.condition!.gradeRange!.likely)!;
+    const costAt = (price: number) => cents(acquisitionCost(price, path.shipping, MONEY_CONFIG.buying)) + cents(path.fixedCosts);
+    assert.ok(meetsMoneyTargets(cents(likely.net), costAt(purchase.maxItemPrice), targets.minProfit, targets.minRoi));
+    assert.ok(!meetsMoneyTargets(cents(likely.net), costAt(purchase.maxItemPrice + .01), targets.minProfit, targets.minRoi),
+        "the receipt's ceiling preserves the likely-grade target to the cent");
+});
+
+test("an otherwise supported fixed-price purchase can request fresh terms without approving stale terms", () => {
+    const targets = { minProfit: 0, minRoi: 0 };
+    const create = () => {
+        const e = rawCard();
+        e.gradedPricing = null;
+        e.rawPricing = { status: "PRICED", printing: "UNLIMITED", variant: "Unlimited Holofoil", finish: "HOLO",
+            conditionEvidence: "TCGPLAYER", prices: [tcgplayerRawEstimate(175, stamp)] };
+        e.underwriting = underwrite(e, { ...MONEY_CONFIG, targets });
+        return e;
+    };
+    const completed = new Set<DealHuntAction>([...checked, "check_raw_resale", "resolve_printing"]);
+    let clock = now;
+    const e = create(), photos = e.photoCheck;
+    const candidate = dealHuntCandidate(e, "resell", () => clock, undefined, targets)!;
+    assert.equal(candidate.outcome(completed)?.decision, "BUY");
+    assert.equal(candidate.canRepeat?.("check_listing", completed), false);
+    clock += 120_000;
+    const stale = candidate.outcome(completed)!;
+    assert.equal(stale.decision, "WAIT");
+    assert.equal(stale.verifiedPurchase, undefined);
+    assert.equal(candidate.canRepeat?.("check_listing", completed), true);
+    assert.deepEqual(candidate.available(completed), ["check_listing"]);
+    assert.equal(candidate.canRepeat?.("inspect_photos", completed), false);
+
+    e.listing.termsCheckedAt = new Date(clock).toISOString();
+    assert.equal(candidate.outcome(completed)?.decision, "BUY");
+    assert.equal(candidate.canRepeat?.("check_listing", completed), false);
+    assert.equal(e.photoCheck, photos, "refreshing terms does not replace physical findings");
+
+    e.listing.price = 170;
+    e.underwriting = underwrite(e, { ...MONEY_CONFIG, targets });
+    assert.equal(candidate.outcome(completed)?.decision, "WAIT", "a price increase must remove the old approval");
+    e.listing.termsCheckedAt = stamp;
+    assert.equal(candidate.canRepeat?.("check_listing", completed), false, "a current financial loss does not buy another terms check");
+
+    for (const stop of ["authenticity", "liquidity", "prices", "ended"] as const) {
+        const blocked = create();
+        if (stop === "authenticity") {
+            blocked.condition!.authenticity.concern = "POSSIBLE";
+            blocked.underwriting = underwrite(blocked, { ...MONEY_CONFIG, targets });
+        }
+        if (stop === "prices") blocked.pricesCheckedAt = new Date(clock - 7 * 3_600_000).toISOString();
+        if (stop === "ended") blocked.listing.availability = "UNAVAILABLE";
+        const hold = dealHuntCandidate(blocked, "resell", () => clock, undefined, targets, undefined,
+            { preferRecentSales: stop === "liquidity" })!;
+        assert.equal(hold.outcome(completed)?.decision, "WAIT", stop);
+        assert.equal(hold.canRepeat?.("check_listing", completed), false, stop);
+        assert.ok(!hold.available(completed).includes("check_listing"), stop);
+    }
 });
 
 test("the resale hunt reads seller-described sales when the sold photos have yet to establish a raw price", () => {

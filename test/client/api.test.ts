@@ -67,6 +67,18 @@ test("failed or cancelled interpretation cannot dispatch a fallback marketplace 
     assert.equal(fetch.mock.callCount(), 2);
 });
 
+test("interpreted Both preserves both format legs while malformed format plans cannot dispatch work", async t => {
+    const plan = { workflow: "market_hunt", query: "pokemon", intent: { cardName: null }, marketPreferences: {},
+        format: "FIXED_PRICE", listingFormats: ["FIXED_PRICE", "AUCTION"], summary: "Check both listing formats." };
+    const fetch = t.mock.method(globalThis, "fetch", async () => Response.json(plan));
+    const result = await interpretSearchRequest({ query: "find a flip", filters: { typeFilter: "all" } }, "same-account", new AbortController().signal);
+    assert.deepEqual(result.listingFormats, ["FIXED_PRICE", "AUCTION"]);
+    for (const listingFormats of [[], ["AUCTION"], ["FIXED_PRICE", "FIXED_PRICE"], ["FIXED_PRICE", "OTHER"], "all"]) {
+        fetch.mock.mockImplementation(async () => Response.json({ ...plan, listingFormats }));
+        await assert.rejects(interpretSearchRequest({ query: "find a flip" }, "same-account", new AbortController().signal), /interpretation was incomplete/);
+    }
+});
+
 test("known filters and a search identifier reach both search modes before paid work", async t => {
     const requests: { url: string; searchId: string | null }[] = [];
     t.mock.method(globalThis, "fetch", async (url: unknown, init?: RequestInit) => {

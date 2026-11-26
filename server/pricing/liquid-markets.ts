@@ -2,7 +2,7 @@ import { catalogSample, recentVolume } from "./pkmnprices.ts";
 import { PricingProviderError } from "./errors.ts";
 import type { ListingFilters } from "../../shared/listing-filters.ts";
 
-export interface Market { id: number; name: string; set: string; number: string; sales: number }
+export interface Market { id: number; name: string; set: string; number: string; sales: number; activeDays?: number }
 export type CatalogCard = { id: number; name: string; number: string; total_set_number: string; set?: { name?: string } };
 type Volume = { date: string; sales: number; currency: string; graded: boolean; variant?: string | null };
 
@@ -45,19 +45,23 @@ export async function rankCatalogMarkets(cards: Iterable<CatalogCard>, kind: Lis
         try {
             const result = await volume(card.id, graded);
             const buckets = new Map<string, number>();
+            const days = new Set<string>();
             for (const r of (result.data ?? []) as Volume[]) {
                 if (!/^\d{4}-\d{2}-\d{2}$/.test(r.date) || r.date < earliest || r.date > today || r.currency !== "USD" ||
                     typeof r.graded !== "boolean" || (graded !== undefined && r.graded !== graded) || !Number.isSafeInteger(r.sales) || r.sales <= 0) continue;
+                days.add(r.date);
                 buckets.set(JSON.stringify([r.date, r.graded, r.variant ?? null]), r.sales);
             }
             const sales = [...buckets.values()].reduce((a, b) => a + b, 0);
+            const activeDays = days.size;
             if (sales) ranked.push({ id: card.id, name: card.name, set: card.set!.name!,
-                number: card.number + "/" + card.total_set_number, sales });
+                number: card.number + "/" + card.total_set_number, sales, activeDays });
         } catch (error) {
             signal.throwIfAborted();
-            if (!(error instanceof PricingProviderError)) throw error;
+            if (!(error instanceof PricingProviderError && error.kind === "TEMPORARY")) throw error;
             break;
         }
     }
-    return ranked.sort((a, b) => b.sales - a.sales || a.name.localeCompare(b.name)).slice(0, 3);
+    const priority = (market: Market) => market.sales * (market.activeDays ?? 1);
+    return ranked.sort((a, b) => priority(b) - priority(a) || b.sales - a.sales || a.name.localeCompare(b.name));
 }

@@ -10,7 +10,7 @@ import { parseListingLink } from "../../../shared/listing-link.ts";
 import type { ListingSummary } from "../../../shared/types.ts";
 import { withFreshListing } from "../../../shared/fresh-listing.ts";
 
-export const expiredGradingReason = "This grading quote has expired. Run the hunt again for current listings and resale evidence.";
+export const expiredGradingReason = "This grading quote has expired. Search again for current listings and resale evidence.";
 
 export const huntSections: Record<DealHuntSection, string> = {
     grading: "grading breakdown", sales: "price evidence", photos: "photo evidence",
@@ -53,7 +53,7 @@ export function reconcileHuntListing(original: ListingSummary, evaluation: Evalu
 export function selectedHuntListing(response: DealHuntResponse, searchId: string, goal: DealHuntGoal, scope: DealHuntScope, listings: ListingSummary[], format: BuyingOption = "FIXED_PRICE") {
     const { report, evaluation, alternative } = response;
     const destination = report.destination;
-    const mismatch = "The returned evidence does not match this hunt. Run it again on the current results.";
+    const mismatch = "The returned evidence does not match this search. Run it again on the current results.";
     if (report.searchId !== searchId || report.goal !== goal || !["WAIT", format === "AUCTION" ? "BID" : "BUY"].includes(report.decision)) throw new Error(mismatch);
     if (scope === "search" && response.candidates?.some(row => !listings.some(match => match.id === row.id))) throw new Error(mismatch);
     if (!destination) {

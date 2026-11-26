@@ -3,20 +3,25 @@ import type { DealHuntResponse } from "../../../shared/deal-hunt.ts";
 import type { ListingFilters } from "../../../shared/listing-filters.ts";
 import type { BuyingOption, ListingSummary, Targets } from "../../../shared/types.ts";
 import type { AiUsageDay } from "../../../shared/ai-usage.ts";
-import { fetchAiUsage, interpretSearchRequest, runDealHunt } from "../api";
-import { selectedHuntListing } from "../search/hunt-result";
-import { DealHuntResult, HuntProgressPanel } from "./DealHunt";
+import { fetchAiUsage, interpretSearchRequest, newWatchScanId, runDealHunt } from "../api";
+import { currentHuntBid, reconcileHuntListing, selectedHuntListing } from "../search/hunt-result";
+import { runGuidedHuntLegs, type GuidedHuntLeg } from "../search/guided-hunt";
+import { applyVerifiedPurchase } from "../../../shared/money/verified-purchase.ts";
+import { DealHuntResult, HuntProgressPanel, HuntCandidateCards } from "./DealHunt";
 import { AnalysisDetails } from "./analysis/AnalysisDetails";
+import { ShippingDestination } from "./ShippingDestination";
 import styles from "./DealHunt.module.css";
 
 type Result = DealHuntResponse & { listing?: ListingSummary; format: BuyingOption; targets: Targets; destination: string | null };
-const changedDestination = "The shipping ZIP changed. Start a new hunt for current delivery prices.";
+const changedDestination = "The shipping ZIP changed. Search again for updated delivery prices.";
 interface Props {
     filters: ListingFilters; targets: Targets; minGrade: number; destination: string | null | undefined; ready: boolean; now: number;
     latest: ReadonlyMap<string, ListingSummary>; updated: ReadonlyMap<string, number>; shortlist: (listing: ListingSummary) => ReactNode;
+    active?: boolean; onStart?: (id: string) => void; onBusyChange?: (busy: boolean) => void; onDestinationSaved?: (zip: string) => void;
 }
 
-export function GuidedFlip({ filters: initialFilters, targets: initialTargets, minGrade: initialGrade, destination, ready, now, latest, updated, shortlist }: Props) {
+export function GuidedFlip({ filters: initialFilters, targets: initialTargets, minGrade: initialGrade, destination, ready, now, latest, updated, shortlist,
+    active = true, onStart, onBusyChange, onDestinationSaved }: Props) {
     const [kindFilter, setKind] = useState<NonNullable<ListingFilters["kindFilter"]>>(initialFilters.kindFilter ?? "all");
     const [maxCost, setMaxCost] = useState(String(initialFilters.maxPrice ?? ""));
     const [minCost, setMinCost] = useState(String(initialFilters.minPrice || ""));
@@ -31,15 +36,19 @@ export function GuidedFlip({ filters: initialFilters, targets: initialTargets, m
     const [text, setText] = useState("");
     const [format, setFormat] = useState<BuyingOption | "all">("FIXED_PRICE");
     const [expand, setExpand] = useState(true);
-    const [run, setRun] = useState<{ id: string; started: number } | null>(null);
+    const [run, setRun] = useState<{ id: string; started: number; legs: GuidedHuntLeg[] } | null>(null);
     const [message, setMessage] = useState("");
     const [error, setError] = useState("");
     const [results, setResults] = useState<Result[]>([]);
     const [detail, setDetail] = useState<BuyingOption | null>(null);
-    const [usage, setUsage] = useState<AiUsageDay | null>(null);
-    const [interruptedId, setInterruptedId] = useState<string | null>(null);
+    const [usage, setUsage] = useState<Record<string, AiUsageDay>>({});
+    const [lastLegs, setLastLegs] = useState<GuidedHuntLeg[]>([]);
+    const [legErrors, setLegErrors] = useState<{ format: BuyingOption; message: string }[]>([]);
+    const liveContext = useRef({ latest, updated, destination, ready });
+    liveContext.current = { latest, updated, destination, ready };
     const pending = useRef<{ controller: AbortController; zip: string | null } | null>(null);
     useEffect(() => () => pending.current?.controller.abort(), []);
+    useEffect(() => { if (!active) pending.current?.controller.abort(); }, [active]);
     useEffect(() => {
         const active = pending.current;
         // Undefined means the saved destination is being checked, including on window focus.
@@ -48,19 +57,27 @@ export function GuidedFlip({ filters: initialFilters, targets: initialTargets, m
         }
     }, [destination]);
     useEffect(() => {
-        const id = run?.id ?? interruptedId;
-        if (!id) return;
+        const legs = run?.legs.length ? run.legs : run ? [{ id: run.id, started: run.started, format: "FIXED_PRICE" as const }] : lastLegs;
+        if (!legs.length) return;
         let active = true;
+        let reading = false;
         const poll = async () => {
-            try { const receipt = await fetchAiUsage(id); if (active) setUsage(receipt); } catch { /* Next poll resumes. */ }
+            if (reading) return;
+            reading = true;
+            try {
+                await Promise.all(legs.map(async leg => {
+                    try { const receipt = await fetchAiUsage(leg.id, leg.id); if (active) setUsage(previous => ({ ...previous, [leg.id]: receipt })); }
+                    catch { /* Next poll resumes without restarting research. */ }
+                }));
+            } finally { reading = false; }
         };
         void poll();
         const timer = run ? setInterval(poll, 2000) : undefined;
         return () => { active = false; clearInterval(timer); };
-    }, [run, interruptedId]);
+    }, [run, lastLegs]);
     async function start(event: FormEvent) {
         event.preventDefault();
-        if (pending.current || !ready || destination === undefined) return;
+        if (!active || pending.current || !ready || destination === undefined) return;
         if (maxCost && Number(minCost) > Number(maxCost)) {
             setError("The minimum item price exceeds your maximum delivered price.");
             return;
@@ -68,9 +85,9 @@ export function GuidedFlip({ filters: initialFilters, targets: initialTargets, m
         const controller = new AbortController(), id = crypto.randomUUID();
         const { signal } = controller;
         pending.current = { controller, zip: destination };
-        setInterruptedId(null);
-        setRun({ id, started: Date.now() }); setUsage(null); setError(""); setResults([]); setDetail(null);
-        setMessage(text.trim() ? "Interpreting your hunt…" : "Ranking cards by recent eBay sales.");
+        onStart?.(id); onBusyChange?.(true);
+        setRun({ id, started: Date.now(), legs: [] }); setUsage({}); setLastLegs([]); setLegErrors([]); setError(""); setResults([]); setDetail(null);
+        setMessage(text.trim() ? "Reading your search…" : "Ranking cards by recent eBay sales.");
         try {
             const plan = text.trim() ? await interpretSearchRequest({ query: text.trim(), filters: { ...filters, typeFilter: format } }, id, signal) : null;
             const intent = plan?.intent;
@@ -85,37 +102,61 @@ export function GuidedFlip({ filters: initialFilters, targets: initialTargets, m
             const asksAuction = /\bauctions?\b/i.test(text);
             const asksFixed = /\b(?:buy it now|fixed.price)\b/i.test(text);
             const both = format === "all" && asksAuction === asksFixed;
-            const formats: BuyingOption[] = both ? ["FIXED_PRICE", "AUCTION"] : [plan?.format ?? (format === "all" ? "FIXED_PRICE" : format)];
-            for (const leg of formats) {
-                signal.throwIfAborted();
-                const label = leg === "AUCTION" ? "Auctions ending within ten hours" : "Buy It Now listings · newest first";
-                setMessage([label, plan?.summary].filter(Boolean).join(" · "));
-                const result = await runDealHunt(id, { standalone: true, listingIds: [], scope: "any_card", goal: "resell",
-                    marketPreferences: scoped, targets: actualTargets, minPotentialGrade: minGrade,
-                    ...(leg === "FIXED_PRICE" && { freshListings: true }),
-                    filters: { typeFilter: leg, kindFilter: kind, minPrice: leg === "AUCTION" ? 0 : filters.minPrice,
-                        ...(Number.isFinite(ceiling) && { maxPrice: ceiling }) } }, signal);
-                signal.throwIfAborted();
-                const listing = selectedHuntListing(result, id, "resell", "any_card", [], leg);
-                setResults(previous => [...previous, { ...result, listing, format: leg, targets: actualTargets, destination }]);
-            }
-            setMessage("Hunt complete");
+            const formats: BuyingOption[] = plan?.listingFormats ?? (both ? ["FIXED_PRICE", "AUCTION"] : [plan?.format ?? (format === "all" ? "FIXED_PRICE" : format)]);
+            const legs = formats.map(format => ({ format, id: formats.length > 1 ? newWatchScanId(id) : id, started: Date.now() }));
+            setRun(previous => previous && { ...previous, legs }); setLastLegs(legs);
+            setMessage([formats.length > 1 ? "Checking Buy It Now listings and auctions together" :
+                formats[0] === "AUCTION" ? "Auctions ending within ten hours" : "Buy It Now listings · newest first", plan?.summary].filter(Boolean).join(" · "));
+            let failures = 0;
+            const outcome = await runGuidedHuntLegs<Result>({ legs, signal,
+                async run(leg, legSignal) {
+                    const result = await runDealHunt(leg.id, { standalone: true, listingIds: [], scope: "any_card", goal: "resell",
+                        marketPreferences: scoped, targets: actualTargets, minPotentialGrade: minGrade,
+                        ...(leg.format === "FIXED_PRICE" && { freshListings: true }),
+                        filters: { typeFilter: leg.format, kindFilter: kind, minPrice: leg.format === "AUCTION" ? 0 : filters.minPrice,
+                            ...(Number.isFinite(ceiling) && { maxPrice: ceiling }) } }, legSignal);
+                    legSignal.throwIfAborted();
+                    const listing = selectedHuntListing(result, leg.id, "resell", "any_card", [], leg.format);
+                    return { ...result, listing, format: leg.format, targets: actualTargets, destination };
+                },
+                onResult: (_leg, result) => setResults(previous => [...previous, result]),
+                onFailure: (leg, failure) => { failures++; setLegErrors(previous => [...previous, { format: leg.format, message: failure.message }]); },
+                isOpportunity(result) {
+                    const live = liveContext.current, selected = result.listing, evaluation = result.evaluation;
+                    if (!selected || !evaluation || !live.ready || live.destination !== result.destination ||
+                        (evaluation.listing.shippingDestination ?? null) !== live.destination) return false;
+                    const current = reconcileHuntListing(selected, evaluation, live.latest.get(selected.id));
+                    const checked = Date.parse(current.listing.termsCheckedAt ?? "");
+                    if (!current.currentTerms || (live.updated.get(selected.id) ?? 0) > checked) return false;
+                    return result.report.decision === "BUY"
+                        ? !!applyVerifiedPurchase(evaluation, result.report.verifiedPurchase, actualTargets, Date.now())
+                        : result.report.decision === "BID" && currentHuntBid("resell", evaluation, actualTargets, Date.now(),
+                            Number.isFinite(ceiling) ? ceiling : undefined)?.status === "BID";
+                },
+            });
+            setMessage(outcome.found ? "Found a verified flip" : failures === legs.length ? "Search interrupted" :
+                failures ? "One listing format was interrupted" : "No verified flip found in this search");
         } catch (err) {
-            setInterruptedId(id);
-            if (signal.aborted) setMessage(signal.reason?.message === changedDestination ? changedDestination : "Hunt stopped");
-            else { setError(err instanceof Error ? err.message : "The hunt could not finish."); setMessage(""); }
+            if (signal.aborted) setMessage(signal.reason?.message === changedDestination ? changedDestination : "Search stopped");
+            else { setError(err instanceof Error ? err.message : "The search could not finish."); setMessage(""); }
         } finally {
-            if (pending.current?.controller === controller) { pending.current = null; setRun(null); }
+            if (pending.current?.controller === controller) { pending.current = null; setRun(null); onBusyChange?.(false); }
         }
     }
+    const completedIds = new Set(results.flatMap(result => [result.listing?.id, ...(result.candidates?.map(row => row.id) ?? [])]));
+    const pendingCandidates = [...new Map(lastLegs.flatMap(leg => {
+        const progress = usage[leg.id]?.hunt;
+        return progress?.searchId === leg.id && Date.parse(progress.startedAt) >= leg.started
+            ? progress.candidates ?? [] : [];
+    }).filter(row => !completedIds.has(row.id)).map(row => [row.id, row])).values()].slice(-50);
     return <section className={styles.hunt} aria-label="Find a flip">
         <form onSubmit={start}>
-            <label className={styles.guidance}>Where should the hunt start?
+            <label className={styles.guidance}>Which cards should we look for?
                 <input type="search" maxLength={300} value={text} disabled={!!run} onChange={event => setText(event.target.value)}
                     placeholder="Card, set or buying goal (optional)" aria-describedby="flip-hint" />
             </label>
             <p className={styles.note} id="flip-hint">Leave blank to start with cards showing recent eBay sales.</p>
-            <details className={styles.limits}><summary>Hunt filters{activeLimits.length > 0 && " · " + activeLimits.join(" · ")}</summary>
+            <details className={styles.limits}><summary>Search filters{activeLimits.length > 0 && " · " + activeLimits.join(" · ")}</summary>
                 <div className={styles.controls}>
                     <label>Card type<select disabled={!!run} value={kindFilter} onChange={e => setKind(e.target.value as typeof kindFilter)}>
                         <option value="all">Raw and graded</option><option value="raw">Raw</option><option value="graded">Graded</option>
@@ -127,18 +168,27 @@ export function GuidedFlip({ filters: initialFilters, targets: initialTargets, m
                     <label>Minimum potential grade<input type="number" min="1" max="10" step="1" value={minGrade || ""} disabled={!!run} onChange={e => setGrade(Number(e.target.value))} placeholder="Any" /></label>
                 </div>
             </details>
-            <div className={styles.controls}><label>Hunt format<select value={format} disabled={!!run}
+            <div className={styles.controls}><label>Listing format<select value={format} disabled={!!run}
                 onChange={event => setFormat(event.target.value as typeof format)}>
                 <option value="FIXED_PRICE">Buy It Now</option><option value="AUCTION">Auctions under 10 hours</option><option value="all">Both</option>
             </select></label>{text.trim() && <label className={styles.expand}><input type="checkbox" checked={expand} disabled={!!run}
                 onChange={event => setExpand(event.target.checked)} /> Include related cards</label>}
-                <button type="submit" disabled={!!run || !ready} className={styles.run}>Start hunt</button>
+                <button type="submit" disabled={!!run || !ready} className={styles.run}>Find a flip</button>
             </div>
         </form>
+        {ready && destination === null && <ShippingDestination busy={!!run} onSaved={onDestinationSaved} />}
         {message && <p role="status">{message}</p>}
-        {!run && interruptedId && usage?.hunt?.searchId === interruptedId &&
-            <p className={styles.note}>{usage.hunt.discovered} listings found · {usage.hunt.screened} pricing checks · {usage.hunt.reviewed} copies checked before the interruption</p>}
-        {run && <HuntProgressPanel searchId={run.id} startedAt={run.started} usage={usage} onStop={() => pending.current?.controller.abort()} />}
+        {run && <>
+            <button type="button" className={styles.stop} onClick={() => pending.current?.controller.abort()}>Stop search</button>
+            {(run.legs.length ? run.legs : [{ id: run.id, started: run.started, format: "FIXED_PRICE" as const }]).map(leg => <div key={leg.id}>
+                {run.legs.length > 1 && <h2>{leg.format === "AUCTION" ? "Auction search" : "Buy It Now search"}</h2>}
+                <HuntProgressPanel searchId={leg.id} startedAt={leg.started} usage={usage[leg.id]} />
+            </div>)}
+        </>}
+        {pendingCandidates.length > 0 && <HuntCandidateCards listings={pendingCandidates} now={now} active={!!run} shortlistButton={shortlist} />}
+        {legErrors.map(failure => <p key={failure.format} className={styles.error} role="alert">
+            {failure.format === "AUCTION" ? "Auction search" : "Buy It Now search"} interrupted: {failure.message}
+        </p>)}
         {error && <p className={styles.error} role="alert">{error}</p>}
         {results.map(result => <div key={result.format}><h2>{result.format === "AUCTION" ? "Auction results" : "Buy It Now results"}</h2>
             <DealHuntResult result={result} now={now} targets={result.targets} updatedTerms={updated}

@@ -1,9 +1,45 @@
 # Pokémon Flipper — current plan and resources
 
-Updated November 24, 2026. This file records current decisions and locates the
+Updated November 25, 2026. This file records current decisions and locates the
 resources behind them. [LOCAL_TODO.md](LOCAL_TODO.md) is the single active
 checklist. [AGENTS.md](AGENTS.md) contains the working agreement. Git retains
 earlier versions; obsolete planning reports are deleted rather than archived.
+
+## Buyer decisions and saved strategies
+
+- The first milestone is one available eBay copy a buyer can acquire and resell profitably after costs. A collector can instead ask for a specific copy at a good delivered price. Pilot results should distinguish an alert, a purchase and money received on resale.
+- The search box takes the buyer's own words. OpenAI interprets the card or broad goal, set, release years, finish, format, budget, grade and profit target. “Liquid” means repeated comparable transactions. The original wording stays editable. Resolve a catalog-backed typo such as “neo revolution” and show the interpreted release.
+- A blank flip hunt can pick any eligible Pokémon. A named hunt starts with that card. After misses allow a related printing of the same character or another liquid card from the same set or release era. Honor exact-only requests and explicit filters on every pivot. The current nearby-year default is two years on either side of a confirmed release.
+- Search Buy It Now and auctions. An actionable auction has strictly under ten hours left, a current price below supported market value and a next valid bid inside the after-cost ceiling. Run both formats together when requested. Track the next twenty distinct alerts against the original ceiling and verified closing result.
+- Retain distinct copies and page positions beyond the initial card markets and fifty-row review batch. Prioritize the fifteen selected for review, continue the rest, retry eligible transient failures and explain quota stops. Surface real listing cards and completed decisions while other work continues. Use another card for live latency checks.
+- The AI can pick the market, the copy, the next function, a pricing source, a cited web lookup and the evidence panel. Independent checks can run together. Reuse paid work. Validate the listing and calculate the money in code. The buyer controls bids, purchases and seller contact.
+- Estimate raw condition from the pictured copy, recognize an unstamped Unlimited printing when the correct area is visible, and read the grader and grade from a slab. Use set-specific evidence and resolve missing details where possible. Dark Gengar and Team Rocket Dark Alakazam are reported edition-warning regressions.
+- Evaluate selling raw, selling an existing slab and grading raw. Show comparable prices for the exact printing, finish, language and condition or certified grade. Compare the likely grade and one lower. Include shipping, taxes, selling fees and applicable grading and fulfillment expenses in profit, return and purchase ceilings.
+- TCGplayer's condition-specific asks can value raw cards. Label asks, completed sales and provider estimates. Compare observed sales per day, distinct selling days and the typical price range over two months. A single exceptional sale should not set value. Assessed listing cards show dated eBay, TCGplayer and Pokémon Price Tracker prices, plus matched Cardmarket asks in EUR and individual cited web prices when available. Visible cards request extra sources under their original research account. PriceCharting integration remains paused.
+- Look for advantages in seller presentation, under-described condition, vague listing titles and number-only searches. For Leafeon compare full name, `167/203` and `Evolving Skies 167` at the same ceiling, then verify the original artwork. A shelf of unrelated items at a seller with a few Pokémon cards can justify inspecting their other listings.
+- Keep the [seller and offer ideas](#andrews-seller-research-and-offer-ideas), [twenty product strategies](#twenty-deal-finding-ideas-to-test) and [fifteen supplied eBay tactics](#fifteen-ebay-tactics-for-the-deal-planner) as distinct lists. The selected product strategies are competing auctions, cross-market resale, clean-front binder copies, same-art alternatives and revisiting changed evidence.
+- Longer-term collector ideas include scanning and centering, binders and want lists, price history, sealed products and additional languages, portfolio tracking, sharing and trade matching. Pilot the buying guide first and measure whether buyers act, pay and return.
+
+## November 25 continuous Find a flip
+
+The buyer’s goal is to keep Find a flip searching until a verified flip is found
+or the buyer presses Stop. Today a pass can also end when current inventory runs
+out or a provider, quota, storage or accounting issue prevents more research.
+Automatic waiting and resumption under the original budget are open work.
+Use “Find a flip” and “search” in the buyer interface. A fixed card, market or total
+resale-step count cannot end a pass. Catalog suggestions rank the first queries;
+they are followed by independent inventory discovery. Keep unreviewed physical
+copies and source cursors under the original account, including later copies
+of the same provisional market. Rotate continued query backlogs so one popular
+card cannot monopolize the hunt. Batch/model/display windows bound work without
+discarding the remaining inventory. The provider's retrieval ceiling still
+requires honest partial-coverage reporting.
+
+The local repair also adds provisional cards, simultaneous Both-format checks,
+workspace cancellation, semantic subject evidence for ordinary-language goals,
+an otherwise-supported final BIN terms refresh and likely-grade target
+consistency. The current checklist and maintained audit record offline
+acceptance; a new live profitable deal remains unproved.
 
 ## November 24 pricing and recovery checkpoint
 
@@ -201,7 +237,8 @@ Ask a collector for one exact card, condition and all-in budget. Deliver a verif
 - A pass can fetch 200 eBay summaries. Discovery screens beyond 50 unresolved rows
   before deciding which 50 to retain for assessment/display. A thin newest-first
   BIN pass can add one lower-price pass under the original research account.
-  Explicit continuation through saved overflow remains on the checklist.
+  Saved overflow and source cursors continue under the original account.
+  Durable whole-hunt restart recovery remains on the checklist.
 - A fixed-price listing can be worth researching when its delivered ask is
   below both the other matching asks and recent sold prices. Use the smaller
   discount and show both sample sizes. Keep seller-described condition and
@@ -279,9 +316,9 @@ flat subscriptions; their requests and credits are separate from OpenAI dollars.
 The user specifically wants more useful data coverage and AI at the right stage.
 Zero calls or an arbitrarily cheap search is not the goal.
 
-Current new-search safeguards are 100 actual Browse requests, 128 uncached
-PKMNPrices screening requests and 256 across all pricing stages. These are tunable
-runaway controls. Existing ledgers keep their recorded ceilings and spend.
+Production searches have no per-search Browse or PKMNPrices request ceiling.
+Existing ledgers preserve historical limits, spent counts and unresolved state;
+they are never reset to continue a hunt.
 PKMNPrices supplies 20,000 daily credits on this subscription. Preserve rate
 limits, daily reserves, shared response reuse and rapid-depletion warnings.
 

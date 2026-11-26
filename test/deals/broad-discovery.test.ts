@@ -81,7 +81,7 @@ test("broad and named discovery both pass their cancellation signal into shared 
     assert.deepEqual(optionsPassed, [["signal"], ["signal"]]);
 });
 
-test("fresh resale samples rough titles across printings and bounds speculative photo checks", () => {
+test("fresh resale prioritizes rough titles without dropping another physical copy", () => {
     const unclear = (id: string, name: string, number: string) => ({ ...listing(id, number + " shiny card"),
         screen: { status: "UNSCREENED" as const, incomplete: true, reason: null, assumed: null, bestCase: null,
             card: { name, set: "Aquapolis", cardNumber: number, printing: "UNKNOWN" as const, printingLabel: null } } });
@@ -89,5 +89,42 @@ test("fresh resale samples rough titles across printings and bounds speculative 
         unclear("another", "Espeon", "11/147"), listing("other", "Unknown holo"),
         { ...listing("no-photo", "Missing photo"), images: [] }];
     assert.deepEqual(freshResaleCandidates(rows, { minProfit: 0, minRoi: 0 }, Date.now()).map(r => r.id),
-        ["one", "another", "other"]);
+        ["one", "another", "other", "same"]);
+});
+
+test("hunt inventory drains every retained and deferred copy before advancing its source cursor", async () => {
+    const { createHuntInventoryScanner } = await import("../../server/deals/find-deals.ts");
+    const rows = Array.from({ length: 240 }, (_, i) => listing(`copy-${i}`, "Nidoking 11/102 Base Set Unlimited Holo English"));
+    const offsets: number[] = [], checked: string[] = [], accounts = new Set<string | undefined>();
+    const root = randomUUID();
+    const { getBudgetContext } = await import("../../server/ai/usage-context.ts");
+    const scan = createHuntInventoryScanner(new AbortController().signal, offlineSearchSteps([], {
+        search: async (_query, options) => {
+            const offset = options?.offset ?? 0;
+            offsets.push(offset); accounts.add(getBudgetContext().searchId);
+            return { listings: rows.slice(offset, offset + 200), total: rows.length, skipped: 0, rejections: [],
+                ...(offset === 0 && { nextOffset: 200 }) };
+        },
+        soldScreening: () => async row => {
+            checked.push(row.id); accounts.add(getBudgetContext().searchId);
+            return { status: "UNAVAILABLE", exactScope: false, references: [], note: "Offline missing price remains researchable." };
+        },
+    }));
+    const intent = { cardName: null, sets: [], cardNumber: null, printing: null, graded: null, titleWords: [], source: "rules" as const };
+    const all: string[] = [], found: number[] = [];
+    let hasMore = true;
+    while (hasMore) {
+        const batch = await withAiUsageContext({ searchId: root }, () => scan("Pokemon", intent,
+            { typeFilter: "FIXED_PRICE" }, { minProfit: 0, minRoi: 0 }, 1_795_560_000_000,
+            { excludeIds: new Set(all), freshGrading: false, freshListings: true }));
+        all.push(...batch.listings.map(row => row.id)); found.push(batch.summary.found);
+        hasMore = batch.hasMore === true;
+        if (all.length <= 200) assert.deepEqual(offsets, [0], "pending copies must drain before the next source request");
+    }
+    assert.equal(all.length, 240);
+    assert.equal(new Set(all).size, 240);
+    assert.equal(checked.length, 240);
+    assert.deepEqual(offsets, [0, 200]);
+    assert.deepEqual(found, [200, 0, 0, 0, 40], "pending batches do not inflate observed discovery counts");
+    assert.deepEqual([...accounts], [root]);
 });

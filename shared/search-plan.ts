@@ -1,6 +1,6 @@
 import type { DealHuntGoal, HuntMarketPreferences } from "./deal-hunt.ts";
 import type { ListingFilters } from "./listing-filters.ts";
-import type { SearchIntent } from "./types.ts";
+import type { BuyingOption, SearchIntent } from "./types.ts";
 
 export interface SearchPlanInput {
     query: string;
@@ -13,6 +13,8 @@ export interface SearchPlan {
     intent: SearchIntent;
     goal: DealHuntGoal | null;
     format: "FIXED_PRICE" | "AUCTION";
+    /** Explicit executable formats; older saved plans retain their single primary format. */
+    listingFormats?: BuyingOption[];
     marketPreferences: HuntMarketPreferences;
     minProfit: number | null;
     maxDelivered: number | null;

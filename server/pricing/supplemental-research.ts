@@ -14,7 +14,7 @@ type SupplementalEvidence = Pick<Evaluation, "trackerPriceReference" | "trackerR
 type Providers = { tracker: typeof trackerMarketReferences; web: typeof searchWebPrices };
 const providers: Providers = { tracker: trackerMarketReferences, web: searchWebPrices };
 
-export function supplementalMarket(value: Evaluation) {
+export function supplementalMarket(value: Evaluation, comparePrices = false) {
     const identity = value.identity, photo = value.photoCheck;
     if (!identity || !readyForPricing(identity) || !identity.name || !identity.cardNumber || !identity.set || identity.notThisCard ||
         !photo || photo.cardCount !== "ONE" || !photo.images.some(p => p.usable && !p.isStockImage) ||
@@ -22,7 +22,7 @@ export function supplementalMarket(value: Evaluation) {
         !["HOLO", "NON_HOLO", "REVERSE_HOLO"].includes(identity.finish) || unsupportedVariantReason(value) ||
         obscuredDisclosedWear(value) || value.frontPhotoStop || value.pricingDeferred ||
         value.condition?.authenticity && value.condition.authenticity.concern !== "NONE_SEEN" ||
-        !value.underwriting || value.underwriting.verdict === "NEEDS_REVIEW" || value.underwriting.shippingUnconfirmed) return null;
+        !comparePrices && (!value.underwriting || value.underwriting.verdict === "NEEDS_REVIEW" || value.underwriting.shippingUnconfirmed)) return null;
 
     const kind = observedCardKind(value), slab = value.slab, raw = value.condition?.rawCondition;
     const provisional = provisionalTrackerGrade(value);
@@ -43,17 +43,17 @@ export function supplementalMarket(value: Evaluation) {
     return { market, provisional, exactCount };
 }
 
-export async function supplementalResearch(value: Evaluation, options: { cacheOnly: boolean; signal: AbortSignal; now: number },
+export async function supplementalResearch(value: Evaluation, options: { cacheOnly: boolean; signal: AbortSignal; now: number; source?: "tracker" | "web"; comparePrices?: boolean },
     sources = providers): Promise<SupplementalEvidence> {
     const result: SupplementalEvidence = {};
-    const target = supplementalMarket(value);
+    const target = supplementalMarket(value, options.comparePrices);
     if (!target) return result;
     const identity = value.identity!;
     const { market, exactCount, provisional } = target;
     const supported = value.underwriting?.best?.status === "PRICED";
     const settledPass = supported && value.underwriting?.verdict === "PASS";
     // Read saved references for a settled purchase. Spend only where the exact market is sparse.
-    const cacheOnly = options.cacheOnly || provisional !== null || settledPass || exactCount >= 3;
+    const cacheOnly = options.cacheOnly || provisional !== null || !options.comparePrices && (settledPass || exactCount >= 3);
     async function lookup<T>(source: string, work: () => Promise<T>) {
         options.signal.throwIfAborted();
         try {
@@ -75,9 +75,11 @@ export async function supplementalResearch(value: Evaluation, options: { cacheOn
             return null;
         }
     }
-    const tracker = await lookup("Pokémon Price Tracker", () => sources.tracker(value, options.signal, { cacheOnly }));
-    if (tracker) Object.assign(result, tracker);
-    if (provisional !== null) return result;
+    if (options.source !== "web") {
+        const tracker = await lookup("Pokémon Price Tracker", () => sources.tracker(value, options.signal, { cacheOnly }));
+        if (tracker) Object.assign(result, tracker);
+    }
+    if (options.source === "tracker" || provisional !== null) return result;
     const web = await lookup("Cited web price research", () => sources.web({ cardName: identity.name!, setName: identity.set!, cardNumber: identity.cardNumber!,
         language: identity.language, printingLabel: identity.printingLabel || identity.printing.replaceAll("_", " "),
         finish: identity.finish, ...market }, { signal: options.signal, cacheOnly }));

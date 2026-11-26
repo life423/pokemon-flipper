@@ -12,7 +12,7 @@ export type DealHuntGoal = keyof typeof dealHuntGoals;
 export const DEAL_HUNT_LISTING_LIMIT = 200;
 export const HUNT_RECHECK_MS = 15 * 60_000;
 export type DealHuntScope = "search" | "same_set" | "any_card";
-export type DealHuntAction = "check_listing" | "inspect_photos" | "resolve_printing" | "check_sales" | "check_price_references" | "calculate_grading" | "check_raw_resale";
+export type DealHuntAction = "check_listing" | "inspect_photos" | "resolve_printing" | "check_sales" | "check_price_references" | "check_price_tracker" | "search_web_sales" | "check_price_history" | "compare_cardmarket" | "calculate_grading" | "check_raw_resale";
 export type DealHuntSection = "grading" | "sales" | "photos";
 export interface HuntMarketPreferences {
     sets?: string[];

@@ -1,5 +1,7 @@
 import type { HuntProgress } from "../../shared/ai-usage.ts";
 import type { DealHuntAction } from "../../shared/deal-hunt.ts";
+import type { ListingSummary } from "../../shared/types.ts";
+import { DEVELOPMENT_SEARCH_LIMIT } from "../../shared/research-policy.ts";
 
 const ACTIVE_TTL_MS = 30 * 60_000;
 const FINISHED_TTL_MS = 5 * 60_000;
@@ -13,6 +15,7 @@ export interface HuntProgressObserver {
     source(discovered: number, screened: number, scans?: number): void;
     retain(count: number): void;
     checked(listingId: string, action: DealHuntAction): void;
+    candidates?(rows: ListingSummary[]): void;
 }
 
 export function createHuntProgressStore(now = Date.now) {
@@ -26,7 +29,7 @@ export function createHuntProgressStore(now = Date.now) {
         const record = records.get(key);
         if (!record) return;
         if (expired(record)) { records.delete(key); return; }
-        return { ...record };
+        return structuredClone(record);
     }
 
     async function observe<T>(budgetSearchId: string, searchId: string, signal: AbortSignal, work: (progress: HuntProgressObserver) => Promise<T>): Promise<T> {
@@ -58,6 +61,8 @@ export function createHuntProgressStore(now = Date.now) {
                     discovered: record.discovered + discovered, screened: record.screened + screened, scans: record.scans + scans,
                 }),
                 retain: retained => update({ retained }),
+                candidates: rows => update({ candidates: structuredClone([...new Map(rows.map(row => [row.id, row])).values()]
+                    .slice(-DEVELOPMENT_SEARCH_LIMIT)) }),
                 checked: (listingId, action) => {
                     checked.add(listingId);
                     if (action === "inspect_photos") photoChecks.add(listingId);
