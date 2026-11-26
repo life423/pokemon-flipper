@@ -11,8 +11,7 @@ branch and delivery state; obsolete planning reports are removed, not archived.
 - Normal app port is 3017; port 3000 belongs to another app. Do not kill other
   instances or overwrite their data. Source changes restart tsx watch and may
   interrupt live searches.
-- Commit, merge and push only when requested. Preserve unrelated changes,
-  including the existing unstaged .env.example deletion.
+- Commit, merge and push only when requested. Preserve unrelated changes.
 - Read tracked LOCAL_PLAN.md and LOCAL_TODO.md before product/strategy work.
   The user explicitly requested that Markdown notes and the roadmap travel with
   Git for work across computers. Keep credentials, .env, API responses, paid evidence and data/
@@ -59,8 +58,9 @@ Read docs/architecture.md for the source map and reading order.
 - Find a flip must not stop at a fixed total number of cards, markets, pages
   or resale research steps. Catalog rankings and diversified first checks set
   order; keep remaining copies and source cursors. Continue until a supported
-  opportunity, buyer cancellation, accessible inventory exhaustion, or a real
-  provider/quota/storage/accounting stop. Bound active batches, model context,
+  opportunity, buyer cancellation, or a hard provider/accounting stop. On the
+  Find a flip screen, exhaustion finishes one pass. Wait for new inventory or
+  a recoverable provider reset and reuse the original account on the next pass. Bound active batches, model context,
   displayed cards and concurrency without silently discarding inventory. The
   provider's own retrieval ceiling still requires partial-coverage disclosure.
   Both formats share one original account and Stop; a verified current result

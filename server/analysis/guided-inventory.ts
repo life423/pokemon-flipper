@@ -77,17 +77,30 @@ export async function* guidedInventoryTargets(seed: NonNullable<HuntMarketPrefer
     try {
         let sameSets = sets.filter(acceptsSet);
         let nearby: string[] = [];
+        let yieldedObservedSet = false;
         if (!sets.length) {
             const observed = sources.observedSet?.();
-            const lookup = await catalog(new URLSearchParams({ name: seed.name, language: "English", per_page: "50" }));
-            if (!observed && (lookup.data?.length >= 50 || lookup.pagination?.has_more || lookup.pagination?.total_pages > 1)) {
-                sources.report?.("The catalog returned only part of the named card’s printings. A confirmed release is needed for related cards.");
-                return;
+            if (observed && !acceptsSet(observed)) return;
+            // A confirmed listing can lead straight to the same set, even while the catalog is slow.
+            if (observed) {
+                yieldedObservedSet = true;
+                yield { name: null, number: null, set: observed, stage: "Widening to the same set" };
             }
-            const matching: CatalogCard[] = (lookup.data ?? []).filter((card: CatalogCard) => card.set?.name && acceptsSet(card.set.name) &&
-                sameCatalogName(card.name?.replace(/\s*\([A-Z]*\d+\)$/i, ""), seed.name!));
-            const releases = [...new Set(matching.map(card => card.set!.name!))];
-            sameSets = observed && acceptsSet(observed) ? [observed] : releases;
+            let releases: string[] = [];
+            try {
+                const lookup = await catalog(new URLSearchParams({ name: seed.name, language: "English", per_page: "50" }));
+                if (!observed && (lookup.data?.length >= 50 || lookup.pagination?.has_more || lookup.pagination?.total_pages > 1)) {
+                    sources.report?.("The catalog returned only part of the named card’s printings. A confirmed release is needed for related cards.");
+                    return;
+                }
+                const matching: CatalogCard[] = (lookup.data ?? []).filter((card: CatalogCard) => card.set?.name && acceptsSet(card.set.name) &&
+                    sameCatalogName(card.name?.replace(/\s*\([A-Z]*\d+\)$/i, ""), seed.name!));
+                releases = [...new Set(matching.map(card => card.set!.name!))];
+            } catch (error) {
+                signal.throwIfAborted();
+                if (!observed || !(error instanceof PricingProviderError && error.kind === "TEMPORARY")) throw error;
+            }
+            sameSets = observed ? [observed] : releases;
             if (!sameSets.length) return;
             const years = await (sources.years ?? setYears)();
             const anchorYears = sameSets.map(set => yearOf(years, set));
@@ -98,14 +111,14 @@ export async function* guidedInventoryTargets(seed: NonNullable<HuntMarketPrefer
                 return;
             }
             nearby = Object.keys(years).filter(set => acceptsSet(set) && !sameSets.some(anchor => sameSetFamily(set, anchor)) &&
-                dated.some(year => Math.abs(years[set] - year) <= 2))
+                dated.some(year => years[set] <= year))
                 .sort((a, b) => Math.min(...dated.map(y => Math.abs(y - years[a]))) - Math.min(...dated.map(y => Math.abs(y - years[b]))) || a.localeCompare(b));
-            // Same Pokémon in another nearby release gets a specific query.
+            // Keep known related printings within the resolved release years.
             for (const set of releases.filter(set => nearby.some(s => sameSetFamily(set, s)))) {
                 yield { name: seed.name, number: null, set, stage: "Same Pokémon from a nearby release" };
             }
         }
-        for (const set of sameSets) {
+        for (const set of yieldedObservedSet ? [] : sameSets) {
             signal.throwIfAborted();
             yield { name: null, number: null, set, stage: "Widening to the same set" };
         }
@@ -115,7 +128,7 @@ export async function* guidedInventoryTargets(seed: NonNullable<HuntMarketPrefer
         }
         for (const set of nearby) {
             signal.throwIfAborted();
-            yield { set, number: null, name: null, stage: "Cards from a nearby release year" };
+            yield { set, number: null, name: null, stage: "Cards from the same year or an older release" };
         }
     } catch (error) {
         signal.throwIfAborted();

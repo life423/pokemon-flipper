@@ -12,20 +12,8 @@ import { Drawer } from "./Drawer";
 import { EbayBuyerAccount } from "./EbayBuyerAccount";
 import styles from "./AuctionSniper.module.css";
 
-export interface SniperDraft {
-    itemId: string;
-    title: string;
-    url: string;
-    searchId?: string;
-    suggestion: { maxBid: number; shipping: number; title: string; endTime: string } | null;
-}
-
-function suggestedBid(draft: SniperDraft | null, quote: SniperQuote | null) {
-    const suggestion = draft?.suggestion;
-    return suggestion && quote && quote.itemId === draft.itemId && quote.shipping === suggestion.shipping &&
-        quote.title.trim() === suggestion.title.trim() && Date.parse(quote.endTime) === Date.parse(suggestion.endTime)
-        ? suggestion.maxBid : undefined;
-}
+import { suggestedBid, type SniperDraft } from "../search/sniper-draft";
+export type { SniperDraft } from "../search/sniper-draft";
 
 const endDate = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit", timeZoneName: "short" });
 const statusLabel: Record<SniperJob["status"], string> = {
@@ -49,11 +37,12 @@ function reminderError(cause: unknown, fallback: string) {
 function PlanForm({ draft, onSaved }: { draft: SniperDraft | null; onSaved: (job: SniperJob) => void }) {
     const [url, setUrl] = useState(draft?.url ?? "");
     const [quote, setQuote] = useState<SniperQuote | null>(null);
-    const [bid, setBid] = useState("");
+    const [enteredBid, setBid] = useState<string | null>(null);
     const [working, setWorking] = useState<"preview" | "arm" | null>(null);
     const [error, setError] = useState("");
     const now = useNow(1000);
-    const suggested = suggestedBid(draft, quote);
+    const suggested = suggestedBid(draft, quote, now);
+    const bid = enteredBid ?? suggested?.toFixed(2) ?? "";
     const maxBid = Number(bid);
     const validBid = /^(?:\d+(?:\.\d{1,2})?|\.\d{1,2})$/.test(bid) && maxBid > 0 && Number.isFinite(maxBid);
     const withinWindow = quote && withinReminderWindow({ buyingOption: "AUCTION", endTime: quote.endTime }, now);
@@ -67,18 +56,16 @@ function PlanForm({ draft, onSaved }: { draft: SniperDraft | null; onSaved: (job
         else if (validBid && maxBid < Math.max(quote.minimumBid, quote.currentBid ?? 0)) blocked = "The bid needed exceeds your limit.";
     }
     const canArm = quote && validBid && !blocked && !working;
-    function resetPreview() { setQuote(null); setBid(""); setError(""); }
+    function resetPreview() { setQuote(null); setBid(null); setError(""); }
 
     const preview = useCallback(async (value: string, signal?: AbortSignal) => {
         if (signal?.aborted) return;
-        setWorking("preview"); setQuote(null); setBid(""); setError("");
+        setWorking("preview"); setQuote(null); setBid(null); setError("");
         try {
             const { quote: fresh } = await previewSnipe(value, "reminder", draft?.searchId, signal);
             if (signal?.aborted) return;
             if (draft && draft.itemId !== fresh.itemId) { setError("eBay returned a different listing. Check the auction again."); return; }
             setQuote(fresh);
-            const prefill = suggestedBid(draft, fresh);
-            if (prefill != null) setBid(prefill.toFixed(2));
         } catch (cause) { if (!signal?.aborted) setError(reminderError(cause, "We couldn’t confirm the auction details with eBay. Check the listing and try again.")); }
         finally { if (!signal?.aborted) setWorking(null); }
     }, [draft]);
@@ -99,7 +86,7 @@ function PlanForm({ draft, onSaved }: { draft: SniperDraft | null; onSaved: (job
         setWorking("arm"); setError("");
         try {
             const { job } = await armSnipe(quote, "reminder", maxBid, draft?.searchId);
-            onSaved(job); setQuote(null); setBid(""); setUrl("");
+            onSaved(job); setQuote(null); setBid(null); setUrl("");
         } catch (cause) { setError(reminderError(cause, "We couldn’t confirm the reminder. Check Your auctions before trying again.")); }
         finally { setWorking(null); }
     }
@@ -126,6 +113,7 @@ function PlanForm({ draft, onSaved }: { draft: SniperDraft | null; onSaved: (job
                 <div><dt>Shipping</dt><dd>{quote.shipping == null ? "Unquoted" : quote.shipping === 0 ? "Free" : dollars(quote.shipping)}</dd></div>
                 <div><dt>Auction ends</dt><dd><time dateTime={quote.endTime}>{endDate.format(new Date(quote.endTime))}</time></dd></div>
             </dl>
+            {draft?.suggestion?.validUntil != null && suggested == null && <p>The auction needs a fresh flip estimate before it can suggest a bid.</p>}
             {suggested != null && <p>Analysis bid ceiling <strong>{dollars(suggested)}</strong></p>}
             <label className={styles.bid}>Your maximum item bid (USD)
                 <input type="number" min="0.01" step="0.01" required inputMode="decimal" value={bid} disabled={!!working}

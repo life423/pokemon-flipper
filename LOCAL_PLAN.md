@@ -31,9 +31,20 @@ resale-step count cannot end a pass. Catalog suggestions rank the first queries;
 they are followed by independent inventory discovery. Keep unreviewed physical
 copies and source cursors under the original account, including later copies
 of the same provisional market. Rotate continued query backlogs so one popular
-card cannot monopolize the hunt. Batch/model/display windows bound work without
+card cannot monopolize the search. After two misses, a flexible search tries
+another eligible market. When related cards are enabled for a named card,
+widen to the confirmed set, then eligible same-year or older releases. Preserve the remaining copies for later. Batch/model/display windows bound work without
 discarding the remaining inventory. The provider's retrieval ceiling still
 requires honest partial-coverage reporting.
+
+While Find a flip stays open, an empty pass schedules another check under the
+original account. A burst slows individual eBay requests. Reaching the daily
+reserve pauses the pass until the reset. A temporary sold-listing failure preserves that exact copy
+and the outstanding transaction for retry. The planner can choose another
+source or move on. A Buy requires positive profit and stable completed sales
+for the proposed exit. The working threshold is one observed sale per day over
+7 or 60 days, sales on multiple days in the past week, and a middle-half price
+range no wider than 30% of the median.
 
 The local repair also adds provisional cards, simultaneous Both-format checks,
 workspace cancellation, semantic subject evidence for ordinary-language goals,

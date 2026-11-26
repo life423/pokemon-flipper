@@ -5,9 +5,12 @@ import { priceEvidenceGap } from "../../../shared/money/price-evidence.ts";
 import { DEFAULT_SNIPER_LEAD_SECONDS } from "../../../shared/sniper.ts";
 import type { AnalysisState } from "../analysis-state";
 import type { ListingSummary, Targets } from "../types";
-import type { SniperDraft } from "./AuctionSniper";
+import { flipSniperDraft, type SniperDraft } from "../search/sniper-draft";
+import type { AuctionOpportunity } from "../../../shared/auction-opportunity.ts";
 
 interface Props {
+    flipOffer?: AuctionOpportunity | null;
+    searchId?: string;
     listing: ListingSummary;
     analysis?: AnalysisState;
     targets: Targets;
@@ -16,12 +19,18 @@ interface Props {
     onSnipe?: (draft: SniperDraft) => void;
 }
 
-export function AuctionReminderButton({ listing, analysis, targets, now, className, onSnipe }: Props) {
+export function AuctionReminderButton({ listing, analysis, targets, now, className, onSnipe, flipOffer, searchId }: Props) {
     if (!onSnipe || listing.buyingOption !== "AUCTION" || listing.availability === "UNAVAILABLE" ||
         !withinReminderWindow(listing, now) ||
         Date.parse(listing.endTime ?? "") - now <= DEFAULT_SNIPER_LEAD_SECONDS.reminder * 1000) return null;
 
+    if (flipOffer !== undefined && (!flipOffer || !flipSniperDraft(listing, flipOffer, now, searchId))) return null;
     function openPlanner() {
+        if (flipOffer) {
+            const draft = flipSniperDraft(listing, flipOffer, Date.now(), searchId);
+            if (draft) onSnipe?.(draft);
+            return;
+        }
         const assessed = analysis?.status === "done" && analysis.evaluation.listing.id === listing.id ? analysis : null;
         const evaluation = assessed?.evaluation;
         let suggestion: SniperDraft["suggestion"] = null;

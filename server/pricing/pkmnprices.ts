@@ -461,7 +461,8 @@ async function readPricingRecord(recordId: string, get: typeof cachedApiGet) {
     if (!detail || String(detail.id) !== recordId || !detail.name || !detail.set?.name || !Array.isArray(detail.prices)) return null;
     return toCardRecord(detail);
 }
-export const cardmarketRecord = (recordId: string) => readPricingRecord(recordId, apiGet);
+export const pricingRecord = (recordId: string) => readPricingRecord(recordId, apiGet);
+export const cardmarketRecord = pricingRecord;
 export const cachedPricingRecord = (recordId: string) => readPricingRecord(recordId, cachedApiGet);
 export async function cardmarketOfferPage(recordId: string, params: URLSearchParams): Promise<unknown[]> {
     const body = await apiGet(`/cards/${recordId}/listings/cardmarket?${params}`, 1);

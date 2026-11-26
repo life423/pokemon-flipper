@@ -16,11 +16,11 @@ export { rawConditionClaim as compCondition } from "../../shared/raw-condition-c
 import { rawConditionClaim as compCondition } from "../../shared/raw-condition-claim.ts";
 
 export async function rawPricesWithSales(card: PricedCard | null, identity: Identity, {
-    fetchRawComps, checkComps, now = Date.now(), assessCondition, conditionStatus, acquireCondition, requestedCondition, signal,
+    fetchRawComps, checkComps, now = Date.now(), assessCondition, conditionStatus, acquireCondition, requestedCondition, signal, propagateErrors = false,
 }: { fetchRawComps: FetchRawComps; checkComps?: CheckComps; now?: number; assessCondition?: (sale: Comp, identity: Identity, signal?: AbortSignal) => Promise<SoldConditionEvidence | null>;
     conditionStatus?: (sale: Comp, identity: Identity) => SoldConditionReadStatus;
     acquireCondition?: (sales: readonly Comp[], identity: Identity, signal?: AbortSignal, checkPriceSpread?: boolean) => Promise<{ sale: Comp; evidence: SoldConditionEvidence } | null>;
-    requestedCondition?: RawCondition; signal?: AbortSignal }): Promise<RawPricing> {
+    requestedCondition?: RawCondition; signal?: AbortSignal; propagateErrors?: boolean }): Promise<RawPricing> {
     signal?.throwIfAborted();
     if (!readyForPricing(identity) || !identity.name?.trim()) {
         return { status: "PRICE_UNAVAILABLE", reason: "The card isn't fully identified, so its raw sales can't be matched." };
@@ -54,7 +54,12 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
             const key = JSON.stringify([sale.id, sale.listing_url, sale.title]);
             let reading = readings.get(key);
             if (!reading) {
-                reading = assessCondition!(sale, identity, signal).catch(() => { signal?.throwIfAborted(); cacheReadFailed = true; return null; });
+                reading = assessCondition!(sale, identity, signal).catch(error => {
+                    signal?.throwIfAborted();
+                    if (propagateErrors) throw error;
+                    cacheReadFailed = true;
+                    return null;
+                });
                 readings.set(key, reading);
             }
             return reading;
@@ -223,8 +228,9 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
             conditionEvidence: assessCondition ? "AI_PHOTOS" : "SELLER_TEXT", reviewedSoldCopies: assessCondition ? sales.length : undefined, sampledSoldCopies,
             evidenceNote: assessCondition ? photoNote
                 : "Screening uses seller-stated raw conditions. Final evaluations assess sold-copy photos where available. Up to 40 returned records over 90 days are sampled." };
-    } catch {
+    } catch (error) {
         signal?.throwIfAborted();
+        if (propagateErrors) throw error;
         return { ...market, status: "PRICE_UNAVAILABLE", reason: "eBay raw sales are temporarily unavailable." };
     }
 }

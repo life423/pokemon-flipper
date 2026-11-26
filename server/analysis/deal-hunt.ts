@@ -15,6 +15,7 @@ export interface DealHuntOutcome {
     section: DealHuntSection;
     alternateSections?: DealHuntSection[];
     verifiedPurchase?: DealHuntReport["verifiedPurchase"];
+    liquidityIssue?: string;
     recentSales?: number;
     resalePriority?: number;
 }
@@ -44,6 +45,7 @@ interface DealHuntInput {
     preferRecentSales?: boolean;
     freshListings?: boolean;
     guidedResale?: boolean;
+    rotateMarkets?: boolean;
     progress?: Pick<HuntProgressObserver, "stage" | "checked" | "guidance">;
 }
 
@@ -57,6 +59,7 @@ export interface DealHuntMarket {
         chooseMarket?: (markets: { title: string; summary: string }[]) => Promise<number>): Promise<DealHuntCandidate[]>;
     /** Another source page or release remains available under this account. */
     hasMore?(): boolean;
+    hasOtherMarket?(): boolean;
 }
 
 type ResearchChoice = { action: DealHuntAction; index: number };
@@ -76,9 +79,11 @@ const toolDescriptions: Record<Option["action"], string> = {
     calculate_grading: "Compare the pictured card at the likely grade and one grade lower, including grading, shipping and resale costs.",
     check_price_references: "Look up supplemental evidence for the exact market when direct pricing is incomplete.",
     check_price_tracker: "Look up the matching Pokémon Price Tracker reference for this copy’s market.",
+    verify_sold_listing: "Verify an individual cited eBay sale against a completed transaction and the exact physical market. Use confirmed comparisons to reprice this copy.",
     search_web_sales: "Look up cited individual prices or transactions for the exact card. The app validates the returned evidence.",
     check_price_history: "Read dated price history for the identified market.",
     compare_cardmarket: "Read matching European asking prices. These are active offers.",
+    move_on: "Leave this copy when further price research is unlikely to establish a liquid, profitable exit. Continue searching other copies.",
     finish: "Open the checked listing and selected evidence section. The app supplies the verified decision and amounts.",
 };
 
@@ -203,8 +208,8 @@ async function selectOption(options: Option[], searchId: string, goal: DealHuntG
     const referenceInstructions = options.some(option => option.action === "check_price_references")
         ? " check_price_references checks additional price sources when exact sales are sparse. Use it to resolve a missing price. A provider estimate or asking price cannot substitute for a completed matching sale."
         : "";
-    if (options.some(option => option.action === "check_price_tracker" || option.action === "search_web_sales")) {
-        guidance.push("Choose the source that answers the open question. check_price_tracker requests the exact product or grade reference. search_web_sales looks for cited individual transactions. check_price_history examines dated prices for this market. compare_cardmarket checks competing European asking prices. Only matched completed transactions establish sales activity.");
+    if (options.some(option => option.action === "verify_sold_listing" || option.action === "check_price_tracker" || option.action === "search_web_sales")) {
+        guidance.push("Choose the check most likely to settle resale value or trading frequency. Consider the observed dates, typical spread and asking competition. Use move_on when the remaining checks are unlikely to change the decision. check_price_tracker requests the exact product or grade reference. search_web_sales looks for cited individual transactions. check_price_history examines dated prices for this market. compare_cardmarket checks competing European asking prices. Only matched completed transactions establish sales activity.");
     }
     const offeredCopies = new Set(checks.map(check => check.index));
     const shownInventory = afterMiss || steps.length > 24 ? inventory.filter(row => offeredCopies.has(row.index)) : inventory;
@@ -258,7 +263,7 @@ async function selectOption(options: Option[], searchId: string, goal: DealHuntG
 }
 
 export async function runDealHunt({ searchId, goal, candidates: initial, markets = [], auction = false, maxSteps,
-    preferRecentSales = false, freshListings = false, guidedResale = false, progress }: DealHuntInput, signal?: AbortSignal, choose = experiment): Promise<DealHuntReport> {
+    preferRecentSales = false, freshListings = false, guidedResale = false, rotateMarkets = false, progress }: DealHuntInput, signal?: AbortSignal, choose = experiment): Promise<DealHuntReport> {
     signal?.throwIfAborted();
     const format = auction ? "auction" : "Buy It Now";
     const candidates = [...initial];
@@ -281,6 +286,8 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
     const closedWaits = new Map<number, DealHuntOutcome>();
     const inventory = candidates.map(inventoryEntry);
     let reconsiderCopies = false;
+    let batchStart = 0;
+    let emptyBatch = false;
 
     try {
         while (true) {
@@ -290,6 +297,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                 (auction && candidates.length ? verificationSteps : 0);
             const remainingChecks = researchLimit - steps.length;
             const options: Option[] = [];
+            let batchMisses = 0;
             let hasUncheckedMarketCopy = false;
             let canSwitchCopy = false;
             let gradingChecksExceedLimit = false;
@@ -301,7 +309,8 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                 let available: DealHuntAction[] = [];
                 if (!closed && remainingChecks > 0 && (!((huntGradingMarkets || freshListings) && outcome) || needsTermsRefresh)) {
                     available = [...new Set(candidate.available(checked))].filter(action => !checked.has(action) ||
-                        action === "check_listing" && needsTermsRefresh);
+                        action === "check_listing" && needsTermsRefresh ||
+                        action === "verify_sold_listing" && candidate.canRepeat?.(action, checked));
                     const affordable = huntGradingMarkets ? affordableGradingChecks(available, checked, remainingChecks) : available;
                     if (available.length && !affordable.length && !outcome) gradingChecksExceedLimit = true;
                     for (const action of affordable) {
@@ -320,6 +329,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                 // Otherwise-supported stale quotes stay open for their one refresh.
                 if (!closed && outcome?.decision === "WAIT" && !available.length && !needsTermsRefresh)
                     closedWaits.set(index, outcome);
+                if (rotateMarkets && index >= batchStart && checked.size && !available.length && outcome?.decision !== "BUY" && outcome?.decision !== "BID") batchMisses++;
                 if (outcome) {
                     for (const section of new Set([outcome.section, ...(outcome.alternateSections ?? [])])) {
                         options.push({ action: "finish", index, section, decision: outcome.decision, reason: outcome.reason,
@@ -328,7 +338,9 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                 }
             }
             const canVerifyNewCopy = remainingChecks > verificationSteps;
-            const canBrowse = huntMarketsForBuyer ? canVerifyNewCopy && (!hasUncheckedMarketCopy || canSwitchCopy)
+            const otherMarket = rotateMarkets && markets.some(m => m.hasOtherMarket?.() ?? m.hasMore?.());
+            const widen = otherMarket && (emptyBatch || batchMisses >= 2);
+            const canBrowse = huntMarketsForBuyer ? canVerifyNewCopy && (!hasUncheckedMarketCopy || canSwitchCopy || widen)
                 : steps.length < researchLimit && searchedMarkets.size < 2;
             if (canBrowse) {
                 markets.forEach(({ title, summary, source }, index) => {
@@ -354,9 +366,16 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             const buys = options.filter((option): option is DestinationChoice => option.action === "finish" && option.decision !== "WAIT");
             const resalePriority = (option: DestinationChoice) => option.resalePriority ?? (option.recentSales ?? 0) / 60;
             const highestPriority = Math.max(0, ...buys.map(resalePriority));
-            const eligible = buys.length ? preferRecentSales ? buys.filter(option => resalePriority(option) === highestPriority) : buys :
+            let eligible = buys.length ? preferRecentSales ? buys.filter(option => resalePriority(option) === highestPriority) : buys :
                 huntMarketsForBuyer && (hasUncheckedMarketCopy || options.some(option => option.action === "find_listings" || guidedResale && isListingCheck(option)))
                 ? options.filter(option => option.action !== "finish") : options;
+            if (rotateMarkets && !buys.length) {
+                const broaden = widen && eligible.filter(option => option.action === "find_listings");
+                const newCopies = eligible.filter(option => isListingCheck(option) && option.index >= batchStart &&
+                    (!otherMarket || option.index < batchStart + 2));
+                if (broaden && broaden.length) eligible = broaden;
+                else if (newCopies.length && (otherMarket || batchStart > 0)) eligible = newCopies;
+            }
             // After two unsuccessful markets, reserve the remaining checks for a new copy.
             // Let the planner compare every unsearched eligible market, including another printing.
             const pivot = huntMarketsForBuyer && searchedMarkets.size >= 2 && eligible.some(option => option.action === "find_listings") &&
@@ -385,7 +404,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             }
             if (candidates.length > DEVELOPMENT_SEARCH_LIMIT || steps.length > 24)
                 choiceMenu = planningWindow(choiceMenu);
-            const providerDecision = pendingCopies.some(option => option.action === "check_price_tracker" || option.action === "search_web_sales");
+            const providerDecision = pendingCopies.some(option => option.action === "verify_sold_listing" || option.action === "check_price_tracker" || option.action === "search_web_sales");
             const nextCopy = pendingCopies.find(option => inventory[option.index].listingId === lastCopy) ?? pendingCopies.at(0);
             // Routine prerequisites stay inexpensive. Once terms and photos are checked,
             // the model can pick the evidence or resale route that would change the decision.
@@ -429,6 +448,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                     note => queries.push(note), guidedResale ? chooseMarket : undefined));
                 reconsiderCopies = guidedResale;
                 signal?.throwIfAborted();
+                if (rotateMarkets) batchStart = candidates.length;
                 let added = 0;
                 for (const candidate of discovered) {
                     if (candidates.some(existing => existing.listingId === candidate.listingId)) continue;
@@ -437,6 +457,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                     completed.push(new Set());
                     added++;
                 }
+                emptyBatch = added === 0;
                 const observation = [selected.summary, ...queries, `Found ${added} additional eligible ${format} ${added === 1 ? "listing" : "listings"} to check.`].join(" ");
                 steps.push({ listingId: null, title: selected.title, action: selected.action, reason: choiceReason, observation,
                     reused: choiceReused, selectedBy: choiceSource });
@@ -496,6 +517,6 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                 destination: { listingId: candidate.listingId, section: outcome.section },
             };
         }
-        return wait(reason);
+        return { ...wait(reason), providerStop: error instanceof EbayBudgetError ? "daily_ebay" : "account" };
     }
 }

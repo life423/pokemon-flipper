@@ -179,7 +179,7 @@ export function rankHuntMarkets(evaluations: Evaluation[], origin: HuntOrigin | 
         const listings = [...copies].sort((a, b) => (b[1] ?? -Infinity) - (a[1] ?? -Infinity) || a[0].localeCompare(b[0]));
         ranked.push({ ...market, sales30: recent.filter(s => now - s.at <= 30 * day).length, sales60: recent.length,
             sales90: verified.filter(s => now - s.at <= 90 * day).length, medianUsd: money(median(values)),
-            activity: resaleActivity(recent), activityDates: verified.map(sale => new Date(sale.at).toISOString()),
+            activity: resaleActivity(recent, now), activityDates: verified.map(sale => new Date(sale.at).toISOString()),
             latestSaleAt: verified.length ? new Date(Math.max(...verified.map(sale => sale.at))).toISOString() : "",
             listingIds: listings.map(([id]) => id), projectedProfit: listings[0]?.[1] ?? null });
     }
@@ -209,7 +209,7 @@ export function activityForExit(value: Evaluation, path: PricedPath, markets: Hu
         const floor = verifiedRawFloor(value, path, now);
         const sales = observedSoldSales(floor?.summary.activitySales ?? floor?.summary.sales ?? [], now, { maxDays: SALES_ACTIVITY_DAYS })
             .filter(({ sale }) => sale.photoCondition === path.priceCondition && sale.conditionEvidence?.length);
-        return { count: sales.length, activity: resaleActivity(sales) };
+        return { count: sales.length, activity: resaleActivity(sales, now) };
     }
     const slab = path.path === "GRADED_RESALE";
     const grade = slab ? Number(value.slab?.grade) : value.condition?.gradeRange?.likely;

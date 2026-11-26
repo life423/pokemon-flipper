@@ -42,7 +42,7 @@ import { dailyBrowseReserve } from "../ebay/daily-budget.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { createSharedWork } from "../lib/shared-work.ts";
 import { evaluateBoundedListing, PriceOnlyEvidenceError } from "./bounded-evaluate.ts";
-import { EnglishOnlyError, RejectedPhotoAssessmentError } from "./failure.ts";
+import { EnglishOnlyError, evaluationFailure, RejectedPhotoAssessmentError } from "./failure.ts";
 import { runDealHunt, type DealHuntCandidate, type DealHuntMarket } from "./deal-hunt.ts";
 import { huntProgress } from "./deal-hunt-progress.ts";
 import { verifyCollectorArtwork } from "./collector-artwork.ts";
@@ -58,6 +58,7 @@ import { findHuntMarkets, restoreSavedHuntSales, type HuntMarket } from "./same-
 import { discoverMarketListings, type MarketQueryObservation } from "./same-set-listings.ts";
 import { describeHuntMarket, huntOrigin, huntPhotoIdentityIssue, keepsSetSearchPreferences, marketItemLimit, marketIntent, matchesHuntMarket, photoMatchesCollectorMarket, shortlistMarketCopies } from "./deal-hunt-market-checks.ts";
 import { groupMarketCopies, groupMarketSearches, huntMarketCardKey } from "./deal-hunt-market-groups.ts";
+import { citedTransactions, verifyCitedSales, type SoldCitation } from "../pricing/cited-sale.ts";
 import { priceChartingComparison } from "../pricing/pricecharting.ts";
 import { marketHistory } from "../pricing/price-history.ts";
 import { providerPrices } from "../pricing/buyer-market-prices.ts";
@@ -173,6 +174,7 @@ const defaults = {
     restoreRaw: restoreRawComparisons,
     supplement: supplementalResearch,
     priceCharting: priceChartingComparison,
+    verifyCitedSales,
     marketHistory,
     compareCardmarket,
     evaluate: evaluateBoundedListing,
@@ -213,13 +215,15 @@ function rowMatches(row: HuntRow, saved: PrivateEvaluationSnapshot) {
 
 interface ScopedCandidate extends DealHuntCandidate {
     guidePrices(): ProviderPrice[];
+    retryAfter(): number | undefined;
+    rejectedSales(): string[];
     liveListing(): ListingSummary | null;
 }
 
 function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searchId: string, saved: PrivateEvaluationSnapshot | null,
     inventory: HuntInventory | null, row: HuntRow | undefined, evaluations: Map<string, Evaluation>, deps: Dependencies,
     filters: ListingFilters, minGrade: number, acceptsEvaluation: (evaluation: Evaluation) => boolean,
-    { markets = [], freshGrading = false, preferRecentSales = false, verifyPhotoIdentity = false }: { markets?: HuntMarket[]; freshGrading?: boolean; preferRecentSales?: boolean; verifyPhotoIdentity?: boolean } = {}): ScopedCandidate | null {
+    { markets = [], freshGrading = false, preferRecentSales = false, requireLiquid = false, verifyPhotoIdentity = false, rejectedSales = [] }: { markets?: HuntMarket[]; freshGrading?: boolean; preferRecentSales?: boolean; requireLiquid?: boolean; verifyPhotoIdentity?: boolean; rejectedSales?: string[] } = {}): ScopedCandidate | null {
     // Never use an unrelated old version of a card simply because its eBay ID is the same.
     if (saved && (saved.evaluation.listing.id !== id || (row ? !rowMatches(row, saved) : saved.searchId !== searchId))) saved = null;
     const format = filters.typeFilter === "AUCTION" ? "AUCTION" : "FIXED_PRICE";
@@ -231,13 +235,29 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
     const matches = (e: Evaluation) => e.listing.buyingOption === format && acceptsEvaluation(e) && fits(e, row, inventory) && meetsMinimumGrade(e, minGrade) && (!markets.length || markets.some(market => matchesHuntMarket(e, market, !!huntPrintingCheck(e), freshGrading) && !evaluatedCriteriaMismatch(e, marketIntent(market)))) &&
         (!row || matchesListingFilters({ ...row.listing, currentPrice: e.listing.price }, filters, e));
     if (value && !matches(value)) return null;
-    const reader = () => value && dealHuntCandidate(value, goal, deps.now, markets, targets, filters.maxPrice, { preferRecentSales });
+    let guideSales: SoldCitation[] = [];
+    const reader = () => value && dealHuntCandidate(value, goal, deps.now, markets, targets, filters.maxPrice,
+        { preferRecentSales, requireLiquid, hasGuideSales: guideSales.length > 0 });
     const initial = reader();
     let artworkVerified = !row?.collectorQuery;
     if (value && !initial) return null;
     if (!value && (!row?.assessable || goal === "grade_raw" && row.listing.isGraded || goal === "collect_slab" && !row.listing.isGraded)) return null;
     if (value && artworkVerified) evaluations.set(id, value);
     let guidePrices: ProviderPrice[] = [];
+    let retryAt: number | undefined;
+    const attemptedSales = new Set<string>();
+    const rejected = new Set(rejectedSales);
+    const saleKey = (sale: SoldCitation) => JSON.stringify([value?.identity?.recordId, value?.identity?.printing, value?.identity?.finish,
+        value?.slab?.grader, value?.slab?.grade, value?.condition?.rawCondition, sale.url, sale.date, sale.priceUsd]);
+    const pendingSales = () => {
+        const sales = value ? citedTransactions(value, guideSales, deps.now()) : new Map<string, SoldCitation>();
+        for (const [key, sale] of sales) if (attemptedSales.has(key) || rejected.has(saleKey(sale))) sales.delete(key);
+        return sales;
+    };
+    const canVerifySale = (checked: ReadonlySet<DealHuntAction>) => goal === "resell" && value?.identity?.recordId &&
+        checked.has("check_listing") && checked.has("inspect_photos") && checked.has("check_sales") &&
+        !(retryAt && retryAt > deps.now()) && !huntPhotoIdentityIssue(value) && pendingSales().size > 0 &&
+        reader()?.available(referencePrerequisites).includes("check_price_references");
     let retired = false;
     let quotaNote: string | undefined;
     const retire = (message: string) => {
@@ -271,6 +291,8 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
         summary: [row?.collectorQuery && `Found through “${row.collectorQuery}”. Inspect the original front to verify the searched card and number.`,
             auctionClues, freshClues, copySummary].filter(Boolean).join(" "),
         guidePrices: () => guidePrices,
+        retryAfter: () => retryAt,
+        rejectedSales: () => [...rejected],
         liveListing() {
             if (!card || retired || !artworkVerified) return null;
             const latest = value ? withFreshListing(card, value) : card;
@@ -281,26 +303,30 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
             return latest;
         },
         available(checked) {
-            if (retired) return [];
+            if (retired || checked.has("move_on")) return [];
             if (!artworkVerified) return ["inspect_photos"];
             const actions = reader()?.available(checked);
             if (!actions) return auction && !checked.has("check_listing") ? ["check_listing", "inspect_photos"] : ["inspect_photos"];
+            if (canVerifySale(checked)) actions.unshift("verify_sold_listing");
             if (goal !== "resell" || !actions.includes("check_price_references") ||
                 !preferRecentSales && !value?.rawPricing?.tcgplayerComparison) return actions;
             const sources: DealHuntAction[] = ["check_price_tracker", "search_web_sales"];
+            if (requireLiquid) sources.push("move_on");
             if (value?.identity?.recordId) sources.push("check_price_history", "compare_cardmarket");
             return [...actions.filter(action => action !== "check_price_references"), ...sources.filter(source => !checked.has(source))];
         },
-        canRepeat: (action, checked) => !retired && artworkVerified && reader()?.canRepeat?.(action, checked) === true,
+        canRepeat: (action, checked) => !retired && artworkVerified && (action === "verify_sold_listing" ? !!canVerifySale(checked) : reader()?.canRepeat?.(action, checked) === true),
         outcome(checked) {
             if (!value || retired || !artworkVerified) return null;
+            if (checked.has("move_on")) return { decision: "WAIT", section: "sales", reason: "Continuing to another copy with stronger resale evidence." };
+            if (canVerifySale(checked)) return null;
             const evidence = reader();
             if (evidence?.available(checked).includes("check_price_references") &&
                 !(checked.has("check_price_tracker") && checked.has("search_web_sales"))) return null;
             const searched = checked.has("check_price_tracker") || checked.has("search_web_sales");
             const result = evidence?.outcome(searched ? new Set([...checked, "check_price_references"]) : checked);
             if (!result) return null;
-            if (verifyPhotoIdentity && result.decision === "BUY") {
+            if ((verifyPhotoIdentity && result.decision === "BUY") || (goal === "resell" && result.decision === "BID")) {
                 const reason = huntPhotoIdentityIssue(value);
                 if (reason) return { decision: "WAIT", section: "photos", reason };
                 if (!(result.recentSales && result.recentSales > 0))
@@ -326,12 +352,14 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
         async read(action, signal) {
             signal?.throwIfAborted();
             if (retired) return "This copy was excluded from the search.";
+            if (action === "move_on") return "Continue to another copy with stronger resale evidence.";
             if (!artworkVerified && action !== "inspect_photos") return "Check the original front against the catalog first.";
             const checkRaw = action === "check_raw_resale" || action === "check_sales" && value?.underwriting?.verdict === "CANT_PRICE";
             if (checkRaw && value) {
                 const raw = await deps.restoreRaw(value, deps.now(), signal);
                 if (raw) value = retargetEvaluation({ ...value, rawPricing: raw }, targets);
             }
+            let verification: string | undefined;
             try {
                 if (!value) {
                     if (auction && action === "check_listing" && row) {
@@ -369,6 +397,17 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
                         JSON.stringify(focused.listing.conditionNotes) !== JSON.stringify(value.listing.conditionNotes))
                         return retire("The listing changed during its printing check. Its previous evidence no longer applies.");
                     value = focused;
+                } else if (action === "verify_sold_listing") {
+                    // Check the newest outstanding citation. A rejection consumes only that transaction.
+                    const next = [...pendingSales()].sort((a, b) => b[1].date!.localeCompare(a[1].date!) || a[0].localeCompare(b[0]))[0];
+                    if (!next) return "No new cited transactions remain.";
+                    const update = await deps.verifyCitedSales(value, new Map([next]), deps.now(), signal);
+                    attemptedSales.add(next[0]);
+                    if (!update) rejected.add(saleKey(next[1]));
+                    retryAt = undefined;
+                    verification = update ? "Verified a cited eBay transaction against the completed sale record and matched copy."
+                        : "This transaction did not establish a verified comparison.";
+                    if (update) value = retargetEvaluation({ ...value, ...update }, targets);
                 } else if (action === "check_price_history" || action === "compare_cardmarket") {
                     if (!reader()?.available(referencePrerequisites).includes("check_price_references")) return "The current copy no longer needs this reference.";
                     if (action === "check_price_history") {
@@ -387,7 +426,7 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
                     const now = deps.now();
                     const source = action === "check_price_tracker" ? "tracker" as const : action === "search_web_sales" ? "web" as const : undefined;
                     const options = { now, signal: signal ?? new AbortController().signal, source,
-                        ...(value.rawPricing?.tcgplayerComparison && { comparePrices: true }) };
+                        ...((requireLiquid || value.rawPricing?.tcgplayerComparison) && { comparePrices: true }) };
                     const cached = await deps.supplement(value, { ...options, cacheOnly: true });
                     value = { ...value, ...cached };
                     if (eligible()) {
@@ -430,6 +469,14 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
                 }
             } catch (error) {
                 signal?.throwIfAborted();
+                if (action === "verify_sold_listing") {
+                    const failure = evaluationFailure(error);
+                    if (error instanceof PricingProviderError ? error.kind === "TEMPORARY" : failure.retryable) {
+                        const retry = error instanceof PricingProviderError ? error.retryAt : undefined;
+                        retryAt = Math.max(deps.now() + 1000, retry ?? deps.now() + (failure.retryAfterMs ?? 30_000));
+                        return "The sold listing could not be checked yet. Its verification is scheduled for retry.";
+                    }
+                }
                 if ((action === "check_price_history" || action === "compare_cardmarket") && error instanceof PricingProviderError && error.kind === "TEMPORARY")
                     return "This source was temporarily unavailable. Other sources remain available.";
                 if (error instanceof EbayError && [404, 410].includes(error.status)) return retire("This copy is no longer available on eBay.");
@@ -465,8 +512,10 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
             const observation = await evidence.read(action, signal);
             const guide = goal === "resell" && action === "check_sales" && value.identity && !huntPhotoIdentityIssue(value)
                 ? await deps.priceCharting(value.identity, signal) : null;
-            if (guide) guidePrices = guide.prices;
-            return [artworkObservation, observation, guide?.observation, quotaNote].filter(Boolean).join(" ");
+            if (guide) { guidePrices = guide.prices; guideSales = guide.sales ?? []; }
+            const liquidity = requireLiquid && (action === "check_sales" || action === "verify_sold_listing")
+                ? evidence.outcome(new Set([...referencePrerequisites, "check_raw_resale", "calculate_grading"])) : null;
+            return [artworkObservation, verification, observation, guide?.observation, liquidity?.liquidityIssue && liquidity.reason, quotaNote].filter(Boolean).join(" ");
         },
     };
 }
@@ -476,6 +525,8 @@ interface WatchCheckpoint {
     nextCheckAt: number;
     offsets: Record<string, number>;
     checked: Record<string, number>;
+    deferred?: Record<string, { listing: ListingSummary; target: InventoryTarget; at: number; rejectedSales?: string[] }>;
+    waitingFor?: "provider" | "inventory";
 }
 
 function listingFingerprint(row: ListingSummary) {
@@ -498,11 +549,14 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                 { rounds: 0, nextCheckAt: 0, offsets: {}, checked: {} } : null;
             if (watch) {
                 const pressure = await deps.browsePressure();
-                if (pressure || watch.nextCheckAt > deps.now()) {
-                    const low = pressure?.warning?.includes("LOW");
-                    const nextCheckAt = Math.max(watch.nextCheckAt, low ? Date.parse(pressure!.resetsAt) : pressure ? deps.now() + HUNT_RECHECK_MS : 0);
-                    return { evaluation: null, nextCheckAt, report: { searchId, goal, decision: "WAIT", destination: null, steps: [],
-                        reason: pressure ? "Waiting for eBay search allowance." : "Waiting for the next inventory check." } };
+                // Browse paces individual requests during a burst. Hold the entire pass only at the daily reserve.
+                const atReserve = pressure && pressure.remaining <= dailyBrowseReserve(pressure.limit);
+                if (atReserve || watch.nextCheckAt > deps.now()) {
+                    const reset = Date.parse(pressure?.resetsAt ?? "");
+                    const nextCheckAt = Math.max(watch.nextCheckAt, atReserve ? (reset > deps.now() ? reset : deps.now() + HUNT_RECHECK_MS) : 0);
+                    const waitingFor = atReserve ? "provider" : watch.waitingFor;
+                    return { evaluation: null, nextCheckAt, waitingFor, report: { searchId, goal, decision: "WAIT", destination: null, steps: [],
+                        reason: atReserve ? "Waiting for eBay search allowance." : waitingFor === "provider" ? "Waiting to retry the pricing source." : "Waiting for the next inventory check." } };
                 }
             }
             const discovery = standalone ? null : await deps.discovery(searchId);
@@ -538,6 +592,7 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                 maxPrice: ceilings.length ? Math.min(...ceilings) : undefined };
             const { minYear, maxYear, finish, sets, printing, grader, minGrade, maxGrade } = request.marketPreferences ?? {};
             const preferRecentSales = freshListings || request.marketPreferences?.preferRecentSales;
+            const requireLiquid = standalone && goal === "resell" && preferRecentSales;
             const yearRange = minYear !== undefined || maxYear !== undefined;
             const years = yearRange ? await deps.setYears() : {};
             const acceptsSet = (set?: string | null) => {
@@ -559,7 +614,8 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                 .map(row => [row.listing.id, row] as const)));
             const evaluations = new Map<string, Evaluation>();
             const candidates: DealHuntCandidate[] = [];
-            const alternatives = new Map<string, { candidate: ScopedCandidate; leads: HuntMarket[]; reason: string }>();
+            const resumedListings = new Set<string>();
+            const alternatives = new Map<string, { candidate: ScopedCandidate; leads: HuntMarket[]; reason: string; target?: InventoryTarget }>();
             const observeCandidate = (candidate: ScopedCandidate): ScopedCandidate => ({ ...candidate,
                 async read(action, signal) {
                     const observation = await candidate.read(action, signal);
@@ -675,7 +731,7 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                                 const saved = await deps.snapshot(listing.id);
                                 // Each candidate verifies the complete identity against its viable exits.
                                 const candidate = scopedCandidate(listing.id, goal, targets, searchId, saved, null,
-                                    row, evaluations, deps, filters, minPotentialGrade, acceptsEvaluation, { markets: leads, freshGrading, preferRecentSales });
+                                    row, evaluations, deps, filters, minPotentialGrade, acceptsEvaluation, { markets: leads, freshGrading, preferRecentSales, requireLiquid });
                                 if (!candidate) continue;
                                 const matched = saved ? leads.filter(lead => matchesHuntMarket(saved.evaluation, lead)) : [];
                                 const reason = (matched.length ? matched : leads).map(describeHuntMarket).join(" ");
@@ -719,13 +775,18 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                             marketNote = "The sampled market ranking was temporarily unavailable. Checking independent eBay inventory.";
                         }
                     }
-                    const pendingTargets: InventoryTarget[] = [...ranked];
+                    const deferred = watch?.deferred ?? {};
+                    const due = Object.values(deferred).filter(item => item.at <= deps.now());
+                    const retryTargets = new Map(due.map(item => [JSON.stringify(item.target), item.target]));
+                    const pendingTargets: InventoryTarget[] = [...retryTargets.values(), ...ranked];
                     const continuedTargets: InventoryTarget[] = [];
                     let guideEnded = !guide;
                     const allowFallback = !guided;
                     let offerWebDiscovery = !guided && standalone && goal === "resell" && preferRecentSales && releases.length > 0;
                     let fallbackIndex = 0;
                     let currentTarget: InventoryTarget | undefined;
+                    let lastMarket: string | undefined;
+                    const marketQuery = (target: InventoryTarget) => [target.name, target.number, target.set].filter(Boolean).join(" ") || "Pokemon";
                     let paused = false;
                     const exhaustedQueries = new Set<string>();
                     const checkedQueries = new Set<string>();
@@ -747,6 +808,8 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                         markets.push({ source: "inventory", title: freshListings ? "New Buy It Now listings" : "Current eBay inventory",
                             summary: "Search current listings within the buyer's filters. Check each copy and its matching prices before considering a purchase.",
                             hasMore: hasTargets,
+                            hasOtherMarket: () => !paused && (!guideEnded || allowFallback && fallbackIndex < releases.length ||
+                                [...pendingTargets, ...continuedTargets].some(target => marketQuery(target) !== lastMarket)),
                             async discover(_signal, reportQueries, chooseMarket) {
                                 if (!hasTargets()) return [];
                                 const beforeScanPressure = pagesScanned && (guided || rankBlank) ? await deps.browsePressure() : null;
@@ -799,12 +862,13 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                                     }
                                     active.throwIfAborted();
                                     const [next] = pendingTargets.splice(targetIndex, 1);
-                                    const nextQuery = [next.name, next.number, next.set].filter(Boolean).join(" ") || "Pokemon";
+                                    const nextQuery = marketQuery(next);
                                     if (!exhaustedQueries.has(JSON.stringify([nextQuery, format]))) currentTarget = next;
                                 }
                                 const target = currentTarget;
                                 const release = target.set;
-                                const query = [target.name, target.number, release].filter(Boolean).join(" ") || "Pokemon";
+                                const query = marketQuery(target);
+                                lastMarket = query;
                                 const cursorKey = JSON.stringify([query, format]);
                                 let pageOffset = queryOffsets.get(cursorKey);
                                 const stageLabel = target?.stage ? target.stage + " · " + query : query === "Pokemon" ? "Newly listed singles across sets" : query;
@@ -858,7 +922,12 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                                 const discovered: DealHuntCandidate[] = [];
                                 const current = format === "AUCTION" ? await deps.researchAuctionSellers(listings, deps.now(), active)
                                     : listings;
-                                const eligible = current.filter(listing => !knownIds.has(listing.id) && buyerReviewBlock(listing, deps.now()) === null &&
+                                // A provider retry retains the specific physical copy even when it has moved off the newest page.
+                                const retryRows = due.filter(item => item.target.name === target.name && item.target.set === target.set &&
+                                    item.target.number === target.number).map(item => item.listing);
+                                for (const listing of retryRows) resumedListings.add(listing.id);
+                                const page = new Map([...retryRows, ...current].map(listing => [listing.id, listing]));
+                                const eligible = [...page.values()].filter(listing => (deferred[listing.id]?.at ?? 0) <= deps.now() && !knownIds.has(listing.id) && buyerReviewBlock(listing, deps.now()) === null &&
                                     matchesListingFilters(listing, inventoryFilters));
                                 const copies = (freshListings ? freshResaleCandidates(eligible, targets, scanStartedAt) : eligible).map(listing => ({ listing }));
                                 for (const { listing } of await rankFreshCopies(copies)) {
@@ -869,12 +938,14 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                                         { listing, assessable: true }, evaluations, deps, inventoryFilters, minPotentialGrade,
                                         evaluation => acceptsEvaluation(evaluation) && (!release || sameSetFamily(evaluation.identity?.set, release)) &&
                                             (!target || !evaluatedCriteriaMismatch(evaluation, scanIntent)),
-                                        { freshGrading, preferRecentSales, verifyPhotoIdentity: Boolean(freshListings || guided || rankBlank) });
+                                        { freshGrading, preferRecentSales, requireLiquid, verifyPhotoIdentity: Boolean(freshListings || guided || rankBlank),
+                                            rejectedSales: deferred[listing.id] && listingFingerprint(deferred[listing.id].listing) === listingFingerprint(listing)
+                                                ? deferred[listing.id].rejectedSales : undefined });
                                     if (!candidate) continue;
                                     const reason = target?.stage ? cohort : freshListings ? "Found in current Buy It Now listings." : `Found in the broader eBay search for ${query}.`;
                                     knownIds.add(listing.id);
                                     const observed = observeCandidate(candidate);
-                                    alternatives.set(listing.id, { candidate: observed, leads: [], reason });
+                                    alternatives.set(listing.id, { candidate: observed, leads: [], reason, target });
                                     discovered.push(observed);
                                 }
                                 progress.retain(candidates.length + alternatives.size);
@@ -890,8 +961,11 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                     ? "The original results did not establish a single set to explore."
                     : "No matching markets were found within your filters.";
             }
-            const report = await deps.plan({ searchId, goal, candidates, markets, auction: format === "AUCTION", progress,
-                guidedResale: standalone && goal === "resell" && request.marketPreferences?.preferRecentSales === true,
+            const seed = request.marketPreferences?.seed;
+            const guidedResale = standalone && goal === "resell" && request.marketPreferences?.preferRecentSales === true;
+            const rotateMarkets = guidedResale && (!seed || seed.expand && !seed.number);
+            const report = await deps.plan({ rotateMarkets, searchId, goal, candidates, markets, auction: format === "AUCTION", progress,
+                guidedResale,
                 ...(freshListings && { freshListings }),
                 ...(preferRecentSales && { preferRecentSales: true }) }, active);
             active.throwIfAborted();
@@ -924,17 +998,27 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
                 }
             }
             if (watch && watchKey) {
-                for (const [id, { candidate }] of alternatives) {
+                const deferred = watch.deferred ??= {};
+                for (const id of resumedListings) delete deferred[id];
+                for (const [id, { candidate, target }] of alternatives) {
                     const listing = candidate.liveListing(), e = evaluations.get(id);
+                    const retry = candidate.retryAfter();
+                    if (listing && target && retry !== undefined) {
+                        deferred[id] = { listing, target, at: retry, rejectedSales: candidate.rejectedSales() };
+                        continue;
+                    }
+                    delete deferred[id];
                     if (listing && e && (e.identity?.notThisCard || e.underwriting?.verdict === "PASS" && !releaseIssue(e)))
                         watch.checked[listingFingerprint(listing)] = deps.now() + 6 * 3_600_000;
                 }
                 watch.checked = Object.fromEntries(Object.entries(watch.checked).filter(([, expires]) => expires > deps.now()).slice(-1000));
                 watch.rounds++;
-                watch.nextCheckAt = deps.now() + HUNT_RECHECK_MS;
+                const earliestRetry = Object.values(deferred).reduce((earliest, item) => Math.min(earliest, item.at), Infinity);
+                watch.nextCheckAt = Math.max(deps.now() + 1000, Math.min(deps.now() + HUNT_RECHECK_MS, earliestRetry));
+                watch.waitingFor = earliestRetry <= watch.nextCheckAt || report.providerStop === "daily_ebay" ? "provider" : "inventory";
                 await writeCache(watchKey, watch);
             }
-            const copies = { ...(watch && { nextCheckAt: watch.nextCheckAt }), ...(alternative && { alternative }), ...(standalone && { candidates: otherCopies }),
+            const copies = { ...(watch && { nextCheckAt: watch.nextCheckAt, waitingFor: watch.waitingFor }), ...(alternative && { alternative }), ...(standalone && { candidates: otherCopies }),
                 ...(Object.keys(candidatePrices).length > 0 && { candidatePrices }) };
             if (standalone && report.destination && !alternative) {
                 return { report: { ...report, decision: "WAIT", destination: null, reason: "The selected listing became unavailable before the search finished." },

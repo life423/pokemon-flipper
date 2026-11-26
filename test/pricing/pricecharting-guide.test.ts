@@ -97,6 +97,11 @@ test("on-demand lookup requires an authorized exact catalog match and separates 
     assert.match(quotes[0].observation, /Ungraded guide · mixed conditions \$24.00.*2 distinct transactions, 1 with conflicting grade labels/);
     assert.match(quotes[0].observation, /Ungraded: 0 observed.*Grade 7: 1 observed, 1 selling day, 0.02\/day, median \$37.00/);
     const published = readPriceChartingGuide(html, product, at);
+    assert.deepEqual(quotes[0].sales, [], "Conflicted buckets and other marketplaces are excluded.");
+    const accepted = { ...published.history.sales[0], bucketConflict: undefined, title: "Raw Dark Gengar", url: null };
+    const listed = await priceChartingComparison(identity, undefined, { ...options, load: async () => ({ ...published,
+        history: { ...published.history, sales: [accepted, { ...accepted, transactionId: "123456789109", url: "https://www.ebay.com/itm/123456789110" }] } }) });
+    assert.deepEqual(listed.sales, [{ url: "https://www.ebay.com/itm/123456789101", priceUsd: 18, date: "2026-11-20" }]);
     const sale = published.history.sales[1];
     const history = { ...published.history, sales: ["2026-09-26", "2026-09-27", "2026-11-25", "2026-11-25", "2026-11-26"]
         .map((soldOn, i) => ({ ...sale, soldOn, transactionId: String(i), price: [1000, 21, 23, 999, 800][i] })) };

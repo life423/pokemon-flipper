@@ -107,3 +107,37 @@ test("provisional hunt cards show original copies and asking prices without a pu
     assert.match(active, /purchase decision is not ready/); assert.doesNotMatch(active, /data-decision="BUY"|Max item price|verified flip/);
     assert.match(render(false), /do not have a verified purchase recommendation/);
 });
+
+test("a continuous search resumes an empty pass and a provider timeout under the same ID", async () => {
+    const ids: string[] = [], results: string[] = [], waits: string[] = [];
+    const due = Date.now() + 30000;
+    const result = await runGuidedHuntLegs({
+        legs: legs.slice(0, 1), signal: new AbortController().signal,
+        async run(leg) {
+            ids.push(leg.id);
+            if (ids.length === 2) throw new ApiRequestError("Timeout", true, 1000, "PROVIDER_TEMPORARY", due);
+            return ids.length === 1 ? "exhausted" : "buy";
+        },
+        onResult: (_leg, result) => results.push(result), isOpportunity: result => result === "buy",
+        onFailure: () => assert.fail("a recoverable interruption should be resumed"),
+        continuation: { next: () => ({ at: due, reason: "New inventory" }),
+            waiting: (_leg, at, reason) => { assert.equal(at, due); waits.push(reason); },
+            sleep: async () => {} },
+    });
+    assert.deepEqual(result, { found: true });
+    assert.deepEqual(ids, ["fixed", "fixed", "fixed"]);
+    assert.deepEqual(results, ["exhausted", "buy"]);
+    assert.deepEqual(waits, ["New inventory", "Waiting for the pricing or listings provider"]);
+});
+
+test("Stop cancels a pending recheck before it dispatches another search", async () => {
+    const stop = new AbortController(), waiting = deferred<void>();
+    let calls = 0;
+    const work = runGuidedHuntLegs({ legs: legs.slice(0, 1), signal: stop.signal,
+        run: async () => { calls++; return "wait"; }, isOpportunity: () => false, onResult() {}, onFailure: () => assert.fail(),
+        continuation: { next: () => ({ at: Date.now() + 60000, reason: "New inventory" }), waiting: () => waiting.resolve() } });
+    await waiting.promise;
+    stop.abort();
+    await assert.rejects(work, { name: "AbortError" });
+    assert.equal(calls, 1);
+});

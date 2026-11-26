@@ -12,7 +12,7 @@ export type DealHuntGoal = keyof typeof dealHuntGoals;
 export const DEAL_HUNT_LISTING_LIMIT = 200;
 export const HUNT_RECHECK_MS = 15 * 60_000;
 export type DealHuntScope = "search" | "same_set" | "any_card";
-export type DealHuntAction = "check_listing" | "inspect_photos" | "resolve_printing" | "check_sales" | "check_price_references" | "check_price_tracker" | "search_web_sales" | "check_price_history" | "compare_cardmarket" | "calculate_grading" | "check_raw_resale";
+export type DealHuntAction = "move_on" | "check_listing" | "inspect_photos" | "resolve_printing" | "check_sales" | "check_price_references" | "check_price_tracker" | "verify_sold_listing" | "search_web_sales" | "check_price_history" | "compare_cardmarket" | "calculate_grading" | "check_raw_resale";
 export type DealHuntSection = "grading" | "sales" | "photos";
 export interface HuntMarketPreferences {
     sets?: string[];
@@ -47,6 +47,7 @@ export interface DealHuntReport {
     decision: "BUY" | "BID" | "WAIT";
     reason: string;
     marketNote?: string;
+    providerStop?: "daily_ebay" | "account";
     destination: { listingId: string; section: DealHuntSection } | null;
     verifiedPurchase?: VerifiedPurchase;
     steps: {
@@ -65,6 +66,7 @@ export interface DealHuntReport {
 }
 export interface DealHuntResponse {
     nextCheckAt?: number;
+    waitingFor?: "inventory" | "provider";
     gradingOpportunity?: import("./grading-watch.ts").GradingOpportunity;
     auctionOpportunity?: import("./auction-opportunity.ts").AuctionOpportunity;
     collectorAuction?: import("./collector-auction.ts").CollectorAuction;

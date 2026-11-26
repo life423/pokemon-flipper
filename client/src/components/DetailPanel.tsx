@@ -30,6 +30,7 @@ import { cardmarketComparisonKey } from "../../../shared/cardmarket.ts";
 import styles from "./DetailPanel.module.css";
 
 interface Props {
+    flipOffer?: import("../../../shared/auction-opportunity.ts").AuctionOpportunity | null;
     huntFocus?: { report: DealHuntReport; alternative?: { reason: string } } | null;
     docked?: boolean;
     returnFocus?: RefObject<HTMLElement | null>;
@@ -56,7 +57,7 @@ interface Props {
     saving?: boolean;
 }
 
-export function DetailPanel({ listing, analysis, automaticDecision: receipt, reviewPending, reviewActive, now, onClose, onSnipe, onAnalyze, onRefreshPrices, priceRefresh, closing = false, docked = false, returnFocus, huntFocus, minGrade = 0, targets = MONEY_CONFIG.targets, includeOffers, photoReviewState, onPhotoReview, onSave, saved, saving }: Props) {
+export function DetailPanel({ listing, analysis, automaticDecision: receipt, reviewPending, reviewActive, now, onClose, onSnipe, onAnalyze, onRefreshPrices, priceRefresh, closing = false, docked = false, returnFocus, huntFocus, flipOffer, minGrade = 0, targets = MONEY_CONFIG.targets, includeOffers, photoReviewState, onPhotoReview, onSave, saved, saving }: Props) {
     const unavailable = listing.availability === "UNAVAILABLE" || Boolean(listing.endTime && Date.parse(listing.endTime) <= now);
     const assessed = analysis?.status === "done" ? analysis.evaluation : null;
     const collecting = huntFocus?.report.goal === "collect_slab" && huntFocus.report.destination?.listingId === listing.id;
@@ -146,7 +147,7 @@ export function DetailPanel({ listing, analysis, automaticDecision: receipt, rev
 
                 <div className={styles.detailActions}>
                     <a className={`${styles.primary} ${styles.listingLink}`} href={listing.url} target="_blank" rel="noopener noreferrer">Open on eBay ↗</a>
-                    <AuctionReminderButton listing={listing} analysis={showPurchaseScenarios ? analysis : undefined} targets={targets} now={now} className={styles.secondary} onSnipe={onSnipe} />
+                    <AuctionReminderButton flipOffer={flipOffer === undefined ? undefined : huntFocus ? flipOffer : null} searchId={report?.searchId} listing={listing} analysis={showPurchaseScenarios ? analysis : undefined} targets={targets} now={now} className={styles.secondary} onSnipe={onSnipe} />
                     {onSave && <button type="button" className={styles.secondary} onClick={() => { if (!saving) onSave(); }} aria-disabled={saving} aria-pressed={saved}>{saving ? "Saving…" : saved ? "Remove from shortlist" : "Save to shortlist"}</button>}
                 </div>
                 <PhotoGallery images={analysis?.status === "done" ? analysis.evaluation.listing.photos ?? listing.images : listing.images} />

@@ -8,6 +8,8 @@ import { createSharedWork } from "../lib/shared-work.ts";
 import type { ProviderPrice } from "../../shared/listing-market-prices.ts";
 import { SALES_ACTIVITY_DAYS } from "../../shared/sales-activity.ts";
 import { median } from "../../shared/sold-evidence.ts";
+import { parseListingLink } from "../../shared/listing-link.ts";
+import type { SoldCitation } from "./cited-sale.ts";
 import type { Identity } from "../../shared/types.ts";
 import { DATA_DIR } from "../lib/paths.ts";
 import { getSqlRepositories, storageBackend, type SqlRepositories } from "../storage/index.ts";
@@ -217,7 +219,7 @@ export async function priceChartingComparison(identity: Identity, signal?: Abort
     authorized = process.env.PRICECHARTING_BUYER_USE_AUTHORIZED === "true",
     catalog = process.env.PRICECHARTING_PRODUCT_MAP,
     load = importPriceChartingGuide,
-} = {}): Promise<{ observation: string; prices: ProviderPrice[] } | null> {
+} = {}): Promise<{ observation: string; prices: ProviderPrice[]; sales?: SoldCitation[] } | null> {
     if (!authorized || !catalog || identity.status !== "IDENTIFIED" || identity.notThisCard) return null;
     const products: CatalogProduct[] = JSON.parse(catalog);
     if (!Array.isArray(products)) throw new Error("PRICECHARTING_PRODUCT_MAP must be a JSON array.");
@@ -234,7 +236,13 @@ export async function priceChartingComparison(identity: Identity, signal?: Abort
         }));
         const labels = prices.map(row => row.basis + " $" + row.price.toFixed(2));
         const conflicts = guide.history.sales.filter(sale => sale.bucketConflict).length;
-        return { prices, observation: `PriceCharting guide (${guide.observedAt.slice(0, 10)}), ${labels.join(", ")}. Published product-page history includes ${guide.history.sales.length} distinct transactions, ${conflicts} with conflicting grade labels and ${guide.history.unreadableRows} unreadable rows. ${publishedActivity(guide)} Ungraded spans conditions and numeric grades can span graders. Verify individual sales before using them to price this copy. ${guide.url}` };
+        const sales = guide.history.sales.flatMap(sale => {
+            const link = parseListingLink(sale.transactionId);
+            if (sale.bucketConflict || sale.source.toLowerCase() !== "ebay" || !/^\d{9,15}$/.test(sale.transactionId) ||
+                !link || (sale.url && parseListingLink(sale.url)?.itemId !== link.itemId)) return [];
+            return [{ url: link.url, date: sale.soldOn, priceUsd: sale.price }];
+        });
+        return { prices, sales, observation: `PriceCharting guide (${guide.observedAt.slice(0, 10)}), ${labels.join(", ")}. Published product-page history includes ${guide.history.sales.length} distinct transactions, ${conflicts} with conflicting grade labels and ${guide.history.unreadableRows} unreadable rows. ${publishedActivity(guide)} Ungraded spans conditions and numeric grades can span graders. Verify individual sales before using them to price this copy. ${guide.url}` };
     } catch (error) {
         if (error instanceof GuideSourceError) return { prices: [], observation: "The PriceCharting page could not supply a verified guide for this check." };
         throw error;

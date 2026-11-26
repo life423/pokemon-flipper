@@ -172,7 +172,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
     const [searchInterpreting, setSearchInterpreting] = useState(false);
     const plannedQuery = useRef(restored?.request.query ?? "");
     const pendingHuntPrompt = useRef<string | null>(null);
-    const [panelHunt, setPanelHunt] = useState<{ scope: string; report: DealHuntReport; original: ListingSummary; evaluation: Evaluation; alternative?: DealHuntResponse["alternative"]; gradingValidUntil?: number } | null>(null);
+    const [panelHunt, setPanelHunt] = useState<{ scope: string; report: DealHuntReport; original: ListingSummary; evaluation: Evaluation; alternative?: DealHuntResponse["alternative"]; gradingValidUntil?: number; flipOffer?: DealHuntResponse["auctionOpportunity"] } | null>(null);
     const now = useNow(30_000, panelHunt?.gradingValidUntil);
     const [auctionUpdates, setAuctionUpdates] = useState(new Map<string, number>());
     useEffect(() => {
@@ -1307,7 +1307,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
     const currentHunt = useRef({ id: huntId, scope: huntScope, listings: huntListings, destination, auctionUpdates });
     currentHunt.current = { id: huntId, scope: huntScope, listings: huntListings, destination, auctionUpdates };
     useEffect(() => { setPanelHunt(null); }, [huntScope]);
-    function openHuntEvidence(report: DealHuntReport, original: ListingSummary, evaluation: Evaluation, opener: HTMLElement, scope: DealHuntScope, alternative?: DealHuntResponse["alternative"], showPanel = true, gradingValidUntil?: number) {
+    function openHuntEvidence(report: DealHuntReport, original: ListingSummary, evaluation: Evaluation, opener: HTMLElement, scope: DealHuntScope, alternative?: DealHuntResponse["alternative"], showPanel = true, gradingValidUntil?: number, flipOffer?: DealHuntResponse["auctionOpportunity"]) {
         const id = report.destination?.listingId;
         const rootId = standaloneHunt ? huntId : continuationRequest.current?.rootId;
         if (!id || report.searchId !== huntId || currentHunt.current.scope !== huntScope || searchRunId.current !== rootId) return false;
@@ -1343,7 +1343,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
         if (!alternative && listing !== current) setListings(rows => rows.map(row => row.id === id ? listing : row));
         setAnalyses(rows => ({ ...rows, [id]: state }));
         if (showPanel) openPanel(id, opener);
-        setPanelHunt({ scope: huntScope, report, original, evaluation, alternative: alternative && { ...alternative, listing }, gradingValidUntil });
+        setPanelHunt({ scope: huntScope, report, original, evaluation, alternative: alternative && { ...alternative, listing }, gradingValidUntil, flipOffer });
         return true;
     }
     function reviewSearch(runId: string, signal: AbortSignal) {
@@ -1722,7 +1722,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
                         The shipping destination changed. Run the search again for current delivery quotes.
                     </p>}
                     <div hidden={!showingFlip}>
-                        <GuidedFlip active={showingFlip} onBusyChange={setGuidedBusy}
+                        <GuidedFlip onSnipe={planAuction} active={showingFlip} onBusyChange={setGuidedBusy}
                             onStart={id => { stopSearch(); cancelLink(); cancelPricing(); searchRunId.current = id; setAiUsage(null); }} onDestinationSaved={zip => confirmDestination.current(zip)}
                             filters={currentFilters} targets={targets} minGrade={minGrade} destination={destination} ready={destinationReady}
                             now={now} latest={latestListings.current} updated={auctionUpdates} shortlist={listing => {
@@ -1801,7 +1801,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
                             canScan={reviewReady && selectedId === null && !drawerOpen && !sniperDraft}
                             onScan={scanGradingWatch} onOpen={openPanel} onRecheck={buyerReviews.recheckQuote} />}
                     {huntId && (standaloneHunt && activeHuntPrompt || sameSearchText && huntReady && page === "search" && !needsWiderSearch) &&
-                        <DealHunt active={!showingFlip && page === "search"} key={huntScope} searchId={huntId} standalone={standaloneHunt} now={now} updatedTerms={auctionUpdates} filters={huntFilters} usage={aiUsage}
+                        <DealHunt onSnipe={planAuction} active={!showingFlip && page === "search"} key={huntScope} searchId={huntId} standalone={standaloneHunt} now={now} updatedTerms={auctionUpdates} filters={huntFilters} usage={aiUsage}
                             latestListings={latestListings.current} destinationReady={destinationReady}
                             initialGoal={activeHuntPrompt?.goal} marketPreferences={activeHuntPrompt?.marketPreferences}
                             onFormatChange={format => { setHuntPrompt(null); setTypeFilter(format); }}
@@ -1998,6 +1998,8 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
                         huntFocus={!expiredHuntGrading && !expiredHuntTerms && !needsWiderSearch && selectedHunt &&
                             (selectedHunt.report.decision !== "BID" || selectedEval && currentHuntBid(selectedHunt.report.goal, selectedEval, huntTargets, now, huntFilters.maxPrice)?.status === "BID")
                             ? selectedHunt : null}
+                        flipOffer={selectedHunt?.report.goal === "resell" && selectedHunt.report.decision === "BID"
+                            ? expiredHuntTerms || needsWiderSearch ? null : selectedHunt.flipOffer ?? null : undefined}
                         returnFocus={analysisOpener}
                         listing={selected}
                         closing={panelClosing}

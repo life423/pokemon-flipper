@@ -26,7 +26,7 @@ import type { CompSummary, Evaluation, Grader, PricedPath, Targets } from "../..
 import type { DealHuntCandidate, DealHuntOutcome } from "./deal-hunt.ts";
 import { supplementalMarket } from "../pricing/supplemental-research.ts";
 import { configuredShippingZip } from "../ebay/shipping-destination.ts";
-import { activityDescription } from "./resale-activity.ts";
+import { activityDescription, liquidityIssue } from "./resale-activity.ts";
 import { activityForExit, rankHuntMarkets, salesForExit, verifiedRawFloor, type HuntMarket } from "./same-set-markets.ts";
 
 const STALE_PURCHASE_TERMS = "The saved purchase terms need a fresh availability and shipping check.";
@@ -201,7 +201,7 @@ export function flipResaleEvidence(value: Evaluation, goal: DealHuntGoal, target
 }
 
 export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: number | (() => number) = Date.now, market?: HuntMarket | HuntMarket[], targets: Targets = MONEY_CONFIG.targets,
-    maxDelivered?: number, { preferRecentSales = false }: { preferRecentSales?: boolean } = {}): DealHuntCandidate | null {
+    maxDelivered?: number, { preferRecentSales = false, hasGuideSales = false, requireLiquid = false }: { preferRecentSales?: boolean; hasGuideSales?: boolean; requireLiquid?: boolean } = {}): DealHuntCandidate | null {
     value = flipResaleEvidence(value, goal, targets);
     const timestamp = typeof clock === "number" ? () => clock : clock;
     const kind = observedCardKind(value);
@@ -213,13 +213,17 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
     const gradeRoute = goal === "grade_raw" || (!slab && value.underwriting?.best?.path === "GRADE");
     const requiresLiquidity = preferRecentSales && goal === "resell";
     function canCheckReferences(completed: ReadonlySet<DealHuntAction>, now: number) {
+        const hasSoldLeads = goal === "resell" && (hasGuideSales || value.webPriceResearch?.observations.some(row => row.kind === "SOLD"));
         if (!completed.has("check_sales") || !completed.has("inspect_photos") || !completed.has("check_listing") ||
-            goal === "grade_raw" || (value.underwriting?.verdict !== "CANT_PRICE" &&
-                !(value.rawPricing?.tcgplayerComparison && value.underwriting?.verdict === "PASS")) || listingTerms(value, now).status ||
+            goal === "grade_raw" || listingTerms(value, now).status ||
             value.listing.endTime && Date.parse(value.listing.endTime) <= now ||
             value.deeperPhotoReview?.findings.some(f => f.impact === "NEW_CONCERN") ||
-            (slab ? !verifiedSlabMarketKey(value, { allowScratchedCase: true }) || slabMarket(value, now) : rawMarket(value, now)) ||
-            (!value.rawPricing?.tcgplayerComparison && huntReferenceEvidence(value, now))) return false;
+            slab && !verifiedSlabMarketKey(value, { allowScratchedCase: true })) return false;
+        const thinExit = requireLiquid && outcome(new Set([...completed, "check_raw_resale", "calculate_grading"]))?.liquidityIssue;
+        if (!thinExit && ((value.underwriting?.verdict !== "CANT_PRICE" &&
+            !(value.rawPricing?.tcgplayerComparison && value.underwriting?.verdict === "PASS")) ||
+            (slab ? slabMarket(value, now) : rawMarket(value, now)) ||
+            (!value.rawPricing?.tcgplayerComparison && !hasSoldLeads && huntReferenceEvidence(value, now)))) return false;
         const target = supplementalMarket(value);
         if (!target || target.provisional !== null) return false;
         const item = auction ? nextAuctionBid(value.listing, now) : value.listing.price;
@@ -240,12 +244,12 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
         const observations = raw ? [raw.basis?.startsWith("TCGPLAYER_")
             ? `Condition-matched TCGplayer estimate ${dollars(raw.price)}. Current offers are price evidence, not completed sales.`
             : `Condition-matched raw sale estimate ${dollars(raw.price)}.`] : [];
-        if (!raw && value.rawPricing?.tcgplayerComparison) {
+        if (value.rawPricing?.tcgplayerComparison) {
             const quote = value.rawPricing.tcgplayerComparison;
             const lowest = quote.offers.length ? Math.min(...quote.offers.map(o => o.total)) : null;
             observations.push(lowest !== null ? `The lowest ${quote.marketCondition} TCGplayer ask is ${dollars(lowest)} with shipping.`
                 : `TCGplayer reports a ${quote.marketCondition} market estimate of ${dollars(quote.price)}.`);
-            observations.push("A matched completed sale is needed to price this flip.");
+            if (!raw) observations.push("A matched completed sale is needed to price this flip.");
         }
         if (!raw) {
             const guidance = rawBuyGuidance(value, now, targets);
@@ -321,12 +325,14 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
             const path = value.underwriting?.paths.find((p): p is PricedPath => p.status === "PRICED" && p.path === offer.routeKind &&
                 (p.path !== "GRADE" || p.grader === offer.grading?.grader));
             const activity = requiresLiquidity && path && activityForExit(value, path, rankHuntMarkets([value], null, "resell", "any_card", now), now).activity;
+            const thin = requireLiquid && offer.status === "BID" && liquidityIssue(activity || undefined);
+            if (thin) return { decision: "WAIT", section, recentSales, liquidityIssue: thin, reason: [thin, activity && activityDescription(activity)].filter(Boolean).join(" ") };
             if (requiresLiquidity && recentSales === 0) return { decision: "WAIT", section, recentSales,
                 reason: liquidityNote(recentSales) + " No matching sales for this resale route were observed in the last 60 days." };
             return { decision: offer.status === "BID" ? "BID" : "WAIT",
                 section, reason: [offer.reason, requiresLiquidity && `${recentSales} matching ${recentSales === 1 ? "sale" : "sales"} observed in the last 60 days.`,
                     activity && activityDescription(activity), requiresLiquidity && liquidityNote(recentSales)].filter(Boolean).join(" "),
-                ...(requiresLiquidity && { recentSales, resalePriority: activity ? activity.priority : undefined }) };
+                recentSales, ...(activity && { resalePriority: activity.priority }) };
         }
         if (!slab && !readyForPricing(value.identity)) {
             const status = value.listing.availability === "UNAVAILABLE" ? "The listing has ended. " : "";
@@ -408,6 +414,11 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
             } else if (!recentSales) reason += " The returned evidence supplies no matching transactions in that window; a price quote alone does not establish sales activity.";
             if (exit.profit > 0 && !exit.clears) reason += " The projected return falls short of your profit or ROI target.";
         }
+        const thin = requireLiquid && exit?.clears && exit.profit > 0 && liquidityIssue(resale?.activity);
+        if (thin) {
+            supported = false;
+            reason += " " + thin;
+        }
         if (!supported && completed.has("check_price_references") && !reference) {
             reason = [checkedReferences(now), reason].join(" ");
         }
@@ -423,7 +434,7 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
         const cautions = [termsCaution, stalePrices && "The market prices need updating.", sellerConcern && "The seller has limited or low feedback."].filter(Boolean);
         const purchase = exit && supported && cautions.length === 0 ? verifiedPurchase(value, exit, targets, reviewedLimit) : undefined;
         return { decision: supported && cautions.length === 0 && (goal === "collect_slab" || purchase) ? "BUY" : "WAIT",
-            reason: [reason, ...cautions].join(" "), section, ...(purchase && { verifiedPurchase: purchase }),
+            reason: [reason, ...cautions].join(" "), section, ...(thin && { liquidityIssue: thin }), ...(purchase && { verifiedPurchase: purchase }),
             ...(requiresLiquidity && recentSales !== null && { recentSales, resalePriority: resale?.activity?.priority }),
             alternateSections: section === "grading" && hasGradeComparisons ? ["sales"] : undefined };
     }
@@ -455,6 +466,8 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
                 case "inspect_photos": return photos(value, slab);
                 case "resolve_printing": return huntPrintingObservation(value);
                 case "check_raw_resale": return rawObservation(now);
+                case "move_on": return "Continue checking other listings.";
+                case "verify_sold_listing":
                 case "check_sales": return saleEvidence(now);
                 case "check_price_history": return "Daily history requires an exact market lookup.";
                 case "compare_cardmarket": return "Active EU offers require an exact Cardmarket lookup.";

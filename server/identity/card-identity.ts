@@ -145,6 +145,11 @@ const SET_ALIASES: Record<string, string> = {
     rocket: "team rocket",
 };
 
+// Printed English set codes may appear alone on a slab or beside the full release.
+const ENGLISH_RELEASE_CODES: Record<string, string> = {
+    meg: "mega evolution", mew: "scarlet violet 151", pfl: "phantasmal flames", por: "perfect order",
+};
+
 // Known releases whose Sword & Shield era may be written out on the label or
 // in seller metadata. Keep the standalone base release and promos separate.
 export const SWORD_SHIELD_RELEASE_CODES = {
@@ -169,6 +174,9 @@ export function normalizeSetName(value: unknown): string {
         .replace(/\s+/g, " ")
         .trim();
 
+    for (const [code, name] of Object.entries(ENGLISH_RELEASE_CODES)) {
+        if ([code, code + " en", name + " " + code, code + " en " + name].includes(words)) return name;
+    }
     const release = words.replace(/^(?:sword (?:and )?shield|swsh) /, "");
     return SET_ALIASES[words] ?? (Object.hasOwn(SWORD_SHIELD_RELEASE_CODES, release) ? release : canonicalBaseSet2(words));
 }

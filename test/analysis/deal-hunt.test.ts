@@ -646,3 +646,22 @@ test("Find a flip keeps researching an eligible auction when another copy alread
     assert.equal(result.decision, "BID");
     assert.equal(result.destination?.listingId, "second");
 });
+
+test("a flexible resale search tries another market after two losses and can return to the remaining copies", async () => {
+    const inspected: string[] = [];
+    const market = (listingId: string): DealHuntCandidate => ({
+        listingId, title: listingId, summary: "Eligible copy",
+        available: () => ["inspect_photos"],
+        read() { inspected.push(listingId); return "Compared the exact copy to recent sold prices."; },
+        outcome: checked => !checked.has("inspect_photos") ? null : { decision: listingId === "third A" ? "BUY" : "WAIT",
+            section: "sales", reason: listingId === "third A" ? "Profitable after costs." : "Delivered cost exceeds the exit." },
+    });
+    let page = 0;
+    const chooser = planner(({ menu }) => menu[0].key);
+    const report = await runDealHunt({ searchId, goal: "resell", freshListings: true, guidedResale: true, rotateMarkets: true,
+        candidates: [], markets: [{ source: "inventory", title: "Eligible markets", summary: "Current copies.",
+            hasMore: () => page < 2,
+            discover: async () => (page++ === 0 ? ["first A", "second A", "third A"] : ["first B"]).map(market) }] }, undefined, chooser.choose);
+    assert.equal(report.decision, "BUY");
+    assert.deepEqual(inspected, ["first A", "second A", "first B", "third A"]);
+});

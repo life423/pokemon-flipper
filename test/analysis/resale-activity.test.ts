@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { activityDescription, resaleActivity } from "../../server/analysis/resale-activity.ts";
+import { activityDescription, liquidityIssue, resaleActivity } from "../../server/analysis/resale-activity.ts";
 import { rankCatalogMarkets } from "../../server/pricing/liquid-markets.ts";
 
 test("steady selling days and typical prices distinguish markets of equal volume", () => {
@@ -23,4 +23,18 @@ test("catalog ranking retains every measured card and prioritizes daily sales ov
             : [bucket("2026-11-25", id === 1 ? 12 : 1)] }));
     assert.deepEqual(ranked.map(m => m.name), ["Daily", "Burst", "Fourth", "Third"]);
     assert.deepEqual([ranked[0].activeDays, ranked[0].sales], [3, 9]);
+});
+
+test("verified flips need recent trading across days and stable typical prices", () => {
+    const now = Date.UTC(2026, 10, 25, 12), day = 86_400_000;
+    const measure = (prices: number[], ages: number[]) => resaleActivity(prices.map((price, i) => ({ price, at: now - ages[i] * day })), now);
+    const prices = [98, 99, 100, 100, 101, 102, 320], ages = [0, 0, 1, 1, 2, 3, 4];
+    const daily = measure(prices, ages);
+    assert.equal(liquidityIssue(daily), null);
+    assert.match(activityDescription(daily!), /7 observed sales on 5 selling days/);
+    assert.match(liquidityIssue(measure(prices, ages.map(() => 0)))!, /daily demand/);
+    assert.match(liquidityIssue(measure(prices, ages.map(a => a + 10)))!, /daily demand/);
+    assert.match(liquidityIssue(measure([20, 20, 22, 60, 90, 100, 101], ages))!, /30%/);
+    assert.match(liquidityIssue(measure([100], [1]))!, /daily demand/);
+    assert.match(liquidityIssue(undefined)!, /daily demand/);
 });

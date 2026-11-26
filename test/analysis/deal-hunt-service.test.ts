@@ -8,6 +8,7 @@ import type { Evaluation, ListingSummary, SearchIntent } from "../../shared/type
 import { getAiUsageContext, getBudgetContext, withAiUsageContext } from "../../server/ai/usage-context.ts";
 import { huntPhotoIdentityIssue } from "../../server/analysis/deal-hunt-market-checks.ts";
 import { huntProgress } from "../../server/analysis/deal-hunt-progress.ts";
+import { guidedInventoryTargets } from "../../server/analysis/guided-inventory.ts";
 import { createDealHuntService, dealHuntRequest } from "../../server/analysis/deal-hunt-service.ts";
 import { runDealHunt } from "../../server/analysis/deal-hunt.ts";
 import { createModelExperimentRunner } from "../../server/analysis/model-experiment.ts";
@@ -15,6 +16,11 @@ import { evaluationContextKey } from "../../server/analysis/private-evaluation.t
 import { rankHuntMarkets } from "../../server/analysis/same-set-markets.ts";
 import { createHuntInventoryScanner, type SearchSummary } from "../../server/deals/find-deals.ts";
 import type { ListingDetails } from "../../server/ebay/listings.ts";
+import { citedTransactions, verifyCitedSales } from "../../server/pricing/cited-sale.ts";
+import { createSoldConditionAcquirer } from "../../server/ai/sold-condition.ts";
+import { flipSniperDraft, suggestedBid } from "../../client/src/search/sniper-draft.ts";
+import { reconcileHuntListing } from "../../client/src/search/hunt-result.ts";
+import { auctionOpportunity } from "../../shared/auction-opportunity.ts";
 import { EbayBudgetError } from "../../server/ebay/usage.ts";
 import { cardEvaluation, clearReleaseFixture, salesSummary } from "../fixtures/card-evaluation.ts";
 import { offlineSearchSteps } from "../fixtures/search-steps.ts";
@@ -859,6 +865,10 @@ test("auction hunt preserves the vintage holo request through two misses and ver
     const comp = salesSummary("RAW", "LIGHTLY_PLAYED", [80, 85, 90]);
     comp.sales.forEach((sale, i) => Object.assign(sale, { url: "https://www.ebay.com/itm/" + (260000000001 + i),
         saleType: "auction", soldAt: old, photoCondition: "LIGHTLY_PLAYED", conditionEvidence: ["Light whitening visible on back."] }));
+    const identity = f.e.identity!;
+    Object.assign(identity, { evidence: { photo: identity.printing } });
+    Object.assign(f.e.photoCheck!, { cardIdentity: { name: identity.name, cardNumber: identity.cardNumber, set: identity.set,
+        finish: identity.finish, language: identity.language, confidence: "HIGH", evidence: ["Readable original card front."] } });
     f.e.photoCheck!.cardMatch = { verdict: "MATCH", problems: [] };
     f.e.rawPricing = { status: "PRICED", source: "pkmnprices", printing: "UNLIMITED", finish: "HOLO", variant: "holo",
         conditionEvidence: "AI_PHOTOS", prices: [{ condition:"LIGHTLY_PLAYED", basis: "EBAY_SOLD", price: 85, updatedAt: stamp, comps: comp }] };
@@ -1199,11 +1209,12 @@ test("a blank flip hunt passes sampled markets and three source pages to find a 
             Object.assign(e.photoCheck!, { cardIdentity: card, printedName: card.name, printedNumber: card.cardNumber });
             clearReleaseFixture(e);
             e.gradedPricing = null;
-            const comp = salesSummary("RAW", "LIGHTLY_PLAYED", [100]);
+            const comp = salesSummary("RAW", "LIGHTLY_PLAYED", Array(8).fill(100));
             Object.assign(comp, { median: 100, newestSale: old });
-            Object.assign(comp.sales[0], { title: row.title, saleType: "fixed_price", soldAt: old,
+            comp.sales.forEach((sale, index) => Object.assign(sale, { title: row.title, saleType: "fixed_price",
+                soldAt: new Date(now - (index + 1) * 12 * 3_600_000).toISOString(),
                 photoCondition: "LIGHTLY_PLAYED", conditionEvidence: ["Sold gallery shows the same edge wear."],
-                url: "https://www.ebay.com/itm/120000029999" });
+                url: "https://www.ebay.com/itm/" + (120000029990 + index) }));
             e.rawPricing = { status: "PRICED", printing: "UNLIMITED", finish: "HOLO", variant: "holo", conditionEvidence: "TCGPLAYER",
                 prices: [tcgplayerRawEstimate(100, stamp)], ebayComps: [comp], sellerConditionComps: comp };
             return retargetEvaluation(e, goal.targets);
@@ -1339,4 +1350,307 @@ test("new quota pressure between stages prevents both the guided pivot and its n
     assert.deepEqual(queries, ["A 1/147 Aquapolis"]);
     assert.equal(result.report.decision, "WAIT");
     assert.match(result.report.marketNote ?? "", /daily eBay allowance/);
+});
+
+test("Find a flip replays a TCGplayer-only Nidoking auction through a verified sale and the sniper draft", async t => {
+    t.mock.method(globalThis, "fetch", unexpected);
+    const f = example(), value = f.e, listing = f.inventory.rows[0].listing;
+    const title = "Nidoking 11/102 Base Set Unlimited Holo English";
+    const card = { name: "Nidoking", set: "Base Set", cardNumber: "11/102", finish: "HOLO" as const, language: "English",
+        confidence: "HIGH" as const, evidence: ["Name, number and set visible on the card front."] };
+    const terms = { title, buyingOption: "AUCTION" as const, endTime: new Date(now + 2 * 3_600_000).toISOString(),
+        bids: 1, shipping: 3, shippingDestination: configuredShippingZip(), termsCheckedAt: stamp, availability: "ACTIVE" as const };
+    Object.assign(listing, terms);
+    Object.assign(f.inventory.filters, { typeFilter: "AUCTION" });
+    Object.assign(f.inventory.intent, { cardName: card.name, titleWords: ["nidoking"] });
+    Object.assign(value.listing, terms, { auctionQuote: { currentBid: 5, minimumBid: 6, checkedAt: stamp } });
+    Object.assign(value.identity!, { name: card.name, cardNumber: card.cardNumber, recordId: "1234", evidence: { photo: "UNLIMITED" } });
+    Object.assign(value.photoCheck!, { printedName: card.name, printedNumber: card.cardNumber, cardIdentity: card, cardMatch: { verdict: "MATCH", problems: [] } });
+    clearReleaseFixture(value);
+    value.gradedPricing = null;
+    value.rawPricing = { status: "PRICED", printing: "UNLIMITED", finish: "HOLO", variant: "Holofoil",
+        conditionEvidence: "TCGPLAYER", prices: [tcgplayerRawEstimate(150, stamp)] };
+    const targets = { minProfit: 10, minRoi: 0 }, budget = 40;
+    const saleId = "120000099888", url = "https://www.ebay.com/itm/" + saleId;
+    const lead = { url, priceUsd: 100, date: old.slice(0, 10) };
+    const sale = { title, id: 41, listing_url: url, price: 100, sold_at: old, currency: "USD", sale_type: "best_offer_accepted" as const,
+        variant: "Holofoil", grader: null, grade: null, grade_qualifier: null, attribution: "exact" as const };
+    const photos = [1, 2].map(i => "https://i.ebayimg.com/images/g/" + saleId + "-" + i + "/s-l1600.jpg");
+    let reviews = 0;
+    let soldPrinting = "UNLIMITED";
+    const provider = {
+        record: async () => ({ source: "pkmnprices" as const, id: 1234, name: card.name, setName: card.set, cardNumber: card.cardNumber,
+            variants: [{ name: "Holofoil", printing: "UNLIMITED" as const, finish: "HOLO" }] }),
+        raw: async () => [sale, { ...sale, id: 42, listing_url: url + "?ref=copy" }],
+        graded: unexpected, checkComps: unexpected,
+        soldPhotos: (options: Parameters<typeof createSoldConditionAcquirer>[0]) => createSoldConditionAcquirer({ ...options,
+            cached: async () => null, save: async () => {}, loadDetails: async id => {
+                assert.equal(id, "v1|" + saleId + "|0");
+                return { ...f.details, id, title, url, images: photos, availability: "UNAVAILABLE", buyingOption: "FIXED_PRICE", endTime: old };
+            }, assess: async ({ photos: supplied }) => {
+                reviews++;
+                assert.deepEqual(supplied.map(p => p.url), photos);
+                return { result: { card, printing: soldPrinting, condition: "LIGHTLY_PLAYED", confidence: "HIGH", oneRawCard: true,
+                    frontVisible: true, backVisible: true, closeUps: false, structuralDamage: false, evidence: ["Light whitening on the reverse."], limitations: [] },
+                    usage: { inputTokens: 100, outputTokens: 40 } };
+            } }),
+    };
+    const model = createModelExperimentRunner({ cached: async () => null, save: async () => {}, run: async request => {
+        const { menu } = JSON.parse(request.prompt) as { menu: { key: string }[] };
+        const order = ["check_listing", "inspect_photos", "check_sales", "search_web_sales", "verify_sold_listing", "finish/sales", "check_price_tracker"];
+        const choice = order.map(action => "0/" + action).find(key => menu.some(row => row.key === key)) ?? menu[0].key;
+        return { result: { choice, reason: "Verify the sold copy before setting a bid." }, usage: { inputTokens: 1, outputTokens: 1 } };
+    } });
+    const request = { ...goal, goal: "resell" as const, targets, filters: { typeFilter: "AUCTION" as const, maxPrice: budget } };
+    const run = service(f, { details: async () => ({ ...f.details, ...terms, auctionBids: { currentBid: 5, minimumBid: 6 } }),
+        restoreRaw: async () => null, plan: (input, active) => runDealHunt(input, active, model),
+        priceCharting: async () => ({ prices: [], observation: "Published transaction on PriceCharting.", sales: [lead] }),
+        supplement: async (_e, options) => options.source === "web" ? { webPriceResearch: { checkedAt: stamp,
+            observations: [{ ...lead, title, kind: "SOLD", url: url + "?ref=web" }] } } : {},
+        verifyCitedSales: (e, citations, at, active) => {
+            assert.equal(getBudgetContext().searchId, searchId);
+            assert.equal(e.rawPricing?.prices?.length, 0);
+            assert.equal(e.webPriceResearch?.observations.length, 1);
+            assert.equal(citations.size, 1);
+            return verifyCitedSales(e, citations, at, active, provider);
+        },
+    });
+    const result = await run(searchId, request, signal());
+    assert.equal(result.report.decision, "BID", JSON.stringify(result.report));
+    assert.equal(reviews, 1);
+    assert.equal(result.evaluation!.rawPricing!.tcgplayerComparison!.price, 150);
+    const offer = result.auctionOpportunity!;
+    assert.equal(offer.marketValue, 100);
+    assert.equal(offer.sampleSize, 1);
+    assert.equal(offer.exitSales60, 1);
+    assert.equal(result.evaluation!.rawPricing!.prices![0].comps!.sales[0].saleType, "best_offer_accepted");
+    assert.equal(offer.totalAtMaxBid, budget);
+    assert.ok(offer.profitAtMaxBid! >= targets.minProfit);
+    assert.ok(auctionOpportunity(result.evaluation!, targets, now)!.maxBid! > offer.maxBid!);
+    const current = reconcileHuntListing(listing, result.evaluation!).listing;
+    const draft = flipSniperDraft(current, offer, now, searchId);
+    const preview = { itemId: listing.id, title, url: listing.url, endTime: terms.endTime, shipping: 3, currentBid: 5, minimumBid: 6, checkedAt: stamp };
+    assert.equal(suggestedBid(draft, preview, now), offer.maxBid);
+    assert.equal(suggestedBid(draft, { ...preview, minimumBid: offer.maxBid! + 0.01 }, now), undefined);
+    assert.equal(suggestedBid(draft, { ...preview, shipping: 4 }, now), undefined);
+    assert.equal(suggestedBid(draft, preview, offer.validUntil), undefined);
+    const { createServer } = await import("vite");
+    const server = await createServer({ configFile: "client/vite.config.js", envFile: false, appType: "custom", logLevel: "silent",
+        server: { middlewareMode: true, hmr: false, watch: null } });
+    t.after(() => server.close());
+    const { DealHuntResult } = await server.ssrLoadModule("/src/components/DealHunt.tsx");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { createElement } = await import("react");
+    const html = renderToStaticMarkup(createElement(DealHuntResult, { result: { ...result, listing }, now, targets,
+        updatedTerms: new Map(), onEvidence() {}, onSnipe() {}, shortlistButton: () => null }));
+    assert.ok(html.includes("Recommended max snipe <strong>$" + draft!.suggestion!.maxBid.toFixed(2) + "</strong>"));
+    assert.match(html, /Auction sniper for Nidoking/);
+    t.diagnostic("Sold $100.00; recommended and drafted $" + offer.maxBid!.toFixed(2) + "; delivered $" + offer.totalAtMaxBid!.toFixed(2) +
+        "; net profit $" + offer.profitAtMaxBid!.toFixed(2));
+
+    soldPrinting = "FIRST_EDITION";
+    const wrongSoldCopy = await run(searchId, request, signal());
+    assert.equal(wrongSoldCopy.report.decision, "WAIT");
+    assert.equal(wrongSoldCopy.auctionOpportunity, undefined);
+    // A priced auction still has to pass the final live-copy and exit-sale checks.
+    value.rawPricing = structuredClone(result.evaluation!.rawPricing);
+    value.identity!.evidence!.photo = "FIRST_EDITION";
+    const wrongLiveCopy = await run(searchId, request, signal());
+    assert.equal(wrongLiveCopy.report.decision, "WAIT");
+    assert.match(wrongLiveCopy.report.reason, /edition|printing/i);
+    assert.equal(wrongLiveCopy.auctionOpportunity, undefined);
+    value.identity!.evidence!.photo = "UNLIMITED";
+    const oldSaleDate = new Date(now - 61 * 86_400_000).toISOString();
+    const oldBucket = value.rawPricing!.prices![0].comps!;
+    oldBucket.sales.forEach(row => { row.soldAt = oldSaleDate; });
+    oldBucket.newestSale = oldSaleDate;
+    const oldExit = await run(searchId, request, signal());
+    assert.equal(oldExit.report.decision, "WAIT");
+    assert.match(oldExit.report.reason, /recent|60 days/i);
+    assert.equal(oldExit.auctionOpportunity, undefined);
+    const stale = { ...lead, date: new Date(now - 61 * 86_400_000).toISOString() };
+    assert.equal(citedTransactions(value, [stale], now).size, 0);
+    assert.equal(citedTransactions(value, [lead, { ...lead, priceUsd: 120 }], now).size, 0);
+});
+
+test("a cited slab sale requires the recorded grader, grade, accepted USD amount and an affirmative AI review", async () => {
+    const value = example().e;
+    const title = "Dark Gengar Neo Destiny 6/105 Unlimited Holo CGC 8.5";
+    Object.assign(value.identity!, { name: "Dark Gengar", set: "Neo Destiny", cardNumber: "6/105", recordId: "5678" });
+    value.listing.title = title;
+    value.slab = { status: "OK", grader: "CGC", grade: "8.5", gradeQualifier: null, caseCondition: "INTACT", labelText: title,
+        certNumber: null, certUrl: null, reasons: [], concerns: [] };
+    value.condition = null;
+    Object.assign(value.photoCheck!, { holder: "GRADED_SLAB", slab: { present: true } });
+    const url = "https://www.ebay.com/itm/120000099445";
+    const lead = { url, date: old.slice(0, 10), priceUsd: 120 };
+    const citations = citedTransactions(value, [lead], now);
+    const sale = { title, listing_url: url, price: 120, sold_at: old, grader: "CGC", grade: "8.5", grade_qualifier: null,
+        variant: "Unlimited Holofoil", currency: "USD", sale_type: "best_offer_accepted" as const, attribution: "exact" as const };
+    let keep = true;
+    const deps: NonNullable<Parameters<typeof verifyCitedSales>[4]> = {
+        record: async () => ({ id: 5678, source: "pkmnprices", name: "Dark Gengar", setName: "Neo Destiny", cardNumber: "6/105",
+            variants: [{ name: "Unlimited Holofoil", printing: "UNLIMITED", finish: "HOLO" }] }),
+        graded: async () => [sale], raw: unexpected, soldPhotos: () => assert.fail("Raw review on a slab"),
+        checkComps: async (sales, target) => {
+            assert.equal(target.grader, "CGC"); assert.equal(target.grade, "8.5");
+            return new Map(sales.map(row => [row, { keep, reason: keep ? null : "ANOTHER_GRADE", note: "Reviewed sold listing." }]));
+        },
+    };
+    const checked = await verifyCitedSales(value, citations, now, signal(), deps);
+    assert.ok(checked && "slabPricing" in checked);
+    assert.equal(checked.slabPricing.summary?.median, 120);
+    assert.equal(checked.slabPricing.summary?.checkedByAI, true);
+    keep = false;
+    assert.equal(await verifyCitedSales(value, citations, now, signal(), deps), null);
+    keep = true;
+    for (const change of [{ grader: "PSA" }, { grade: "9" }, { price: 150 }, { sold_at: "2026-11-16" },
+        { sale_type: null }, { variant: "1st Edition Holofoil" }, { title: title.replace("CGC 8.5", "CGC 9") }]) {
+        assert.equal(await verifyCitedSales(value, citations, now, signal(), { ...deps, graded: async () => [{ ...sale, ...change }] }), null);
+    }
+});
+
+test("Buy It Now widens Dark Gengar, resumes a cited sale after an outage and displays a liquid older flip", async t => {
+    t.mock.method(globalThis, "fetch", unexpected);
+    const fixture = example(), baseline = fixture.inventory.rows[0].listing;
+    const targets = { minProfit: 20, minRoi: 0 };
+    let clock = now, firstPass = true, expensiveShipping = false, interrupted = false;
+    const seen: string[] = [], queries: string[] = [], checkedSales: number[] = [];
+    const dark = { name: "Dark Gengar", number: "6/105", set: "Neo Destiny" };
+    const older = { name: "Nidoking", number: "11/102", set: "Base Set" };
+    const row = (index: number, market: typeof dark, price: number): ListingSummary => ({
+        ...baseline, id: "v1|" + (120000077000 + index) + "|0", currentPrice: price, shipping: 3,
+        title: [market.name, market.number, market.set, "Unlimited Holo English"].join(" "),
+        url: "https://www.ebay.com/itm/" + (120000077000 + index), images: ["front-" + index, "back-" + index],
+    });
+    const seeds = Array.from({ length: 8 }, (_, i) => row(i, dark, 250));
+    const candidate = row(20, older, 35), alternate = row(21, older, 30);
+    const rows = [...seeds, candidate, alternate];
+    const transactionPrices = [320, 100, 98, 102, 99, 101, 100, 100, 100];
+    const sales = transactionPrices.map((price, i) => ({
+        id: 100 + i, price, title: candidate.title + " LP", currency: "USD", sale_type: "fixed_price" as const,
+        sold_at: new Date(now - (i + 1) * 12 * 3_600_000).toISOString(), variant: "Holofoil", grader: null, grade: null,
+        grade_qualifier: null, attribution: "exact" as const, listing_url: "https://www.ebay.com/itm/" + (120000078000 + i),
+    }));
+    const citations = sales.map(sale => ({ date: sale.sold_at.slice(0, 10), url: sale.listing_url, priceUsd: sale.price }));
+    const photoEvidence = { condition: "LIGHTLY_PLAYED" as const, evidence: ["The original front and back show light edge wear."], photoCount: 2 };
+    const reviewed = new Set<number>();
+    const model = createModelExperimentRunner({ cached: async () => null, save: async () => {}, run: async request => {
+        const { menu } = JSON.parse(request.prompt) as { menu: { key: string }[] };
+        const priorities = ["check_listing", "inspect_photos", "check_sales", "verify_sold_listing", "search_web_sales", "check_price_tracker", "check_raw_resale", "move_on"];
+        const choice = priorities.map(action => menu.find(r => r.key.endsWith("/" + action))).find(Boolean) ?? menu[0];
+        return { result: { choice: choice.key, reason: "Compare completed sales for this condition before choosing another copy." },
+            usage: { inputTokens: 1, outputTokens: 1 } };
+    } });
+    const run = service(fixture, {
+        now: () => clock, discovery: unexpected, inventory: unexpected, snapshot: async () => null,
+        browsePressure: async () => ({ provider: "EBAY", label: "eBay Browse", limit: 5000, remaining: 3930,
+            observedAt: stamp, resetsAt: new Date(now + 3_600_000).toISOString(), usedInWindow: 121, windowMinutes: 14, warning: null }),
+        restoreRaw: async () => null, liquidMarkets: unexpected, setYears: async () => ({ "neo destiny": 2002, "base set": 1999, modern: 2025 }),
+        guidedInventoryTargets: (seed, sets, kind, at, signal, allowed, _catalog, _rank, sources) =>
+            guidedInventoryTargets(seed, sets, kind, at, signal, allowed, async () => ({ data: [{ name: dark.name, set: { name: dark.set } }] }),
+                undefined, sources),
+        inventoryScanner: () => async (query, intent) => {
+            queries.push(query);
+            const listings = query === dark.name ? seeds : query.toLowerCase() === "base set" ?
+                (expensiveShipping ? [candidate, alternate] : firstPass ? [candidate] : []) : [];
+            return { listings, summary: { intent, mode: "development", deferred: 0, total: listings.length, found: listings.length, count: listings.length, skipped: 0 } };
+        },
+        evaluate: async id => {
+            seen.push(id);
+            const copy = rows.find(r => r.id === id)!;
+            const isDark = seeds.includes(copy), card = isDark ? dark : older;
+            const e = example().e;
+            Object.assign(e.listing, { id, title: copy.title, price: copy.currentPrice, url: copy.url, shipping: expensiveShipping && id === candidate.id ? 70 : 3,
+                photos: copy.images, termsCheckedAt: new Date(clock).toISOString(), shippingDestination: configuredShippingZip() });
+            Object.assign(e.identity!, { name: card.name, set: card.set, cardNumber: card.number, recordId: isDark ? "1111" : "1234", evidence: { photo: "UNLIMITED" } });
+            Object.assign(e.photoCheck!, { printedName: card.name, printedNumber: card.number,
+                cardIdentity: { name: card.name, set: card.set, cardNumber: card.number, language: "English", finish: "HOLO", confidence: "HIGH", evidence: ["Readable front."] } });
+            clearReleaseFixture(e);
+            e.gradedPricing = null;
+            const quote = tcgplayerRawEstimate(120, stamp);
+            Object.assign(quote, { basis: "TCGPLAYER_OFFERS" });
+            Object.assign(quote.offers!, { method: "LOWEST_DELIVERED_COMPETITION", sellerCount: 1,
+                offers: [{ id: "offer", sellerId: "seller", sellerName: "Seller", price: 117, shipping: 3, total: 120, quantity: 1, snapshotAt: stamp }] });
+            const comp = salesSummary("RAW", "LIGHTLY_PLAYED", [90, 90]);
+            comp.sales.forEach((s, i) => Object.assign(s, { title: copy.title, soldAt: old, url: "https://www.ebay.com/itm/" + (120000079000 + i),
+                photoCondition: "LIGHTLY_PLAYED", conditionEvidence: ["Sold photos show light wear."], saleType: "fixed_price" }));
+            e.rawPricing = { status: "PRICED", printing: "UNLIMITED", finish: "HOLO", variant: "Holofoil", conditionEvidence: "TCGPLAYER",
+                prices: [quote], ...(isDark && { ebayComps: [comp] }) };
+            return retargetEvaluation(e, targets);
+        },
+        supplement: async () => ({}), marketHistory: unexpected, compareCardmarket: unexpected,
+        priceCharting: async id => id.name === older.name ? { prices: [{ source: "PriceCharting", basis: "Ungraded guide · mixed conditions",
+            price: 110, currency: "USD", asOf: stamp, validUntil: now + 86_400_000 }], observation: "Ungraded guide $110.00.",
+            sales: citations } : null,
+        verifyCitedSales: async (e, cites, at, signal) => {
+            assert.equal(cites.size, 1);
+            const sale = [...cites.values()][0];
+            checkedSales.push(sale.priceUsd);
+            if (!interrupted && sale.priceUsd !== 320) {
+                interrupted = true;
+                throw new PricingProviderError("Replay outage", "TEMPORARY", clock + 30_000);
+            }
+            return verifyCitedSales(e, cites, at, signal, {
+                record: async () => ({ source: "pkmnprices", id: 1234, name: older.name, setName: older.set, cardNumber: older.number,
+                    variants: [{ name: "Holofoil", printing: "UNLIMITED", finish: "HOLO" }] }),
+                raw: async () => sales, graded: unexpected, checkComps: unexpected,
+                soldPhotos: () => ({ read: async s => reviewed.has(s.id) ? photoEvidence : null,
+                    acquire: async s => { reviewed.add(s.id); return photoEvidence; }, status: () => "UNREVIEWED", usage: [] }),
+            });
+        },
+        plan: (input, signal) => runDealHunt(input, signal, model),
+    });
+    const request: DealHuntRequest = { standalone: true, freshListings: true, watch: true, scope: "any_card", goal: "resell", listingIds: [],
+        targets, filters: { typeFilter: "FIXED_PRICE" }, marketPreferences: { seed: { name: dark.name, number: null, expand: true }, preferRecentSales: true } };
+    const id = "ac6ef390-36e9-4195-88aa-877799aa5301";
+    const held = await run(id, request, signal());
+    assert.equal(held.report.decision, "WAIT");
+    assert.deepEqual(seen.slice(0, 3), [seeds[0].id, seeds[1].id, candidate.id], JSON.stringify({ seen, queries }));
+    assert.deepEqual(checkedSales, [320, 100]);
+    assert.equal(held.waitingFor, "provider");
+    const reads = queries.length;
+    firstPass = false;
+    await run(id, request, signal());
+    assert.equal(queries.length, reads, "no new source scan during cooldown");
+    clock = held.nextCheckAt!;
+    const buy = await run(id, request, signal());
+    assert.equal(buy.report.decision, "BUY", JSON.stringify(buy.report));
+    assert.equal(buy.report.destination?.listingId, candidate.id, "resume the physical copy even when it moved off the page");
+    assert.ok(buy.report.steps.some(step => step.action === "verify_sold_listing" && step.selectedBy === "model"));
+    assert.ok(buy.report.verifiedPurchase);
+    assert.ok(!queries.includes("modern"));
+    const prices = buy.candidatePrices?.[candidate.id];
+    assert.equal(checkedSales.filter(price => price === 320).length, 1, "an unchanged rejected outlier is not rechecked after a timeout");
+    assert.equal(prices?.sold?.price, 100);
+    assert.equal(prices?.tcg?.delivered, 120);
+    assert.equal(prices?.additional?.find(r => r.source === "PriceCharting")?.price, 110);
+    const { createServer } = await import("vite");
+    const vite = await createServer({ configFile: "client/vite.config.js", envFile: false, appType: "custom", logLevel: "silent",
+        server: { middlewareMode: true, hmr: false, watch: null } });
+    t.after(() => vite.close());
+    const { DealHuntResult } = await vite.ssrLoadModule("/src/components/DealHunt.tsx");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { createElement } = await import("react");
+    const html = renderToStaticMarkup(createElement(DealHuntResult, { result: { ...buy, listing: buy.alternative!.listing }, now: clock,
+        targets, updatedTerms: new Map(), onEvidence() {}, shortlistButton: () => null }));
+    assert.match(html, /data-decision="BUY"/);
+    for (const label of ["Matched eBay sales", "TCGplayer lowest offer", "PriceCharting", "$100.00", "$120.00", "$110.00"]) assert.ok(html.includes(label), label);
+    t.diagnostic(buy.report.reason);
+    expensiveShipping = true;
+    const next = await run("35114912-1c12-40ae-94f6-c96592de5af4", request, signal());
+    assert.equal(next.report.decision, "BUY", next.report.reason);
+    assert.equal(next.report.destination?.listingId, alternate.id, "shipping erased the first copy’s margin");
+});
+
+test("a watched Find a flip at the eBay reserve waits until reset without starting discovery", async () => {
+    const reset = now + 3_600_000;
+    const hunt = service(example(), { now: () => now, inventoryScanner: unexpected, plan: unexpected, liquidMarkets: unexpected,
+        browsePressure: async () => ({ provider: "EBAY", label: "eBay Browse", limit: 5000, remaining: 500, observedAt: stamp,
+            resetsAt: new Date(reset).toISOString(), warning: "LOW", usedInWindow: 121, windowMinutes: 14 }) });
+    const result = await hunt("f5fe25ee-e6d2-4435-ab74-2795458efbf6", { standalone: true, watch: true, goal: "resell", listingIds: [],
+        scope: "any_card", targets: goal.targets, filters: { typeFilter: "FIXED_PRICE" }, marketPreferences: { preferRecentSales: true } }, signal());
+    assert.equal(result.waitingFor, "provider");
+    assert.equal(result.nextCheckAt, reset);
+    assert.deepEqual(result.report.steps, []);
 });

@@ -101,10 +101,13 @@ requests. Both TypeScript checks and the production build passed.
   its current decision. After checking the listing and photos, let it pick a
   supported raw-resale or grading check on a fixed-price copy. Preserve which
   function the model chose in Research steps.
-- [ ] Keep Find a flip active between inventory passes. Wait for new eligible
+- [x] Keep Find a flip active between inventory passes while the screen is open. Wait for new eligible
   listings or a recoverable provider reset and resume from saved progress with
   the original filters and budget. Stop on the buyer’s request. Treat a closest
   priced miss as optional feedback within the search.
+- [x] Replay Buy It Now with two Dark Gengar misses, an older Base Set
+  candidate, an isolated premium sale, a recoverable pricing outage, and
+  shipping that wipes out the margin. Verify the displayed source prices.
 
 ## November 24 stopping checkpoint
 
@@ -208,8 +211,12 @@ no push was requested for the break.
   eligible auction, matching price evidence, recent relevant sales activity and
   a supported after-cost purchase limit. Andrew reaffirmed that comparisons,
   completed research and engineering progress alone have not delivered this.
-  For the next live validation use Find a flip across Buy It Now and auctions
-  under ten hours, with the saved destination and a stated profit target. Record
+  The November 25 live run ended without a verified liquid Buy It Now flip.
+  Before another live run, trace saved fixed-price listings from discovery through
+  photo identity, condition-matched sales, liquidity and after-cost profit. Record
+  the first reason each candidate dropped out and whether the app could recover it.
+  Use Buy It Now only for the next live validation, with the saved destination
+  and a stated profit target. Record
   time to the first assessed copy, the price source used for each promising exit,
   recent matched sales, and the delivered cost and net profit. If the hunt ends
   without a qualifying copy, keep the closest priced miss and its gap to target,
@@ -226,9 +233,9 @@ no push was requested for the break.
 - [x] Give the Find a flip reviewer its pricing tools on an eligible TCGplayer-only copy even when the buyer omitted a liquidity preference.
 - [x] Report the published 60-day PriceCharting sample by grade bucket, with distinct sales, selling days, observed daily pace and median USD. These buckets cover mixed conditions or graders.
 - [x] Withhold the auction bid ceiling on a TCGplayer-only resale estimate. Show a supported maximum snipe with the estimated delivered cost and net profit if won at that maximum.
-- [ ] Apply the final photographed identity and recent exit-sale check to newly discovered Bid recommendations wherever the finder currently applies it to Buy. Replay a wrong printing and an older sale.
-- [ ] Replay a TCGplayer-only auction that later acquires verified sales, a duplicate eBay sale syndicated on PriceCharting, and a re-quote over the cap. Compare the displayed ceiling with the sniper draft under the same buyer budget.
-- [ ] Let a reviewer turn a cited sale into a verified resale comparison. Retrieve the individual completed transaction, deduplicate by marketplace ID, match the printing and AI-assessed condition or slab grade, then recompute net profit and recent sales activity. Replay before validating a live opportunity.
+- [x] Require the photographed identity and a matching exit sale in the past 60 days for reseller auction bids. Replay a wrong printing and an older sale.
+- [x] Replay an auction with a TCGplayer quote and one eBay sale cited by two sources. The offline Nidoking fixture produces a $33.95 item bid at a $40 delivered budget. The sniper draft uses the same ceiling and clears its suggestion when the next bid exceeds it.
+- [x] Give the reviewer a tool to match cited eBay sales to completed transactions by item ID, date and accepted USD amount. Verify raw condition from sold photos or match the slab grade and grader, then recompute resale and recent activity.
 
 - [x] Complete OpenAI interpretation before discovery for every newly submitted
   search. Send the original wording, resolve its meaning into a typed search
@@ -353,8 +360,7 @@ no push was requested for the break.
   boundaries. Verify import freshness ordering and reject corrupt image bytes
   before paid dispatch. Add repeatable browser coverage for shortlist edits.
 - [ ] Update local reproduction and the environment template for port 3017 and
-  current settings. Preserve the loopback API boundary and the unrelated existing
-  .env.example deletion until its own change is explicitly handled.
+  current settings. Preserve the loopback API boundary.
 
 ## 3. Improve exact identity and price evidence
 

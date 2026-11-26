@@ -22,6 +22,8 @@ import { runDealHunt } from "../api";
 import { tcgplayerEstimateLabel } from "./analysis/PricingSections";
 import styles from "./DealHunt.module.css";
 import { listingMarketPrices } from "../../../shared/listing-market-prices.ts";
+import { AuctionReminderButton } from "./AuctionReminderButton";
+import type { SniperDraft } from "../search/sniper-draft";
 import { MarketPrices } from "./MarketPrices";
 
 const checks: Record<DealHuntReport["steps"][number]["action"], string> = {
@@ -32,6 +34,8 @@ const checks: Record<DealHuntReport["steps"][number]["action"], string> = {
     check_sales: "Sale comparisons",
     check_raw_resale: "Compare selling raw",
     check_price_tracker: "Pokémon Price Tracker",
+    move_on: "Consider another copy",
+    verify_sold_listing: "Verify cited sale",
     search_web_sales: "Cited web sales",
     check_price_history: "Price history",
     compare_cardmarket: "Cardmarket asking prices",
@@ -82,6 +86,8 @@ const huntActions: Record<NonNullable<HuntProgress["action"]>, string> = {
     check_sales: "Comparing recent sales",
     check_raw_resale: "Estimating resale value ungraded",
     check_price_tracker: "Checking Pokémon Price Tracker",
+    move_on: "Looking for another copy",
+    verify_sold_listing: "Verifying a completed sale",
     search_web_sales: "Looking up cited transactions",
     check_price_history: "Checking price history",
     compare_cardmarket: "Checking Cardmarket offers",
@@ -154,8 +160,9 @@ export function HuntCandidateCards({ listings, now, active, shortlistButton }: {
     </section>;
 }
 
-export function DealHuntResult({ result, now, targets, updatedTerms, currentListing, destinationReady = true, onEvidence, shortlistButton }: {
+export function DealHuntResult({ result, now, targets, updatedTerms, currentListing, destinationReady = true, onEvidence, shortlistButton, onSnipe }: {
     result: HuntResult; now: number; updatedTerms: ReadonlyMap<string, number>;
+    onSnipe?: (draft: SniperDraft) => void;
     targets?: Targets; currentListing?: ListingSummary; destinationReady?: boolean;
     onEvidence: (opener: HTMLElement) => void; shortlistButton: (listing: ListingSummary) => ReactNode;
 }) {
@@ -227,7 +234,8 @@ export function DealHuntResult({ result, now, targets, updatedTerms, currentList
         {(selected && current || otherListings.length > 0) && <div className={styles.tileGrid} aria-label="Listings found">
         {selected && current && <HuntListingCard listing={current.listing} decision={decision} now={now} fallbackImages={selected.images}
             onEvidence={destination ? onEvidence : undefined} evidenceLabel={destination ? `View ${huntSections[destination.section]}` : undefined}
-            shortlist={shortlistButton(selected)}>{explanation}<MarketPrices prices={selectedPrices ?? undefined} now={now} /></HuntListingCard>}
+            shortlist={<>{resaleBid && <AuctionReminderButton listing={current.listing} now={now} flipOffer={resaleBid}
+                targets={targets ?? MONEY_CONFIG.targets} searchId={report.searchId} onSnipe={onSnipe} />}{shortlistButton(selected)}</>}>{explanation}<MarketPrices prices={selectedPrices ?? undefined} now={now} /></HuntListingCard>}
         {otherListings.map(row => <HuntListingCard key={row.id} listing={row} now={now} shortlist={shortlistButton(row)}>
             <MarketPrices prices={result.candidatePrices?.[row.id]} now={now} />
         </HuntListingCard>)}
@@ -246,7 +254,7 @@ export function DealHuntResult({ result, now, targets, updatedTerms, currentList
     </div>;
 }
 
-export function DealHunt({ searchId, listings, listingOwners, latestListings, destinationReady, targets, filters, minPotentialGrade, standalone = false, initialGoal, marketPreferences, takePrompt, now, updatedTerms, usage, onFormatChange, onOpen, onClear, onStart, onUsage, onBusyChange, shortlistButton, active = true }: {
+export function DealHunt({ searchId, listings, listingOwners, latestListings, destinationReady, targets, filters, minPotentialGrade, standalone = false, initialGoal, marketPreferences, takePrompt, now, updatedTerms, usage, onFormatChange, onOpen, onClear, onStart, onUsage, onBusyChange, shortlistButton, onSnipe, active = true }: {
     searchId: string;
     listings: ListingSummary[];
     listingOwners?: ReadonlyMap<string, string>;
@@ -263,7 +271,8 @@ export function DealHunt({ searchId, listings, listingOwners, latestListings, de
     now: number;
     updatedTerms: ReadonlyMap<string, number>;
     usage?: AiUsageDay | null;
-    onOpen: (report: DealHuntReport, listing: ListingSummary, evaluation: Evaluation, opener: HTMLElement, scope: DealHuntScope, alternative?: DealHuntResponse["alternative"], showPanel?: boolean, gradingValidUntil?: number) => boolean;
+    onSnipe?: (draft: SniperDraft) => void;
+    onOpen: (report: DealHuntReport, listing: ListingSummary, evaluation: Evaluation, opener: HTMLElement, scope: DealHuntScope, alternative?: DealHuntResponse["alternative"], showPanel?: boolean, gradingValidUntil?: number, flipOffer?: DealHuntResponse["auctionOpportunity"]) => boolean;
     shortlistButton: (listing: ListingSummary) => ReactNode;
     onClear: () => void;
     onStart: () => void;
@@ -327,7 +336,7 @@ export function DealHunt({ searchId, listings, listingOwners, latestListings, de
             if (controller.signal.aborted) return;
             const { report, evaluation, alternative } = response;
             const listing = selectedHuntListing(response, searchId, goal, scope, candidates, format);
-            if (listing && evaluation && start.current && !onOpen(report, listing, evaluation, start.current, scope, alternative, !standalone, response.gradingOpportunity?.validUntil)) {
+            if (listing && evaluation && start.current && !onOpen(report, listing, evaluation, start.current, scope, alternative, !standalone, response.gradingOpportunity?.validUntil, response.auctionOpportunity)) {
                 throw new Error("The listing changed while the hunt was running. Run it again with the latest evidence.");
             }
             setResult({ ...response, listing });
@@ -352,7 +361,7 @@ export function DealHunt({ searchId, listings, listingOwners, latestListings, de
         if (active) start.current?.focus();
     }
     function viewEvidence(opener: HTMLElement) {
-        if (result?.listing && result.evaluation && !onOpen(result.report, result.listing, result.evaluation, opener, scope, result.alternative, true, result.gradingOpportunity?.validUntil)) {
+        if (result?.listing && result.evaluation && !onOpen(result.report, result.listing, result.evaluation, opener, scope, result.alternative, true, result.gradingOpportunity?.validUntil, result.auctionOpportunity)) {
             setError("The listing changed. Run the hunt again to check the latest evidence.");
         }
     }
@@ -370,7 +379,7 @@ export function DealHunt({ searchId, listings, listingOwners, latestListings, de
         </>}
         {result && <DealHuntResult result={result} now={now} targets={targets} updatedTerms={updatedTerms}
             currentListing={result.listing && latestListings.get(result.listing.id)} destinationReady={destinationReady}
-            onEvidence={viewEvidence} shortlistButton={shortlistButton} />}
+            onEvidence={viewEvidence} onSnipe={onSnipe} shortlistButton={shortlistButton} />}
         {!busy && goal === "resell" && <p>{standalone && format === "FIXED_PRICE" ? "Check active Buy It Now listings, newest first. Compare the photographed copy with sales of the same printing and condition or slab grade." : "Look for cards with recent sales of the same printing and condition or slab grade."}
             {" "}{format === "AUCTION" ? "The next bid must fit your limit after costs." : "A Buy must clear your profit and ROI targets after costs."} Your purchase limit includes shipping and estimated tax.</p>}
         {!busy && goal === "collect_slab" && format === "AUCTION" && <p>Compare the next bid with recent sales of the same printing, grader and grade. Your bid limit includes room for shipping and estimated tax.</p>}

@@ -875,6 +875,14 @@ test("a reprint in the title, or another card number, overrules the item details
 });
 
 test("a database may put a series name in front of a set, except Base Set", () => {
+    assert.equal(sameSetFamily("PFL", "ME02: Phantasmal Flames"), true);
+    assert.equal(setSearchTerm("PFL"), "Phantasmal");
+    assert.equal(sameSetFamily("Phantasmal Flames (PFL)", "PFL"), true);
+    assert.equal(sameSetFamily("2026 Pokémon POR EN", "Perfect Order"), true);
+    assert.equal(sameSetFamily("MEG", "ME01: Mega Evolution"), true);
+    assert.equal(sameSetFamily("Pokémon MEW EN / Scarlet & Violet—151", "SV: Scarlet & Violet 151"), true);
+    assert.equal(sameSetFamily("PFL EN / Obsidian Flames", "Phantasmal Flames"), false);
+    assert.equal(sameSetFamily("PFL", "Obsidian Flames"), false);
     assert.equal(sameSetFamily("XY - Evolutions", "Evolutions"), true);
     assert.equal(sameSetFamily("Evolutions", "XY - Evolutions"), true);
     assert.equal(sameSetFamily("SV: Scarlet & Violet 151", "151"), true);

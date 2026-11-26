@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import type { DealHuntResponse } from "../../../shared/deal-hunt.ts";
+import { HUNT_RECHECK_MS, type DealHuntResponse } from "../../../shared/deal-hunt.ts";
 import type { ListingFilters } from "../../../shared/listing-filters.ts";
 import type { BuyingOption, ListingSummary, Targets } from "../../../shared/types.ts";
 import type { AiUsageDay } from "../../../shared/ai-usage.ts";
@@ -10,18 +10,21 @@ import { applyVerifiedPurchase } from "../../../shared/money/verified-purchase.t
 import { DealHuntResult, HuntProgressPanel, HuntCandidateCards } from "./DealHunt";
 import { AnalysisDetails } from "./analysis/AnalysisDetails";
 import { ShippingDestination } from "./ShippingDestination";
+import type { SniperDraft } from "../search/sniper-draft";
 import styles from "./DealHunt.module.css";
 
 type Result = DealHuntResponse & { listing?: ListingSummary; format: BuyingOption; targets: Targets; destination: string | null };
 const changedDestination = "The shipping ZIP changed. Search again for updated delivery prices.";
+
 interface Props {
+    onSnipe?: (draft: SniperDraft) => void;
     filters: ListingFilters; targets: Targets; minGrade: number; destination: string | null | undefined; ready: boolean; now: number;
     latest: ReadonlyMap<string, ListingSummary>; updated: ReadonlyMap<string, number>; shortlist: (listing: ListingSummary) => ReactNode;
     active?: boolean; onStart?: (id: string) => void; onBusyChange?: (busy: boolean) => void; onDestinationSaved?: (zip: string) => void;
 }
 
 export function GuidedFlip({ filters: initialFilters, targets: initialTargets, minGrade: initialGrade, destination, ready, now, latest, updated, shortlist,
-    active = true, onStart, onBusyChange, onDestinationSaved }: Props) {
+    active = true, onSnipe, onStart, onBusyChange, onDestinationSaved }: Props) {
     const [kindFilter, setKind] = useState<NonNullable<ListingFilters["kindFilter"]>>(initialFilters.kindFilter ?? "all");
     const [maxCost, setMaxCost] = useState(String(initialFilters.maxPrice ?? ""));
     const [minCost, setMinCost] = useState(String(initialFilters.minPrice || ""));
@@ -106,11 +109,15 @@ export function GuidedFlip({ filters: initialFilters, targets: initialTargets, m
             const legs = formats.map(format => ({ format, id: formats.length > 1 ? newWatchScanId(id) : id, started: Date.now() }));
             setRun(previous => previous && { ...previous, legs }); setLastLegs(legs);
             setMessage([formats.length > 1 ? "Checking Buy It Now listings and auctions together" :
-                formats[0] === "AUCTION" ? "Auctions ending within ten hours" : "Buy It Now listings · newest first", plan?.summary].filter(Boolean).join(" · "));
+                formats[0] === "AUCTION" ? "Auctions ending within ten hours" : "Buy It Now listings · newest first", scoped.seed?.expand ? `Starting with ${scoped.seed.name}. After two misses, checking the same set and same-year or older releases.` : plan?.query,
+                Number.isFinite(ceiling) && `Up to $${ceiling.toFixed(2)} delivered`].filter(Boolean).join(" · "));
+            const attempted = new Set<string>();
             let failures = 0;
             const outcome = await runGuidedHuntLegs<Result>({ legs, signal,
                 async run(leg, legSignal) {
-                    const result = await runDealHunt(leg.id, { standalone: true, listingIds: [], scope: "any_card", goal: "resell",
+                    if (attempted.has(leg.id)) setMessage(leg.format === "AUCTION" ? "Rechecking eligible auctions" : "Rechecking Buy It Now listings");
+                    attempted.add(leg.id);
+                    const result = await runDealHunt(leg.id, { watch: true, standalone: true, listingIds: [], scope: "any_card", goal: "resell",
                         marketPreferences: scoped, targets: actualTargets, minPotentialGrade: minGrade,
                         ...(leg.format === "FIXED_PRICE" && { freshListings: true }),
                         filters: { typeFilter: leg.format, kindFilter: kind, minPrice: leg.format === "AUCTION" ? 0 : filters.minPrice,
@@ -119,7 +126,15 @@ export function GuidedFlip({ filters: initialFilters, targets: initialTargets, m
                     const listing = selectedHuntListing(result, leg.id, "resell", "any_card", [], leg.format);
                     return { ...result, listing, format: leg.format, targets: actualTargets, destination };
                 },
-                onResult: (_leg, result) => setResults(previous => [...previous, result]),
+                onResult: (_leg, result) => setResults(previous => [...previous.filter(item => item.format !== result.format), result]),
+                continuation: {
+                    next(result) {
+                        if (result.report.providerStop === "account") throw new Error(result.report.reason);
+                        return { at: result.nextCheckAt ?? Date.now() + HUNT_RECHECK_MS,
+                            reason: result.waitingFor === "provider" ? "Waiting for provider availability" : "Waiting for the next inventory check" };
+                    },
+                    waiting: (leg, at, reason) => setMessage(`${leg.format === "AUCTION" ? "Auctions" : "Buy It Now"} · ${reason}. Resuming at ${new Date(at).toLocaleTimeString()}.`),
+                },
                 onFailure: (leg, failure) => { failures++; setLegErrors(previous => [...previous, { format: leg.format, message: failure.message }]); },
                 isOpportunity(result) {
                     const live = liveContext.current, selected = result.listing, evaluation = result.evaluation;
@@ -191,7 +206,7 @@ export function GuidedFlip({ filters: initialFilters, targets: initialTargets, m
         </p>)}
         {error && <p className={styles.error} role="alert">{error}</p>}
         {results.map(result => <div key={result.format}><h2>{result.format === "AUCTION" ? "Auction results" : "Buy It Now results"}</h2>
-            <DealHuntResult result={result} now={now} targets={result.targets} updatedTerms={updated}
+            <DealHuntResult result={result} onSnipe={onSnipe} now={now} targets={result.targets} updatedTerms={updated}
                 currentListing={result.listing && latest.get(result.listing.id)} destinationReady={ready && destination === result.destination &&
                     (!result.evaluation || (result.evaluation.listing.shippingDestination ?? null) === destination)}
                 onEvidence={() => setDetail(previous => previous === result.format ? null : result.format)} shortlistButton={shortlist} />

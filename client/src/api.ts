@@ -39,7 +39,7 @@ function filterQuery(filters?: ListingFilters): string {
     return query.size ? `&${query}` : "";
 }
 
-function retryDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
+export function retryDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
     return new Promise((resolve, reject) => {
         const cancel = () => { clearTimeout(timer); reject(signal?.reason); };
