@@ -40,6 +40,21 @@ The original 1,621-test suite passed despite those missing cases.
   Verification: 1,645 automated tests, both TypeScript checks, production build
   and whitespace checks passed. Nine isolated browser scenarios passed with no
   provider requests or page errors. The build retains its bundle-size advisory.
+- [x] Carry both the assessed-condition TCGplayer quote and the photo-matched
+  eBay sale estimate into raw valuation. The outlier-filtered average of exact,
+  photo-assessed eBay copies leads. The same-condition TCGplayer market and
+  shipped asks stay visible. Find a flip requests more evidence when it only has a TCGplayer quote. eBay sold shipping is
+  unreported. Do not infer that an exceptional sale included free shipping.
+- [ ] Calibrate an inferred CGC price against actual PSA and CGC sales of the
+  same printing, label tier and grade over comparable dates. Weight each paired
+  card market once, stratify by era and value, and test the inferred range on
+  later held-out CGC sales. Show direct CGC sales first and keep observed CGC
+  turnover separate from the PSA reference.
+- [ ] Validate resale accuracy by printing, grade or raw condition, source and
+  sample size. Split past sales from later sales by date and report the typical
+  error and how often projected profit survives. Include raw listings where
+  the TCGplayer quote conflicts with seller-described sales and no sold-copy
+  condition has been verified. Check the source dates and paid-photo reuse.
 - [ ] Validate a current live profitable copy through the repaired normal UI.
   The 661-copy service replay and nine browser scenarios use controlled inputs;
   they establish behavior, not a live buying opportunity. Preserve the eBay
@@ -206,7 +221,14 @@ no push was requested for the break.
   observations, and applicable Cardmarket asks in EUR. Load additional providers
   when the buyer sees the card and reuse the original research account. A slab
   with no eBay sample can still show exact-grade estimates.
-- [ ] Add a separate PriceCharting guide row when that paused integration resumes.
+- [x] Import the exact PriceCharting product on demand, reuse the daily guide and store the published sale rows for Ungraded and grades 7, 8 and 9. Retain transaction IDs, source buckets, accepted prices and grade conflicts.
+- [ ] Obtain express written permission for buyer-facing PriceCharting data and validate additional product mappings. Establish the available licensed historical coverage beyond the product page.
+- [x] Give the Find a flip reviewer its pricing tools on an eligible TCGplayer-only copy even when the buyer omitted a liquidity preference.
+- [x] Report the published 60-day PriceCharting sample by grade bucket, with distinct sales, selling days, observed daily pace and median USD. These buckets cover mixed conditions or graders.
+- [x] Withhold the auction bid ceiling on a TCGplayer-only resale estimate. Show a supported maximum snipe with the estimated delivered cost and net profit if won at that maximum.
+- [ ] Apply the final photographed identity and recent exit-sale check to newly discovered Bid recommendations wherever the finder currently applies it to Buy. Replay a wrong printing and an older sale.
+- [ ] Replay a TCGplayer-only auction that later acquires verified sales, a duplicate eBay sale syndicated on PriceCharting, and a re-quote over the cap. Compare the displayed ceiling with the sniper draft under the same buyer budget.
+- [ ] Let a reviewer turn a cited sale into a verified resale comparison. Retrieve the individual completed transaction, deduplicate by marketplace ID, match the printing and AI-assessed condition or slab grade, then recompute net profit and recent sales activity. Replay before validating a live opportunity.
 
 - [x] Complete OpenAI interpretation before discovery for every newly submitted
   search. Send the original wording, resolve its meaning into a typed search
@@ -521,7 +543,8 @@ no push was requested for the break.
   history. Run shared daily work once at a random time between 5 and 6 a.m.
   America/Chicago, then compare newer and older BINs with defensible updated
   ceilings. One outlier or changing grade/condition mix is not market appreciation.
-- [ ] **On hold at Andrew’s request.** When resumed, claim each PriceCharting product before requesting it so overlapping runs and restarts cannot duplicate a scrape. Keep each batch small and space requests within the randomized morning window. Evaluate the [comic price updater](https://github.com/life423/comic-book-data) as a model for the Pokémon watchlist and Big Movers feed. Pilot a handful of variants against their PriceCharting product IDs. Test duplicate daily imports, missing prices, changed page structure and switching between standard and reverse holo before using a move to trigger eBay research.
+- [x] The personal product importer is available via `npm run pricecharting:guide -- PRODUCT_ID PRODUCT_URL`. It verifies the product ID, canonical URL, USD currency and column labels and reuses a successful observation for the day.
+- [ ] Build the scheduled watchlist and Big Movers feed. Keep each batch small and space requests within the randomized morning window. Evaluate the [comic price updater](https://github.com/life423/comic-book-data) as a model for the Pokémon watchlist and Big Movers feed. Pilot a handful of variants against their PriceCharting product IDs. Test duplicate daily imports, missing prices, changed page structure and switching between standard and reverse holo before using a move to trigger eBay research.
   The supplied [Google Cloud project](https://console.cloud.google.com/welcome?project=pokemon-flipper-trends-2026) remains a resource for this deferred work.
 - [ ] Resolve documented access/permission for PriceCharting Big Movers before
   customer integration. It can supply ungraded leads; confirm movement with exact

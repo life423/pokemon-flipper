@@ -76,13 +76,18 @@ test("recent Buy It Now comps anchor resale while auctions remain a separate bid
     assert.equal(sparse.marketEstimate?.method, "RECENCY_WEIGHTED_MEDIAN");
 });
 
-test("sparse exact markets weight newer sales in either direction and preserve legacy medians", () => {
+test("sparse exact markets require corroboration for a new high and preserve legacy medians", () => {
     const age = (days: number) => new Date(now - days * 86_400_000).toISOString();
     const older = [sale(100, { sold_at: age(40) }), sale(110, { sold_at: age(60) })];
     for (const price of [70, 150]) {
         const summary = summarizeComps([...older, sale(price, { sold_at: age(3) })], criteria);
-        assert.equal(soldMarketPrice(summary), price);
-        assert.notEqual(summary.median, price);
+        assert.equal(soldMarketPrice(summary), price === 150 ? 110 : 70);
+        if (price === 150) {
+            const saved = { ...summary, marketEstimate: { ...summary.marketEstimate!, price: 150 } };
+            assert.equal(soldMarketPrice(saved), 110, "saved estimates also require support for the upside");
+        }
+        const repeated = summarizeComps([...older, sale(price, { sold_at: age(3) }), sale(price, { sold_at: age(4) })], criteria);
+        assert.equal(soldMarketPrice(repeated), price, "two independent recent sales can establish a move");
         assert.equal(summary.marketEstimate?.method, "RECENCY_WEIGHTED_MEDIAN");
         const { marketEstimate: _estimate, ...legacy } = summary;
         assert.equal(soldMarketPrice(legacy), summary.median);

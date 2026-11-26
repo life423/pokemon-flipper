@@ -42,6 +42,7 @@ export interface AuctionOpportunity {
     listingId: string; endsAt: string; checkedAt: string; validUntil: number;
     status: "BID" | "PASS" | "WATCH"; currentPrice: number; marketValue: number; sales30: number; sales60?: number; sampleSize: number;
     marketLabel: string; marketBasis?: RawPrice["basis"]; nextBid: number | null; nextTotal: number | null; maxBid: number | null; profitAtNext: number | null;
+    totalAtMaxBid?: number; profitAtMaxBid?: number;
     route: string | null; routeKind: PathKind | null; exitSales30: number; exitSales60?: number; grading: GradeOutcome | null; reason: string;
 }
 
@@ -178,7 +179,8 @@ export function auctionOpportunity(e: Evaluation, targets: Targets, now = Date.n
     const total = next == null ? null : costAt(next);
     // A missing next bid still allows delivery and resale costs to establish a ceiling.
     const basis = total ?? costAt(price);
-    const routes = basis == null ? [] : resaleRoutes(e, market, targets, basis, now);
+    const referenceOnly = market.basis !== "EBAY_SOLD";
+    const routes = basis == null || referenceOnly ? [] : resaleRoutes(e, market, targets, basis, now);
     if (maxDelivered != null && shipping !== null) {
         for (const route of routes) route.max = affordableBidLimit(route.max, shipping, maxDelivered);
     }
@@ -187,6 +189,7 @@ export function auctionOpportunity(e: Evaluation, targets: Targets, now = Date.n
     const status = eligible.length ? "BID" : route && next !== null && !routes.some(r => r.max >= next) ? "PASS" : "WATCH";
     let reason: string;
     if (status === "BID") reason = `Bid up to ${dollars(route.max)} before shipping and tax. ${route.label} projects ${dollars(route.profit)} profit after costs if you win at ${dollars(next)}.`;
+    else if (referenceOnly) reason = "The TCGplayer quote shows the competition. Check completed sales for this copy before setting a snipe limit.";
     else if (status === "PASS") reason = `Pass at the next bid of ${dollars(next)}. ${route.max > 0 ? `Your item-bid limit is ${dollars(route.max)}.` : "No positive bid meets your resale targets."}`;
     else if (next === null) reason = (route && route.max > 0 ? `The estimated item-bid ceiling is ${dollars(route.max)}. ` : "") +
         "Watch for a fresh minimum bid from eBay before bidding.";
@@ -197,7 +200,10 @@ export function auctionOpportunity(e: Evaluation, targets: Targets, now = Date.n
         Date.parse(e.pricesCheckedAt!) + maxPriceEvidenceAge(e)];
     if (next !== null) validity.push(Date.parse(l.auctionQuote!.checkedAt) + BEST_BUY_TERMS_MAX_AGE_MS);
     if (status === "BID") validity.push(route.expires);
-    return { listingId: l.id, endsAt: l.endTime!, checkedAt: l.termsCheckedAt!, validUntil: Math.min(...validity), status, currentPrice: price,
+    const totalAtMax = status === "BID" ? costAt(route.max) : null;
+    return { ...(totalAtMax !== null && total !== null && { totalAtMaxBid: totalAtMax,
+        profitAtMaxBid: (cents(route.profit) + cents(total) - cents(totalAtMax)) / 100 }),
+        listingId: l.id, endsAt: l.endTime!, checkedAt: l.termsCheckedAt!, validUntil: Math.min(...validity), status, currentPrice: price,
         marketValue: market.price, marketLabel: market.label, marketBasis: market.basis, sampleSize: market.count, sales30: market.sales30, sales60: market.recent.length,
         nextBid: next, nextTotal: total, maxBid: route?.max ?? null, profitAtNext: total == null ? null : route?.profit ?? null,
         route: route?.label ?? null, routeKind: route?.kind ?? null,

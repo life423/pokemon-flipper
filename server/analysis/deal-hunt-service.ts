@@ -9,7 +9,7 @@ import { setYears } from "../pricing/price-tracker.ts";
 import { researchAuctionSellers, researchFreshRawSellers } from "../deals/auction-seller-research.ts";
 import { freshResaleCandidates } from "../deals/discovery-order.ts";
 import { createHuntInventoryScanner } from "../deals/find-deals.ts";
-import { listingMarketPrices } from "../../shared/listing-market-prices.ts";
+import { listingMarketPrices, type ProviderPrice } from "../../shared/listing-market-prices.ts";
 import { chooseReviewSelection } from "../deals/search-review-selection.ts";
 import { availablePhotoCount } from "../../shared/analysis-priority.ts";
 import { freshListingTime } from "../../shared/grading-watch.ts";
@@ -47,7 +47,7 @@ import { runDealHunt, type DealHuntCandidate, type DealHuntMarket } from "./deal
 import { huntProgress } from "./deal-hunt-progress.ts";
 import { verifyCollectorArtwork } from "./collector-artwork.ts";
 import { huntPrintingCheck, huntPrintingTerms } from "./deal-hunt-printing.ts";
-import { dealHuntCandidate, newGradingOpportunity } from "./deal-hunt-evidence.ts";
+import { dealHuntCandidate, flipResaleEvidence, newGradingOpportunity } from "./deal-hunt-evidence.ts";
 import { evaluationContextKey, loadPrivateEvaluation, type PrivateEvaluationSnapshot } from "./private-evaluation.ts";
 import { guidedInventoryTargets, webInventoryTargets, type InventoryTarget } from "./guided-inventory.ts";
 import { liquidMarkets } from "../pricing/liquid-markets.ts";
@@ -58,6 +58,7 @@ import { findHuntMarkets, restoreSavedHuntSales, type HuntMarket } from "./same-
 import { discoverMarketListings, type MarketQueryObservation } from "./same-set-listings.ts";
 import { describeHuntMarket, huntOrigin, huntPhotoIdentityIssue, keepsSetSearchPreferences, marketItemLimit, marketIntent, matchesHuntMarket, photoMatchesCollectorMarket, shortlistMarketCopies } from "./deal-hunt-market-checks.ts";
 import { groupMarketCopies, groupMarketSearches, huntMarketCardKey } from "./deal-hunt-market-groups.ts";
+import { priceChartingComparison } from "../pricing/pricecharting.ts";
 import { marketHistory } from "../pricing/price-history.ts";
 import { providerPrices } from "../pricing/buyer-market-prices.ts";
 import { compareCardmarket } from "../pricing/cardmarket.ts";
@@ -171,6 +172,7 @@ const defaults = {
     details: getListingDetails,
     restoreRaw: restoreRawComparisons,
     supplement: supplementalResearch,
+    priceCharting: priceChartingComparison,
     marketHistory,
     compareCardmarket,
     evaluate: evaluateBoundedListing,
@@ -210,6 +212,7 @@ function rowMatches(row: HuntRow, saved: PrivateEvaluationSnapshot) {
 }
 
 interface ScopedCandidate extends DealHuntCandidate {
+    guidePrices(): ProviderPrice[];
     liveListing(): ListingSummary | null;
 }
 
@@ -223,7 +226,7 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
     const auction = format === "AUCTION";
     if (auction && !withinOpportunityWindow(row?.listing.endTime ?? saved?.evaluation.listing.endTime, deps.now())) return null;
     let checkFullListing = Boolean((markets.length || auction || !inventory && row) && saved);
-    let value = saved && retargetEvaluation(saved.evaluation, targets, row?.listing);
+    let value = saved && flipResaleEvidence(retargetEvaluation(saved.evaluation, targets, row?.listing), goal, targets);
     if (freshGrading && (!row || freshListingTime(row.listing, deps.now()) === null)) return null;
     const matches = (e: Evaluation) => e.listing.buyingOption === format && acceptsEvaluation(e) && fits(e, row, inventory) && meetsMinimumGrade(e, minGrade) && (!markets.length || markets.some(market => matchesHuntMarket(e, market, !!huntPrintingCheck(e), freshGrading) && !evaluatedCriteriaMismatch(e, marketIntent(market)))) &&
         (!row || matchesListingFilters({ ...row.listing, currentPrice: e.listing.price }, filters, e));
@@ -234,6 +237,7 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
     if (value && !initial) return null;
     if (!value && (!row?.assessable || goal === "grade_raw" && row.listing.isGraded || goal === "collect_slab" && !row.listing.isGraded)) return null;
     if (value && artworkVerified) evaluations.set(id, value);
+    let guidePrices: ProviderPrice[] = [];
     let retired = false;
     let quotaNote: string | undefined;
     const retire = (message: string) => {
@@ -266,6 +270,7 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
         ...(freshRawGradingLead && { freshRawGradingLead }),
         summary: [row?.collectorQuery && `Found through “${row.collectorQuery}”. Inspect the original front to verify the searched card and number.`,
             auctionClues, freshClues, copySummary].filter(Boolean).join(" "),
+        guidePrices: () => guidePrices,
         liveListing() {
             if (!card || retired || !artworkVerified) return null;
             const latest = value ? withFreshListing(card, value) : card;
@@ -280,7 +285,8 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
             if (!artworkVerified) return ["inspect_photos"];
             const actions = reader()?.available(checked);
             if (!actions) return auction && !checked.has("check_listing") ? ["check_listing", "inspect_photos"] : ["inspect_photos"];
-            if (!preferRecentSales || goal !== "resell" || !actions.includes("check_price_references")) return actions;
+            if (goal !== "resell" || !actions.includes("check_price_references") ||
+                !preferRecentSales && !value?.rawPricing?.tcgplayerComparison) return actions;
             const sources: DealHuntAction[] = ["check_price_tracker", "search_web_sales"];
             if (value?.identity?.recordId) sources.push("check_price_history", "compare_cardmarket");
             return [...actions.filter(action => action !== "check_price_references"), ...sources.filter(source => !checked.has(source))];
@@ -380,7 +386,8 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
                     if (!eligible()) return "The current listing terms or market evidence no longer warrant a supplemental lookup.";
                     const now = deps.now();
                     const source = action === "check_price_tracker" ? "tracker" as const : action === "search_web_sales" ? "web" as const : undefined;
-                    const options = { now, signal: signal ?? new AbortController().signal, source };
+                    const options = { now, signal: signal ?? new AbortController().signal, source,
+                        ...(value.rawPricing?.tcgplayerComparison && { comparePrices: true }) };
                     const cached = await deps.supplement(value, { ...options, cacheOnly: true });
                     value = { ...value, ...cached };
                     if (eligible()) {
@@ -439,6 +446,7 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
             }
             signal?.throwIfAborted();
             if (value.identity?.notThisCard) return retire(value.identity.notThisCard);
+            value = flipResaleEvidence(value, goal, targets);
             if (action === "check_sales" || action === "check_raw_resale") await restoreSavedHuntSales([value], goal, deps.now(), signal);
             let artworkObservation: string | undefined;
             if (!artworkVerified) {
@@ -455,7 +463,10 @@ function scopedCandidate(id: string, goal: DealHuntGoal, targets: Targets, searc
             if (value.listing.id !== id || !matches(value) || !evidence) return retire("The verified copy falls outside the search, comparison market or buyer goal.");
             evaluations.set(id, value);
             const observation = await evidence.read(action, signal);
-            return [artworkObservation, observation, quotaNote].filter(Boolean).join(" ");
+            const guide = goal === "resell" && action === "check_sales" && value.identity && !huntPhotoIdentityIssue(value)
+                ? await deps.priceCharting(value.identity, signal) : null;
+            if (guide) guidePrices = guide.prices;
+            return [artworkObservation, observation, guide?.observation, quotaNote].filter(Boolean).join(" ");
         },
     };
 }
@@ -897,7 +908,7 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
             const capturePrices = (id: string, listing: ListingSummary) => {
                 const assessment = evaluations.get(id), now = deps.now();
                 const prices = listingMarketPrices(assessment, listing, now);
-                if (prices && assessment) candidatePrices[id] = { ...prices, additional: [...(prices.additional ?? []), ...providerPrices(assessment, now)] };
+                if (prices && assessment) candidatePrices[id] = { ...prices, additional: [...(prices.additional ?? []), ...providerPrices(assessment, now), ...(alternatives.get(id)?.candidate.guidePrices() ?? [])] };
             };
             for (const [id, { candidate, leads, reason }] of visibleAlternatives) {
                 const listing = candidate.liveListing();

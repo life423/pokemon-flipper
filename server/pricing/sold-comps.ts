@@ -1,4 +1,4 @@
-import { median } from "../../shared/sold-evidence.ts";
+import { capAtSecondHighestSale, median, rawPriceDeviation } from "../../shared/sold-evidence.ts";
 import {
     mapVariantPrintings,
     printingClaimFromText,
@@ -209,10 +209,10 @@ function marketEstimate(sales: Comp[], now: number): CompSummary["marketEstimate
     let cumulative = 0;
     for (const [index, { price, weight }] of ranked.entries()) {
         cumulative += weight;
-        if (cumulative * 2 >= totalWeight) return {
-            price: cumulative * 2 === totalWeight ? rounded((price + ranked[index + 1].price) / 2) : price,
-            method: "RECENCY_WEIGHTED_MEDIAN",
-        };
+        if (cumulative * 2 >= totalWeight) {
+            const weightedMedian = cumulative * 2 === totalWeight ? rounded((price + ranked[index + 1].price) / 2) : price;
+            return { price: capAtSecondHighestSale(weightedMedian, ranked), method: "RECENCY_WEIGHTED_MEDIAN" };
+        }
     }
 }
 
@@ -251,15 +251,21 @@ export function summarizeComps(
     }
 
     const activity = kept;
+    const photoMatched = criteria.grader === "RAW" && kept.length > 0 &&
+        kept.every(sale => sale.photoCondition === criteria.grade && sale.conditionEvidence?.length);
     if (kept.length >= 2) {
-        const middle = median(kept.map((comp) => comp.price));
+        const amounts = kept.map(comp => comp.price);
+        const middle = median(amounts);
         const sparseFloor = kept.length === 2 ? Math.min(...kept.map(comp => comp.price)) : null;
 
+        // For photo-matched raw copies a tightly clustered market can reveal a
+        // premium well below 2.5x. Allow ordinary price variation and wider markets.
+        const deviation = photoMatched ? rawPriceDeviation(amounts, middle) : Infinity;
         kept = kept.filter((comp) => {
             // Two radically different observations cannot justify averaging an
             // isolated premium into the ordinary price. Keep the lower amount.
             const far = sparseFloor !== null ? comp.price > sparseFloor * OUTLIER_FACTOR
-                : comp.price > middle * OUTLIER_FACTOR || comp.price < middle / OUTLIER_FACTOR;
+                : comp.price > middle * OUTLIER_FACTOR || comp.price < middle / OUTLIER_FACTOR || Math.abs(comp.price - middle) > deviation;
 
             if (far) drop("price far from the other sales");
 
@@ -268,7 +274,10 @@ export function summarizeComps(
     }
 
     const prices = kept.map((comp) => comp.price).sort((a, b) => a - b);
-    const estimate = marketEstimate(uniqueSoldComps(kept), criteria.now);
+    const mean = prices.length ? Math.round(prices.reduce((sum, price) => sum + price, 0) / prices.length * 100) / 100 : null;
+    const estimate = photoMatched && mean !== null
+        ? { price: mean, method: "FILTERED_SOLD_MEAN" as const, sampleSize: prices.length }
+        : marketEstimate(kept, criteria.now);
     const saleFacts = (comp: Comp) => ({
         ...(comp.photoCondition && { photoCondition: comp.photoCondition }),
         ...(comp.photoCondition && comp.conditionEvidence?.length && { conditionEvidence: comp.conditionEvidence }),
@@ -282,7 +291,7 @@ export function summarizeComps(
         grade: criteria.grade,
         count: kept.length,
         median: prices.length > 0 ? median(prices) : null,
-        mean: prices.length > 0 ? Math.round(prices.reduce((sum, price) => sum + price, 0) / prices.length * 100) / 100 : null,
+        mean,
         ...(estimate ? { marketEstimate: estimate } : {}),
         low: prices[0] ?? null,
         high: prices.at(-1) ?? null,

@@ -5,7 +5,8 @@ import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { acquisitionCost, underwrite } from "../../shared/money/underwriting.ts";
 import { cents, meetsMoneyTargets } from "../../shared/money/cents.ts";
 import { PRICING_VERSION } from "../../shared/pricing-freshness.ts";
-import { dealHuntCandidate } from "../../server/analysis/deal-hunt-evidence.ts";
+import { dealHuntCandidate, flipResaleEvidence } from "../../server/analysis/deal-hunt-evidence.ts";
+import { listingMarketPrices } from "../../shared/listing-market-prices.ts";
 import { rankHuntMarkets } from "../../server/analysis/same-set-markets.ts";
 import { cardEvaluation, salesSummary } from "../fixtures/card-evaluation.ts";
 import { tcgplayerRawEstimate } from "../fixtures/tcgplayer-raw-estimate.ts";
@@ -30,7 +31,16 @@ function rawCard(lowerPrice = 250) {
     return e;
 }
 
-test("a matched TCGplayer raw estimate supports buying without fabricating completed-sales activity", () => {
+function soldPrice(price: number, days = 1) {
+    const soldAt = new Date(now - days * 86_400_000).toISOString();
+    const comps = salesSummary("RAW", "LIGHTLY_PLAYED", [price]);
+    Object.assign(comps, { median:price, newestSale:soldAt });
+    Object.assign(comps.sales[0], { soldAt, saleType: "fixed_price", photoCondition: "LIGHTLY_PLAYED", conditionEvidence: ["Both faces were inspected."],
+        url: "https://www.ebay.com/itm/123111111111" });
+    return { condition: "LIGHTLY_PLAYED", basis: "EBAY_SOLD", price, updatedAt: soldAt, comps } as const;
+}
+
+test("Find a flip sends a TCGplayer-only estimate to research and preserves the buyer comparison", () => {
     const e = rawCard();
     e.gradedPricing = null;
     e.rawPricing = { status: "PRICED", source: "pkmnprices", printing: "UNLIMITED", variant: "Unlimited Holofoil", finish: "HOLO",
@@ -38,10 +48,12 @@ test("a matched TCGplayer raw estimate supports buying without fabricating compl
     e.underwriting = underwrite(e, { ...MONEY_CONFIG, targets: { minProfit: 0, minRoi: 0 } });
     assert.equal(e.underwriting.verdict, "BUY_RAW");
     const result = dealHuntCandidate(e, "resell", now)!.outcome(checked)!;
-    assert.equal(result.decision, "BUY");
-    assert.match(result.reason, /0 observed matching Lightly Played raw sales in the last 60 days/);
-    assert.match(result.reason, /quote alone does not establish sales activity/);
-    assert.match(String(dealHuntCandidate(e, "resell", now)!.read("check_sales")), /TCGplayer estimate/);
+    assert.equal(result.decision, "WAIT");
+    assert.equal(result.verifiedPurchase, undefined);
+    assert.ok(dealHuntCandidate(e, "resell", now)!.available(checked).includes("check_price_references"));
+    const projected = flipResaleEvidence(e, "resell", {minProfit: 0, minRoi: 0});
+    assert.equal(listingMarketPrices(projected, {...e.listing, images:e.listing.photos ?? []}, now)?.tcg?.market, 175);
+    assert.match(String(dealHuntCandidate(e, "resell", now)!.read("check_sales")), /TCGplayer reports/);
     const [market] = rankHuntMarkets([e], null, "resell", "any_card", now);
     assert.equal(market.sales60, 0); assert.equal(market.sales30, 0); assert.equal(market.latestSaleAt, "");
     assert.equal(market.quoteAsOf, stamp); assert.equal(market.valueBasis, "TCGPLAYER_MARKET");
@@ -51,16 +63,21 @@ test("a matched TCGplayer raw estimate supports buying without fabricating compl
         url: "https://www.ebay.com/itm/123111111111", sellerCondition: "LIGHTLY_PLAYED" });
     e.rawPricing.sellerConditionComps = sellers;
     const observed = dealHuntCandidate(e, "resell", now)!.outcome(checked)!;
-    assert.equal(observed.decision, "BUY");
-    assert.match(observed.reason, /1 observed matching Lightly Played raw sale in the last 60 days/);
+    assert.equal(observed.decision, "WAIT");
+    assert.equal(observed.verifiedPurchase, undefined);
     assert.equal(rankHuntMarkets([e], null, "resell", "any_card", now)[0].activityScope, "SELLER_CONDITION");
+    Object.assign(e.listing, { buyingOption: "AUCTION", price: 10, bids: 1,
+        endTime: new Date(now + 3_600_000).toISOString(), auctionQuote: { currentBid: 10, minimumBid: 11, checkedAt: stamp } });
+    const auction = dealHuntCandidate(e, "resell", now)!.outcome(checked);
+    assert.equal(auction?.decision, "WAIT");
+    assert.equal(auction?.verifiedPurchase, undefined);
 });
 
 test("a liquidity-constrained Buy needs observed recent sales on the exact exit, with one or two allowed at low confidence", () => {
     const e = rawCard();
     e.gradedPricing = null;
     e.rawPricing = { status: "PRICED", source: "pkmnprices", printing: "UNLIMITED", variant: "Unlimited Holofoil", finish: "HOLO",
-        conditionEvidence: "TCGPLAYER", prices: [tcgplayerRawEstimate(175, stamp)] };
+        conditionEvidence: "AI_PHOTOS", prices: [soldPrice(175, 62)] };
     const targets = { minProfit: 0, minRoi: 0 };
     e.underwriting = underwrite(e, { ...MONEY_CONFIG, targets });
     const liquidity = { preferRecentSales: true };
@@ -77,11 +94,14 @@ test("a liquidity-constrained Buy needs observed recent sales on the exact exit,
     assert.match(prevented.reason, /liquidity is unverified/i);
     for (const count of [1, 2]) {
         const recent = salesSummary("RAW", "LIGHTLY_PLAYED", Array(count).fill(160));
+        recent.median = 160;
         recent.sales.forEach((sale, i) => Object.assign(sale, { saleType: "fixed_price", soldAt: soldAt(45 - i),
             url: `https://www.ebay.com/itm/${123111111112 + i}`, sellerCondition: "LIGHTLY_PLAYED" }));
-        e.rawPricing.sellerConditionComps = recent;
+        for (const sale of recent.sales) Object.assign(sale, { photoCondition: "LIGHTLY_PLAYED", conditionEvidence: ["Both faces were inspected."] });
+        e.rawPricing.prices = [{ ...soldPrice(160), comps: recent }];
+        e.underwriting = underwrite(e, { ...MONEY_CONFIG, targets });
         const outcome = dealHuntCandidate(e, "resell", now, unmatched, targets, undefined, liquidity)!.outcome(checked)!;
-        assert.equal(outcome.decision, "BUY");
+        assert.equal(outcome.decision, "BUY", outcome.reason);
         assert.equal(outcome.recentSales, count);
         assert.equal(outcome.verifiedPurchase?.path.path, "RAW");
         assert.match(outcome.reason, /liquidity confidence is low/i);
@@ -135,7 +155,7 @@ test("grading purchases meet the buyer's targets at the likely grade, not just a
         assert.match(outcome.reason, /likely-grade return falls short of your profit or ROI target/);
 
         e.rawPricing = { status: "PRICED", printing: "UNLIMITED", variant: "Unlimited Holofoil", finish: "HOLO",
-            conditionEvidence: "TCGPLAYER", prices: [tcgplayerRawEstimate(300, stamp)] };
+            conditionEvidence: "AI_PHOTOS", prices: [soldPrice(300)] };
         e.underwriting = underwrite(e, { ...MONEY_CONFIG, targets });
         const raw = dealHuntCandidate(e, "resell", now, undefined, targets)!.outcome(checked)!;
         assert.equal(raw.decision, "BUY", "an independently profitable raw exit remains usable");
@@ -159,7 +179,7 @@ test("an otherwise supported fixed-price purchase can request fresh terms withou
         const e = rawCard();
         e.gradedPricing = null;
         e.rawPricing = { status: "PRICED", printing: "UNLIMITED", variant: "Unlimited Holofoil", finish: "HOLO",
-            conditionEvidence: "TCGPLAYER", prices: [tcgplayerRawEstimate(175, stamp)] };
+            conditionEvidence: "AI_PHOTOS", prices: [soldPrice(175, 62)] };
         e.underwriting = underwrite(e, { ...MONEY_CONFIG, targets });
         return e;
     };

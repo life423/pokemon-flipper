@@ -33,7 +33,7 @@ export interface ListingMarketPrices {
     additional?: ProviderPrice[];
     scope: string;
     validUntil: number;
-    sold?: { price: number; count: number; days: number; sellerCondition: boolean; latestSale?: string; validUntil?: number };
+    sold?: { price: number; filteredMean?: boolean; count: number; days: number; sellerCondition: boolean; latestSale?: string; validUntil?: number };
     tcg?: { market?: number; delivered?: number; condition: string; checkedAt?: string; marketRecordAt?: string | null; snapshotAt?: string; validUntil?: number; offerValidUntil?: number };
 }
 
@@ -66,8 +66,9 @@ export function listingMarketPrices(e: Evaluation | null | undefined, listing: P
         const raw = e.rawPricing?.printing === e.identity!.printing && e.rawPricing.finish === e.identity!.finish ? e.rawPricing : null;
         scope = CONDITION_NAMES[wear];
         const row = raw?.prices?.find(r => r.condition === wear && isUsableRawPrice(r));
-        const quote = row?.offers;
-        if (quote && row?.basis?.startsWith("TCGPLAYER_")) {
+        const quote = row?.offers ?? raw?.tcgplayerComparison;
+        if (quote && isUsableRawPrice({ condition: wear, price: quote.price, offers: quote, updatedAt: quote.checkedAt,
+            basis: quote.method === "CONDITION_MARKET" ? "TCGPLAYER_MARKET" : "TCGPLAYER_OFFERS" })) {
             tcg = { condition: quote.marketCondition, checkedAt: quote.checkedAt, marketRecordAt: quote.marketRecordAt,
                 snapshotAt: quote.snapshotAt, validUntil: Date.parse(quote.checkedAt) + 6 * 3_600_000 };
             if (Number.isFinite(quote.marketPrice) && quote.marketPrice! > 0) tcg.market = quote.marketPrice;
@@ -95,7 +96,8 @@ export function listingMarketPrices(e: Evaluation | null | undefined, listing: P
     const medianPrice = sales.length ? median(sales.map(sale => sale.price)) : undefined;
     const estimate = summary?.marketEstimate && summary.count === sales.length && sales.length ? soldMarketPrice(summary) : null;
     const additional: ProviderPrice[] = [];
-    if (estimate && estimate !== medianPrice) additional.push({ source: "eBay", basis: "Resale estimate from matched sales",
+    const filteredMean = estimate !== null && summary?.marketEstimate?.method === "FILTERED_SOLD_MEAN";
+    if (!filteredMean && estimate && estimate !== medianPrice) additional.push({ source: "eBay", basis: "Resale estimate from matched sales",
         price: estimate, currency: "USD", asOf: new Date(sales[0].at).toISOString(), validUntil: sampleUntil });
     const market = JSON.stringify([cardmarketComparisonKey(e), e.answeredAt, e.pricesCheckedAt,
         listingEvidenceKey({ title: e.listing.title, images: e.listing.photos ?? [] })]);
@@ -103,6 +105,6 @@ export function listingMarketPrices(e: Evaluation | null | undefined, listing: P
     return { scope, additional, printing: printingName(e.identity!.printing), ...(ended ? {} : { lookup: { listingId: listing.id, market } }),
         validUntil, tcg, sold: sales.length ? {
         latestSale: new Date(sales[0].at).toISOString(), validUntil: sampleUntil,
-        price: medianPrice!, count: sales.length, days, sellerCondition,
+        price: filteredMean ? estimate : medianPrice!, ...(filteredMean && { filteredMean }), count: sales.length, days, sellerCondition,
     } : undefined };
 }

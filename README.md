@@ -79,7 +79,27 @@ The roadmap retains the [original twenty strategies](LOCAL_PLAN.md#twenty-deal-f
 all [fifteen supplied eBay tactics](LOCAL_PLAN.md#fifteen-ebay-tactics-for-the-deal-planner)
 and the collector feature ideas.
 The [checklist](LOCAL_TODO.md) records their implementation and validation work.
-Auction sniper development and the planned PriceCharting importer are on hold.
+Auction sniper development is on hold. For personal guide research, run
+`npm run pricecharting:guide -- PRODUCT_ID PRODUCT_URL` with the canonical
+Pokémon product page. The importer saves the USD guide values and all sale rows
+published on that page for Ungraded and grades 7, 8 and 9. It records the published
+counts, unreadable rows and conflicting grade labels. Each product reuses its daily
+snapshot. Azure SQL also retains individual sales by product, marketplace and
+transaction ID across snapshots. File storage keeps a dated snapshot per product.
+
+Find a flip can request this comparison when it checks sales for a photo-identified
+card. Customer-facing use requires express written permission under PriceCharting's
+[terms](https://www.pricecharting.com/page/terms-of-service). With that permission,
+set `PRICECHARTING_BUYER_USE_AUTHORIZED=true` and supply validated product mappings
+as a JSON array in `PRICECHARTING_PRODUCT_MAP`. For example:
+
+```json
+[{"name":"Dark Gengar","set":"Neo Destiny","cardNumber":"6/105","language":"English","printing":"UNLIMITED","finish":"HOLO","id":"762567","url":"https://www.pricecharting.com/game/pokemon-neo-destiny/dark-gengar-6"}]
+```
+
+A guide comparison can direct further research. The flip calculation uses matched
+resale evidence. An ungraded guide spans several raw conditions, and a generic
+graded guide can include multiple grading companies.
 
 ## Search workflow
 
@@ -137,7 +157,7 @@ language remains preliminary until identified.
 
 | Resale route | Required evidence |
 | --- | --- |
-| Sell raw as-is | Assessed live condition and exact condition/printing TCGplayer valuation or supported condition-matched sold evidence |
+| Sell raw as-is | Photo-matched eBay sold average after extreme prices are excluded. Find a flip also shows the lowest delivered TCGplayer ask for the assessed condition as a comparison |
 | Buy raw and grade | Supported raw grade estimate and exact PSA/CGC sales around it |
 | Resell an existing slab | Exact card, printing, finish, grading company and certified grade |
 

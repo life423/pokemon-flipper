@@ -30,21 +30,23 @@ function raw() {
 }
 const receipt = (e: Evaluation, budget?: number) => auctionOpportunity(retargetEvaluation(e, targets), targets, now, budget);
 
-test("a raw auction can use an exact TCGplayer estimate while sixty-day sale activity stays separate", () => {
+test("a raw auction keeps a TCGplayer-only quote for research without recommending a snipe", () => {
     const e = raw();
     e.rawPricing!.conditionEvidence = "TCGPLAYER";
     e.rawPricing!.prices = [tcgplayerRawEstimate(100, stamp)];
     const opportunity = receipt(e)!;
-    assert.equal(opportunity.status, "BID");
+    assert.equal(opportunity.status, "WATCH");
     assert.equal(opportunity.marketValue, 100);
     assert.equal(opportunity.sales60, 0); assert.equal(opportunity.exitSales60, 0); assert.equal(opportunity.sampleSize, 0);
-    assert.ok(opportunity.maxBid! < 100, "fees, shipping and tax still constrain the bid");
+    assert.equal(opportunity.maxBid, null);
+    assert.equal(opportunity.profitAtNext, null);
+    assert.equal(opportunity.profitAtMaxBid, undefined);
     const summary = sales("RAW", "LIGHTLY_PLAYED", [100]);
     summary.sales[0].soldAt = new Date(now - 45 * 86_400_000).toISOString();
     delete summary.sales[0].photoCondition; delete summary.sales[0].conditionEvidence;
     e.rawPricing!.sellerConditionComps = summary;
     assert.equal(receipt(e)?.sales60, 1); assert.equal(receipt(e)?.sales30, 0);
-    assert.equal(receipt(e)?.status, "BID");
+    assert.equal(receipt(e)?.status, "WATCH");
     e.listing.endTime = end(10 * 3_600_000);
     assert.equal(receipt(e), null, "the strict ten-hour auction window is preserved");
 });
@@ -62,6 +64,8 @@ test("only active auctions strictly under ten hours and under the matching as-li
 test("next bid, delivery and the buyer’s budget control the recommendation while the market opportunity survives", () => {
     const e = raw(), first = receipt(e)!;
     assert.equal(first.nextTotal,44.38);
+    assert.ok(first.totalAtMaxBid! >= first.nextTotal!);
+    assert.equal(first.profitAtMaxBid, Math.round((first.profitAtNext! + first.nextTotal! - first.totalAtMaxBid!) * 100) / 100);
     assert.equal(first.status,"BID"); assert.equal(first.routeKind,"RAW");
     assert.ok(first.maxBid! > first.nextBid! && first.maxBid! < 100);
     assert.equal(receipt(e,44.38)?.maxBid,36); assert.equal(receipt(e,44.37)?.status,"PASS");

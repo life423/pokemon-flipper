@@ -3,6 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createBoundedEvaluator, type BoundedReading } from '../../server/analysis/bounded-evaluate.ts';
 import { cardEvaluation, clearReleaseFixture } from '../fixtures/card-evaluation.ts';
+import { listingMarketPrices } from '../../shared/listing-market-prices.ts';
+import { currentPriceEvidence } from '../../shared/pricing-freshness.ts';
 import { tcgplayerRawPrice } from '../../server/pricing/tcgplayer-raw.ts';
 import type { ListingDetails } from '../../server/ebay/listings.ts';
 import type { CardRecord, PricedCard } from '../../server/pricing/types.ts';
@@ -15,7 +17,7 @@ const record: CardRecord = { source: 'pkmnprices', id: 123, name: 'Alakazam', se
 const card: PricedCard = { source: 'pkmnprices', name: record.name, cardNumber: record.cardNumber, records: [record],
     variants: record.variants.map(v => ({ ...v, recordId: record.id, setName: record.setName })) };
 
-test('bounded evaluation uses AI wear with TCGplayer pricing and does not acquire sold-copy photos', async () => {
+async function evaluateWithQuote(soldPrices: number[] = [], observedWear: 'LIGHTLY_PLAYED' | 'MODERATELY_PLAYED' | 'MIXED' | null = 'LIGHTLY_PLAYED', acquireWear = false) {
     let acquisitions = 0, tcgCalls = 0;
     const saved = new Map<string, any>();
     const listing: ListingDetails = { id: 'v1|123456789012|0', title: 'Alakazam Base Set 1/102 Unlimited Holo',
@@ -36,11 +38,98 @@ test('bounded evaluation uses AI wear with TCGplayer pricing and does not acquir
     const evaluate = createBoundedEvaluator({ release: async e => clearReleaseFixture(e), now: () => now, details: async () => listing, saved: async () => null,
         cached: async key => saved.get(key) ?? null, save: async (key,value) => { saved.set(key, structuredClone(value)); }, assertPriceAvailable: async () => {},
         assess: async (_listing,selected) => ({ result: { ...reading, photoCheck: { ...reading.photoCheck, images: selected.map((photo,i) => ({ ...reading.photoCheck.images[photos.indexOf(photo.url)], number: i+1 })) } }, usage: { inputTokens: 1, outputTokens: 1 } }), identify: async () => ({ identity: structuredClone(identity), card }),
-        lookup: async () => [record], fetchRawComps: async () => [], fetchComps: async () => [], fetchCachedComps: async () => [], compChecks: async () => new Map(),
-        soldCondition: _options => ({ read: async () => null, status: () => 'UNREVIEWED', usage: [], acquire: async () => { acquisitions++; return null; } }) as any,
+        lookup: async () => [record],
+        fetchRawComps: async () => soldPrices.map((price, index) => ({
+            id: index, listing_url: 'https://www.ebay.com/itm/' + (123456789100 + index), title: listing.title + ' LP',
+            price, currency: 'USD', attribution: 'exact', sale_type: 'fixed_price', sold_at: new Date(now - (index + 1) * 86400000).toISOString(),
+            variant: 'Unlimited Holofoil', grader: null, grade: null, grade_qualifier: null })),
+        fetchComps: async () => [], fetchCachedComps: async () => [], compChecks: async () => new Map(),
+        soldCondition: () => ({
+            read: async (sale: { id: number }) => observedWear && {
+                condition: observedWear === 'MIXED' ? (sale.id === 0 ? 'NEAR_MINT' : 'LIGHTLY_PLAYED') : observedWear,
+                evidence: ['Photo review of front and back'], photoCount: 2 },
+            status: () => observedWear ? 'REVIEWED' : 'UNREVIEWED',
+            usage: [], acquire: async () => { acquisitions++; return acquireWear ? { condition: 'LIGHTLY_PLAYED', evidence: ['Both faces show light wear'], photoCount: 2 } : null; },
+        }) as any,
         tcgplayer: async (_card,_identity,wear) => { tcgCalls++; assert.equal(wear,'LIGHTLY_PLAYED'); return quote; } });
     const e = await evaluate(listing.id, { targets: { minProfit: 0, minRoi: 0 } });
-    assert.ok(tcgCalls > 0); assert.equal(acquisitions,0);
+    assert.ok(tcgCalls > 0);
+    if (acquireWear) assert.ok(acquisitions > 0);
+    if (observedWear || !soldPrices.length) assert.equal(acquisitions, 0);
+    return e;
+}
+
+test('bounded evaluation uses AI wear with TCGplayer pricing and does not acquire sold-copy photos', async () => {
+    const e = await evaluateWithQuote();
     assert.equal(e.rawPricing?.conditionEvidence,'TCGPLAYER'); assert.equal(e.rawPricing?.prices?.[0].price,70);
     assert.equal(e.underwriting?.verdict,'BUY_RAW'); assert.ok(e.underwriting!.best!.profit > 0);
+});
+
+test('a high TCGplayer ask cannot turn a loss at matched raw eBay sales into a flip', async () => {
+    const e = await evaluateWithQuote([14, 15, 16]);
+    const raw = e.underwriting!.paths.find(path => path.path === 'RAW');
+    assert.ok(raw?.status === 'PRICED');
+    assert.equal(raw.salePrice, 15);
+    assert.ok(raw.profit < 0);
+    assert.ok(!e.underwriting!.verdict.startsWith('BUY'));
+    assert.equal(e.rawPricing?.conditionEvidence, 'AI_PHOTOS');
+    const display = listingMarketPrices(e, { ...e.listing, images: e.listing.photos! }, now);
+    assert.equal(display?.tcg?.delivered, 70);
+    assert.equal(display?.sold?.price, 15);
+    assert.ok(currentPriceEvidence(e, now));
+
+    const old = await evaluateWithQuote();
+    old.rawPricing!.ebayComps = e.rawPricing!.ebayComps;
+    assert.equal(currentPriceEvidence(old, now), false, 'refresh an older stored flip based on the higher ask');
+});
+
+test('photo-matched eBay sales lead even when TCGplayer has a lower asking price', async () => {
+    const e = await evaluateWithQuote([95, 100, 108, 195]);
+    const raw = e.underwriting!.paths.find(path => path.path === 'RAW');
+    assert.ok(raw?.status === 'PRICED');
+    assert.equal(raw.salePrice, 101);
+    assert.equal(e.rawPricing?.prices?.[0].comps?.dropped["price far from the other sales"], 1);
+    const display = listingMarketPrices(e, { ...e.listing, images: e.listing.photos! }, now);
+    assert.equal(display?.sold?.price, 101);
+    assert.equal(display?.sold?.filteredMean, true);
+    const previous = await evaluateWithQuote();
+    previous.rawPricing!.ebayComps = e.rawPricing!.ebayComps;
+    assert.equal(currentPriceEvidence(previous, now), false);
+    assert.equal(display?.tcg?.delivered, 70);
+});
+
+test('seller descriptions and photo-verified worse wear cannot replace the assessed condition price', async () => {
+    for (const wear of [null, 'MODERATELY_PLAYED'] as const) {
+        const e = await evaluateWithQuote([14, 15, 16], wear);
+        assert.equal(e.rawPricing?.prices?.[0].price, 70);
+        assert.equal(e.rawPricing?.prices?.[0].condition, 'LIGHTLY_PLAYED');
+        assert.ok(currentPriceEvidence(e, now));
+        const comparisons = listingMarketPrices(e, { ...e.listing, images: e.listing.photos! }, now);
+        assert.equal(comparisons?.tcg?.delivered, 70);
+        if (wear === null) assert.equal(comparisons?.sold?.sellerCondition, true);
+    }
+});
+
+test('an apparent TCGplayer flip triggers a photo check even when the reported eBay sale would lose money', async () => {
+    const e = await evaluateWithQuote([15], null, true);
+    assert.equal(e.rawPricing?.prices?.[0].price, 15);
+    assert.equal(e.rawPricing?.prices?.[0].offers?.price, 70);
+    assert.ok(!e.underwriting!.verdict.startsWith('BUY'));
+});
+
+test('a lone photo-matched premium prompts checks of the cheaper cluster before setting resale', async () => {
+    const e = await evaluateWithQuote([120, 49, 50], null, true);
+    const price = e.rawPricing!.prices![0];
+    assert.equal(price.price, 49.5);
+    assert.equal(price.comps?.count, 2);
+    assert.equal(price.comps?.activitySales?.length, 3);
+    assert.equal(price.offers?.price, 70);
+});
+
+test('the high sale of a cleaner copy stays in its own condition market', async () => {
+    const e = await evaluateWithQuote([150, 48, 50], 'MIXED');
+    const rows = e.rawPricing!.prices!;
+    assert.equal(rows.find(row => row.condition === 'NEAR_MINT')?.price, 150);
+    assert.equal(rows.find(row => row.condition === 'LIGHTLY_PLAYED')?.price, 49);
+    assert.equal(e.underwriting!.paths.find(path => path.path === 'RAW')?.salePrice, 49);
 });

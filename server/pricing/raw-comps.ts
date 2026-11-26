@@ -6,7 +6,7 @@ import { compProblem, matchesSoldTarget, summarizeComps, uniqueSoldComps } from 
 import type { CheckComps, Comp, FetchRawComps, PricedCard } from "./types.ts";
 import type { SoldConditionEvidence, SoldConditionReadStatus } from "../ai/sold-condition.ts";
 import { readyForPricing } from "../../shared/identity.ts";
-import { MIN_MATCHED_SALES, soldMarketPrice } from "../../shared/sold-evidence.ts";
+import { median, MIN_MATCHED_SALES, rawPriceDeviation, soldMarketPrice } from "../../shared/sold-evidence.ts";
 import { finishClaim } from "../../shared/finish.ts";
 import { sellerConditionClues } from "../../shared/raw-condition-claim.ts";
 
@@ -19,7 +19,7 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
     fetchRawComps, checkComps, now = Date.now(), assessCondition, conditionStatus, acquireCondition, requestedCondition, signal,
 }: { fetchRawComps: FetchRawComps; checkComps?: CheckComps; now?: number; assessCondition?: (sale: Comp, identity: Identity, signal?: AbortSignal) => Promise<SoldConditionEvidence | null>;
     conditionStatus?: (sale: Comp, identity: Identity) => SoldConditionReadStatus;
-    acquireCondition?: (sales: readonly Comp[], identity: Identity, signal?: AbortSignal) => Promise<{ sale: Comp; evidence: SoldConditionEvidence } | null>;
+    acquireCondition?: (sales: readonly Comp[], identity: Identity, signal?: AbortSignal, checkPriceSpread?: boolean) => Promise<{ sale: Comp; evidence: SoldConditionEvidence } | null>;
     requestedCondition?: RawCondition; signal?: AbortSignal }): Promise<RawPricing> {
     signal?.throwIfAborted();
     if (!readyForPricing(identity) || !identity.name?.trim()) {
@@ -83,7 +83,7 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
             titleMatchedSoldCopies = eligible.filter(titleMatches).length;
             const accepted = new Map<Comp, SoldConditionEvidence>();
             // This callback reads accepted evidence only. New photo work has
-            // a separate, one-shot acquisition after every cache read finishes.
+            // a separate acquisition after every cache read finishes.
             await Promise.all(eligible.map(async sale => {
                 signal?.throwIfAborted();
                 const assessed = await readCondition(sale);
@@ -92,17 +92,40 @@ export async function rawPricesWithSales(card: PricedCard | null, identity: Iden
             }));
             const matched = [...accepted.values()].filter(evidence => evidence.condition === requestedCondition).length;
             const unassessed = eligible.filter(sale => !accepted.has(sale));
-            if (acquireCondition && requestedCondition && RAW_CONDITIONS.includes(requestedCondition) &&
-                !cacheReadFailed && matched < MIN_MATCHED_SALES && unassessed.length) {
-                signal?.throwIfAborted();
-                const acquired = await acquireCondition(Object.freeze(unassessed), identity, signal);
-                signal?.throwIfAborted();
-                // The callback validates physical identity/condition; it may
-                // only supply evidence for an offered source copy, never inject
-                // a different transaction or alter its price/printing fields.
-                if (acquired && unassessed.includes(acquired.sale) && RAW_CONDITIONS.includes(acquired.evidence.condition) &&
-                    acquired.evidence.evidence.length && Number.isSafeInteger(acquired.evidence.photoCount) && acquired.evidence.photoCount > 0) {
-                    accepted.set(acquired.sale, acquired.evidence);
+            if (acquireCondition && requestedCondition && RAW_CONDITIONS.includes(requestedCondition) && !cacheReadFailed) {
+                const inspect = async (offered: Comp[], checkPriceSpread = false) => {
+                    signal?.throwIfAborted();
+                    const result = await acquireCondition(Object.freeze(offered), identity, signal, checkPriceSpread);
+                    signal?.throwIfAborted();
+                    if (!result || !offered.includes(result.sale) || !RAW_CONDITIONS.includes(result.evidence.condition) ||
+                        !result.evidence.evidence.length || !Number.isSafeInteger(result.evidence.photoCount) || result.evidence.photoCount < 1) return false;
+                    accepted.set(result.sale, result.evidence);
+                    return true;
+                };
+                if (matched < MIN_MATCHED_SALES && unassessed.length) await inspect(unassessed);
+                // One premium copy might be cleaner than its seller indicated. When
+                // multiple other copies cluster elsewhere, inspect examples from that
+                // cluster before letting the premium set the price. Only confirmed
+                // physical matches can enter the resale average.
+                const cohort = eligible.filter(sale => {
+                    if (accepted.has(sale)) return accepted.get(sale)!.condition === requestedCondition;
+                    return titleMatches(sale) && claimedCondition(sale) === requestedCondition;
+                });
+                if (cohort.length >= 3) {
+                    const amounts = cohort.map(sale => sale.price);
+                    const middle = median(amounts), deviation = rawPriceDeviation(amounts, middle);
+                    const ordinary = cohort.filter(sale => Math.abs(sale.price - middle) <= deviation);
+                    const verifiedPremium = cohort.some(sale => accepted.has(sale) && sale.price > middle + deviation);
+                    if (verifiedPremium && ordinary.length >= 2) {
+                        const pending = ordinary.filter(sale => !accepted.has(sale));
+                        let confirmations = ordinary.filter(sale => accepted.has(sale)).length;
+                        while (confirmations < 2 && pending.length) {
+                            if (!await inspect([...pending], true)) break;
+                            const index = pending.findIndex(sale => accepted.has(sale));
+                            const [checked] = pending.splice(index, 1);
+                            if (accepted.get(checked)?.condition === requestedCondition) confirmations++;
+                        }
+                    }
                 }
             }
             if (requestedCondition && !cacheReadFailed) {

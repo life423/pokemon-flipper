@@ -9,7 +9,8 @@ export function soldEstimateBasis(summary?: CompSummary): string {
     const estimate = summary?.marketEstimate;
     switch (estimate?.method) {
         case "RECENT_FIXED_PRICE_MEDIAN": return `median of the ${estimate.sampleSize ?? 5} latest matched Buy It Now sales within 30 days`;
-        case "RECENT_FOUR": return "average of the four latest matched eBay sales across available formats within 48 hours";
+        case "FILTERED_SOLD_MEAN": return "average of photo-matched eBay sales after excluding extreme prices";
+        case "RECENT_FOUR": return "median of the four latest matched eBay sales across available formats within 48 hours";
         case "RECENCY_WEIGHTED_MEDIAN": return "eBay sold median across available formats, weighted toward newer sales";
         default: return "eBay sold median";
     }
@@ -131,7 +132,7 @@ export function PricesSection({
                     {raw.evidenceNote && <p className={styles.small}>{raw.evidenceNote}</p>}
                     {raw.prices?.filter(price => price.offers).map(price => <details key={price.condition}>
                         <summary>TCGplayer {CONDITION_NAMES[price.offers!.condition]} prices</summary>
-                        <p className={styles.small}>Estimated resale value {dollars(price.price)}. {price.offers!.printing}. Checked {price.offers!.checkedAt}; marketplace snapshot {price.offers!.snapshotAt}. Asking prices are active competition.</p>
+                        <p className={styles.small}>TCGplayer estimate {dollars(price.offers!.price)}. {price.offers!.printing}. Checked {price.offers!.checkedAt}; marketplace snapshot {price.offers!.snapshotAt}. Asking prices are active competition.</p>
                         <ul>{price.offers!.offers.map(offer => <li key={offer.id}>{offer.sellerName || "Seller"}: {dollars(offer.price)} + {dollars(offer.shipping)} shipping = {dollars(offer.total)}</li>)}</ul>
                     </details>)}
                     {raw.ebayComps?.filter(summary => summary.count > 0).map(summary => <CompsRow key={String(summary.grade)} summary={summary} />)}

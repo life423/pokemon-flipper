@@ -54,7 +54,7 @@ import { assertPriceResearchAvailable, PriceResearchBudgetError, withPriceResear
 import { getAiUsageContext, getBudgetContext, withAiUsageContext, type AiUsageContext } from "../ai/usage-context.ts";
 import { RejectedPhotoAssessmentError } from "./failure.ts";
 import { supplementalResearch } from "../pricing/supplemental-research.ts";
-import { tcgplayerRawPrice } from "../pricing/tcgplayer-raw.ts";
+import { tcgplayerRawPrice, withTcgplayerPrice } from "../pricing/tcgplayer-raw.ts";
 import { hasUnlocatedConcern } from "./authenticity.ts";
 
 const CACHE_HOURS = 24 * 365 * 10;
@@ -624,7 +624,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
             const inspect = rawOnly ? peek : guarded;
             const requestedCondition = creaseDisclosed ? "DAMAGED" : condition.rawCondition;
             if (frontRawPrices?.key === rawPriceKey(identity) &&
-                (!verifySoldCondition || frontRawPrices.prices.prices?.some(row => row.condition === requestedCondition))) {
+                (!(allowSoldPhoto || verifySoldCondition) || frontRawPrices.prices.prices?.some(row => row.condition === requestedCondition && row.basis === "EBAY_SOLD"))) {
                 prices.rawPricing = frontRawPrices.prices;
             } else if (requestedCondition !== "UNKNOWN") {
                 // The live copy's AI condition chooses the TCGplayer market.
@@ -643,7 +643,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                     fetchRawComps: (...args) => inspect(() => deps.fetchRawComps(...args)), signal, now: deps.now(), requestedCondition,
                     assessCondition: (sale, target) => inspect(() => sold.read(sale, target, signal)),
                     conditionStatus: sold.status,
-                    acquireCondition: !tcgPrice && (allowSoldPhoto || verifySoldCondition) ? async sales => {
+                    acquireCondition: allowSoldPhoto || verifySoldCondition ? async (sales, _target, _signal, checkPriceSpread) => {
                         // Resolving another copy's resale price cannot settle
                         // this copy's suspected structural damage or authenticity.
                         if (condition.creases === "SUSPECTED" || condition.authenticity.concern !== "NONE_SEEN") return null;
@@ -657,9 +657,9 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                         const pending = matching.filter(sale => sold.status(sale, identity) === "UNREVIEWED");
                         const price = verifiedOfferPrice() ?? listing.price;
                         if (price === null) return null;
-                        const meetsTargets = (sale: Comp) => {
-                            if (!Number.isFinite(sale.price) || sale.price <= 0) return false;
-                            const net = netFromSale(sale.price, "raw", MONEY_CONFIG.selling);
+                        const meetsTargets = (resale: number) => {
+                            if (!Number.isFinite(resale) || resale <= 0) return false;
+                            const net = netFromSale(resale, "raw", MONEY_CONFIG.selling);
                             return pathNumbers({ expectedNet: net, fixedCosts: 0, shipping, price }, money).clears;
                         };
                         // Prefer an exact or unstated title condition, then a worse copy whose
@@ -669,7 +669,11 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                         for (const sale of pending) cohorts.get(compCondition(sale.title))?.push(sale);
                         // Prices gate research on a whole cohort. Always inspect its newest sale,
                         // even when an older sale was the one that cleared the targets.
-                        const candidates = [...cohorts.values()].find(group => group.some(meetsTargets));
+                        // An apparently profitable TCGplayer exit also warrants checking a lower
+                        // completed sale. Sample the newest eligible copy without favoring high prices.
+                        const verifyMarket = checkPriceSpread || (tcgPrice && meetsTargets(tcgPrice.price));
+                        const candidates = [...cohorts.values()].find(group => group.length &&
+                            (verifyMarket || group.some(sale => meetsTargets(sale.price))));
                         const sale = revisit ?? candidates?.sort((a, b) => Date.parse(b.sold_at) - Date.parse(a.sold_at))[0];
                         if (!sale) {
                             if ([...cohorts.values()].some(group => group.length)) soldPhotoDeferred = { price, shipping, targets: money.targets };
@@ -696,9 +700,7 @@ export function createBoundedEvaluator(overrides: Partial<Dependencies> = {}) {
                     raw.evidenceNote = `${raw.evidenceNote} ${note}`;
                     if (raw.status === "PRICE_UNAVAILABLE") raw.reason = note;
                 }
-                prices.rawPricing = tcgPrice ? { ...raw, status: "PRICED", reason: undefined, conditionEvidence: "TCGPLAYER",
-                    prices: [tcgPrice, ...(raw.prices ?? []).filter(row => row.condition !== requestedCondition)],
-                    evidenceNote: `TCGplayer ${tcgPrice.basis === "TCGPLAYER_OFFERS" ? "current asking-price competition" : "condition market estimate"} for ${CONDITION_NAMES[requestedCondition]}. ${tcgPrice.offers?.offers.length ?? 0} current offers; these are not completed sales. ${raw.evidenceNote ?? ""}` }
+                prices.rawPricing = tcgPrice ? withTcgplayerPrice(raw, tcgPrice)
                     : priceLimits > beforeRaw ? { status: "PRICE_UNAVAILABLE", reason: evaluation.pricingDeferred!.note } : raw;
             }
             if (hardFailure) throw hardFailure;

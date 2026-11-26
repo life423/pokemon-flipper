@@ -9,7 +9,8 @@ import { dollars } from "../../shared/format.ts";
 import { readyForPricing } from "../../shared/identity.ts";
 import { cents, meetsMoneyTargets } from "../../shared/money/cents.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
-import { isUsableRawPrice, referencePriceReason } from "../../shared/money/price-evidence.ts";
+import { retargetEvaluation } from "../../shared/money/targets.ts";
+import { isUsableRawPrice, photoMatchedRawPrice, referencePriceReason } from "../../shared/money/price-evidence.ts";
 import { rawBuyGuidance, rawPriceReferences } from "../../shared/money/raw-buy-guidance.ts";
 import { slabBuyGuidance } from "../../shared/money/slab-buy-guidance.ts";
 import { acquisitionCost, maxBid } from "../../shared/money/underwriting.ts";
@@ -179,8 +180,29 @@ function liquidityNote(sales: number) {
     return sales < 3 ? "Liquidity confidence is low with this small sample." : "";
 }
 
+// Find a flip can use asks to prioritize research. Only a supported exit
+// belongs in the profit calculation, including on older saved evaluations.
+export function flipResaleEvidence(value: Evaluation, goal: DealHuntGoal, targets: Targets): Evaluation {
+    const raw = value.rawPricing;
+    if (goal !== "resell" || !raw?.prices?.some(row => row.basis?.startsWith("TCGPLAYER_"))) return value;
+    const comparison = raw.prices.find(row => row.condition === value.condition?.rawCondition &&
+        row.basis?.startsWith("TCGPLAYER_") && isUsableRawPrice(row))?.offers;
+    const prices = raw.prices.flatMap(row => {
+        if (!row.basis?.startsWith("TCGPLAYER_")) {
+            return raw.conditionEvidence === "AI_PHOTOS" || photoMatchedRawPrice(row.comps, row.condition) === row.price ? [row] : [];
+        }
+        const comps = raw.ebayComps?.find(s => s.grader === "RAW" && s.grade === row.condition);
+        const price = photoMatchedRawPrice(comps, row.condition);
+        return price === null || !comps ? [] : [{ condition: row.condition, price, comps, updatedAt: comps.newestSale, basis: "EBAY_SOLD" as const }];
+    });
+    return retargetEvaluation({ ...value, rawPricing: { ...raw, prices, tcgplayerComparison: comparison,
+        ...(prices.length ? { status: "PRICED", conditionEvidence: "AI_PHOTOS" } : {
+            status: "PRICE_UNAVAILABLE", reason: "The TCGplayer quote shows current competition. A matched resale price is still needed." }) } }, targets);
+}
+
 export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: number | (() => number) = Date.now, market?: HuntMarket | HuntMarket[], targets: Targets = MONEY_CONFIG.targets,
     maxDelivered?: number, { preferRecentSales = false }: { preferRecentSales?: boolean } = {}): DealHuntCandidate | null {
+    value = flipResaleEvidence(value, goal, targets);
     const timestamp = typeof clock === "number" ? () => clock : clock;
     const kind = observedCardKind(value);
     const auction = value.listing.buyingOption === "AUCTION";
@@ -192,11 +214,12 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
     const requiresLiquidity = preferRecentSales && goal === "resell";
     function canCheckReferences(completed: ReadonlySet<DealHuntAction>, now: number) {
         if (!completed.has("check_sales") || !completed.has("inspect_photos") || !completed.has("check_listing") ||
-            goal === "grade_raw" || value.underwriting?.verdict !== "CANT_PRICE" || listingTerms(value, now).status ||
+            goal === "grade_raw" || (value.underwriting?.verdict !== "CANT_PRICE" &&
+                !(value.rawPricing?.tcgplayerComparison && value.underwriting?.verdict === "PASS")) || listingTerms(value, now).status ||
             value.listing.endTime && Date.parse(value.listing.endTime) <= now ||
             value.deeperPhotoReview?.findings.some(f => f.impact === "NEW_CONCERN") ||
             (slab ? !verifiedSlabMarketKey(value, { allowScratchedCase: true }) || slabMarket(value, now) : rawMarket(value, now)) ||
-            huntReferenceEvidence(value, now)) return false;
+            (!value.rawPricing?.tcgplayerComparison && huntReferenceEvidence(value, now))) return false;
         const target = supplementalMarket(value);
         if (!target || target.provisional !== null) return false;
         const item = auction ? nextAuctionBid(value.listing, now) : value.listing.price;
@@ -217,6 +240,13 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
         const observations = raw ? [raw.basis?.startsWith("TCGPLAYER_")
             ? `Condition-matched TCGplayer estimate ${dollars(raw.price)}. Current offers are price evidence, not completed sales.`
             : `Condition-matched raw sale estimate ${dollars(raw.price)}.`] : [];
+        if (!raw && value.rawPricing?.tcgplayerComparison) {
+            const quote = value.rawPricing.tcgplayerComparison;
+            const lowest = quote.offers.length ? Math.min(...quote.offers.map(o => o.total)) : null;
+            observations.push(lowest !== null ? `The lowest ${quote.marketCondition} TCGplayer ask is ${dollars(lowest)} with shipping.`
+                : `TCGplayer reports a ${quote.marketCondition} market estimate of ${dollars(quote.price)}.`);
+            observations.push("A matched completed sale is needed to price this flip.");
+        }
         if (!raw) {
             const guidance = rawBuyGuidance(value, now, targets);
             if (guidance) observations.push(guidance.explanation);

@@ -72,10 +72,10 @@ function copyMarkets(value: Evaluation, goal: DealHuntGoal, slab: boolean, inclu
         const row = raw.prices?.find(row => row.condition === condition && isUsableRawPrice(row));
         const physical = row?.comps ?? raw.ebayComps?.find(s => s.grader === "RAW" && s.grade === condition && s.count > 0);
         const seller = raw.sellerConditionComps;
-        const summary = seller?.grader === "RAW" && seller.grade === condition && seller.count > 0 ? seller
-            : physical?.grader === "RAW" && physical.grade === condition ? physical : undefined;
+        const verified = physical?.grader === "RAW" && physical.grade === condition && physical.count > 0 ? physical : undefined;
+        const summary = verified ?? (seller?.grader === "RAW" && seller.grade === condition && seller.count > 0 ? seller : undefined);
         if (row) result.push({ summary, price: row.price, basis: row.basis?.startsWith("TCGPLAYER_") ? row.basis : "EBAY_SOLD",
-            quoteAsOf: row.offers?.checkedAt, activityScope: summary === physical ? "PHOTO_CONDITION" : "SELLER_CONDITION", condition, variant: raw.variant,
+            quoteAsOf: row.basis?.startsWith("TCGPLAYER_") ? row.offers?.checkedAt : undefined, activityScope: summary === physical ? "PHOTO_CONDITION" : "SELLER_CONDITION", condition, variant: raw.variant,
             path: paths.find(path => path.path === "RAW" && path.priceCondition === condition && path.salePrice === row.price) });
     }
     const likely = value.condition.gradeRange?.likely;

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import type { AiUsageDay, HuntProgress } from "../../../shared/ai-usage.ts";
 import { DEAL_HUNT_LISTING_LIMIT, dealHuntGoals, type DealHuntGoal, type DealHuntReport, type DealHuntResponse, type DealHuntScope, type HuntMarketPreferences } from "../../../shared/deal-hunt.ts";
 import type { ListingFilters } from "../../../shared/listing-filters.ts";
+import { CONDITION_NAMES, isRawCondition } from "../../../shared/conditions.ts";
 import { dollars } from "../../../shared/format.ts";
 import { MONEY_CONFIG } from "../../../shared/money/config.ts";
 import { acquisitionCost } from "../../../shared/money/underwriting.ts";
@@ -179,7 +180,9 @@ export function DealHuntResult({ result, now, targets, updatedTerms, currentList
     if (selectedPrices?.lookup && selectedPrices.lookup.market === savedPrices?.lookup?.market) selectedPrices.additional = savedPrices.additional;
     const mismatch = physical?.identity?.notThisCard;
     const release = mismatch || (physical && releaseIssue(physical));
-    const expired = release || outdated || expiredGrading || expiredPurchase || auction && auction.validUntil <= now;
+    const unverifiedResaleBid = report.decision === "BID" && report.goal === "resell" &&
+        result.auctionOpportunity?.marketBasis?.startsWith("TCGPLAYER_");
+    const expired = release || outdated || expiredGrading || expiredPurchase || unverifiedResaleBid || auction && auction.validUntil <= now;
     const bid = report.decision === "BID";
     const resaleBid = bid && !expired && result.auctionOpportunity?.status === "BID" ? result.auctionOpportunity : null;
     const quoteSource = tcgplayerEstimateLabel(resaleBid?.marketBasis);
@@ -196,8 +199,16 @@ export function DealHuntResult({ result, now, targets, updatedTerms, currentList
         result.evaluation && !result.evaluation.underwriting?.shippingUnconfirmed && (updatedTerms.get(current.listing.id) ?? 0) <= checked
         ? checkedTerms(current.listing, result.evaluation, now) : null;
     const explanation = <>
+        {resaleBid?.maxBid != null && <p>Recommended max snipe <strong>{dollars(resaleBid.maxBid)}</strong> item bid.
+            {resaleBid.totalAtMaxBid != null && resaleBid.profitAtMaxBid != null &&
+                ` At that bid, you pay ${dollars(resaleBid.totalAtMaxBid)} delivered and project ${dollars(resaleBid.profitAtMaxBid)} profit after costs.`}</p>}
         {terms && !grading && <p>Estimated total to buy <strong>{dollars(acquisitionCost(terms.price, terms.shipping, MONEY_CONFIG.buying))}</strong> including shipping and estimated tax.</p>}
-        {exit && rawPrice && !expired && <p>Resale {dollars(rawPrice.price)} · {tcgplayerEstimateLabel(rawPrice.basis) ?? (reviewed?.rawPricing?.source === "pkmnprices" ? "Matched eBay sales via PKMNPrices" : "Matched eBay sales")}</p>}
+        {rawPrice && !expired && <p>Raw resale used for profit <strong>{dollars(rawPrice.price)}</strong>
+            {isRawCondition(rawPrice.condition) && ` · ${CONDITION_NAMES[rawPrice.condition]}`} · {tcgplayerEstimateLabel(rawPrice.basis) ?? "Matched eBay sales"}</p>}
+        {exit?.path === "GRADED_RESALE" && exit.salePrice != null && !expired && <p>Slab resale used for profit <strong>{dollars(exit.salePrice)}</strong>
+            {" · "}{reviewed?.slab?.grader} {reviewed?.slab?.grade} · Matched eBay sales</p>}
+        {exit?.path === "GRADE" && exit.expectedSale != null && !expired && <p>Estimated resale after {exit.grader} grading <strong>{dollars(exit.expectedSale)}</strong>
+            {" · Weighted across the projected grades"}</p>}
         <p>{release || (expiredGrading ? expiredGradingReason : expired ? bid
             ? "The next search checks the auction terms before calculating a bid limit."
             : "The next search checks current prices and availability before recommending a buy." : report.reason)}</p>
@@ -216,7 +227,7 @@ export function DealHuntResult({ result, now, targets, updatedTerms, currentList
         {(selected && current || otherListings.length > 0) && <div className={styles.tileGrid} aria-label="Listings found">
         {selected && current && <HuntListingCard listing={current.listing} decision={decision} now={now} fallbackImages={selected.images}
             onEvidence={destination ? onEvidence : undefined} evidenceLabel={destination ? `View ${huntSections[destination.section]}` : undefined}
-            shortlist={shortlistButton(selected)}><MarketPrices prices={selectedPrices ?? undefined} now={now} />{explanation}</HuntListingCard>}
+            shortlist={shortlistButton(selected)}>{explanation}<MarketPrices prices={selectedPrices ?? undefined} now={now} /></HuntListingCard>}
         {otherListings.map(row => <HuntListingCard key={row.id} listing={row} now={now} shortlist={shortlistButton(row)}>
             <MarketPrices prices={result.candidatePrices?.[row.id]} now={now} />
         </HuntListingCard>)}

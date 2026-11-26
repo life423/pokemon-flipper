@@ -1,9 +1,11 @@
 import type { Evaluation } from "./types.ts";
 import { CONDITION_RULES_VERSION, RAW_CONDITIONS, isRawCondition, sellerCreaseOverridesCondition } from "./conditions.ts";
 import { hasSpecialSlabTitle } from "./grade-qualifier.ts";
-import { hasMismatchedPricePrinting, isRawSoldPrice, isUsableRawPrice } from "./money/price-evidence.ts";
+import { hasMismatchedPricePrinting, isRawSoldPrice, isUsableRawPrice, photoMatchedRawPrice } from "./money/price-evidence.ts";
 import { hasBaseSetFourthPrint } from "./reprint-release.ts";
 import { conflictsWithPhotoFinish } from "./photo-evidence.ts";
+import { parseListingLink } from "./listing-link.ts";
+import { median, rawPriceDeviation, soldMarketPrice } from "./sold-evidence.ts";
 import { hasSavedConditionExamples } from "./ebay-condition-notes.ts";
 
 // Pricing changes do not invalidate paid photo/condition assessments.
@@ -39,7 +41,28 @@ export function priceEvidenceHasExpired(evaluation: Evaluation, now: number): bo
 }
 
 export function currentPriceEvidence(evaluation: Evaluation, now = Date.now()): boolean {
-    const quote = evaluation.rawPricing?.prices?.find(row => row.condition === evaluation.condition?.rawCondition && isUsableRawPrice(row))?.offers;
+    const selected = evaluation.rawPricing?.prices?.find(row => row.condition === evaluation.condition?.rawCondition && isUsableRawPrice(row));
+    // Earlier valuations preferred any TCGplayer quote over their own matched sales.
+    if (selected?.basis?.startsWith("TCGPLAYER_")) {
+        const summary = evaluation.rawPricing?.ebayComps?.find(s => s.grader === "RAW" && s.grade === selected.condition);
+        const sold = photoMatchedRawPrice(summary, selected.condition);
+        if (sold !== null) return false;
+    }
+    if (selected?.comps && photoMatchedRawPrice(selected.comps, selected.condition) !== null &&
+        selected.comps.marketEstimate?.method !== "FILTERED_SOLD_MEAN") {
+        const seen = new Set<string>();
+        const amounts = selected.comps.sales.filter(sale => {
+            const id = parseListingLink(sale.url)?.itemId;
+            if (!id) return true;
+            if (seen.has(id)) return false;
+            seen.add(id);
+            return true;
+        }).map(sale => sale.price);
+        const middle = median(amounts), deviation = rawPriceDeviation(amounts, middle);
+        if (amounts.some(price => Math.abs(price - middle) > deviation) ||
+            Math.round(amounts.reduce((sum, price) => sum + price, 0) / amounts.length * 100) / 100 !== selected.price) return false;
+    }
+    const quote = selected?.offers ?? evaluation.rawPricing?.tcgplayerComparison;
     if (quote && (!(now - Date.parse(quote.checkedAt) >= 0) || now - Date.parse(quote.checkedAt) >= 6 * 3_600_000 ||
         quote.method === "LOWEST_DELIVERED_COMPETITION" && !(now - Date.parse(quote.snapshotAt) >= 0 && now - Date.parse(quote.snapshotAt) < 86_400_000))) return false;
     if (!evaluation.slab && hasSavedConditionExamples(evaluation.listing)) return false;
@@ -77,6 +100,7 @@ export function currentPriceEvidence(evaluation: Evaluation, now = Date.now()): 
     const raw = evaluation.rawPricing?.prices;
     const soldSummaries = [...gradedSummaries, evaluation.rawPricing?.sellerConditionComps, evaluation.rawPricing?.cleanerSellerConditionComps,
         ...(evaluation.rawPricing?.ebayComps ?? []), ...(raw ?? []).map(price => price.comps)];
+    if (soldSummaries.some(s => s?.marketEstimate?.method === "RECENCY_WEIGHTED_MEDIAN" && soldMarketPrice(s) !== s.marketEstimate.price)) return false;
     if (soldSummaries.some(summary => summary?.sales?.some(sale => hasBaseSetFourthPrint(evaluation.identity?.set, sale.title)))) return false;
     if (raw?.some(price => !isUsableRawPrice(price)) && !raw.some(isUsableRawPrice) &&
         !Object.values(evaluation.gradedPricing ?? {}).some(pricing => pricing.status === "PRICED")) return false;

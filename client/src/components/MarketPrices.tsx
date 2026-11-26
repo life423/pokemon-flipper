@@ -64,9 +64,9 @@ export function MarketPrices({ prices, now }: { prices?: ListingMarketPrices; no
     return <section ref={panel} aria-label={`Resale comparisons · ${label}`}>
         <strong className={styles.heading}>Market prices · {label}</strong>
         <dl className={styles.prices}>
-            <div><dt>eBay sold median</dt><dd>{sold ? dollars(sold.price) + " USD" : "No matched sales"}</dd>
+            <div><dt>{sold?.filteredMean ? "eBay sold average" : "eBay sold median"}</dt><dd>{sold ? dollars(sold.price) + " USD" : "No matched sales"}</dd>
                 {sold && <dd className={styles.detail}>{sold.count} {sold.count === 1 ? "sale" : "sales"} in {sold.days} days{sold.sellerCondition && " · seller-described condition"}
-                    {sold.latestSale && " · latest " + dayOf(sold.latestSale)}</dd>}</div>
+                    {sold.latestSale && " · latest " + dayOf(sold.latestSale)} · shipping unreported</dd>}</div>
             {tcg?.market != null && <div><dt>TCGplayer market</dt><dd>{dollars(tcg.market)} USD</dd>
                 <dd className={styles.detail}>{tcg.condition}{tcg.checkedAt && " · " + dayOf(tcg.marketRecordAt || tcg.checkedAt)}</dd></div>}
             {offer != null && <div><dt>TCGplayer lowest offer</dt><dd>{dollars(offer)} USD</dd>

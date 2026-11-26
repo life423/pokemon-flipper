@@ -1,4 +1,5 @@
 import { MONEY_CONFIG } from "./money/config.ts";
+import { rawPriceForPath } from "./money/price-evidence.ts";
 import { pathNumbers } from "./money/underwriting.ts";
 import { photoReviewStatus } from "./photo-review.ts";
 import { hasSlabEvidence } from "./photo-evidence.ts";
@@ -19,7 +20,8 @@ export function scenarioAt(path: PricedPath, price: number) {
 export function auctionDecision(evaluation: Evaluation, targets: Targets = MONEY_CONFIG.targets, now = Date.now()) {
     const best = evaluation.underwriting?.best;
     const current = evaluation.listing.price;
-    const ceiling = best && Number.isFinite(best.maxBid) && best.maxBid > 0 ? best.maxBid : null;
+    const quoteOnly = best && rawPriceForPath(evaluation.rawPricing, best)?.basis?.startsWith("TCGPLAYER_");
+    const ceiling = best && !quoteOnly && Number.isFinite(best.maxBid) && best.maxBid > 0 ? best.maxBid : null;
     const provisional = !evaluation.photoCheck || photoReviewStatus(evaluation).needsYourReview || (!evaluation.slab && evaluation.condition?.rawCondition === "UNKNOWN");
     const ended = evaluation.listing.availability === "UNAVAILABLE" || Boolean(evaluation.listing.endTime && Date.parse(evaluation.listing.endTime) <= now);
     const overLimit = ceiling !== null && current !== null && current > ceiling;
