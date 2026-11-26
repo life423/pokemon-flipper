@@ -294,12 +294,17 @@ test("source filtering keeps assurance/holder wording without admitting other ju
         const address = String(input);
         if (address.includes("oauth2/token")) return Response.json({ access_token: "offline", expires_in: 3600 });
         if (address.includes("rate_limit")) return Response.json({ rateLimits: [{ apiName: "Browse", resources: [{ name: "buy.browse", rates: [{ count: 0, limit: 5000, remaining: 5000 }] }] }] });
-        return Response.json({ total: titles.length, itemSummaries: titles.map((title, index) => ({ itemId: `v1|filter-${index}|0`, title, buyingOptions: ["FIXED_PRICE"], price: { currency: "USD", value: "100" } })) });
+        return Response.json({ total: titles.length, itemSummaries: titles.map((title, index) => ({ itemId: `v1|filter-${index}|0`, title,
+            image: { imageUrl: `https://i.ebayimg.com/images/g/front-${index}/s-l500.jpg` },
+            buyingOptions: ["FIXED_PRICE"], price: { currency: "USD", value: "100" } })) });
     });
     const result = await searchListings(`offline-filter-context-${Date.now()}`);
     assert.deepEqual(result.listings.map(row => row.title), titles.slice(0, 2));
     assert.equal(result.skipped, 4);
-    assert.deepEqual(result.rejections, ["PROXY_OR_REPLICA", "MYSTERY", "EMPTY_HOLDER", "PROXY_OR_REPLICA"].map((reason, index) => ({
-        id: `v1|filter-${index + 2}|0`, reason,
+    assert.deepEqual(result.rejections?.map(({ id, reason, listing }) => ({ id, reason, title: listing?.title,
+        images: listing?.images, currentPrice: listing?.currentPrice })), ["PROXY_OR_REPLICA", "MYSTERY", "EMPTY_HOLDER", "PROXY_OR_REPLICA"].map((reason, index) => ({
+        id: `v1|filter-${index + 2}|0`, reason, title: titles[index + 2],
+        currentPrice: 100,
+        images: [`https://i.ebayimg.com/images/g/front-${index + 2}/s-l500.jpg`],
     })));
 });

@@ -1,3 +1,4 @@
+import { currentQuote } from "../../shared/fresh-listing.ts";
 import { createHash } from "node:crypto";
 import { auctionOpportunity, currentAuctionMarket, withinOpportunityWindow } from "../../shared/auction-opportunity.ts";
 import { resultGroup } from "../../shared/analysis.ts";
@@ -55,8 +56,7 @@ type Evidence = BuyerListingReview["evidence"];
 type Research = "assess" | "printing" | "deeper" | "prices" | "terms";
 
 function freshTerms(e: Evaluation, now: number) {
-    const age = now - Date.parse(e.listing.termsCheckedAt ?? "");
-    return age >= 0 && age <= BEST_BUY_TERMS_MAX_AGE_MS && matchesShippingDestination(e);
+    return currentQuote(e.listing.termsCheckedAt, now) && matchesShippingDestination(e);
 }
 
 function matchesShippingDestination(e: Evaluation) {

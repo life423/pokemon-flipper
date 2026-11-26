@@ -3,7 +3,6 @@ import type { EbayUsage, Targets } from "../types";
 import type { AiUsageDay } from "../../../shared/ai-usage.ts";
 import type { ResultGroups, View, SortKey, SearchFilters, TypeFilter, KindFilter } from "./results";
 import { ALL, AUTO_OPTIONS } from "./settings";
-import { DEVELOPMENT_SEARCH_LIMIT, SEARCH_SOURCE_PAGE_LIMIT } from "../../../shared/research-policy.ts";
 import type { MarketplaceOrder } from "../../../shared/listing-filters.ts";
 import { MAX_OFFER_DISCOUNT_PERCENT } from "../../../shared/money/cents.ts";
 import { describeUsage } from "./presentation";
@@ -65,9 +64,9 @@ const VIEW_NAMES: Record<View, string> = {
     deals: "Deals",
     bids: "Bid opportunities",
     offers: "Offers",
-    candidates: "Sorting",
+    candidates: "Under review",
     review: "Wait or skip",
-    losses: "Projected losses",
+    losses: "Resale losses",
     all: "All matching",
 };
 function Segmented<T extends string>({
@@ -99,7 +98,7 @@ function PurchaseFields({ filters }: Pick<SearchControlsProps, "filters">) {
     return <>
                 <label className={styles.field}>
                     <span>Listing format</span>
-                    <select value={typeFilter} onChange={({ target: { value } }) => withViewTransition(() => setTypeFilter(value as TypeFilter))}>
+                    <select value={typeFilter} onChange={({ target: { value } }) => setTypeFilter(value as TypeFilter)}>
                         <option value="FIXED_PRICE">Buy It Now</option>
                         <option value="AUCTION">Auctions ending in under 10 hours</option>
                         <option value="all">Both formats</option>
@@ -107,9 +106,9 @@ function PurchaseFields({ filters }: Pick<SearchControlsProps, "filters">) {
                 </label>
                 <label className={styles.field}>
                     <span>Card type</span>
-                    <select value={kindFilter} onChange={({ target: { value } }) => withViewTransition(() => setKindFilter(value as KindFilter))}>
-                        <option value="all">Both</option>
-                        <option value="raw">Raw cards</option>
+                    <select value={kindFilter} onChange={({ target: { value } }) => setKindFilter(value as KindFilter)}>
+                        <option value="all">Ungraded and graded</option>
+                        <option value="raw">Ungraded cards</option>
                         <option value="graded">Graded cards</option>
                     </select>
                 </label>
@@ -125,7 +124,7 @@ function PurchaseFields({ filters }: Pick<SearchControlsProps, "filters">) {
                     <span className={styles.affix}><span>$</span><input type="number" min="0" inputMode="decimal" placeholder="Any" value={minPrice} onChange={(event) => changeMinPrice(event.target.value)} /></span>
                 </label>
                 <label className={styles.field}>
-                    <span>Maximum purchase price</span>
+                    <span>Maximum item price</span>
                     <span className={styles.affix}><span>$</span><input type="number" min="0" inputMode="decimal" placeholder="Any" value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} /></span>
                 </label>
     </>;
@@ -135,13 +134,14 @@ export function SearchOptions({ filters, target, shipping }: Pick<SearchControls
     return <section className={styles.searchOptions} data-marketplace-order={filters.typeFilter !== "AUCTION" || undefined} aria-label="Search options">
         <PurchaseFields filters={filters} />
         <div className={styles.searchTargets}>
-            <span>Profit &amp; return targets</span>
+            <span>Resale targets (optional)</span>
             <div className={styles.targets}><TargetFields targetInputs={target.targetInputs} changeTarget={target.changeTarget} /></div>
         </div>
         <ShippingDestination {...shipping} />
         <details className={styles.searchHelp}>
             <summary>How this search works</summary>
-            <p>English cards only. Each discovery pass fetches up to {SEARCH_SOURCE_PAGE_LIMIT} listing summaries; the app keeps up to {DEVELOPMENT_SEARCH_LIMIT} results for display and assessment. Screening can continue past {DEVELOPMENT_SEARCH_LIMIT} unresolved rows, and a thin newest-first Buy It Now search can add a lower-price pass. Listing coverage below records exclusions and rows not reached. Identity and condition remain preliminary until photo assessment. All prices by default. The minimum applies to Buy It Now and the maximum to both formats.</p>
+            <p>We compare English cards on eBay using recent sales and competing listings. Photo reviews check which version the seller has and what condition it’s in. The estimated total includes shipping and tax.</p>
+            <p>The minimum item price applies to Buy It Now. The maximum applies to both formats, before shipping and tax. Set a resale target if you want deals that meet a minimum profit or return.</p>
         </details>
     </section>;
 }
@@ -179,12 +179,12 @@ export function SearchControls({ searchPage = false, hidden, idle, views, filter
         typeFilter !== "all" && {
             key: "type",
             label: typeFilter === "AUCTION" ? "Auctions only" : "Buy It Now only",
-            clear: () => withViewTransition(() => setTypeFilter("all")),
+            clear: () => setTypeFilter("all"),
         },
         kindFilter !== "all" && {
             key: "kind",
             label: kindFilter === "raw" ? "Raw only" : "Graded only",
-            clear: () => withViewTransition(() => setKindFilter("all")),
+            clear: () => setKindFilter("all"),
         },
         minPrice !== "" && { key: "min", label: `Buy It Now ≥ $${minPrice}`, clear: () => changeMinPrice("") },
         maxPrice !== "" && { key: "max", label: `Price ≤ $${maxPrice}`, clear: () => setMaxPrice("") },
@@ -197,10 +197,8 @@ export function SearchControls({ searchPage = false, hidden, idle, views, filter
         changeMinPrice("");
         setMaxPrice("");
         changeMinGrade(0);
-        withViewTransition(() => {
-            setTypeFilter("all");
-            setKindFilter("all");
-        });
+        setTypeFilter("all");
+        setKindFilter("all");
     };
 
 
@@ -346,7 +344,7 @@ export function SearchControls({ searchPage = false, hidden, idle, views, filter
                 <section className={styles.drawerSection}>
                     <h3>Each search</h3>
                     <label className={styles.offerToggle}>
-                        <span>Include deals requiring a Best Offer<small>Up to {MAX_OFFER_DISCOUNT_PERCENT}% below asking. The seller would need to accept.</small></span>
+                        <span>Show listings open to offers<small>Suggested offers can be up to {MAX_OFFER_DISCOUNT_PERCENT}% below asking. The seller must accept the offer.</small></span>
                         <input type="checkbox" role="switch" checked={includeOffers} onChange={(event) => changeIncludeOffers(event.target.checked)} />
                     </label>
                     <label className={styles.field}>

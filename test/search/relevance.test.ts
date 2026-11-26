@@ -84,3 +84,13 @@ test("Crown Zenith searches include its gallery without including other expansio
     assert.equal(setMatches("SWSH: Crown Zenith: Galarian Gallery", intent), true);
     assert.equal(setMatches("Brilliant Stars: Trainer Gallery", intent), false);
 });
+
+test("a seller can space the VSTAR name without admitting a different card or collector number", () => {
+    const intent = { ...INTENT, cardName: "Mewtwo VSTAR", titleWords: ["Mewtwo VSTAR"],
+        sets: ["SWSH: Crown Zenith: Galarian Gallery"], cardNumber: "GG44/GG70" };
+    assert.equal(titleMatches("2023 Pokemon SWSH FA Mewtwo V Star Crown Zenith - #GG44", intent), true);
+    assert.equal(setMatches("Crown Zenith", intent, "GG44"), true);
+    assert.equal(setMatches("Crown Zenith", intent, "GG43"), false);
+    assert.equal(titleMatches("Mewtwo V 030/078", intent), false);
+    assert.equal(titleMatches("Palkia V-Star", intent), false);
+});

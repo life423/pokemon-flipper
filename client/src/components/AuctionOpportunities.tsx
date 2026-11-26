@@ -9,15 +9,18 @@ interface Props {
     listings: ListingSummary[];
     decisions: Record<string, { auctionOpportunity?: AuctionOpportunity }>;
     now: number;
+    bestValueFirst?: boolean;
     onOpen: (id: string, opener: HTMLElement) => void;
 }
 
 const rank = { BID: 0, WATCH: 1, PASS: 2 };
-export function AuctionOpportunities({ listings, decisions, now, onOpen }: Props) {
+export function AuctionOpportunities({ listings, decisions, now, onOpen, bestValueFirst = false }: Props) {
+    const priceRatio = (o: AuctionOpportunity) => o.nextTotal !== null && o.marketValue > 0 ? o.nextTotal / o.marketValue : Infinity;
     const matches = listings.flatMap(listing => {
         const opportunity = decisions[listing.id]?.auctionOpportunity;
         return opportunity && now < opportunity.validUntil ? [{ listing, opportunity }] : [];
     }).sort((a, b) => rank[a.opportunity.status] - rank[b.opportunity.status] ||
+        (bestValueFirst && a.opportunity.status === "BID" ? priceRatio(a.opportunity) - priceRatio(b.opportunity) : 0) ||
         Date.parse(a.opportunity.endsAt) - Date.parse(b.opportunity.endsAt));
     if (!matches.length) return null;
     return <section className={styles.panel} aria-label="Auction opportunities">

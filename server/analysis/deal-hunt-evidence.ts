@@ -1,3 +1,5 @@
+import { currentQuote } from "../../shared/fresh-listing.ts";
+import { relistEstimate, type ComparableAsk, type SaleStatistic } from "../../shared/money/relist-estimate.ts";
 import { affordableBidLimit, auctionOpportunity, nextAuctionBid, withinOpportunityWindow } from "../../shared/auction-opportunity.ts";
 import { collectorAuction } from "../../shared/collector-auction.ts";
 import { freshListingTime, GRADING_WATCH_FRESH_MS, type GradingOpportunity } from "../../shared/grading-watch.ts";
@@ -26,7 +28,6 @@ import type { CompSummary, Evaluation, Grader, PricedPath, Targets } from "../..
 import type { DealHuntCandidate, DealHuntOutcome } from "./deal-hunt.ts";
 import { supplementalMarket } from "../pricing/supplemental-research.ts";
 import { configuredShippingZip } from "../ebay/shipping-destination.ts";
-import { activityDescription } from "./resale-activity.ts";
 import { activityForExit, rankHuntMarkets, salesForExit, verifiedRawFloor, type HuntMarket } from "./same-set-markets.ts";
 import { huntPhotoIdentityIssue } from "./deal-hunt-market-checks.ts";
 
@@ -41,7 +42,6 @@ const STALE_PURCHASE_TERMS = "The saved purchase terms need a fresh availability
 
 function listingTerms(value: Evaluation, now: number) {
     const { price, shipping, availability, termsCheckedAt } = value.listing;
-    const age = now - Date.parse(termsCheckedAt ?? "");
     const destinationMatches = (value.listing.shippingDestination ?? null) === configuredShippingZip();
     const total = destinationMatches && price !== null && Number.isFinite(price) && price > 0 && shipping !== null &&
         Number.isFinite(shipping) && shipping >= 0 && !value.underwriting?.shippingUnconfirmed
@@ -50,7 +50,7 @@ function listingTerms(value: Evaluation, now: number) {
         availability !== "ACTIVE" ? "Availability is unverified." :
         !destinationMatches ? "A current shipping quote is needed for this destination." :
         total === null ? "The delivered purchase total is unverified." :
-        !(age >= 0 && age < BEST_BUY_TERMS_MAX_AGE_MS) ? STALE_PURCHASE_TERMS : "";
+        !currentQuote(termsCheckedAt, now) ? STALE_PURCHASE_TERMS : "";
     const costs = total === null ? "" : `Item ${dollars(price)}, shipping ${dollars(shipping)}, total with estimated tax ${dollars(total)}.`;
     return { total, status, text: [costs, status, termsCheckedAt && `Terms checked ${termsCheckedAt}.`].filter(Boolean).join(" ") };
 }
@@ -183,9 +183,7 @@ export function huntReferenceEvidence(value: Evaluation, now: number): string | 
 }
 
 function liquidityNote(month?: ReturnType<typeof activityForExit>["month"]) {
-    const count = month?.count ?? 0, days = month?.days ?? 0;
-    const evidence = `${count} comparable eBay ${count === 1 ? "sale" : "sales"} on ${days} ${days === 1 ? "day" : "days"} in the last 30 days.`;
-    return month?.qualifies ? evidence : `Liquidity is unverified. ${evidence} A flip needs at least three sales across two days.`;
+    return month?.qualifies ? "Recent matched sales observed." : "Liquidity is unverified for this printing and condition.";
 }
 
 // Find a flip can use asks to prioritize research. Only a supported exit
@@ -209,8 +207,8 @@ export function flipResaleEvidence(value: Evaluation, goal: DealHuntGoal, target
 }
 
 export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: number | (() => number) = Date.now, market?: HuntMarket | HuntMarket[], targets: Targets = MONEY_CONFIG.targets,
-    maxDelivered?: number, { preferRecentSales = false, competingCopies }: { preferRecentSales?: boolean;
-        competingCopies?: (value: Evaluation, path: PricedPath, now: number) => { count: number; lowestDelivered: number | null } } = {}): DealHuntCandidate | null {
+    maxDelivered?: number, { preferRecentSales = false, competingCopies, statistic }: { preferRecentSales?: boolean; statistic?: SaleStatistic;
+        competingCopies?: (value: Evaluation, path: PricedPath, now: number) => { count: number; cheapest: ComparableAsk | null } } = {}): DealHuntCandidate | null {
     value = flipResaleEvidence(value, goal, targets);
     const timestamp = typeof clock === "number" ? () => clock : clock;
     const kind = observedCardKind(value);
@@ -333,8 +331,7 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
             if (requiresLiquidity && !resale?.month.qualifies) return { decision: "WAIT", section, recentSales,
                 reason: liquidityNote(resale?.month) };
             return { decision: offer.status === "BID" ? "BID" : "WAIT",
-                section, reason: [offer.reason, requiresLiquidity && `${recentSales} matching ${recentSales === 1 ? "sale" : "sales"} observed in the last 60 days.`,
-                    resale?.activity && activityDescription(resale.activity), requiresLiquidity && liquidityNote(resale?.month)].filter(Boolean).join(" "),
+                section, reason: offer.reason,
                 ...(resale?.month.validThrough && { liquidityValidThrough: resale.month.validThrough }),
                 ...(requiresLiquidity && { recentSales, resalePriority: resale?.activity?.priority }) };
         }
@@ -407,34 +404,26 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
         const resale = goal === "resell" && exit ? activityForExit(value, exit, markets, now) : null;
         const recentSales = resale?.count ?? null;
         const competitors = requiresLiquidity && exit ? competingCopies?.(value, exit, now) : undefined;
-        if (recentSales !== null && exit) {
-            const label = exit.path === "RAW" && exit.priceCondition ? `${CONDITION_NAMES[exit.priceCondition]} raw` :
-                exit.path === "GRADE" ? `${exit.grader} ${grade}` : `${value.slab?.grader} ${value.slab?.grade}`;
-            reason += ` ${recentSales} observed matching ${label} ${recentSales === 1 ? "sale" : "sales"} in the last 60 days.`;
-            if (resale?.activity) reason += " " + activityDescription(resale.activity);
-            if (requiresLiquidity) {
-                supported &&= resale?.month.qualifies === true;
-                reason += " " + liquidityNote(resale?.month);
-                if (competitors !== undefined) {
-                    const count = competitors.count;
-                    reason += count ? ` This search verified ${count} other active Buy It Now ${count === 1 ? "copy" : "copies"} matching that resale market. Total supply is unknown.` :
-                        "The search has yet to verify another active copy in that resale market. Total supply is unknown.";
-                }
-            } else if (!recentSales) reason += " The returned evidence supplies no matching transactions in that window; a price quote alone does not establish sales activity.";
-            if (exit.profit > 0 && !exit.clears) reason += " The projected return falls short of your profit or ROI target.";
+        if (requiresLiquidity && !resale?.month.qualifies) {
+            supported = false;
+            reason += " " + liquidityNote(resale?.month);
         }
-        let relist: { price: number; profit: number; lowestOtherDelivered: number | null } | undefined;
-        if (requiresLiquidity && !auction && exit && exit.path !== "GRADE" && exit.salePrice && terms.total !== null) {
-            const ask = competitors?.lowestDelivered ?? null;
-            const price = Math.min(exit.salePrice, ask ?? Infinity);
-            const net = netFromSale(price, exit.path === "RAW" ? "raw" : "graded", MONEY_CONFIG.selling);
-            relist = { price, profit: (cents(net) - cents(exit.cost)) / 100, lowestOtherDelivered: ask };
-            if (ask !== null && ask < exit.salePrice) {
-                const clears = meetsMoneyTargets(cents(net), cents(exit.cost), targets.minProfit, targets.minRoi);
-                supported &&= clears;
-                reviewedLimit = Math.min(exit.maxBid, maxBid({ expectedNet: net, fixedCosts: exit.fixedCosts, shipping: exit.shipping }, { ...MONEY_CONFIG, targets }));
-                reason += ` A photo-matched competing copy is offered at ${dollars(ask)} including shipping. Matching it projects ${dollars(relist.profit)} after costs.`;
-            }
+        if (exit && exit.profit > 0 && !exit.clears) reason += " The projected return falls short of your profit or ROI target.";
+        const relist = requiresLiquidity && !auction && exit && terms.total !== null
+            ? relistEstimate(value, exit, competitors?.cheapest ?? null, now, statistic) : null;
+        if (supported && relist && exit?.salePrice !== relist.price) {
+            reason = `Matched eBay sales support an expected resale of ${dollars(relist.price)}, projecting ${dollars(relist.profit)} after purchase and selling costs.`;
+        }
+        if (relist && exit && relist.price < exit.salePrice!) {
+            const net = netFromSale(relist.price, exit.path === "RAW" ? "raw" : "graded", MONEY_CONFIG.selling);
+            supported &&= meetsMoneyTargets(cents(net), cents(exit.cost), targets.minProfit, targets.minRoi);
+            reviewedLimit = Math.min(exit.maxBid, maxBid({ expectedNet: net, fixedCosts: exit.fixedCosts, shipping: exit.shipping }, { ...MONEY_CONFIG, targets }));
+        }
+        const cheaper = relist?.competitor;
+        if (cheaper && value.listing.price != null && value.listing.shipping != null &&
+            cents(cheaper.delivered) < cents(value.listing.price) + cents(value.listing.shipping)) {
+            supported = false;
+            reason = `An equivalent photo-checked copy is available for ${dollars(cheaper.delivered)} including shipping.`;
         }
         if (!supported && completed.has("check_price_references") && !reference) {
             reason = [checkedReferences(now), reason].join(" ");
@@ -452,7 +441,7 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
         const purchase = exit && supported && cautions.length === 0 ? verifiedPurchase(value, exit, targets, reviewedLimit, maxDelivered) : undefined;
         if (purchase && relist) purchase.relist = relist;
         const effectiveLimit = exit && maxDelivered !== undefined && value.listing.shipping !== null
-            ? affordableBidLimit(exit.maxBid, value.listing.shipping, maxDelivered) : exit?.maxBid;
+            ? affordableBidLimit(reviewedLimit ?? exit.maxBid, value.listing.shipping, maxDelivered) : reviewedLimit ?? exit?.maxBid;
         const priceGap = goal === "resell" && exit && exit.path !== "GRADE" && (raw || slabSales) &&
             !cautions.length && !referencePriceReason(value, exit) && currentPriceEvidence(value, now) &&
             !value.deeperPhotoReview?.findings.some(f => f.impact === "NEW_CONCERN") &&
@@ -463,7 +452,7 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
             reason: [reason, ...cautions].join(" "), section, ...(purchase && { verifiedPurchase: purchase }), ...(priceGap && { priceGap }),
             ...(requiresLiquidity && resale?.month.validThrough && { liquidityValidThrough: resale.month.validThrough }),
             ...(competitors?.count && { hasSupplyEvidence: true }),
-            ...(requiresLiquidity && recentSales !== null && { recentSales, resalePriority: resale?.activity?.priority }),
+            ...(recentSales !== null && { recentSales }), ...(requiresLiquidity && { resalePriority: resale?.activity?.priority }),
             alternateSections: section === "grading" && hasGradeComparisons ? ["sales"] : undefined };
     }
     const canRefreshTerms = (completed: ReadonlySet<DealHuntAction>) => !auction && completed.has("check_listing") &&
@@ -486,6 +475,8 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
         read(action) {
             const now = timestamp();
             switch (action) {
+                case "check_market_guides": return "Read the available guides for this printing.";
+                case "review_resale": return "Review current competition and demand for this copy.";
                 case "check_listing": {
                     if (!auction) return listingTerms(value, now).text;
                     const { price, endTime, auctionQuote } = value.listing;

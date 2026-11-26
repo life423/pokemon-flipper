@@ -259,7 +259,7 @@ interface SearchResult {
     total: number;
     skipped: number;
     // Earlier cache entries contain only the aggregate skipped count.
-    rejections?: { id: string; reason: SourceRejectionReason }[];
+    rejections?: { id: string; reason: SourceRejectionReason; listing?: ListingSummary }[];
     unidentifiable?: number;
     nextOffset?: number;
     sourceLimitReached?: boolean;
@@ -319,7 +319,7 @@ async function searchListingsAtDestination(
 
         const listings: ListingSummary[] = [];
         const seen = new Set<string>();
-        const rejections = new Map<string, SourceRejectionReason>();
+        const rejections = new Map<string, NonNullable<SearchResult["rejections"]>[number]>();
         let unidentifiable = 0;
         let total = 0;
         let nextOffset: number | undefined, sourceLimitReached = false;
@@ -368,7 +368,7 @@ async function searchListingsAtDestination(
                 const reason = exclusion ?? (language === "OTHER" ? "OTHER_LANGUAGE" : null);
                 if (reason) {
                     skipped += 1;
-                    rejections.set(item.itemId, reason);
+                    rejections.set(item.itemId, { id: item.itemId, reason, listing: toListing(item, termsCheckedAt) });
                     continue;
                 }
 
@@ -385,7 +385,7 @@ async function searchListingsAtDestination(
         console.log(`Search ${JSON.stringify(search)}: eBay has ${total}; kept ${listings.length} single cards`);
 
         const result: SearchResult = { listings, total, skipped,
-            rejections: Array.from(rejections, ([id, reason]) => ({ id, reason })),
+            rejections: [...rejections.values()],
             ...(unidentifiable ? { unidentifiable } : {}),
             ...(nextOffset !== undefined && { nextOffset }), ...(sourceLimitReached && { sourceLimitReached: true }),
         };

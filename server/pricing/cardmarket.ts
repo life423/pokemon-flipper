@@ -1,4 +1,4 @@
-import type { CardmarketComparison, CardmarketOffer } from "../../shared/cardmarket.ts";
+import { cardmarketRawCondition, type CardmarketComparison, type CardmarketOffer } from "../../shared/cardmarket.ts";
 import type { Evaluation } from "../../shared/types.ts";
 import { cardLanguageStatus } from "../../shared/card-language.ts";
 import { sameCardNumber } from "../../shared/card-number.ts";
@@ -16,9 +16,6 @@ import { latestEuroReference } from "./euro-reference.ts";
 
 const day = 86_400_000;
 const offerLimit = 5;
-// Cardmarket documents only a rough translation between US and European played grades.
-const rawConditions: Partial<Record<NonNullable<Evaluation["condition"]>["rawCondition"], string>> =
-    { MINT: "Mint", NEAR_MINT: "Near Mint" };
 const standardVariant = /^(?:(?:1st edition|shadowless|unlimited) )?(?:normal|holo(?:foil)?|reverse holo(?:foil)?)$|^(?:1st edition|unlimited)$/i;
 const variantKey = (variant: string) => variant.toLowerCase().replace(/holofoil/g, "holo").trim();
 
@@ -69,7 +66,7 @@ export async function compareCardmarket(value: Evaluation, {
     const slab = value.slab;
     if (kind === "graded" && !verifiedSlabMarketKey(value)) return unavailable("The slab needs a verified standard label and grade.");
     const condition = value.condition?.rawCondition;
-    const nativeCondition = condition ? rawConditions[condition] ?? null : null;
+    const nativeCondition = condition ? cardmarketRawCondition(condition) : null;
     if (kind === "raw" && !nativeCondition) {
         return unavailable("This raw condition has no exact Cardmarket comparison. US and Cardmarket played grades use different standards.");
     }

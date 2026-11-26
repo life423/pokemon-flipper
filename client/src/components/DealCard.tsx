@@ -1,3 +1,4 @@
+import { purchaseNeedsRecheck } from "../../../shared/fresh-listing.ts";
 import type { CSSProperties } from "react";
 import type { AnalysisState } from "../analysis-state";
 import { currentBinComparison } from "../../../shared/bin-market-comparison.ts";
@@ -36,8 +37,13 @@ import { isRawSoldPrice, priceEvidenceGap, rawPriceForPath } from "../../../shar
 import { resultGroup } from "../../../shared/analysis.ts";
 import { listingOffer, SellerOfferDraft, type ReviewedDecision } from "./analysis/OfferSection";
 import { soldEstimateBasis, tcgplayerEstimateLabel } from "./analysis/PricingSections";
+import type { DealComparison } from "../search/results";
+import { soldMarketPrice } from "../../../shared/sold-evidence.ts";
+import { parseListingLink } from "../../../shared/listing-link.ts";
 
 interface Props {
+    dealLabel?: "Best deal on eBay" | "Deal";
+    dealComparison?: DealComparison;
     index?: number;
     transitionName?: string;
     listing: ListingSummary;
@@ -64,7 +70,26 @@ const LISTED_DATE = new Intl.DateTimeFormat(undefined, { year: "numeric", month:
 const signed = (value: number) => `${value < 0 ? "−" : "+"}${dollars(Math.abs(value))}`;
 const dateOf = (value: string | null | undefined) => typeof value === "string" && Number.isFinite(Date.parse(value)) ? new Date(value) : null;
 
-export function DealCard({ listing, analysis, assessmentNote, automaticDecision: receipt, reviewPending, reviewActive, selected, now, onOpen, onSnipe, years, index = 0, transitionName, minGrade = 0, targets = MONEY_CONFIG.targets, includeOffers, photoReviewState, saved, saving, onSave }: Props) {
+function comparisonReason(comparison: DealComparison) {
+    if (comparison.kind === "asking") {
+        const basis = "Lowest total price among the matching eBay listings with a shipping quote.";
+        return comparison.soldEstimate ? `${basis} Comparable sales put its value at ${dollars(comparison.soldEstimate)}.`
+            : `${basis} Its value against recent sales is unverified.`;
+    }
+    if (comparison.kind === "sales") {
+        const { pricing, basis } = comparison.value;
+        return `${dollars(pricing.resale - pricing.totalCost)} below the ${dollars(pricing.resale)} estimate from ${pricing.sales} matched eBay ${pricing.sales === 1 ? "sale" : "sales"}. ${basis}.`;
+    }
+    const { condition, totalCost, nextTotal, sales, copies, sellerReported } = comparison.value;
+    const savings = nextTotal - totalCost;
+    const estimate = soldMarketPrice(sales);
+    const price = savings > 0 ? `${dollars(savings)} less than the next copy (${dollars(nextTotal)} delivered)` : "Tied for the lowest delivered price";
+    const comparisonText = `${price} among ${copies} copies of this printing assessed as ${CONDITION_NAMES[condition]}.`;
+    if (estimate === null) return comparisonText;
+    return `${comparisonText} ${sales.count} recent ${sales.count === 1 ? "sale" : "sales"} at ${sellerReported ? "seller-reported" : "photo-checked"} ${CONDITION_NAMES[condition]} put the value at ${dollars(estimate)}.${totalCost > estimate ? ` This copy costs ${dollars(totalCost - estimate)} more.` : ""}`;
+}
+
+export function DealCard({ listing, analysis, assessmentNote, automaticDecision: receipt, reviewPending, reviewActive, selected, now, onOpen, onSnipe, years, index = 0, transitionName, minGrade = 0, targets = MONEY_CONFIG.targets, includeOffers, photoReviewState, saved, saving, onSave, dealLabel, dealComparison }: Props) {
     const assessed = analysis?.status === "done" ? withReleaseEvidence(analysis.evaluation) : null;
     const reviewed = receipt?.decision === "BUY" && assessed?.listing.id === listing.id
         ? applyVerifiedPurchase(assessed, receipt.verifiedPurchase, targets, now) : null;
@@ -75,7 +100,7 @@ export function DealCard({ listing, analysis, assessmentNote, automaticDecision:
     const pricingExpired = analysis?.status === "done" && analysis.pricingExpired;
     const priceGap = priceEvidenceGap(evaluation);
     const shippingPending = evaluation?.underwriting?.shippingUnconfirmed;
-    const shipping = evaluation ? evaluation.listing.shipping : listing.shipping;
+    const shipping = dealComparison ? listing.shipping : evaluation ? evaluation.listing.shipping : listing.shipping;
     const deferred = Boolean(priceGap) || isResearchDeferred(evaluation);
     const photoStatus = photoReviewStatus(evaluation, listing);
     const priceReview = Boolean(priceGap && photoStatus.needsYourReview);
@@ -87,14 +112,17 @@ export function DealCard({ listing, analysis, assessmentNote, automaticDecision:
     const lowerConditionSales = evaluation?.rawPricing?.conditionEvidence === "AI_PHOTOS" && isRawCondition(assessedCondition) &&
         rawPrice && isRawSoldPrice(rawPrice) && isRawCondition(rawPrice.condition) && conditionGap(assessedCondition, rawPrice.condition) > 0 ? rawPrice.comps : undefined;
     const verdict = evaluation?.underwriting?.verdict;
-    const group = resultGroup(listing, evaluation, includeOffers);
+    const group = resultGroup(listing, evaluation, includeOffers, false, now);
     const deal = group === "deals" && Boolean(best);
     const override = automaticDecision && automaticDecision.decision !== "BUY" ? automaticDecision : null;
     const auction = listing.buyingOption === "AUCTION";
     const opportunity = auction ? automaticDecision?.auctionOpportunity : undefined;
     const sellerInventory = auction ? listing.auctionResearch : undefined;
-    const checkedPrice = evaluation?.listing.price;
-    const totalToBuy = !auction && checkedPrice != null && shipping != null && !shippingPending
+    const checkedPrice = dealComparison ? listing.currentPrice : evaluation?.listing.price;
+    const totalToBuy = dealComparison?.kind === "asking" ? dealComparison.total
+        : dealComparison?.kind === "copies" ? dealComparison.value.totalCost
+        : dealComparison?.kind === "sales" ? dealComparison.value.pricing.totalCost
+        : !auction && checkedPrice != null && shipping != null && !shippingPending
         ? acquisitionCost(checkedPrice, shipping, MONEY_CONFIG.buying) : null;
     const currentQuote = opportunity && opportunity.validUntil > now ? opportunity : null;
     const bids = currentQuote ? evaluation?.listing.bids ?? listing.bids : listing.bids;
@@ -149,6 +177,7 @@ export function DealCard({ listing, analysis, assessmentNote, automaticDecision:
             [slabGuidance.explanation, slabGuidance.caseNote].filter(Boolean).join(" ")];
         if (guidance) return [guidance.headline, guidance.decision === "PASS" ? "pass" : "watch", guidance.explanation];
         if (priceGap) return ["Wait for resale evidence", "watch", priceGap];
+        if (purchaseNeedsRecheck(evaluation, now) && !shippingPending) return ["Recheck price", "watch", "Refresh the price, shipping and availability before buying this copy."];
         if (decision?.status === "OVER_LIMIT") return ["Skip", "pass", `The current bid exceeds the ${dollars(decision.ceiling)} limit for your targets.`];
         if (decision?.status === "PROVISIONAL") return ["Wait", "watch", photoStatus.reasons[0] ?? "The photos do not support a firm bid limit for this copy."];
         if (deal && !deferred && best) {
@@ -172,7 +201,9 @@ export function DealCard({ listing, analysis, assessmentNote, automaticDecision:
         if (screen?.soldEvidence && screen.soldEvidence.status !== "AVAILABLE") return ["Wait for resale evidence", "watch", screen.soldEvidence.note];
         return ["Wait", "watch", screen?.reason ?? "This copy has no completed comparison between the listing and matching sales."];
     }
-    const [badge, tone, reason] = buyerDecision();
+    const [badge, verdictTone, reason] = buyerDecision();
+    const tone = dealComparison ? "comparison" : verdictTone;
+    const listingLink = dealLabel && parseListingLink(listing.url);
     const seller = listing.seller;
     const sellerText = seller?.feedbackScore === 0 ? "New seller" : seller?.feedbackPercentage != null
         ? `${seller.feedbackPercentage}% · ${seller.feedbackScore == null ? "rating count unavailable" : `${seller.feedbackScore < 1000 ? seller.feedbackScore.toLocaleString() : COMPACT.format(seller.feedbackScore)} ratings`}` : "Not available";
@@ -189,7 +220,7 @@ export function DealCard({ listing, analysis, assessmentNote, automaticDecision:
                     <ListingThumbnail images={[...listing.images, ...(evaluation?.listing.photos ?? [])]} alt={title} />
                 </button>
                 <div className={styles.identity}>
-                    <div className={styles.metaRow}><span className={styles.saleType}>{auction ? "Auction" : "Buy It Now"}</span><span className={styles.badge}>{badge}</span></div>
+                    <div className={styles.metaRow}><span className={styles.saleType}>{auction ? "Auction" : "Buy It Now"}</span><span className={styles.badge}>{dealLabel ?? badge}</span></div>
                     <h2><button type="button" onClick={onOpen}>{title}</button></h2>
                     {subtitle && <p>{subtitle}</p>}
                     <p className={styles.details}><span>{details.source}: </span>{details.grade} · {details.finish}</p>
@@ -209,6 +240,7 @@ export function DealCard({ listing, analysis, assessmentNote, automaticDecision:
                 </p> : <p className={styles.note}>{auction ? `${timeLeft(currentQuote?.endsAt ?? listing.endTime, now) ?? "End time unavailable"} · ${bids} ${bids === 1 ? "bid" : "bids"} · ` : ""}{shipping === null ? !evaluation && screen?.soldEvidence
                     ? "Shipping not quoted · preliminary screening excludes shipping"
                     : `Shipping not quoted · ${dollars(MONEY_CONFIG.buying.assumedShippingWhenUnknown)} assumed in estimates` : shipping === 0 ? "Free shipping" : `${dollars(shipping)} shipping`}</p>}
+                {dealComparison && <p className={styles.comparisonReason}>{comparisonReason(dealComparison)}</p>}
                 <MarketPrices prices={listingMarketPrices(evaluation, listing, now)} screen={!evaluation ? listing.screen : undefined}
                     loadAdditional={!checking} now={now} />
                 {showEconomics && best?.path === "RAW" && rawPrice && !priceGap && <p className={styles.note}>
@@ -227,11 +259,12 @@ export function DealCard({ listing, analysis, assessmentNote, automaticDecision:
             <div className={styles.actions}>
                 <button type="button" className={styles.open} onClick={onOpen} aria-label={`Open ${title}, ${auction ? "Auction" : "Buy It Now"}, ${details.source}: ${details.grade}, ${details.finish}`}>View analysis <span aria-hidden="true">↗</span></button>
                 <AuctionReminderButton listing={listing} analysis={showEconomics ? analysis : undefined} now={now} targets={targets} onSnipe={onSnipe} />
+                {listingLink && <a href={listingLink.url} target="_blank" rel="noopener noreferrer">View on eBay ↗</a>}
                 {onSave && <button type="button" onClick={() => { if (!saving) onSave(); }} aria-disabled={saving} aria-pressed={saved} aria-label={saving ? `Saving… ${title}` : saved ? `Saved: remove ${title} from shortlist` : `Save ${title} to shortlist`}>{saving ? "Saving…" : saved ? <>Saved <span className={styles.savedMark} aria-hidden="true">✓</span></> : "Shortlist"}</button>}
             </div>
         </div>
         <div className={styles.notices}>
-            <p className={styles.note}>{reason}</p>
+            {!dealComparison && <p className={styles.note}>{dealLabel && auction ? badge + ". " : ""}{reason}</p>}
             {!unavailable && offer && offerNumbers && <p className={styles.note}>Open at {dollars(offer.plan.offer)} · walk away above {dollars(offer.plan.walkAway)} · {offer.path.label} · est. profit {signed(offerNumbers.profit)} if accepted.</p>}
         </div>
         <details className={styles.support}>

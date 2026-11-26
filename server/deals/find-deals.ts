@@ -23,6 +23,7 @@ import { prioritizeListingText } from "./listing-text-priority.ts";
 import { createScreeningPriceSource } from "../pricing/pkmnprices.ts";
 import { autoAnalysisBlockReason } from "../../shared/analysis.ts";
 import type { ScreenedOverflowRow, SearchCompetition, SourceDispositionRow, SourceRejectionReason } from "../../shared/search-diagnostic.ts";
+import { lowestQuotedOffer } from "../../shared/listed-offer.ts";
 import { EbayBudgetError } from "../ebay/usage.ts";
 import { EbayError } from "../ebay/api.ts";
 import { ProviderError } from "../lib/http.ts";
@@ -78,6 +79,7 @@ const defaultSteps: FindSteps = {
 };
 
 export interface SearchSummary {
+    comparisonQuote?: ListingSummary;
     continuation?: SearchContinuation;
     sourceLimitReached?: boolean;
     mode: "development";
@@ -551,7 +553,10 @@ async function findDealsBatch(search: string, {
         const positions = new Map(reviewSelection.listingIds.map((id, index) => [id, index]));
         results.sort((a, b) => (positions.get(a.id) ?? FIRST_REVIEW_COUNT) - (positions.get(b.id) ?? FIRST_REVIEW_COUNT));
     }
-    onStart({ ...summary(results.length), ...(reviewSelection && { reviewSelection }) });
+    // A low resale ceiling can exclude every match from paid reviews. Preserve
+    // the lowest quoted purchase for collectors without putting it in that queue.
+    const comparisonQuote = !inventoryScan && !newOnly && lowestQuotedOffer(excludedByPrice, Date.now())?.listing;
+    onStart({ ...summary(results.length), ...(reviewSelection && { reviewSelection }), ...(comparisonQuote && { comparisonQuote }) });
     for (const listing of results) {
         if (signal?.aborted) return [];
         onListing(listing);

@@ -26,6 +26,13 @@ export function rawPriceDeviation(prices: number[], middle: number): number {
     return Math.max(middle * 0.30, 3 * 1.4826 * median(prices.map(price => Math.abs(price - middle))));
 }
 
+export function typicalSales<T extends { price: number }>(sales: T[]): T[] {
+    if (!sales.length) return [];
+    const prices = sales.map(sale => sale.price), center = median(prices);
+    const bounds = comparablePriceBounds(prices), deviation = rawPriceDeviation(prices, center);
+    return sales.filter(({ price }) => price >= bounds.low && price <= bounds.high && Math.abs(price - center) <= deviation);
+}
+
 // In a sample of three or more, one unusually high sale cannot establish a
 // higher exit price on its own. A second sale at the new level can support it.
 export function capAtSecondHighestSale(price: number, sales: readonly { price: number }[]): number {

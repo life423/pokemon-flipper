@@ -224,8 +224,8 @@ function monthlyLiquidity(dates: readonly string[], now: number) {
     const recent = dates.map(date => Date.parse(date)).filter(at => at <= now && now - at <= 30 * day);
     recent.sort((a, b) => b - a);
     const days = new Set(recent.map(at => Math.floor(at / day))).size;
-    const otherDay = recent.find(at => Math.floor(at / day) !== Math.floor(recent[0] / day));
-    const validThrough = recent.length >= 3 && otherDay !== undefined ? Math.min(recent[2], otherDay) + 30 * day : null;
+    const latest = Math.max(-Infinity, ...dates.map(date => Date.parse(date)).filter(at => at <= now && now - at < SALES_ACTIVITY_MS));
+    const validThrough = Number.isFinite(latest) ? latest + SALES_ACTIVITY_MS : null;
     return { count: recent.length, days, qualifies: validThrough !== null, validThrough };
 }
 
@@ -237,7 +237,7 @@ export function activityForExit(value: Evaluation, path: PricedPath, markets: Hu
         const floor = verifiedRawFloor(value, path, now);
         const sales = observedSoldSales(floor?.summary.activitySales ?? floor?.summary.sales ?? [], now, { maxDays: SALES_ACTIVITY_DAYS })
             .filter(({ sale }) => sale.photoCondition === path.priceCondition && sale.conditionEvidence?.length);
-        const comparable = observedSoldSales(floor?.summary.sales ?? [], now, { maxDays: 30 })
+        const comparable = observedSoldSales(floor?.summary.sales ?? [], now, { maxDays: SALES_ACTIVITY_DAYS })
             .filter(({ sale }) => sale.photoCondition === path.priceCondition && sale.conditionEvidence?.length);
         const bounds = comparablePriceBounds(comparable.map(sale => sale.price));
         return { count: sales.length, activity: resaleActivity(sales), month: monthlyLiquidity(comparable

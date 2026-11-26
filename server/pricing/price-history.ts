@@ -1,4 +1,5 @@
 import type { Evaluation } from "../../shared/types.ts";
+import { typicalSales } from "../../shared/sold-evidence.ts";
 import type { DailyPrice, MarketHistory } from "../../shared/price-history.ts";
 import { CONDITION_NAMES, isRawCondition } from "../../shared/conditions.ts";
 import { huntPhotoIdentityIssue } from "../analysis/deal-hunt-market-checks.ts";
@@ -55,7 +56,7 @@ export async function marketHistory(value: Evaluation, now = Date.now(), history
         if (!verifiedSlabMarketKey(value) || !comp || comp.grader !== value.slab?.grader || Number(comp.grade) !== Number(value.slab.grade) ||
             value.slabPricing?.printing !== id.printing) return unavailable("No exact slab sales series is available.");
         source = "Recorded eBay sales · daily median in USD"; scope = comp.grader + " " + comp.grade;
-        for (const sale of observedSoldSales(comp.activitySales ?? comp.sales, now, {maxDays:90,slab:true})) {
+        for (const sale of typicalSales(observedSoldSales(comp.activitySales ?? comp.sales, now, {maxDays:90,slab:true}))) {
             const day = new Date(sale.at).toISOString().slice(0,10);
             days.set(day, [...(days.get(day) ?? []), sale.price]);
         }
@@ -64,7 +65,7 @@ export async function marketHistory(value: Evaluation, now = Date.now(), history
         if (value.photoCheck && isRawCondition(condition) && pricing?.printing === id.printing && pricing?.finish === id.finish) {
             const receipts = pricing?.prices?.filter(row => row.condition === condition && photoMatchedRawPrice(row.comps, condition) !== null)
                 .flatMap(row => row.comps?.sales ?? []) ?? [];
-            const sales = observedSoldSales(receipts, now);
+            const sales = typicalSales(observedSoldSales(receipts, now));
             for (const sale of sales) {
                 const day = new Date(sale.at).toISOString().slice(0, 10);
                 days.set(day, [...(days.get(day) ?? []), sale.price]);

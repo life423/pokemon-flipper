@@ -29,7 +29,7 @@ export function GuidedFlip({ filters: initialFilters, targets: initialTargets, m
     const startingFilters = session?.filters ?? initialFilters, startingTargets = session?.targets ?? initialTargets;
     const [kindFilter, setKind] = useState<NonNullable<ListingFilters["kindFilter"]>>(startingFilters.kindFilter ?? "all");
     const [maxCost, setMaxCost] = useState(String(startingFilters.maxPrice ?? ""));
-    const [minCost, setMinCost] = useState(String(startingFilters.minPrice || (session ? "" : 10)));
+    const [minCost, setMinCost] = useState(String(startingFilters.minPrice || (session ? "" : 50)));
     const [profit, setProfit] = useState(String(startingTargets.minProfit || ""));
     const [roi, setRoi] = useState(String(startingTargets.minRoi * 100 || ""));
     const [minGrade, setGrade] = useState(session?.minGrade ?? initialGrade);
@@ -87,10 +87,6 @@ export function GuidedFlip({ filters: initialFilters, targets: initialTargets, m
     async function start(event: FormEvent) {
         event.preventDefault();
         if (!active || pending.current || !ready || destination === undefined) return;
-        if (maxCost && Number(minCost) > Number(maxCost)) {
-            setError("The minimum item price exceeds your maximum delivered price.");
-            return;
-        }
         if (session && destination !== session.destination) {
             remember(null); setMessage(changedDestination); setError(""); return;
         }
@@ -120,6 +116,8 @@ export function GuidedFlip({ filters: initialFilters, targets: initialTargets, m
             const asksFixed = /\b(?:buy it now|fixed.price)\b/i.test(text);
             const both = format === "all" && asksAuction === asksFixed;
             const formats: BuyingOption[] = plan?.listingFormats ?? (both ? ["FIXED_PRICE", "AUCTION"] : [plan?.format ?? (format === "all" ? "FIXED_PRICE" : format)]);
+            if (formats.includes("FIXED_PRICE") && Number(minCost) > ceiling)
+                throw new Error("The minimum Buy It Now price exceeds your maximum delivered price.");
             const legs = session?.prepared?.legs ?? formats.map(format => ({ format, id: formats.length > 1 ? newWatchScanId(id) : id, started: Date.now() }));
             for (const leg of legs) restoreWatchBudget(leg.id, id);
             remember({ ...submitted, prepared: { plan, legs } });

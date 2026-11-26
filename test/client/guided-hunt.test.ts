@@ -111,6 +111,39 @@ test("a missed pass waits for the scheduled time and checks the same search agai
     assert.deepEqual(checked, ["fixed", "fixed"]);
 });
 
+test("a disconnected response and a worker still finishing reconnect to the same leg and account with backoff", async t => {
+    t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
+    const root = crypto.randomUUID(), id = newWatchScanId(root);
+    const receipts: { id: string | null; owner: string | null; body: unknown }[] = [];
+    t.mock.method(globalThis, "fetch", async (_url: unknown, options: RequestInit) => {
+        const headers = new Headers(options.headers);
+        receipts.push({ id: headers.get("X-Pokemon-Flipper-Search-Id"), owner: headers.get("X-Pokemon-Flipper-Watch-Budget"), body: options.body });
+        if (receipts.length === 1) {
+            const response = new Response();
+            response.json = async () => { throw new TypeError("Connection closed mid-body"); };
+            return response;
+        }
+        if (receipts.length === 2) return Response.json({ code: "FLIP_RUN_ACTIVE", error: "Already running", retryable: true }, { status: 409 });
+        return Response.json(reply("BUY"));
+    });
+    const waits = [deferred<number>(), deferred<number>()];
+    let waited = 0;
+    const work = runGuidedHuntLegs({ legs: [{ ...legs[0], id }], signal: new AbortController().signal,
+        run: (leg, signal) => runDealHunt(leg.id, { goal: "resell", standalone: true, watch: true, scope: "any_card", listingIds: [],
+            targets: { minProfit: 0, minRoi: 0 }, filters: { typeFilter: leg.format } }, signal),
+        onWaiting(_leg, at, reason) { assert.match(reason, /same search/); waits[waited++].resolve(at - Date.now()); },
+        onResult() {}, isOpportunity: result => result.report.decision === "BUY" });
+    for (const [i, wait] of waits.entries()) {
+        const ms = await wait.promise;
+        assert.equal(ms, 2000 * (i + 1)); t.mock.timers.tick(ms);
+    }
+    assert.equal((await work).report.decision, "BUY");
+    assert.equal(receipts.length, 3);
+    assert.equal(receipts[0].owner, root);
+    assert.equal(receipts[0].id, id);
+    assert.deepEqual(receipts, Array(3).fill(receipts[0]));
+});
+
 test("Stop during the next-check countdown prevents every later dispatch, including after a stale Buy", async t => {
     t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1000 });
     const waiting = deferred<number>(), controller = new AbortController();

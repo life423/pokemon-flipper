@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-    countSearchResults, filterSearchResults, groupSearchResults, sortSearchResults, selectDealAlternatives, selectBestCurrentBuy, selectRawBuyingComparison, rawComparisonQuoteIds,
-    type SearchFilters,
+    countSearchResults, filterSearchResults, groupSearchResults, sortSearchResults, selectDealAlternatives, selectBestCurrentBuy, selectRawBuyingComparison, rawComparisonQuoteIds, lowestListedCopy, buyingComparisonRows,
+    dealTabResults, rankCurrentBuys, rankRawBuyingComparisons, type SearchFilters,
 } from "../../client/src/search/results.ts";
 import { competingAuctions } from "../../client/src/search/competing-auctions.ts";
 import { compareResaleReceipts, validReceipt, type ResaleReceipt } from "../../client/src/search/resale-receipts.ts";
@@ -33,7 +33,7 @@ const listing = (id: string, change: Partial<ListingSummary> = {}): ListingSumma
 function evaluation(item: ListingSummary, resale = 250, level?: RatingLevel): Evaluation {
     const area = () => ({ visibility: "CLEAR", severity: "MINOR", observations: [] });
     const value: Evaluation = {
-        listing: { ...item, price: item.currentPrice, sellerCondition: "Ungraded", cardCondition: null,
+        listing: { termsCheckedAt: new Date().toISOString(), ...item, price: item.currentPrice, sellerCondition: "Ungraded", cardCondition: null,
             conditionNotes: [], aspects: {}, photos: item.images, photosInListing: 1, photosAnalyzed: 1 },
         photoCheck: { cardCount: "ONE", holder: "NONE", confidence: "HIGH", photoSufficiency: "SUFFICIENT",
             images: [{ number: 1, view: "FRONT", usable: true, isStockImage: false, issues: [] }], missingViews: [], problems: [] },
@@ -672,6 +672,16 @@ test("best current buy can show a verified loss without adding it to Deals or pu
     assert.equal(requests.mock.callCount(), 0);
 });
 
+test("the lowest quoted match uses shipping and tax when comparable sales are missing", () => {
+    const quoted = listing("quote", { currentPrice: 30, shipping: 2, url: "https://www.ebay.com/itm/123456789012", termsCheckedAt: new Date(NOW).toISOString() });
+    const rows = [listing("cheaper-item", { ...quoted, id: "costly-shipping", currentPrice: 25, shipping: 12 }), quoted,
+        { ...quoted, id: "unknown-shipping", currentPrice: 1, shipping: null }, { ...quoted, id: "wrong-card", currentPrice: 1, match: "OTHER_CARD" as const },
+        { ...quoted, id: "expired", currentPrice: 1, termsCheckedAt: new Date(NOW - BEST_BUY_TERMS_MAX_AGE_MS).toISOString() }];
+    assert.equal(lowestListedCopy(rows, {}, holoIntent, NOW)?.listing.id, "quote");
+    assert.equal(lowestListedCopy(rows, {}, holoIntent, NOW)?.total, 34.64);
+    assert.equal(lowestListedCopy(rows, {}, holoIntent, NOW, 34), undefined);
+});
+
 test("a lower-condition downside scenario cannot support a current buy recommendation", () => {
     const item = listing("played-copy", { currentPrice: 15 });
     const value = currentBuy(item, 15);
@@ -691,6 +701,12 @@ test("a lower-condition downside scenario cannot support a current buy recommend
 
 test("best current buy withholds stale or unknown terms, material concerns and unsupported raw valuation", () => {
     const item = listing("current-buy"), accepted = currentBuy(item, 120);
+    const summaryOnly = { ...item, availability: undefined };
+    const states = { [item.id]: done(accepted) };
+    assert.ok(selectBestCurrentBuy([summaryOnly], states, holoIntent, NOW), "fresh matching detail confirms availability omitted by Browse");
+    assert.equal(selectBestCurrentBuy([{ ...item, availability: "UNAVAILABLE" }], states, holoIntent, NOW), null);
+    assert.equal(selectBestCurrentBuy([{ ...summaryOnly, shipping: 10 }], states, holoIntent, NOW), null);
+    assert.equal(selectBestCurrentBuy([summaryOnly], states, holoIntent, NOW + BEST_BUY_TERMS_MAX_AGE_MS), null);
     const changes: ((value: Evaluation) => void)[] = [
         value => { value.listing.shipping = null; },
         value => { value.listing.availability = "UNKNOWN"; },
@@ -708,8 +724,12 @@ test("best current buy withholds stale or unknown terms, material concerns and u
     }
     for (const sale of [11.44, 105, 108.25]) {
         const value = currentBuy(item, sale);
-        assert.equal(selectBestCurrentBuy([item], { [item.id]: done(value) }, holoIntent, NOW), null,
-            "the full purchase cost of $108.25 must beat the matched market");
+        const analyses = { [item.id]: done(value) };
+        const rows = buyingComparisonRows([item], analyses, { [item.id]: { decision: "SKIP" } }, null, 0);
+        assert.equal(selectBestCurrentBuy(rows, analyses, holoIntent, NOW)?.pricing.resale, sale,
+            "rank even the least expensive over-market option for a collector");
+        assert.equal(selectBestCurrentBuy(rows, analyses, holoIntent, NOW, undefined, 108), null);
+        assert.deepEqual(buyingComparisonRows([item], analyses, { [item.id]: { decision: "WAIT", waitReason: "MATERIAL_REVIEW" } }, null, 0), []);
     }
     const changed = { ...item, currentPrice: 125 };
     assert.equal(selectBestCurrentBuy([changed], { [item.id]: done(accepted) }, holoIntent, NOW), null,
@@ -761,8 +781,8 @@ test("fresh marketplace comparisons reuse known terms while newer photo conflict
         pricing: { resale: 130, totalCost: 113.66, profit: -10, roi: -8.8, sales: 3 } };
     assert.equal(selectBestCurrentBuy([], {}, exact, NOW, reference)?.listingId, "v1|123456789012|0");
     assert.equal(selectBestCurrentBuy([], {}, exact, NOW + BEST_BUY_TERMS_MAX_AGE_MS, reference), null);
-    assert.equal(selectBestCurrentBuy([], {}, exact, NOW, { ...reference, pricing: { ...reference.pricing!, resale: 110 } }), null,
-        "a marketplace comparison over market after tax cannot be recommended");
+    assert.equal(selectBestCurrentBuy([], {}, exact, NOW, { ...reference, pricing: { ...reference.pricing!, resale: 110 } })?.listingId,
+        "v1|123456789012|0", "retain a current over-market comparison");
     assert.equal(selectBestCurrentBuy([], {}, exact, NOW, { ...reference, checkedAt: undefined }), null,
         "old saved comparisons remain readable but cannot claim a current price");
     const item = listing("v1|123456789012|0", { currentPrice: 100, shipping: 5, isGraded: true });
@@ -835,6 +855,19 @@ test("raw collector comparison uses both sides, same-condition sales and quoted 
     assert.equal(selected.sales.median, 39);
     assert.equal(selected.sellerReported, true);
     assert.equal(selectBestCurrentBuy(rows, analyses, holoIntent, NOW), null);
+    const regular = listing("regular", { currentPrice: 30, shipping: 0, url: "https://www.ebay.com/itm/123456789012", termsCheckedAt: new Date(NOW).toISOString() });
+    const matches = [...rows, regular];
+    const groups = rankRawBuyingComparisons(matches, analyses, holoIntent, NOW);
+    const quote = lowestListedCopy(matches, analyses, holoIntent, NOW);
+    const sales = rankCurrentBuys(matches, analyses, holoIntent, NOW);
+    const picks = dealTabResults([], [], matches, sales, groups, quote, targets);
+    assert.deepEqual(ids(picks.listings), [cheap.id, regular.id], "the better-priced comparable and the cheapest offer both appear in Deals");
+    assert.equal(picks.reasons.get(cheap.id)?.kind, "copies");
+    assert.equal(picks.reasons.get(regular.id)?.kind, "asking");
+    assert.deepEqual(dealTabResults([], [], matches, sales, groups, quote, { minProfit: 10, minRoi: 0 }).listings, []);
+    const verified = dealTabResults([cheap], [], matches, sales, groups, quote, targets);
+    assert.deepEqual(ids(verified.listings), [cheap.id, regular.id]);
+    assert.equal(verified.reasons.has(cheap.id), false, "the purchase verdict remains the strongest reason");
     assert.deepEqual(groupSearchResults(rows, analyses, false, new Set()).deals, []);
     analyses.cheap.evaluation.listing.termsCheckedAt = new Date(NOW - BEST_BUY_TERMS_MAX_AGE_MS).toISOString();
     assert.deepEqual(rawComparisonQuoteIds(rows, analyses, holoIntent, NOW), ["cheap"]);

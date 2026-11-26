@@ -1,3 +1,7 @@
+export function fullSizeEbayPhoto(url: string): string {
+    return url.replace(/\/s-l\d+\./, "/s-l1600.");
+}
+
 // eBay search thumbnails and full listing photos can use different sizes
 // of the same image. Other providers' URLs retain their own identity.
 export function normalizedPhoto(url: string): string {

@@ -25,7 +25,7 @@ function subject() {
     reading.condition!.authenticity = { concern: "NONE_SEEN", reasons: [], observations: [], limitations: [] };
     const listing: ListingDetails = { id: "v1|123456789012|0", title: "Venusaur Base Set 15/102 Unlimited Holo English",
         url: "https://www.ebay.com/itm/123456789012", price: 20, shipping: 0, buyingOption: "FIXED_PRICE", bids: 0, endTime: null,
-        seller: null, availability: "ACTIVE", condition: "Ungraded", cardCondition: "Lightly Played", conditionNotes: [],
+        retrievedAt: new Date(NOW).toISOString(), seller: null, availability: "ACTIVE", condition: "Ungraded", cardCondition: "Lightly Played", conditionNotes: [],
         images: ["front", "back", "front-detail", "back-detail"].map(view => `https://i.ebayimg.com/images/g/offline-${view}/s-l1600.jpg`),
         aspects: { "Card Name": "Venusaur", Set: "Base Set", "Card Number": "15/102", Language: "English", Finish: "Holo" } };
     const card: CardRecord = { source: "pkmnprices", id: 99, name: "Venusaur", setName: "Base Set", cardNumber: "15/102",
@@ -90,7 +90,7 @@ test("completed raw profit remains a Deal when a later grading route is deferred
     sales = seedRawSoldCopies(h.cache, values.listing, "LIGHTLY_PLAYED", 180, NOW);
     const result = await h.evaluate(h.listing.id);
     assert.equal(result.rawPricing?.status, "PRICED"); assert.equal(result.underwriting?.verdict, "BUY_RAW");
-    assert.ok(result.underwriting!.best!.profit > 50); assert.equal(resultGroup(h.summary, result), "deals");
+    assert.ok(result.underwriting!.best!.profit > 50); assert.equal(resultGroup(h.summary, result, false, false, NOW), "deals");
     const retargeted = retargetEvaluation(result, { minProfit: 500, minRoi: 1 });
     assert.equal(retargeted.underwriting?.verdict, "CANT_PRICE", "unfinished grading cannot become a completed PASS after a local target change");
     assert.equal(resultGroup(h.summary, retargeted), "candidates");
@@ -105,7 +105,7 @@ test("completed PSA or CGC scenarios remain actionable when the other grader rea
         assert.equal(result.gradedPricing?.[supported]?.status, "PRICED"); assert.equal(result.gradedPricing?.[supported]?.byGrade?.[0].count, 3);
         assert.equal(result.gradedPricing?.[supported === "PSA" ? "CGC" : "PSA"]?.status, "PRICE_UNAVAILABLE");
         assert.equal(result.underwriting?.verdict, "BUY_AND_GRADE");
-        assert.equal(result.underwriting?.best?.grader, supported); assert.equal(resultGroup(h.summary, result), "deals");
+        assert.equal(result.underwriting?.best?.grader, supported); assert.equal(resultGroup(h.summary, result, false, false, NOW), "deals");
     }
 });
 

@@ -33,7 +33,7 @@ import { PriceResearchStatus } from "./components/PriceResearchStatus";
 import { ProviderUsageNotice } from "./components/ProviderUsageNotice";
 import type { DeeperReviewState } from "./components/PhotoReview";
 import { DealCard } from "./components/DealCard";
-import { BestCurrentBuy, RawCopyComparison } from "./components/BestCurrentBuy";
+import { BestCurrentBuy, LowestListedCopy, RawCopyComparison } from "./components/BestCurrentBuy";
 import { CollectorStrategy } from "./components/CollectorStrategy";
 import { AuctionTracking } from "./components/AuctionTracking";
 import { AuctionOpportunities } from "./components/AuctionOpportunities";
@@ -68,7 +68,8 @@ import { SearchControls, SearchOptions } from "./search/SearchControls";
 import { SearchCoverage } from "./search/SearchCoverage";
 import { matchesContinuationDestination, readContinuationSession, writeContinuationSession, type ContinuationRequest, type ContinuationSession } from "./search/continuation-session";
 import { displayAnalysis, type AnalysisState, type PriceRefreshState } from "./analysis-state";
-import { evaluationOf, filterSearchResults, groupSearchResults, sortSearchResults, countSearchResults, selectDealAlternatives, selectBestCurrentBuy, selectRawBuyingComparison, rawComparisonQuoteIds, type View, type SortKey, type TypeFilter, type KindFilter, type SearchPage } from "./search/results";
+import { evaluationOf, filterSearchResults, groupSearchResults, sortSearchResults, countSearchResults, buyingComparisonRows, lowestListedCopy, selectDealAlternatives, rankCurrentBuys, rankRawBuyingComparisons, competitionListingSummary, dealTabResults, rawComparisonQuoteIds, type View, type SortKey, type TypeFilter, type KindFilter, type SearchPage } from "./search/results";
+import { lowestQuotedOffer } from "../../shared/listed-offer";
 import { ALL, AUTO_KEY, RECENT_KEY, RECENT_LIMIT, STARTER_SEARCHES, readRecentSearches, readTargets, readAutoSetting, targetText } from "./search/settings";
 import { analysisBlockPolicy, describeIntent, describeUsage, type AnalysisBlockCode } from "./search/presentation";
 import { automaticListingBlock, describeListingBlock } from "./search/analysis-admission";
@@ -76,7 +77,7 @@ import { listingsInDiagnosticBatch, searchDiagnosticRows } from "./search/diagno
 import styles from "./App.module.css";
 
 // The views, in order, and what each is called everywhere it appears.
-const VIEWS: View[] = ["all", "deals", "bids", "offers", "candidates", "review", "losses"];
+const VIEWS: View[] = ["deals", "all", "bids", "offers", "candidates", "review", "losses"];
 
 // The search shortcut, as this keyboard writes it.
 const SHORTCUT = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘ K" : "Ctrl K";
@@ -202,6 +203,9 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
     }
     const [total, setTotal] = useState<number | null>(restored?.listings.length ?? null);
     const [summary, setSummary] = useState<SearchSummary | null>(restored?.summary ?? null);
+    if (page === "search" && summary?.comparisonQuote && !latestListings.current.has(summary.comparisonQuote.id)) {
+        latestListings.current.set(summary.comparisonQuote.id, summary.comparisonQuote);
+    }
     const [discoveryProgress, setDiscoveryProgress] = useState<{ found: number; screened: number } | null>(null);
     const [continuingDiscovery, setContinuingDiscovery] = useState(false);
     const continuationAbort = useRef<AbortController | null>(null);
@@ -211,6 +215,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
     const [coverage, setCoverage] = useState<ContinuationSession["coverage"]>(restored?.coverage ?? null);
 
     const lastQuery = useRef(restored?.originalQuery ?? "");
+    const bestDealRun = useRef<string | null>(null);
     const watchSearch = useRef(0);
     const [searchStatus, setSearchStatus] = useState<"idle" | "checking" | "done" | "error">(restored?.searchError ? "error" : restored ? "done" : "idle");
     const [completedSearchRunId, setCompletedSearchRunId] = useState<string | null>(restored?.lastBatchId ?? null);
@@ -236,7 +241,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
     const searchAbort = useRef<AbortController | null>(null);
     const [stopped, setStopped] = useState(restored?.stopped ?? false);
 
-    const [view, setView] = useState<View>(restored?.newIds ? "new" : "all");
+    const [view, setView] = useState<View>(restored?.newIds ? "new" : "deals");
     const [sort, setSort] = useState<SortKey>("best");
     const [marketplaceOrder, setMarketplaceOrder] = useState<MarketplaceOrder>(restored?.request.order ?? "newest");
     const [typeFilter, setTypeFilter] = useState<TypeFilter>(restored?.filters.typeFilter ?? "FIXED_PRICE");
@@ -711,10 +716,23 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
             if (!controller.signal.aborted && linkRevision.current === revision) { setLinkStatus("error"); setLinkError((error as Error).message); }
         } finally { if (linkRevision.current === revision) linkRequest.current = null; refreshUsage(); }
     };
+    const pendingSubmission = useRef<{ key: string } | null>(null);
+    const retryInterpretation = useRef<{ key: string; runId: string } | null>(null);
+    const searchKey = (text: string, filters = currentFilters, order = marketplaceOrder) => JSON.stringify([text.trim(), filters, targets, order, includeOffers, autoSetting, destination]);
+    const submissionKey = searchKey(query);
+    const submittingSameSearch = !linkInput && searchStatus === "checking" && pendingSubmission.current?.key === submissionKey;
     const submitSearch = (event: FormEvent) => {
         event.preventDefault();
         if (linkInput) { if (!linkWorking) void openListingLink(query); }
-        else { cancelLink(); void search(undefined, query); }
+        else {
+            if (pendingSubmission.current?.key === submissionKey && !searchAbort.current?.signal.aborted) return;
+            const submission = { key: submissionKey };
+            pendingSubmission.current = submission;
+            cancelLink();
+            void search(undefined, query).finally(() => {
+                if (pendingSubmission.current === submission) pendingSubmission.current = null;
+            });
+        }
     };
     const chooseEntry = (link: boolean) => {
         setFlipEntry(false);
@@ -775,7 +793,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
     }
 
     // From the search box, or a quick pick with its own text.
-    async function search(event?: FormEvent, text = query, onlyNew = false, watched?: { id: string; rootId: string; messages: DealsMessage[] }) {
+    async function search(event?: FormEvent, text = query, onlyNew = false, watched?: { id: string; rootId: string; messages: DealsMessage[] }, bestDealFormat?: "AUCTION" | "FIXED_PRICE") {
         event?.preventDefault();
 
         if (!text.trim()) return;
@@ -791,8 +809,15 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
 
 
         const id = ++searchId.current;
-        const runId = watched?.id ?? crypto.randomUUID();
+        const needsPlan = !onlyNew && !watched;
+        const searchFilters = bestDealFormat ? { ...huntFilters, typeFilter: bestDealFormat } : currentFilters;
+        const order = bestDealFormat === "FIXED_PRICE" ? "lowest" : marketplaceOrder;
+        const key = searchKey(text, searchFilters, order);
+        const retry = needsPlan && retryInterpretation.current?.key === key ? retryInterpretation.current : null;
+        const runId = watched?.id ?? retry?.runId ?? crypto.randomUUID();
+        if (needsPlan) retryInterpretation.current = null;
         const rootId = watched?.rootId ?? runId;
+        bestDealRun.current = bestDealFormat ? runId : null;
         searchRunId.current = rootId;
         setCompletedSearchRunId(null);
         setAiUsage(null);
@@ -826,36 +851,39 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
         setPriceRefreshes({});
         setSelectedId(null);
         setBudget(autoSetting);
-        setView(onlyNew ? "new" : "all");
+        setView(onlyNew ? "new" : "deals");
         setSearchStatus("checking");
         setSearchError("");
         setAnalysisBlocked("");
         setAnalysisBlockCode(null);
         analysisPaused.current = false;
-        setSubmittedFilters(currentFilters);
+        setSubmittedFilters(searchFilters);
 
         setHuntPrompt(null);
         pendingHuntPrompt.current = null;
         setSearchInterpreting(!onlyNew && !watched);
         if (!onlyNew && !watched) { setSearchPlan(null); plannedQuery.current = ""; }
 
+        let awaitingPlan = needsPlan;
         try {
             let effectiveQuery = onlyNew ? plannedQuery.current || text : text;
-            let effectiveFilters = currentFilters;
+            let effectiveFilters = searchFilters;
             let effectiveTargets = targets;
             if (!onlyNew && !watched) {
-                const plan = await interpretSearchRequest({ query: text, filters: currentFilters }, runId, controller.signal);
+                const plan = await interpretSearchRequest({ query: text, filters: searchFilters }, runId, controller.signal);
                 if (searchId.current !== id) return;
                 controller.signal.throwIfAborted();
+                awaitingPlan = false;
                 setSearchPlan(plan);
                 setSearchInterpreting(false);
                 plannedQuery.current = plan.query;
                 effectiveQuery = plan.query;
                 const plannedKind = plan.intent.graded === true ? "graded" : plan.intent.graded === false ? "raw" : kindFilter;
-                const plannedMax = plan.maxDelivered === null ? currentFilters.maxPrice
-                    : Math.min(plan.maxDelivered, currentFilters.maxPrice ?? Infinity);
-                effectiveFilters = { ...currentFilters, typeFilter: plan.format, kindFilter: plannedKind, maxPrice: plannedMax };
-                setTypeFilter(plan.format);
+                const plannedMax = plan.maxDelivered === null ? searchFilters.maxPrice
+                    : Math.min(plan.maxDelivered, searchFilters.maxPrice ?? Infinity);
+                const plannedFormat = bestDealFormat ?? (plan.listingFormats?.length === 2 ? "all" : plan.format);
+                effectiveFilters = { ...searchFilters, typeFilter: plannedFormat, kindFilter: plannedKind, maxPrice: plannedMax };
+                setTypeFilter(plannedFormat);
                 setKindFilter(plannedKind);
                 setMaxPrice(plannedMax === undefined ? "" : String(plannedMax));
                 setSubmittedFilters(effectiveFilters);
@@ -864,8 +892,9 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
                     setTargets(effectiveTargets);
                     setTargetInputs(targetText(effectiveTargets));
                 }
-                if (plan.workflow === "market_hunt") {
-                    setHuntPrompt({ marketPreferences: plan.marketPreferences, listingFormat: plan.format,
+                if (!bestDealFormat && plan.workflow === "market_hunt" && (plan.goal === "grade_raw" || plan.goal === "collect_slab" || plan.minProfit !== null ||
+                    /\b(?:flips?|flipping|resell|resale|profit(?:able)?)\b/i.test(text))) {
+                    setHuntPrompt({ marketPreferences: plan.marketPreferences, listingFormat: plannedFormat,
                         ...(plan.goal && plan.goal !== "resell" && { goal: plan.goal }),
                         ...(plan.minProfit !== null && { minProfit: plan.minProfit }),
                         ...(plan.maxDelivered !== null && { maxDelivered: plan.maxDelivered }) });
@@ -880,7 +909,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
                 }
             }
             continuationRequest.current = { rootId, query: effectiveQuery, filters: effectiveFilters, targets: effectiveTargets,
-                offers: includeOffers, automaticPhotos: autoSetting !== 0, order: marketplaceOrder };
+                offers: includeOffers, automaticPhotos: autoSetting !== 0, order };
             const receive = (message: DealsMessage) => {
                 if (searchId.current !== id) return;
                 if (message.type === "progress") setDiscoveryProgress({ found: message.found, screened: message.screened });
@@ -898,7 +927,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
             };
             if (watched) watched.messages.forEach(receive);
             else if (onlyNew) await streamNewDeals(effectiveQuery, { minPrice: effectiveFilters.minPrice ?? 0, signal: controller.signal, targets: effectiveTargets, includeOffers, automaticPhotos: autoSetting !== 0, filters: effectiveFilters, searchRunId: runId, knownIds: rawListings.map((listing) => listing.id) }, receive);
-            else await streamDeals(effectiveQuery, { minPrice: effectiveFilters.minPrice ?? 0, signal: controller.signal, targets: effectiveTargets, includeOffers, automaticPhotos: autoSetting !== 0, filters: effectiveFilters, searchRunId: runId, marketplaceOrder }, receive);
+            else await streamDeals(effectiveQuery, { minPrice: effectiveFilters.minPrice ?? 0, signal: controller.signal, targets: effectiveTargets, includeOffers, automaticPhotos: autoSetting !== 0, filters: effectiveFilters, searchRunId: runId, marketplaceOrder: order }, receive);
 
             if (searchId.current === id) {
                 setCompletedSearchRunId(runId);
@@ -908,6 +937,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
         } catch (error) {
             refreshUsage();
             if (searchId.current !== id) return;
+            if (awaitingPlan && !controller.signal.aborted) retryInterpretation.current = { key, runId };
             cancelSearchWork();
             if (error instanceof ApiRequestError && ["EBAY_DAILY_BUDGET", "EBAY_BUDGET_ACCOUNTING", "EBAY_AUTH", "AI_CREDITS", "AI_PAUSED", "AI_BUDGET", "AI_ACCOUNTING", "AI_INPUT_PREFLIGHT", "STORAGE_UNAVAILABLE"].includes(error.code ?? "")) {
                 const code = error.code as AnalysisBlockCode;
@@ -1142,7 +1172,11 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
                     setNewIds(previous => new Set([...previous, ...added.map(row => row.id)]));
                     setNewChecked(previous => previous + added.length);
                 }
-                setSummary(batch.start);
+                const latest = batch.start;
+                setSummary(previous => {
+                    const quotes = [latest.comparisonQuote, previous?.comparisonQuote].filter((row): row is ListingSummary => !!row);
+                    return { ...latest, comparisonQuote: lowestQuotedOffer(quotes, Date.now())?.listing };
+                });
                 setCoverage({ ...batch.done, searchTargets: request.targets });
                 if (added.length) setCompletedSearchRunId(next.searchId);
             }
@@ -1152,6 +1186,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
             if (searchId.current !== generation || controller.signal.aborted) return;
             if (error instanceof ApiRequestError && ["EBAY_DAILY_BUDGET", "EBAY_BUDGET_ACCOUNTING", "EBAY_AUTH", "AI_ACCOUNTING", "AI_INPUT_PREFLIGHT", "AI_BUDGET", "AI_PAUSED", "AI_CREDITS", "STORAGE_UNAVAILABLE"].includes(error.code ?? "")) {
                 const code = error.code as AnalysisBlockCode;
+                if (code === "STORAGE_UNAVAILABLE") continuationAttempts.current.delete(next.token);
                 analysisPaused.current = true;
                 setAnalysisBlockCode(code); setAnalysisBlocked(error.message);
                 pricingAbort.current?.abort();
@@ -1174,7 +1209,6 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
     }, [showingFlip, destinationReady, summary?.continuation, autoSetting, stopped, needsWiderSearch, analysisBlocked, continuingDiscovery,
         page, searchStatus, buyerReviews.unreviewed, buyerReviews.active, huntBusy]);
 
-    const visible = useMemo(() => sortSearchResults(groups[view], analyses, sort, targets, now, buyerDecisions), [groups, view, sort, analyses, targets, now, buyerDecisions]);
 
     const counts = useMemo(() => countSearchResults({ listings, analyses, newMode, newIds, page, intent: summary?.intent,
         filters: { typeFilter, kindFilter, maxPrice, minPrice, minGrade } }), [listings, analyses, newMode, newIds, page, summary, typeFilter, kindFilter, maxPrice, minPrice, minGrade]);
@@ -1186,7 +1220,10 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
     const selectedHunt = page === "search" && panelHunt?.scope === huntScope && panelHunt.report.destination?.listingId === selectedId ? panelHunt : null;
     const selectedAlternative = selectedHunt?.alternative ? latestListings.current.get(selectedHunt.alternative.listing.id) ?? selectedHunt.alternative.listing : null;
     const expiredHuntGrading = selectedHunt?.gradingValidUntil !== undefined && selectedHunt.gradingValidUntil <= now;
-    const selectedCandidate = selectedAlternative ?? (page === "shortlist" ? shortlist.map((entry) => entry.listing) : page === "listing" ? directListing ? [directListing] : [] : listings).find((listing) => listing.id === selectedId) ?? null;
+    const outsideSlab = useMemo(() => competitionListingSummary(coverage?.competition, destination), [coverage, destination]);
+    if (page === "search" && outsideSlab && !latestListings.current.has(outsideSlab.id)) latestListings.current.set(outsideSlab.id, outsideSlab);
+    const comparisonListing = page === "search" && selectedId ? [summary?.comparisonQuote, outsideSlab].find(row => row?.id === selectedId) : null;
+    const selectedCandidate = selectedAlternative ?? (page === "shortlist" ? shortlist.map((entry) => entry.listing) : page === "listing" ? directListing ? [directListing] : [] : listings).find((listing) => listing.id === selectedId) ?? comparisonListing;
     const selectedEval = selectedId ? evaluationOf(analyses[selectedId]) : null;
     const selected = selectedCandidate && englishListingEligible(selectedCandidate, languageEvaluations.current.get(selectedCandidate.id)) ? selectedCandidate : null;
     const checkedHuntTime = Date.parse(selectedHunt?.evaluation.listing.termsCheckedAt ?? "");
@@ -1265,7 +1302,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
             searchStatus === "checking" || counts.analyzing > 0
                 ? "No deals yet. Still checking."
                 : !automaticReviews && counts.waiting > 0
-                  ? `No deals yet. ${counts.waiting} ${counts.waiting === 1 ? "candidate hasn't" : "candidates haven't"} been analyzed: see Sorting.`
+                  ? `No deals yet. ${counts.waiting} ${counts.waiting === 1 ? "candidate hasn't" : "candidates haven't"} been analyzed: see Under review.`
                   : "No deals in this search at the current prices.",
         candidates: "No cards are waiting to be sorted or assessed.",
         offers: `No offer opportunities within ${MAX_OFFER_DISCOUNT_PERCENT}% of asking. Seller acceptance is unknown.`,
@@ -1372,19 +1409,32 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
                   : "done";
     const competitionId = parseListingLink(coverage?.competition?.url)?.itemId;
     const competitionListing = competitionId && listings.find(row => parseListingLink(row.id)?.itemId === competitionId);
-    const comparisonAllowed = !competitionListing || purchasable.some(row => row.id === competitionListing.id);
-    const bestCurrentBuy = useMemo(() => page === "search" && searchStatus === "done" && !stopped && !needsWiderSearch
-        ? selectBestCurrentBuy(purchasable, analyses, summary?.intent, now,
+    const comparingBuys = !showingFlip && destinationReady && page === "search" && searchStatus === "done" && !stopped && !needsWiderSearch && typeFilter !== "AUCTION";
+    const buyingRows = useMemo(() => {
+        if (!comparingBuys) return [];
+        const quote = summary?.comparisonQuote;
+        const extra = quote && !listings.some(row => row.id === quote.id) ? filterSearchResults({
+            listings: [quote], analyses, page, intent: summary.intent, now, filters: { typeFilter, kindFilter, maxPrice, minPrice, minGrade },
+        }) : [];
+        return buyingComparisonRows([...filtered, ...extra], analyses, buyerDecisions, destination, minGrade);
+    }, [comparingBuys, filtered, listings, analyses, buyerDecisions, destination, minGrade, summary, page, now, typeFilter, kindFilter, maxPrice, minPrice]);
+    const competitionPrice = coverage?.competition?.price;
+    const comparisonAllowed = kindFilter !== "raw" && competitionPrice !== undefined &&
+        competitionPrice >= (Number(minPrice) || 0) && (maxPrice === "" || competitionPrice <= Number(maxPrice)) &&
+        (!competitionListing || buyingRows.some(row => row.id === competitionListing.id));
+    const deliveredLimit = searchPlan?.maxDelivered ?? undefined;
+    // A quote that just arrived can be newer than the last countdown tick.
+    const comparisonTime = useMemo(() => Date.now(), [now, buyingRows, coverage]);
+    const currentBuys = useMemo(() => comparingBuys
+        ? rankCurrentBuys(buyingRows, analyses, summary?.intent, comparisonTime,
             comparisonAllowed && coverage?.searchTargets.minProfit === targets.minProfit && coverage.searchTargets.minRoi === targets.minRoi &&
                 (minGrade === 0 || summary?.intent.minGrade != null && summary.intent.minGrade >= minGrade)
-                ? coverage.competition : undefined)
-        : null, [page, searchStatus, stopped, needsWiderSearch, purchasable, analyses, summary, now, coverage, comparisonAllowed, targets, minGrade]);
-    const gradedAlternative = useMemo(() => {
-        if (!bestCurrentBuy || !summary?.intent.cardName || kindFilter !== "all") return null;
-        const graded = purchasable.filter(row => evaluationOf(analyses[row.id])?.slab);
-        const best = selectBestCurrentBuy(graded, analyses, summary.intent, now);
-        return best?.listingId === bestCurrentBuy.listingId ? null : best;
-    }, [bestCurrentBuy, summary, kindFilter, purchasable, analyses, now]);
+                ? coverage.competition : undefined, deliveredLimit)
+        : [], [comparingBuys, buyingRows, analyses, summary, comparisonTime, coverage, comparisonAllowed, targets, minGrade, deliveredLimit]);
+    const bestCurrentBuy = currentBuys[0];
+    const gradedAlternative = bestCurrentBuy && summary?.intent.cardName && kindFilter === "all" && !evaluationOf(analyses[bestCurrentBuy.listingId])?.slab
+        ? currentBuys.find(copy => copy.listingId !== bestCurrentBuy.listingId && evaluationOf(analyses[copy.listingId])?.slab)
+        : undefined;
     const quotedSearch = useRef<string | null>(null);
     useEffect(() => {
         if (!reviewReady || !completedSearchRunId || phase !== "done" || page !== "search" || needsWiderSearch ||
@@ -1418,12 +1468,27 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
             if (!signal.aborted) refreshUsage();
         })();
     }, [reviewReady, completedSearchRunId, page, phase, needsWiderSearch, filtered, analyses, summary, refreshUsage]);
-    const rawComparison = useMemo(() => page === "search" && searchStatus === "done" && !stopped && !needsWiderSearch
-        ? selectRawBuyingComparison(purchasable, analyses, summary?.intent, now) : null,
-        [page, searchStatus, stopped, needsWiderSearch, purchasable, analyses, summary, now]);
+    const rawComparisons = useMemo(() => comparingBuys
+        ? rankRawBuyingComparisons(buyingRows, analyses, summary?.intent, comparisonTime, deliveredLimit) : [],
+        [comparingBuys, buyingRows, analyses, summary, comparisonTime, deliveredLimit]);
+    const rawComparison = rawComparisons[0];
     const rawComparisonValue = rawComparison && evaluationOf(analyses[rawComparison.listing.id]);
-    const bestBuyListing = bestCurrentBuy ? filtered.find(listing => listing.id === bestCurrentBuy.listingId) : undefined;
-    const comparisonExpired = page === "search" && searchStatus === "done" && !bestCurrentBuy && !stopped && !needsWiderSearch &&
+    const dealRows = outsideSlab && currentBuys.some(copy => copy.listingId === outsideSlab.id) && !buyingRows.some(row => row.id === outsideSlab.id)
+        ? [...buyingRows, outsideSlab] : buyingRows;
+    const lowestQuote = comparingBuys
+        ? lowestListedCopy(dealRows, analyses, summary?.intent, comparisonTime, deliveredLimit) : undefined;
+    const verifiedDeals = sortSearchResults(groups.deals, analyses, "best", targets, now, buyerDecisions);
+    const deals = dealTabResults(verifiedDeals, groups.bids, dealRows, currentBuys, rawComparisons, lowestQuote, targets);
+    const dealIds = new Set(deals.listings.map(row => row.id));
+    const matchingIds = new Set(groups.all.map(row => row.id));
+    const resultGroups = { ...groups, deals: deals.listings, review: groups.review.filter(row => !dealIds.has(row.id)),
+        all: [...groups.all, ...deals.listings.filter(row => !matchingIds.has(row.id))] };
+    const showDealLabels = view === "deals" || view === "all";
+    const visible = view === "deals" && sort === "best" ? deals.listings
+        : sortSearchResults(resultGroups[view], analyses, sort, targets, now, buyerDecisions);
+    const comparisonOnly = Boolean((lowestQuote || bestCurrentBuy) && !listings.length);
+    const bestBuyListing = bestCurrentBuy ? dealRows.find(listing => listing.id === bestCurrentBuy.listingId) : undefined;
+    const comparisonExpired = comparingBuys && !bestCurrentBuy && !lowestQuote && !rawComparison &&
         coverage?.competition?.checkedAt && now - Date.parse(coverage.competition.checkedAt) >= BEST_BUY_TERMS_MAX_AGE_MS;
 
     // Additional work stays within the loaded development batch and is never
@@ -1476,7 +1541,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
         searchPage: page === "search",
         hidden: page !== "search" || searchStatus === "idle",
         idle: searchStatus === "idle",
-        views: { view, availableViews, groups, allTab, setView },
+        views: { view, availableViews, groups: resultGroups, allTab, setView },
         filters: { typeFilter, kindFilter, sort, marketplaceOrder, minPrice, maxPrice, minGrade, setTypeFilter, setKindFilter, setSort, setMarketplaceOrder, changeMinPrice, setMaxPrice, changeMinGrade },
         target: { targets, targetInputs, changeTarget },
         settings: { includeOffers, autoSetting, changeIncludeOffers, changeAutoSetting },
@@ -1651,6 +1716,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
                                     <input
                                         ref={searchInput}
                                         type="search"
+                                        required
                                         value={query}
                                         onChange={(event) => changeQuery(event.target.value)}
                                         placeholder={linkInput ? "Paste eBay link" : "Card, set or buying goal"}
@@ -1685,11 +1751,12 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
                                         className={`${styles.searchSubmit} ${styles.narrowOnly}`}
                                         aria-label="Find deals"
                                         aria-busy={searchStatus === "checking"}
+                                        disabled={submittingSameSearch}
                                     >
                                         {searchStatus === "checking" ? <span className={styles.spinner} /> : <ArrowIcon />}
                                     </button>}
                                 </label>
-                                <button type="submit" className={`${styles.primary} ${linkInput ? styles.linkPrimary : styles.wideOnly}`} aria-label={linkInput ? linkWorking ? "Evaluating…" : "Evaluate listing · paid" : "Find deals"} aria-disabled={linkInput && linkWorking}>
+                                <button type="submit" className={`${styles.primary} ${linkInput ? styles.linkPrimary : styles.wideOnly}`} aria-label={linkInput ? linkWorking ? "Evaluating…" : "Evaluate listing · paid" : "Find deals"} disabled={submittingSameSearch || (linkInput && linkWorking)}>
                                     {(linkInput ? linkWorking : searchStatus === "checking") ? (
                                         <span className={styles.spinner} aria-hidden="true" />
                                     ) : (
@@ -1697,7 +1764,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
                                     )}
                                     {linkInput ? linkWorking ? "Evaluating…" : "Evaluate listing · paid" : "Find deals"}
                                 </button>
-                                <p className={styles.inputHint} id="listing-input-hint">{linkInput ? "Paste or drop a link. Uses paid AI." : "Describe what you want, for example: a liquid holo card from 1999–2003 to resell."}</p>
+                                <p className={styles.inputHint} id="listing-input-hint">{linkInput ? "Paste or drop a link. Uses paid AI." : "Try a card and set, such as Ampharos Aquapolis."}</p>
                             </form></div>
                         </div>}
                         {saveNotice && <p className={saveNotice.error ? styles.warning : styles.saveNotice} role={saveNotice.error ? "alert" : "status"}>{saveNotice.text}</p>}
@@ -1760,6 +1827,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
                     {searchStatus !== "idle" && !searchInterpreting && (
                         <SearchProgress
                             phase={phase}
+                            comparisonOnly={comparisonOnly && !deals.listings.length}
                             discoveryPaused={Boolean(nextBatch?.blocked) && !continuingDiscovery}
                             query={lastQuery.current}
                             error={searchError}
@@ -1772,7 +1840,7 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
                                 junk: (summary?.skipped ?? 0) + counts.junk,
                                 dropped: (summary?.priceExcluded ?? 0) + counts.dropped,
                                 unchecked: counts.unchecked,
-                                deals: groups.deals.length,
+                                deals: deals.listings.length,
                             }}
                             usage={
                                 usage && {
@@ -1794,59 +1862,6 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
                             details={progressDetails}
                         />
                     )}
-                    {showResume && <div className={styles.searchUpdate}>
-                        <p role="status">{nextBatch.blocked ? "The eBay allowance paused further discovery." :
-                            "More listings are available to check."}</p>
-                        <button type="button" className={`${styles.secondary} ${styles.resumeDiscovery}`}
-                            onClick={() => void continueDiscovery(nextBatch, true)}>Continue remaining listings</button>
-                    </div>}
-                    {page === "search" && searchStatus !== "idle" && searchStatus !== "error" && !stopped && !analysisBlocked &&
-                        !needsWiderSearch && autoSetting !== 0 && typeFilter !== "AUCTION" && kindFilter !== "graded" && !summary?.intent.graded &&
-                        <GradingWatch key={JSON.stringify([watchSearch.current, currentFilters, targets, includeOffers, minGrade])}
-                            listings={filtered} decisions={buyerDecisions} now={now}
-                            canScan={reviewReady && selectedId === null && !drawerOpen && !sniperDraft}
-                            onScan={scanGradingWatch} onOpen={openPanel} onRecheck={buyerReviews.recheckQuote} />}
-                    {huntId && (standaloneHunt && activeHuntPrompt || sameSearchText && huntReady && page === "search" && !needsWiderSearch) &&
-                        <DealHunt active={!showingFlip && page === "search"} key={huntScope} searchId={huntId} standalone={standaloneHunt} now={now} updatedTerms={auctionUpdates} filters={huntFilters} usage={aiUsage}
-                            latestListings={latestListings.current} destinationReady={destinationReady}
-                            initialGoal={activeHuntPrompt?.goal} marketPreferences={activeHuntPrompt?.marketPreferences}
-                            onFormatChange={format => { setHuntPrompt(null); setTypeFilter(format); }}
-                            takePrompt={() => { if (pendingHuntPrompt.current !== huntId) return false; pendingHuntPrompt.current = null; return true; }} minPotentialGrade={minGrade}
-                            listings={huntListings} listingOwners={discoveryRunByItem.current} targets={huntTargets} onOpen={openHuntEvidence} onBusyChange={setHuntBusy}
-                            shortlistButton={listing => {
-                                const saved = shortlist.some(entry => entry.id === listing.id);
-                                const saving = savingIds.has(listing.id);
-                                return <button type="button" aria-pressed={saved} disabled={saving} onClick={() => void toggleSaved(listing)}>
-                                    {saving ? "Saving…" : saved ? "Saved ✓" : "Shortlist"}
-                                </button>;
-                            }}
-                            onStart={() => { if (standaloneHunt) { searchRunId.current = standaloneHuntId; setStartedHuntScope(huntScope); } }}
-                            onClear={() => { if (selectedAlternative) setSelectedId(null); setPanelHunt(null); }} onUsage={refreshUsage} />}
-                    {page === "search" && completedSearchRunId && !stopped && !needsWiderSearch && summary?.intent.grader && typeFilter !== "AUCTION" &&
-                        <CollectorStrategy key={completedSearchRunId} searchId={completedSearchRunId} />}
-                    {page === "search" && !needsWiderSearch && typeFilter !== "FIXED_PRICE" && <>
-                        <AuctionOpportunities listings={filtered} decisions={buyerDecisions} now={now} onOpen={openPanel} />
-                        <AuctionTracking />
-                    </>}
-                    {page === "search" && searchStatus === "done" && !stopped && !needsWiderSearch && typeFilter !== "FIXED_PRICE" &&
-                        <CompetingAuctions listings={filtered} analyses={analyses} intent={summary?.intent} targets={targets} now={now} onOpen={openPanel} />}
-                    {page === "search" && searchStatus === "done" && !stopped && !needsWiderSearch && typeFilter !== "AUCTION" &&
-                        <ResaleReceiptMatches listings={purchasable} analyses={analyses} intent={summary?.intent} now={now} onOpen={openPanel} />}
-                    {bestCurrentBuy && <BestCurrentBuy reference={bestCurrentBuy} evaluation={evaluationOf(analyses[bestCurrentBuy.listingId])}
-                        onOpen={bestBuyListing ? () => openPanel(bestBuyListing.id) : undefined} />}
-                    {gradedAlternative && <button type="button" className={styles.alternative} onClick={() => openPanel(gradedAlternative.listingId)}>
-                        <strong>Graded alternative · {gradedAlternative.title}</strong>
-                        <span>{dollars(gradedAlternative.pricing.totalCost)} delivered · {gradedAlternative.basis} · {gradedAlternative.pricing.sales} matched sales</span>
-                    </button>}
-                    {page === "search" && <CollectorFinds listings={filtered} analyses={analyses} intent={summary?.intent} now={now}
-                        searchRunId={completedSearchRunId} searchQuery={lastQuery.current}
-                        ready={searchStatus === "done" && !stopped && !needsWiderSearch && typeFilter !== "AUCTION"}
-                        onOpen={openPanel} onSearch={text => { setQuery(text); void search(undefined, text); }} />}
-                    {rawComparison && rawComparisonValue && rawComparison.listing.id !== bestCurrentBuy?.listingId &&
-                        <RawCopyComparison comparison={rawComparison} evaluation={rawComparisonValue} onOpen={openPanel} />}
-                    {comparisonExpired ? <p className={styles.discoveryNote}>The buying comparison’s price and shipping check has expired. Run the search again to refresh it.</p> :
-                        !bestCurrentBuy && page === "search" && phase === "done" && !needsWiderSearch && coverage && typeFilter !== "AUCTION" &&
-                        <p className={styles.discoveryNote}>No verified Buy It Now below its matched sold estimate among the listings checked.</p>}
                     <SearchControls {...controlProps} />
                     {!automaticReviews && searchStatus !== "idle" && <PricingRetries listings={filtered} reviewCount={groups.review.length} searching={searchStatus === "checking"} analyzed={new Set(Object.entries(analyses).filter(([, analysis]) => analysis.status === "done" || analysis.status === "loading").map(([id]) => id))}
                         busy={pricingBusy} note={pricingNote} onRetry={(tickets) => void retryPrices(tickets)} onCancel={cancelPricing} />}
@@ -1893,14 +1908,14 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
 
                     {searchStatus !== "idle" &&
                         searchStatus !== "error" &&
-                        visible.length === 0 &&
+                        visible.length === 0 && !comparisonOnly &&
                         !(searchStatus === "checking" && listings.length === 0) &&
                         (view === "deals" && summary ? (
                             <div className={styles.searchUpdate} role="status">
                                 <div>
-                                    <p><strong>No verified profitable buys in this search.</strong></p>
-                                    <p>{bestCurrentBuy ? "The lowest checked purchase is shown above, with its resale numbers." : "You can review matching listings, adjust your targets, or check a different card."} Search details below account for exclusions and unfinished checks.</p>
-                                    {!automaticReviews && counts.waiting > 0 && <p>{counts.waiting} still await assessment{analysisBlocked ? " while automatic assessments are paused" : " in Sorting"}. An unassessed card is not a confirmed deal.</p>}
+                                    <p><strong>{phase === "done" ? targets.minProfit || targets.minRoi ? "No deals met your resale targets." : "No deals with a current price comparison." : "Checking listings for deals…"}</strong></p>
+                                    <p>{phase === "done" ? "See all matches to review the other listings." : "Deals appear here as prices are compared."}</p>
+                                    {!automaticReviews && counts.waiting > 0 && <p>{counts.waiting} still await assessment{analysisBlocked ? " while automatic assessments are paused" : " in Under review"}. An unassessed card is not a confirmed deal.</p>}
                                     {!bestCurrentBuy && alternatives.length > 0 && <div className={styles.alternatives}>
                                         <p><strong>Best available options</strong></p>
                                         <ul>{alternatives.map(({ listing, label, profit, roi, offerPrice }) => <li key={listing.id}>
@@ -1913,8 +1928,8 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
                                     </div>}
                                 </div>
                                 <div className={styles.progressButtons}>
-                                    {groups.candidates.length > 0 ? <button type="button" className={styles.secondary} onClick={() => withViewTransition(() => setView("candidates"))}>Open Sorting</button> :
-                                        groups.review.length > 0 && <button type="button" className={styles.secondary} onClick={() => withViewTransition(() => setView("review"))}>See Wait or skip decisions</button>}
+                                    {groups.candidates.length > 0 ? <button type="button" className={styles.secondary} onClick={() => withViewTransition(() => setView("candidates"))}>View listings under review</button> :
+                                        groups.review.length > 0 && <button type="button" className={styles.secondary} onClick={() => withViewTransition(() => setView("review"))}>View listings to pass on</button>}
                                     {groups.losses.length > 0 && <button type="button" className={styles.secondary} onClick={() => withViewTransition(() => setView("losses"))}>
                                         View projected losses ({groups.losses.length})
                                     </button>}
@@ -1947,6 +1962,8 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
                             <DealCard
                                 key={listing.id}
                                 listing={listing}
+                                dealLabel={showDealLabels && dealIds.has(listing.id) ? listing.id === deals.listings[0]?.id ? "Best deal on eBay" : "Deal" : undefined}
+                                dealComparison={showDealLabels ? deals.reasons.get(listing.id) : undefined}
                                 index={index}
                                 // The first screenfuls glide when you sort or filter.
                                 transitionName={index < 24 ? transitionName(listing.id) : undefined}
@@ -1970,6 +1987,68 @@ export function App({ initialPage = "search", ebayReturnNotice }: { initialPage?
                             />
                         ))}
                     </div>
+                    {bestCurrentBuy && (view !== "deals" || !bestBuyListing && !deals.listings.length) && <BestCurrentBuy reference={bestCurrentBuy} evaluation={evaluationOf(analyses[bestCurrentBuy.listingId])}
+                        onOpen={bestBuyListing ? () => openPanel(bestBuyListing.id) : undefined} />}
+                    {view !== "deals" && lowestQuote && !bestCurrentBuy && !rawComparison && <LowestListedCopy {...lowestQuote} now={now} onOpen={filtered.some(row => row.id === lowestQuote.listing.id)
+                        ? () => openPanel(lowestQuote.listing.id) : undefined} />}
+                    {showResume && <div className={styles.searchUpdate}>
+                        <p role="status">{nextBatch.blocked ? "The eBay allowance paused further discovery." :
+                            "More listings are available to check."}</p>
+                        <button type="button" className={`${styles.secondary} ${styles.resumeDiscovery}`}
+                            onClick={() => void continueDiscovery(nextBatch, true)}>Continue remaining listings</button>
+                    </div>}
+                    {page === "search" && searchStatus !== "idle" && searchStatus !== "error" && !stopped && !analysisBlocked &&
+                        !needsWiderSearch && autoSetting !== 0 && typeFilter !== "AUCTION" && kindFilter !== "graded" && !summary?.intent.graded &&
+                        <GradingWatch key={JSON.stringify([watchSearch.current, currentFilters, targets, includeOffers, minGrade])}
+                            listings={filtered} decisions={buyerDecisions} now={now}
+                            canScan={reviewReady && selectedId === null && !drawerOpen && !sniperDraft}
+                            onScan={scanGradingWatch} onOpen={openPanel} onRecheck={buyerReviews.recheckQuote} />}
+                    {huntId && (standaloneHunt && activeHuntPrompt || sameSearchText && huntReady && (huntListings.length > 0 || huntBusy) && page === "search" && !needsWiderSearch) &&
+                        <DealHunt active={!showingFlip && page === "search"} key={huntScope} searchId={huntId} standalone={standaloneHunt} now={now} updatedTerms={auctionUpdates} filters={huntFilters} usage={aiUsage}
+                            latestListings={latestListings.current} destinationReady={destinationReady}
+                            initialGoal={completedSearchRunId && completedSearchRunId === bestDealRun.current ? "best_ebay" : activeHuntPrompt?.goal} marketPreferences={activeHuntPrompt?.marketPreferences}
+                            onBestEbaySearch={format => {
+                                const text = query.trim() || "Pokémon cards";
+                                setQuery(text);
+                                if (format === "FIXED_PRICE") setMarketplaceOrder("lowest");
+                                void search(undefined, text, false, undefined, format);
+                            }}
+                            onFormatChange={format => { setHuntPrompt(null); setTypeFilter(format); }}
+                            takePrompt={() => { if (pendingHuntPrompt.current !== huntId) return false; pendingHuntPrompt.current = null; return true; }} minPotentialGrade={minGrade}
+                            listings={huntListings} listingOwners={discoveryRunByItem.current} targets={huntTargets} onOpen={openHuntEvidence} onBusyChange={setHuntBusy}
+                            shortlistButton={listing => {
+                                const saved = shortlist.some(entry => entry.id === listing.id);
+                                const saving = savingIds.has(listing.id);
+                                return <button type="button" aria-pressed={saved} disabled={saving} onClick={() => void toggleSaved(listing)}>
+                                    {saving ? "Saving…" : saved ? "Saved ✓" : "Shortlist"}
+                                </button>;
+                            }}
+                            onStart={() => { if (standaloneHunt) { searchRunId.current = standaloneHuntId; setStartedHuntScope(huntScope); } }}
+                            onClear={() => { if (selectedAlternative) setSelectedId(null); setPanelHunt(null); }} onUsage={refreshUsage} />}
+                    {page === "search" && completedSearchRunId && !stopped && !needsWiderSearch && summary?.intent.grader && typeFilter !== "AUCTION" &&
+                        <CollectorStrategy key={completedSearchRunId} searchId={completedSearchRunId} />}
+                    {page === "search" && !needsWiderSearch && typeFilter !== "FIXED_PRICE" && <>
+                        <AuctionOpportunities listings={filtered} decisions={buyerDecisions} now={now} onOpen={openPanel}
+                            bestValueFirst={Boolean(completedSearchRunId && completedSearchRunId === bestDealRun.current)} />
+                        <AuctionTracking />
+                    </>}
+                    {page === "search" && searchStatus === "done" && !stopped && !needsWiderSearch && typeFilter !== "FIXED_PRICE" &&
+                        <CompetingAuctions listings={filtered} analyses={analyses} intent={summary?.intent} targets={targets} now={now} onOpen={openPanel} />}
+                    {page === "search" && searchStatus === "done" && !stopped && !needsWiderSearch && typeFilter !== "AUCTION" &&
+                        <ResaleReceiptMatches listings={purchasable} analyses={analyses} intent={summary?.intent} now={now} onOpen={openPanel} />}
+                    {view !== "deals" && gradedAlternative && <button type="button" className={styles.alternative} onClick={() => openPanel(gradedAlternative.listingId)}>
+                        <strong>Graded alternative · {gradedAlternative.title}</strong>
+                        <span>{dollars(gradedAlternative.pricing.totalCost)} delivered · {gradedAlternative.basis} · {gradedAlternative.pricing.sales} matched sales</span>
+                    </button>}
+                    {page === "search" && <CollectorFinds listings={filtered} analyses={analyses} intent={summary?.intent} now={now}
+                        searchRunId={completedSearchRunId} searchQuery={lastQuery.current}
+                        ready={searchStatus === "done" && !stopped && !needsWiderSearch && typeFilter !== "AUCTION"}
+                        onOpen={openPanel} onSearch={text => { setQuery(text); void search(undefined, text); }} />}
+                    {view !== "deals" && rawComparison && rawComparisonValue && rawComparison.listing.id !== bestCurrentBuy?.listingId &&
+                        <RawCopyComparison comparison={rawComparison} evaluation={rawComparisonValue} onOpen={openPanel} />}
+                    {comparisonExpired ? <p className={styles.discoveryNote}>The buying comparison’s price and shipping check has expired. Run the search again to refresh it.</p> :
+                        !bestCurrentBuy && !lowestQuote && !rawComparison && page === "search" && phase === "done" && !needsWiderSearch && coverage && typeFilter !== "AUCTION" &&
+                        <p className={styles.discoveryNote}>The checked listings did not provide a current match with enough evidence to compare prices.</p>}
                     </>}
                     </div>
                     {!showingFlip && !toolPage && (searchStatus !== "idle" || page !== "search") && <details className={styles.searchDiagnostics}>

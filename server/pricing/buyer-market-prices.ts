@@ -1,5 +1,7 @@
+import { aiSpendingFailure } from "../ai/spending.ts";
+import { silphComparison } from "./silphco.ts";
 import { priceChartingComparison } from "./pricecharting.ts";
-import { listingMarketPrices, screeningSaleGroups, type ProviderPrice } from "../../shared/listing-market-prices.ts";
+import { buyerVisiblePrice, listingMarketPrices, screeningSaleGroups, type ProviderPrice } from "../../shared/listing-market-prices.ts";
 import { CONDITION_NAMES, isRawCondition } from "../../shared/conditions.ts";
 import { finishClaim } from "../../shared/finish.ts";
 import { observedCardKind } from "../../shared/photo-evidence.ts";
@@ -14,6 +16,7 @@ import { cardmarketRecord, createScreeningPriceSource } from "./pkmnprices.ts";
 import { marketSummaries } from "./screening-sales.ts";
 import { tcgplayerRawPrice } from "./tcgplayer-raw.ts";
 import { sourceUrl } from "../ai/web-price-research.ts";
+import { parseListingLink } from "../../shared/listing-link.ts";
 import { storageFailure } from "../lib/storage-failure.ts";
 import { PriceResearchBudgetError, withPriceResearchSignal } from "./research-budget.ts";
 
@@ -74,7 +77,7 @@ export function providerPrices(value: Evaluation, now: number, european?: Cardma
     return prices;
 }
 
-async function recentSales(value: Evaluation, signal: AbortSignal, now: number) {
+export async function recentSales(value: Evaluation, signal: AbortSignal, now: number, maxSoldAgeHours?: number) {
     const id = value.identity;
     if (!id?.recordId || id.printing === "UNKNOWN" || !["HOLO", "REVERSE_HOLO", "NON_HOLO"].includes(id.finish)) return [];
     const card = await cardmarketRecord(String(id.recordId));
@@ -86,7 +89,7 @@ async function recentSales(value: Evaluation, signal: AbortSignal, now: number) 
     const variant = variants[0].name;
     // One recent PKMNPrices page, under the original account, using the same cache
     // and transaction/printing checks as inventory screening. No eBay Browse call.
-    const { sales } = await createScreeningPriceSource({ signal }).fetchSoldPage(card.id, { variant, grader, grade });
+    const { sales } = await createScreeningPriceSource({ signal, maxSoldAgeHours }).fetchSoldPage(card.id, { variant, grader, grade });
     const matched = marketSummaries(sales, { record: card, printing: id.printing,
         finish: id.finish as "HOLO" | "REVERSE_HOLO" | "NON_HOLO", labels: [variant] }, grader, grade, now);
     return screeningSaleGroups(matched.filter(ref => grader || ref.condition === value.condition?.rawCondition), now);
@@ -94,7 +97,8 @@ async function recentSales(value: Evaluation, signal: AbortSignal, now: number) 
 
 const sources = { supplement: supplementalResearch, european: compareCardmarket, record: cardmarketRecord, rawQuote: tcgplayerRawPrice, priceCharting: priceChartingComparison, recentSales };
 
-export async function buyerMarketPrices(value: Evaluation, market: string, requestSignal: AbortSignal, deps = sources, now = Date.now) {
+export async function buyerMarketPrices(value: Evaluation, market: string, requestSignal: AbortSignal, deps: typeof sources & { silph?: typeof silphComparison } = { ...sources, silph: silphComparison }, now = Date.now, purpose: "display" | "finalist" = "display") {
+    const finalist = purpose === "finalist";
     const listing = { ...value.listing, images: value.listing.photos ?? [] };
     const prices = listingMarketPrices(value, listing, now());
     if (!prices?.lookup || prices.lookup.market !== market) return null;
@@ -107,7 +111,7 @@ export async function buyerMarketPrices(value: Evaluation, market: string, reque
         try { return await lookup(); }
         catch (error) {
             signal.throwIfAborted();
-            if (storageFailure(error) || error instanceof PriceResearchBudgetError && error.reason !== "LIMIT") throw error;
+            if (storageFailure(error) || aiSpendingFailure(error) || error instanceof PriceResearchBudgetError) throw error;
             notes.push(source + " is unavailable for this check.");
             return null;
         }
@@ -126,10 +130,11 @@ export async function buyerMarketPrices(value: Evaluation, market: string, reque
         optional("Additional price sources", () => deps.supplement(value, { signal, now: now(), cacheOnly: false, comparePrices: true })),
         optional("Cardmarket", () => deps.european(value, { now, fx: async () => null })),
         optional("TCGplayer", missingTcg),
-        !prices.sold && value.identity?.recordId ? optional("eBay sales", () => deps.recentSales(value, signal, now())) : null,
-        value.identity && deps.priceCharting ? optional("PriceCharting", () => deps.priceCharting(value.identity!, signal, { evaluation: value })) : null,
+        (finalist || !prices.sold) && value.identity?.recordId ? optional("eBay sales", () => deps.recentSales(value, signal, now(), finalist ? 5 / 60 : undefined)) : null,
+        value.identity && deps.priceCharting ? optional("PriceCharting", () => deps.priceCharting(value.identity!, signal, { evaluation: value, privateResearch: true })) : null,
+        deps.silph ? optional("Silph Co", () => deps.silph!(value, signal, now())) : null,
     ] as const);
-    const [supplement, european, quote, saleGroups, guide] = await Promise.all(tasks).catch(async error => {
+    const [supplement, european, quote, saleGroups, guide, silph] = await Promise.all(tasks).catch(async error => {
         stopped.abort(error);
         await Promise.allSettled(tasks);
         throw error;
@@ -139,7 +144,11 @@ export async function buyerMarketPrices(value: Evaluation, market: string, reque
     const extra = providerPrices({ ...value, ...supplement }, now(), european ?? undefined);
     if (guide) {
         extra.push(...guide.prices);
-        if (guide.ebayActivity) notes.push(guide.ebayActivity);
+        if (finalist && guide.ebayActivity) notes.push(guide.ebayActivity);
+    }
+    if (silph) {
+        extra.push(...silph.prices);
+        notes.push(...silph.notes);
     }
     if (quote?.offers) {
         const snapshot = quote.offers, expiry = Date.parse(snapshot.checkedAt) + 6 * 3_600_000;
@@ -149,5 +158,19 @@ export async function buyerMarketPrices(value: Evaluation, market: string, reque
             price: Math.min(...snapshot.offers.map(row => row.total)), currency: "USD", asOf: snapshot.snapshotAt,
             validUntil: Math.min(expiry, Date.parse(snapshot.snapshotAt) + day) });
     }
-    return { market, prices: extra, notes, ...(saleGroups?.length && { saleGroups }) };
+    // On an explicit comparison, a conflicting receipt warrants one fresh
+    // source check. Thin markets and finalists already requested that page.
+    const checkedSales = guide?.recheckSoldPrice && !finalist && prices.sold && value.identity?.recordId
+        ? await withPriceResearchSignal(signal, () => optional("eBay sales", () => deps.recentSales(value, signal, now(), 5 / 60))) : saleGroups;
+    signal.throwIfAborted();
+    const otherSaleIds = new Set([...(checkedSales ?? []).flatMap(group => group.sales), ...(prices.sold?.sales ?? []), ...(silph?.sales ?? [])]
+        .map(sale => parseListingLink(sale.url)?.itemId).filter(Boolean));
+    const guideHistory = guide?.history ?? (finalist ? guide?.researchHistory : undefined);
+    const additionalSales = guideHistory?.sales.filter(sale => !otherSaleIds.has(parseListingLink(sale.url)?.itemId));
+    return { market, prices: finalist ? extra : extra.filter(buyerVisiblePrice), notes, ...(silph?.context.length && { context: silph.context }),
+        ...(guide?.recheckSoldPrice && prices.sold && checkedSales?.length && { recheckedSales: true }),
+        ...(finalist && guide?.trend && { guideTrend: guide.trend }),
+        ...(finalist && guide?.researchGuide && { researchGuide: guide.researchGuide }),
+        ...(guideHistory && additionalSales?.length && { priceChartingHistory: { scope: guideHistory.scope, sales: additionalSales } }),
+        ...(silph?.sales.length && { silphHistory: { points: silph.points, sales: silph.sales } }), ...(checkedSales?.length && { saleGroups: checkedSales }) };
 }

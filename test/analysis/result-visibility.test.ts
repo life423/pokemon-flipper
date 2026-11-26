@@ -62,7 +62,7 @@ test("unknown Buy It Now shipping keeps positive raw and slab estimates in Sorti
     const targets = { minProfit: 0, minRoi: 0 };
     for (const slab of [false, true]) {
         const value = cardEvaluation(targets);
-        Object.assign(value.listing, { buyingOption: "FIXED_PRICE", availability: "ACTIVE", endTime: null, shipping: 0 });
+        Object.assign(value.listing, { buyingOption: "FIXED_PRICE", availability: "ACTIVE", termsCheckedAt: new Date().toISOString(), endTime: null, shipping: 0 });
         if (slab) {
             value.condition = null;
             value.photoCheck!.holder = "GRADED_SLAB";
@@ -82,6 +82,6 @@ test("unknown Buy It Now shipping keeps positive raw and slab estimates in Sorti
         assert.equal(resultGroup(missing, provisional, true), "candidates");
         assert.equal(resultGroup(missing, { ...quoted, listing: provisional.listing }, true), "candidates", "a saved BUY also requires a quote");
         const refreshed = { ...listing, termsCheckedAt: new Date(Date.parse(missing.termsCheckedAt) + 1).toISOString() };
-        assert.equal(resultGroup(refreshed, retargetEvaluation(provisional, targets, refreshed), true), "deals");
+        assert.equal(resultGroup(refreshed, retargetEvaluation(provisional, targets, refreshed), true, false, Date.parse(refreshed.termsCheckedAt)), "deals");
     }
 });

@@ -29,6 +29,8 @@ const checks: Record<DealHuntReport["steps"][number]["action"], string> = {
     check_listing: "Listing terms",
     inspect_photos: "Photo assessment",
     resolve_printing: "Check the printing",
+    check_market_guides: "Market guides",
+    review_resale: "Resale value and competition",
     check_sales: "Sale comparisons",
     check_raw_resale: "Compare selling raw",
     check_price_tracker: "Pokémon Price Tracker",
@@ -59,7 +61,7 @@ function HuntListingCard({ listing, decision, now, children, onEvidence, evidenc
                 {listing.shipping !== null && (listing.shipping === 0 ? " · Free shipping" : ` · ${dollars(listing.shipping)} shipping`)}</p>}
             {sample && sample.lowestOtherDelivered != null && isRawCondition(sample.condition) && sampleAge >= 0 &&
                 sampleAge < BEST_BUY_TERMS_MAX_AGE_MS && sample.destination === (listing.shippingDestination ?? null) &&
-                <p className={styles.meta}>Lowest other ask with shipping <strong>{dollars(sample.lowestOtherDelivered)}</strong>
+                <p className={styles.meta}>Lowest seller-described comparable with shipping <strong>{dollars(sample.lowestOtherDelivered)}</strong>
                     {" · "}{sample.observed} listings sampled as {CONDITION_NAMES[sample.condition]}</p>}
             {children}
             <div className={styles.actions}>
@@ -85,6 +87,8 @@ const huntActions: Record<NonNullable<HuntProgress["action"]>, string> = {
     check_listing: "Checking price and availability",
     inspect_photos: "Reading the listing photos",
     resolve_printing: "Checking the printing marks",
+    check_market_guides: "Comparing market guides",
+    review_resale: "Checking resale value and competing copies",
     check_sales: "Comparing recent sales",
     check_raw_resale: "Estimating resale value ungraded",
     check_price_tracker: "Checking Pokémon Price Tracker",
@@ -157,7 +161,7 @@ export function HuntCandidateCards({ listings, now, active, shortlistButton }: {
         <p className={styles.note}>{active ? "Checking these listings against your criteria. A purchase decision is not ready." :
             "These listings also appeared in the search. They do not have a verified purchase recommendation."}</p>
         <div className={styles.tileGrid}>{listings.map(listing => <HuntListingCard key={listing.id} listing={listing} now={now}
-            shortlist={shortlistButton(listing)}><MarketPrices prices={listing.marketPrices} screen={!listing.marketPrices ? listing.screen : undefined}
+            shortlist={shortlistButton(listing)}><MarketPrices flip prices={listing.marketPrices} screen={!listing.marketPrices ? listing.screen : undefined}
                 loadAdditional={!active} now={now} /></HuntListingCard>)}</div>
     </section>;
 }
@@ -185,8 +189,14 @@ export function DealHuntResult({ result, now, targets, updatedTerms, currentList
     const physical = result.evaluation && withReleaseEvidence(result.evaluation);
     const selectedPrices = current && listingMarketPrices(physical, current.listing, now);
     const savedPrices = current && result.candidatePrices?.[current.listing.id];
-    if (selectedPrices?.lookup && selectedPrices.lookup.market === savedPrices?.lookup?.market && savedPrices.additional)
-        selectedPrices.additional = savedPrices.additional;
+    if (selectedPrices?.lookup && selectedPrices.lookup.market === savedPrices?.lookup?.market && savedPrices.validUntil > now) {
+        selectedPrices.additional = savedPrices.additional ?? selectedPrices.additional;
+        selectedPrices.flipResale = savedPrices.flipResale;
+        selectedPrices.verifiedComparable = savedPrices.verifiedComparable;
+    }
+    if (selectedPrices && reviewed && receipt?.relist?.model === "matched-sales-v1" && receipt.path.salePrice != null) {
+        selectedPrices.flipResale = { current: receipt.path.salePrice, expected: receipt.relist.price, competitor: receipt.relist.competitor ?? null };
+    }
     const mismatch = physical?.identity?.notThisCard;
     const release = mismatch || (physical && releaseIssue(physical));
     const unverifiedResaleBid = report.decision === "BID" && report.goal === "resell" &&
@@ -214,11 +224,12 @@ export function DealHuntResult({ result, now, targets, updatedTerms, currentList
             {resaleBid.totalAtMaxBid != null && resaleBid.profitAtMaxBid != null &&
                 ` At that bid, you pay ${dollars(resaleBid.totalAtMaxBid)} delivered and project ${dollars(resaleBid.profitAtMaxBid)} profit after costs.`}</p>}
         {terms && !grading && <p>Estimated total to buy <strong>{dollars(acquisitionCost(terms.price, terms.shipping, MONEY_CONFIG.buying))}</strong> including shipping and estimated tax.</p>}
-        {reviewed && !expired && receipt?.relist && <p>List on receipt at <strong>{dollars(receipt.relist.price)}</strong> with shipping included.
-            {" "}Estimated profit <strong>{dollars(receipt.relist.profit)}</strong> after costs.</p>}
-        {rawPrice && !expired && <p>Raw resale used for profit <strong>{dollars(rawPrice.price)}</strong>
+        {reviewed && !expired && !selectedPrices?.flipResale && receipt?.relist?.model === "matched-sales-v1" &&
+            <p>Expected resale with a well-presented listing <strong>{dollars(receipt.relist.price)}</strong></p>}
+        {reviewed && !expired && receipt?.relist && <p>Expected profit after costs <strong>{dollars(receipt.relist.profit)}</strong></p>}
+        {!selectedPrices?.flipResale && rawPrice && !expired && <p>Current raw value <strong>{dollars(rawPrice.price)}</strong>
             {isRawCondition(rawPrice.condition) && ` · ${CONDITION_NAMES[rawPrice.condition]}`} · {tcgplayerEstimateLabel(rawPrice.basis) ?? "Matched eBay sales"}</p>}
-        {exit?.path === "GRADED_RESALE" && exit.salePrice != null && !expired && <p>Slab resale used for profit <strong>{dollars(exit.salePrice)}</strong>
+        {!selectedPrices?.flipResale && exit?.path === "GRADED_RESALE" && exit.salePrice != null && !expired && <p>Current slab value <strong>{dollars(exit.salePrice)}</strong>
             {" · "}{reviewed?.slab?.grader} {reviewed?.slab?.grade} · Matched eBay sales</p>}
         {exit?.path === "GRADE" && exit.expectedSale != null && !expired && <p>Estimated resale after {exit.grader} grading <strong>{dollars(exit.expectedSale)}</strong>
             {" · Weighted across the projected grades"}</p>}
@@ -243,9 +254,9 @@ export function DealHuntResult({ result, now, targets, updatedTerms, currentList
         {(selected && current || otherListings.length > 0) && <div className={styles.tileGrid} aria-label="Listings found">
         {selected && current && <HuntListingCard listing={current.listing} decision={decision} now={now} fallbackImages={selected.images}
             onEvidence={destination ? onEvidence : undefined} evidenceLabel={destination ? `View ${huntSections[destination.section]}` : undefined}
-            shortlist={shortlistButton(selected)}>{explanation}<MarketPrices prices={selectedPrices ?? undefined} now={now} /></HuntListingCard>}
+            shortlist={shortlistButton(selected)}>{explanation}<MarketPrices flip prices={selectedPrices ?? undefined} now={now} /></HuntListingCard>}
         {otherListings.map(row => <HuntListingCard key={row.id} listing={row} now={now} shortlist={shortlistButton(row)}>
-            <MarketPrices prices={result.candidatePrices?.[row.id]} screen={result.candidatePrices?.[row.id] ? undefined : row.screen} now={now} />
+            <MarketPrices flip prices={result.candidatePrices?.[row.id]} screen={result.candidatePrices?.[row.id] ? undefined : row.screen} now={now} />
         </HuntListingCard>)}
         </div>}
         {!release && (report.steps.length > 0 || discoveryReason) && <details>
@@ -256,13 +267,17 @@ export function DealHuntResult({ result, now, targets, updatedTerms, currentList
                 {step.parallelGroup === i + 1 && <p>Checked together with the next step.</p>}
                 <p>{step.selectedBy === "model" && <strong>AI choice · </strong>}
                     {step.selectedBy === "app" && <strong>App rule · </strong>}{step.reason}</p>
-                <p>{step.observation}</p>
+                <p>{step.action === "check_sales" ? step.observation.split(/(?:The )?PriceCharting\b/i)[0].trim() || "Checked recent sales for this copy."
+                    : step.action === "check_market_guides" && /PriceCharting/i.test(step.observation) ? "Checked additional market references for this printing."
+                    : step.observation}</p>
             </li>)}</ol>
         </details>}
     </div>;
 }
 
-export function DealHunt({ searchId, listings, listingOwners, latestListings, destinationReady, targets, filters, minPotentialGrade, standalone = false, initialGoal, marketPreferences, takePrompt, now, updatedTerms, usage, onFormatChange, onOpen, onClear, onStart, onUsage, onBusyChange, shortlistButton, active = true }: {
+type BuyingGoal = DealHuntGoal | "best_ebay";
+
+export function DealHunt({ searchId, listings, listingOwners, latestListings, destinationReady, targets, filters, minPotentialGrade, standalone = false, initialGoal, marketPreferences, takePrompt, now, updatedTerms, usage, onFormatChange, onBestEbaySearch, onOpen, onClear, onStart, onUsage, onBusyChange, shortlistButton, active = true }: {
     searchId: string;
     listings: ListingSummary[];
     listingOwners?: ReadonlyMap<string, string>;
@@ -272,7 +287,8 @@ export function DealHunt({ searchId, listings, listingOwners, latestListings, de
     filters: ListingFilters;
     minPotentialGrade: number;
     standalone?: boolean;
-    initialGoal?: DealHuntGoal;
+    initialGoal?: BuyingGoal;
+    onBestEbaySearch: (format: "FIXED_PRICE" | "AUCTION") => void;
     onFormatChange?: (format: "FIXED_PRICE" | "AUCTION") => void;
     marketPreferences?: HuntMarketPreferences;
     takePrompt: () => boolean;
@@ -291,10 +307,10 @@ export function DealHunt({ searchId, listings, listingOwners, latestListings, de
     const format = filters.typeFilter === "AUCTION" || filters.typeFilter === "all" && mixedFormat === "AUCTION" ? "AUCTION" : "FIXED_PRICE";
     const matching = listings.filter(row => row.buyingOption === format);
     const candidates = matching.slice(0, DEAL_HUNT_LISTING_LIMIT);
-    const [goal, setGoal] = useState<DealHuntGoal>(initialGoal ?? "resell");
+    const [goal, setGoal] = useState<BuyingGoal>(initialGoal ?? "resell");
     const freshGrading = standalone && goal === "grade_raw" && format === "FIXED_PRICE";
     const [scope, setScope] = useState<DealHuntScope>(standalone ? "any_card" : "search");
-    const noMatches = scope === "search" && !candidates.length;
+    const noMatches = goal !== "best_ebay" && scope === "search" && !candidates.length;
     const [result, setResult] = useState<HuntResult | null>(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
@@ -323,6 +339,10 @@ export function DealHunt({ searchId, listings, listingOwners, latestListings, de
     async function hunt(event?: FormEvent) {
         event?.preventDefault();
         if (!active || pending.current || noMatches) return;
+        if (goal === "best_ebay") {
+            onBestEbaySearch(format);
+            return;
+        }
         const controller = Object.assign(new AbortController(), { startedAt: Date.now() });
         pending.current = controller;
         setBusy(true);
@@ -379,10 +399,10 @@ export function DealHunt({ searchId, listings, listingOwners, latestListings, de
         marketPreferences?.preferRecentSales && "Recent matched sales prioritized",
         filters.maxPrice !== undefined && `Up to ${dollars(filters.maxPrice)} delivered`,
         marketPreferences && (goal === "resell" || freshGrading) && (targets.minProfit > 0 ? `Minimum profit ${dollars(targets.minProfit)}` : "Positive profit after costs")].filter(Boolean);
-    return <section className={styles.hunt} aria-label="Search these results">
+    return <section className={styles.hunt} aria-label="Compare listings">
         {busy ? <HuntProgressPanel searchId={searchId} startedAt={pending.current?.startedAt} usage={usage} onStop={cancel} /> : <>
-            <h2>{format === "AUCTION" ? "Find an auction to bid on" : freshGrading ? "Find newly listed cards worth grading" : standalone ? "Find a card to flip" : "Search these results"}</h2>
-            {!standalone && <p className={styles.note}>Starting with {candidates.length}{matching.length > candidates.length && ` of ${matching.length}`} matching {candidates.length === 1 ? "listing" : "listings"}.</p>}
+            <h2>{goal === "best_ebay" ? "Compare current eBay prices" : format === "AUCTION" ? "Find an auction to bid on" : freshGrading ? "Find newly listed cards worth grading" : standalone ? "Find a card to flip" : "Compare these listings"}</h2>
+            {!standalone && goal !== "best_ebay" && <p className={styles.note}>Starting with {candidates.length}{matching.length > candidates.length && ` of ${matching.length}`} matching {candidates.length === 1 ? "listing" : "listings"}.</p>}
         </>}
         {result && <DealHuntResult result={result} now={now} targets={targets} updatedTerms={updatedTerms}
             currentListing={result.listing && latestListings.get(result.listing.id)} destinationReady={destinationReady}
@@ -391,6 +411,7 @@ export function DealHunt({ searchId, listings, listingOwners, latestListings, de
             {" "}{format === "AUCTION" ? "The next bid must fit your limit after costs." : "A Buy must clear your profit and ROI targets after costs."} Your purchase limit includes shipping and estimated tax.</p>}
         {!busy && goal === "collect_slab" && format === "AUCTION" && <p>Compare the next bid with recent sales of the same printing, grader and grade. Your bid limit includes room for shipping and estimated tax.</p>}
         {!busy && freshGrading && <p>Search raw Buy It Now listings from the last 24 hours. Compare the condition visible in the photos with the seller’s description, then check profit after costs at the likely grade and one grade lower.</p>}
+        {!busy && goal === "best_ebay" && <p>{format === "AUCTION" ? "Search matching eBay auctions and compare the next bid, shipping and estimated tax with recent sales." : "Search matching eBay listings and compare the total price with recent sales for the same card and condition."}</p>}
         {criteria.length > 0 && <p>{criteria.join(" · ")}</p>}
         <form onSubmit={hunt}>
             <div className={styles.controls}>
@@ -398,22 +419,22 @@ export function DealHunt({ searchId, listings, listingOwners, latestListings, de
                     const next = event.target.value === "AUCTION" ? "AUCTION" : "FIXED_PRICE";
                     setMixedFormat(next);
                     if (standalone) onFormatChange?.(next);
-                    if (standalone && !supportsCrossCardHunt(goal, next)) setGoal("resell");
+                    if (standalone && goal !== "best_ebay" && !supportsCrossCardHunt(goal, next)) setGoal("resell");
                     if (!standalone && next === "FIXED_PRICE" && goal === "collect_slab" && scope === "any_card") setScope("search");
                     setResult(null); setError(""); onClear();
                 }}><option value="FIXED_PRICE">Buy It Now</option><option value="AUCTION">Auctions under 10 hours</option></select></label>}
-                {choices.length > 1 && <label>Buying goal<select value={goal} disabled={busy} onChange={event => {
-                        const next = event.target.value as DealHuntGoal;
+                <label>Buying goal<select value={goal} disabled={busy} onChange={event => {
+                        const next = event.target.value as BuyingGoal;
                         setGoal(next); setScope(standalone ? "any_card" : "search"); setResult(null); setError(""); onClear();
-                    }}>{choices.map(key => <option key={key} value={key}>{standalone && key === "grade_raw" ? "Find newly listed raw cards worth grading" : dealHuntGoals[key]}</option>)}</select></label>}
-                {!standalone && <label>Cards to consider<select value={scope} disabled={busy} onChange={event => {
+                    }}><option value="best_ebay">Find the best deal on eBay</option>{choices.map(key => <option key={key} value={key}>{standalone && key === "grade_raw" ? "Find newly listed raw cards worth grading" : dealHuntGoals[key]}</option>)}</select></label>
+                {!standalone && goal !== "best_ebay" && <label>Cards to consider<select value={scope} disabled={busy} onChange={event => {
                         setScope(event.target.value as DealHuntScope); setResult(null); setError(""); onClear();
                     }}>
                         <option value="search">Only these results</option>
                         <option value="same_set">Other cards in the same set</option>
                         {(goal === "resell" || goal === "collect_slab" && format === "AUCTION") && <option value="any_card">Any card across sets</option>}
                     </select></label>}
-                <button type="submit" ref={start} className={styles.run} aria-disabled={busy || noMatches}>{format === "AUCTION" ? "Find auction opportunities" : freshGrading ? "Find grading opportunities" : standalone ? "Find a flip" : "Search for a deal"}</button>
+                <button type="submit" ref={start} className={styles.run} aria-disabled={busy || noMatches}>{goal === "best_ebay" ? "Compare eBay listings" : format === "AUCTION" ? "Find auction opportunities" : freshGrading ? "Find grading opportunities" : standalone ? "Find a flip" : "Compare listings"}</button>
             </div>
         </form>
         {error && <p role="alert" className={styles.error}>{error}</p>}

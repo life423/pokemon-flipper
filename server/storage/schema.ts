@@ -1,4 +1,5 @@
 import type { SqlExecutor } from "./client.ts";
+import { diagnosticSchema } from "./search-diagnostics.ts";
 
 export const SCHEMA_VERSION = 1;
 const schema = `
@@ -74,6 +75,7 @@ IF OBJECT_ID('dbo.StorageMigrations','U') IS NULL CREATE TABLE dbo.StorageMigrat
         const rows = await tx.query<{ version: number }>("SELECT COALESCE(MAX(version),0) AS version FROM dbo.StorageMigrations");
         const current = Number(rows[0]?.version ?? 0);
         if (current > SCHEMA_VERSION) throw new Error("Database schema is newer than this application.");
+        await tx.query(diagnosticSchema);
         if (current === SCHEMA_VERSION) return { version: current, applied: [] };
         await tx.query(schema);
         await tx.query("INSERT dbo.StorageMigrations(version) VALUES(@version)", { version: SCHEMA_VERSION });

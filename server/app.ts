@@ -55,6 +55,9 @@ import { huntProgress } from "./analysis/deal-hunt-progress.ts";
 import type { ListingSummary } from "../shared/types.ts";
 import { readSniperQuote, sandboxBuyerId, sniperCapabilities, submitSandboxBid } from "./ebay/sniper.ts";
 import { auctionTracker } from "./auction-tracking/service.ts";
+import { closeMarketCache } from "./pricing/market-cache.ts";
+import { startPokePriceSchedule } from "./pricing/pokeprice-movers.ts";
+import { startMoversSchedule } from "./pricing/pricecharting-movers.ts";
 import { createSniperScheduler } from "./sniper/scheduler.ts";
 import { sniperRoutes } from "./sniper/routes.ts";
 import { ebayConnectionRoutes } from "./ebay/connection-routes.ts";
@@ -90,7 +93,10 @@ const requestSignal = () => getPriceResearchSignal() ?? shutdown.signal;
 const searchId = (value: unknown) => typeof value === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(value) ? value : undefined;
 app.use("/api", localApi);
 app.use("/api", (_req, res, next) => {
-    if (shutdown.signal.aborted) { res.status(503).json({ error: "The app is shutting down." }); return; }
+    if (shutdown.signal.aborted) {
+        res.status(503).json({ error: "The app is shutting down.", ...(_req.path === "/deal-hunt" && { code: "FLIP_CONNECTION", retryable: true }) });
+        return;
+    }
     next();
 });
 app.use("/api", async (req, res, next) => {
@@ -207,9 +213,9 @@ async function recordDiagnosticDiscovery(req: express.Request, summary: SearchSu
     const id = req.get("X-Pokemon-Flipper-Search-Id");
     if (!summary || summary.continuation?.blocked || !isSearchDiagnosticId(id)) return;
     const continued = typeof req.query.continuation === "string" ? await discoveryContinuations.completedRequest(req.query.continuation, id) : undefined;
-    await saveDiagnosticDiscovery(id, { ...summary, ...coverage, retainedIds: [...listings.keys()] }, continued !== undefined).catch(error => {
-        console.error("Completed search diagnostic could not be saved", error);
-    });
+    // Buyer reviews require the durable list of admitted IDs for this batch.
+    // Sending "done" before it exists makes every copy ineligible on resume.
+    await saveDiagnosticDiscovery(id, { ...summary, ...coverage, retainedIds: [...listings.keys()] }, continued !== undefined);
     await saveDealHuntInventory(id, summary.intent, continued ? continued.filters ?? {} : readListingFilters(req.query), [...listings.values()]).catch(error => {
         console.error("Deal hunt inventory could not be saved", error instanceof Error ? error.name : "unknown error");
     });
@@ -224,7 +230,14 @@ app.post("/api/search-plan", tracked(async (req, res) => {
         if (!signal.aborted) res.set("Cache-Control", "no-store").json(plan);
     } catch (error) {
         if (signal.aborted) return;
-        if (error instanceof SearchPlanInputError) { res.status(error.status).json({ error: error.message }); return; }
+        if (error instanceof SearchPlanInputError) {
+            if (error.cause instanceof Error) {
+                // Keep the failing code location without logging submitted text or provider payloads.
+                const frame = error.cause.stack?.split("\n").find(line => /^\s+at /.test(line));
+                console.error("Search setup failed", { searchId: id, type: error.cause.name, frame });
+            }
+            res.status(error.status).json({ error: error.message }); return;
+        }
         const failure = evaluationFailure(error);
         res.status(failure.status).json(failure.status === 500 ? { error: "Your search could not be interpreted. Please try again." } : failure);
     }
@@ -246,7 +259,10 @@ app.post("/api/deal-hunt", tracked(async (req, res) => {
         if (!signal.aborted) res.set("Cache-Control", "no-store").json(result);
     } catch (error) {
         if (signal.aborted) return;
-        if (error instanceof DealHuntInputError) { res.status(error.status).json({ error: error.message }); return; }
+        if (error instanceof DealHuntInputError) {
+            res.status(error.status).json({ error: error.message, ...(error.code && { code: error.code, retryable: true }) });
+            return;
+        }
         const failure = evaluationFailure(error);
         res.status(failure.status).json(failure.status === 500 ? { error: "The search could not complete." } : failure);
     }
@@ -401,7 +417,13 @@ app.post("/api/deals/new", tracked(async (req, res) => {
         const coverage = searchCoverage(discovery, sourceDispositions, overflowRows);
         if (!signal.aborted) await recordDiagnosticDiscovery(req, discovery, retained, coverage);
         if (!signal.aborted) send({ type: "done", ...coverage });
-    } catch (error) { if (!signal.aborted) send({ type: "error", error: (error as Error).message }); }
+    } catch (error) {
+        if (!signal.aborted) {
+            const failure = evaluationFailure(error);
+            send({ type: "error", error: storageFailure(error)?.message ?? (error as Error).message,
+                ...(failure.code && { code: failure.code, retryable: failure.retryable, scope: failure.scope }) });
+        }
+    }
     res.end();
 }));
 
@@ -689,7 +711,7 @@ async function stopServer() {
     if (complete) {
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
-            await Promise.race([closeDatabase(), new Promise<void>(resolve => { timer = setTimeout(resolve, 5_000); })]);
+            await Promise.race([Promise.all([closeDatabase(), closeMarketCache()]), new Promise<void>(resolve => { timer = setTimeout(resolve, 5_000); })]);
         } catch { console.error("Saved evidence storage did not close cleanly."); }
         finally { clearTimeout(timer); }
     }
@@ -720,5 +742,7 @@ server.listen(PORT, "127.0.0.1", () => {
         secondaryServer.listen(SECONDARY_PORT, "127.0.0.1", () => console.log(`Same app available on http://localhost:${SECONDARY_PORT}`));
     }
     auctionTracker.start();
+    if (process.env.POKEPRICE_MOVERS_DAILY === "true") startPokePriceSchedule(shutdown.signal);
+    if (process.env.PRICECHARTING_MOVERS_DAILY === "true") startMoversSchedule(shutdown.signal);
     void trackSharedWork(auctionSniper.start()).catch(() => console.error("Auction sniper could not start. Inspect its saved queue."));
 });

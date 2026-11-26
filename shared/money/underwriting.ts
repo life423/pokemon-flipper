@@ -398,7 +398,7 @@ function verdict(name: Verdict, reasons: string[], assumptions: string[] = []): 
 
 const isPriced = (path: MoneyPath): path is PricedPath => path.status === "PRICED";
 
-function matchesSlabSummary(summary: CompSummary, slab: NonNullable<UnderwritingInput["slab"]>): boolean {
+export function matchesSlabSummary(summary: CompSummary, slab: NonNullable<UnderwritingInput["slab"]>): boolean {
     return typeof summary.grader === "string" && typeof slab.grader === "string" &&
         typeof slab.grade === "string" && slab.grade.trim().length > 0 &&
         summary.grader.trim().length > 0 && summary.grader.trim().toUpperCase() === slab.grader.trim().toUpperCase() &&

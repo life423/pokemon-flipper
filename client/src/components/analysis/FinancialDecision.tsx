@@ -1,3 +1,4 @@
+import { purchaseNeedsRecheck } from "../../../../shared/fresh-listing.ts";
 import type { ReactNode } from "react";
 import type { Evaluation, MoneyPath, Targets, Underwriting } from "../../types";
 import { dollars, name, percent, timeLeft } from "../../format";
@@ -45,6 +46,13 @@ export function FinancialDecision({ evaluation, targets, now }: { evaluation: Ev
         <p>{evaluation.rawPricing?.evidenceNote}</p>
         <p className={styles.small}>The preliminary check did not establish a resale margin at this price.</p>
     </Section>;
+    if (purchaseNeedsRecheck(evaluation, now)) {
+        const best = evaluation.underwriting?.best;
+        return <Section title="Recheck price">
+            <p>Refresh the listing price, shipping and availability before buying.</p>
+            {best && <Pairs rows={[["Estimated resale", dollars(best.salePrice)], ["Last calculated price limit", dollars(best.maxBid)]]} />}
+        </Section>;
+    }
     if (!evaluation.underwriting) return null;
     return evaluation.listing.buyingOption === "AUCTION" ? <Section title="Auction decision">
         <AuctionSummary evaluation={evaluation} targets={targets} now={now} />

@@ -1,11 +1,29 @@
 # Pokémon Flipper — current plan and resources
 
-Updated November 25, 2026. This file records current decisions and locates the
+Updated November 26, 2026. This file records current decisions and locates the
 resources behind them. [LOCAL_TODO.md](LOCAL_TODO.md) is the single active
 checklist. [AGENTS.md](AGENTS.md) contains the working agreement. Git retains
 earlier versions; obsolete planning reports are deleted rather than archived.
 
 ## Find a flip discovery and purchase evidence
+
+### Current Buy It Now behavior
+
+A new Find a flip search suggests a $50 minimum item price. The buyer can edit or clear it. A resumed search keeps its original filters. PriceCharting, PokéPrice and Silph Co can suggest cards. The catalog ranking checks monthly completed eBay sales for the suggested card. Any observed completed volume can enter ranking. Exact sales, active supply and price stability inform the final demand review. The purchase decision still checks the exact photographed printing and condition or slab grade. Sales pace stays inside research.
+
+For priced raw copies and existing slabs, the tile shows the current sold-based value and a separate expected resale for a well-presented listing. Find a Flip searches one low-price eBay Buy It Now page for the finalist’s printing, independently of the purchase filter. It checks two promising distinct copies first, then follows cheaper plausible copies on that page while they can undercut both the sold estimate range and the best verified competing ask. An unquoted shipping charge triggers a delivery check before further photo work. Only a current photo-matched equivalent with known shipping can establish a competing delivered price. Recent matched eBay transactions support the median or mean after outlier removal. The model can choose between those estimates or decline a flip after reviewing the competition, dated sales, trend and available provider references. Raw-to-grade keeps its likely-grade and lower-grade underwriting. Fees, shipping, tax, target profit and the buyer's delivered budget determine the purchase limit. A projected improvement in presentation cannot raise it.
+
+The private finalist observation records the issue time, assessed raw condition, exact market, original sold baseline, accepted expected resale, supporting sale IDs and any verified competing quote. A declined resale estimate stays empty. Run `npm run backtest:raw-resale` to score estimates against independent eBay transactions on later dates. Run `npm run replay:flip-selection` to compare historical selection with the current rules. Both read local evidence. Their optional `-- --details` output contains private listing-level results.
+
+An eligible raw listing with a possible seller mistake, unresolved identity or inconclusive front can get an early visual check even if it is the only candidate. In a mixed batch the app can include two additional flagged copies, request larger originals, and compare a second distinct view when available. The model identifies the visible clue and the question for gallery review. An unreadable photo leaves the printing or condition unresolved.
+
+Use PriceCharting in background research on authorized, mapped products. Keep its guide prices and web citations off buyer tiles and detail panels. The buyer sees the resale estimate, the cost to acquire the copy, and the completed eBay transactions that support the estimate.
+
+Find a Deal ranks checked Buy It Now copies by total purchase cost relative to matched sales, including copies priced at or above that estimate. If prices cannot establish value, show the lowest current matching quote with known shipping. Find a Flip keeps the positive after-cost requirement.
+
+The diagnostic record for each finished or interrupted resale pass counts outbound HTTP requests by provider. It distinguishes eBay Browse from OAuth, listing pages and photos, and identifies which PKMNPrices feeds were called. A shared request counts once in the pass that dispatched it. Spending and credit ledgers remain the authority for charges.
+
+An interrupted pricing check saves the physical copy, completed work, retry time and original spending account. Resume the pending copy before repeating inventory or photo research. Changed evidence, expired purchase terms and unresolved charges retain their existing checks.
 
 ### Proposed rollout for raw Buy It Now copies
 
@@ -27,7 +45,7 @@ earlier versions; obsolete planning reports are deleted rather than archived.
 - The AI can pick the market, the copy, the next function, a pricing source, a cited web lookup and the evidence panel. Independent checks can run together. Reuse paid work. Validate the listing and calculate the money in code. The buyer controls bids, purchases and seller contact.
 - Estimate raw condition from the pictured copy, recognize an unstamped Unlimited printing when the correct area is visible, and read the grader and grade from a slab. Use set-specific evidence and resolve missing details where possible. Dark Gengar and Team Rocket Dark Alakazam are reported edition-warning regressions.
 - Evaluate selling raw, selling an existing slab and grading raw. Show comparable prices for the exact printing, finish, language and condition or certified grade. Compare the likely grade and one lower. Include shipping, taxes, selling fees and applicable grading and fulfillment expenses in profit, return and purchase ceilings.
-- Find a flip shows the lowest delivered TCGplayer ask for the assessed raw condition. A quote alone opens more research. A resale Buy or Bid needs a supported exit and observed sales activity. Label asks, completed sales and provider estimates. Compare observed sales per day, distinct selling days and the typical price range over two months. A single exceptional sale should not set value. Assessed listing cards show dated eBay, TCGplayer and Pokémon Price Tracker prices, plus matched Cardmarket asks in EUR and individual cited web prices when available. Visible cards request extra sources under their original research account. The on-demand PriceCharting importer saves published Ungraded and grade 7, 8 and 9 histories by exact product. Buyer-facing use requires written permission from PriceCharting and verified product mappings.
+- Find a flip shows the lowest delivered TCGplayer ask for the assessed raw condition. A quote alone opens more research. A resale Buy or Bid needs a supported exit and observed sales activity. Label asks, completed sales and provider estimates. Use recent transaction counts, distinct selling days and the typical price range to rank research. Keep individual sales in the expandable evidence. A single exceptional sale should not set value. Assessed listing cards show dated eBay, TCGplayer and Pokémon Price Tracker prices, plus matched Cardmarket asks in EUR and individual cited web prices when available. The buyer can request extra sources from the tile under the original research account. The on-demand PriceCharting importer saves published Ungraded and grade 7, 8 and 9 histories by exact product. Buyer-facing use requires written permission from PriceCharting and verified product mappings.
 - Look for advantages in seller presentation, under-described condition, vague listing titles and number-only searches. For Leafeon compare full name, `167/203` and `Evolving Skies 167` at the same ceiling, then verify the original artwork. A shelf of unrelated items at a seller with a few Pokémon cards can justify inspecting their other listings.
 - Keep the [seller and offer ideas](#andrews-seller-research-and-offer-ideas), [twenty product strategies](#twenty-deal-finding-ideas-to-test) and [fifteen supplied eBay tactics](#fifteen-ebay-tactics-for-the-deal-planner) as distinct lists. The selected product strategies are competing auctions, cross-market resale, clean-front binder copies, same-art alternatives and revisiting changed evidence.
 - Longer-term collector ideas include scanning and centering, binders and want lists, price history, sealed products and additional languages, portfolio tracking, sharing and trade matching. Pilot the buying guide first and measure whether buyers act, pay and return.
@@ -56,7 +74,7 @@ acceptance; a new live profitable deal remains unproved.
 
 ## First verified guided flip
 
-The first milestone is an available eBay copy that a buyer can acquire within a defensible ceiling and resell on eBay for a projected profit after costs. Record a subsequent actual purchase and resale separately if the buyer chooses to share them. The live broad hunt, costs and provider balances are recorded privately in LOCAL_HANDOFF.md.
+The first milestone is an available eBay copy that a buyer can acquire within a defensible ceiling and resell on eBay for a projected profit after costs. Record a subsequent actual purchase and resale separately if the buyer chooses to share them.
 
 1. **Separate the two buyer questions.** Give Find a deal a named-card comparison. Use a printing with observed recent eBay sales for the online acceptance run. For the requested English printing it may surface the best supported graded copy, a cheaper raw copy and an eligible auction. Each needs its own terms, comparable market and purchase ceiling. Display the strongest choice and explain when the cheaper copy is worse value. Find a flip starts with a resale goal and may explore related cards. Both use the existing photo, pricing and cost calculations.
 2. **Start from a reproducible baseline.** Review the latest completed search diagnostic, replay its cited evidence and reconcile the in-progress liquidity and guided-routing changes with the local checkout. Verify the current Windows storage backend, saved assessments and spending accounts before paid work. Use the last measured broad hunt as the baseline for time, provider use and verified opportunities. Develop away from the server watching the buyer's active search.
@@ -184,7 +202,7 @@ and a supported purchase ceiling. Consistent discovery is still unproven.
 
 ### OpenAI interpretation and search speed
 
-The baseline [complete Deal blocker audit](docs/deal-blockers-audit.md) found a
+The earlier baseline audit found a
 reproduced integration defect: raw pricing gathers one accepted sold-condition
 comparison, final resale requires three within thirty days, and the reviewer
 never gathers the missing two. It also found inconsistent hunt eligibility and
@@ -198,7 +216,7 @@ every Pokémon card. Andrew asked to stop live Venusaur testing.
 Andrew also requested a later price comparison that fetches and displays the
 available values from every connected pricing API, including PKMNPrices,
 Pokémon Price Tracker, OpenAI price research and applicable Cardmarket offers.
-Include PriceCharting after obtaining buyer-facing data permission. Show source, date,
+Keep authorized PriceCharting data in the background. For displayed sources, show date,
 currency, card identity and condition or certified grade beside each price.
 Finish the active search interpretation and speed fixes before this work.
 

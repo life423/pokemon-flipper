@@ -5,5 +5,5 @@ export interface HuntGoalPrompt {
     minProfit?: number;
     goal?: "collect_slab" | "grade_raw";
     maxDelivered?: number;
-    listingFormat?: "FIXED_PRICE" | "AUCTION";
+    listingFormat?: "FIXED_PRICE" | "AUCTION" | "all";
 }

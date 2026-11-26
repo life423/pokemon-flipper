@@ -2,7 +2,7 @@ import "../fixtures/isolated-data.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createSearchInterpreter, SearchPlanInputError, validateSearchPlan } from "../../server/search/search-plan.ts";
-import { createModelExperimentRunner } from "../../server/analysis/model-experiment.ts";
+import { createModelExperimentRunner, modelExperimentKey } from "../../server/analysis/model-experiment.ts";
 import { withAiUsageContext } from "../../server/ai/usage-context.ts";
 import { AiSpendingError } from "../../server/ai/spending.ts";
 import { TEXT_MODEL } from "../../server/ai/policy.ts";
@@ -16,6 +16,50 @@ function reading(intent = {}, rest = {}) {
         goal: null, format: "FIXED_PRICE", minProfit: null, maxDelivered: null, summary: "Search the requested cards.", ...rest };
 }
 const validate = (result: unknown, query: string) => validateSearchPlan(result, { query, filters }, knownSets);
+
+test("a card and its catalog set may share one verbatim subject span", () => {
+    const subject = (text: string, cardName: string) => ({ kind: "CARD", text, cardName });
+    for (const [name, set, text] of [["Ampharos", "Aquapolis", "ampharos aquapolis"], ["Dark Espeon", "Neo Destiny", "Neo Destiny Dark Espeon"],
+        ["Ampharos", "Aquapolis", "ampharos from aquapolis"]]) {
+        const answer = reading({ cardName: name, sets: [set] }, { setMentions: [{ text: set, name: set }], subjectMentions: [subject(text, name)] });
+        const plan = validate(answer, text);
+        assert.equal(plan.query, name + " " + set);
+        assert.equal(plan.workflow, "named_search");
+        assert.equal(plan.goal, null);
+        assert.equal(plan.minProfit, null);
+        assert.throws(() => validate({ ...answer, subjectMentions: [subject("Dark " + text, name)] }, "Dark " + text), /original words/);
+        assert.throws(() => validate({ ...answer, subjectMentions: [subject(text, "Nidoking")] }, text), /original words/);
+        assert.throws(() => validate({ ...answer, subjectMentions: [subject(text, name), { kind: "DESCRIPTION", text: name, cardName: null }] }, text), /omitted part/);
+    }
+});
+
+test("the Buy It Now minimum cannot become a delivered ceiling or profit target on a Mewtwo search", () => {
+    const set = "Crown Zenith Galarian Gallery";
+    const catalog = [...knownSets, set];
+    const selected = { ...filters, minPrice: 50 };
+    for (const exact of [false, true]) {
+        const cardName = exact ? "Mewtwo VSTAR" : "Mewtwo";
+        const query = exact ? `${cardName} GG44/GG70 ${set}` : cardName;
+        const saved = reading({ cardName, cardNumber: exact ? "GG44/GG70" : null, sets: exact ? [set] : [] }, {
+            setMentions: exact ? [{ text: set, name: set }] : [], maxDelivered: 50, summary: "Search for Mewtwo under $50.",
+        });
+        const result = validateSearchPlan(saved, { query, filters: selected }, catalog);
+        assert.equal(result.intent.cardName, cardName);
+        assert.equal(result.intent.cardNumber, exact ? "GG44/GG70" : null);
+        assert.equal(result.maxDelivered, null);
+        assert.equal(result.summary, query);
+        assert.equal(saved.maxDelivered, 50);
+        assert.equal(validateSearchPlan({ ...saved, minProfit: 50 }, { query, filters: selected }, catalog).minProfit, null);
+        assert.throws(() => validateSearchPlan({ ...saved, maxDelivered: 75 }, { query, filters: selected }, catalog), /added a price/);
+    }
+    const input = { query: "Mewtwo under $50 with $20 profit", filters: selected };
+    const answer = reading({ cardName: "Mewtwo" }, { maxDelivered: 50, minProfit: 20 });
+    assert.equal(validateSearchPlan(answer, input, catalog).maxDelivered, 50);
+    assert.throws(() => validateSearchPlan({ ...answer, minProfit: 50 }, input, catalog), /omitted a requested price/);
+    const profit = validateSearchPlan({ ...answer, minProfit: 50 }, { ...input, query: "Mewtwo with $50 profit" }, catalog);
+    assert.equal(profit.minProfit, 50);
+    assert.equal(profit.maxDelivered, null);
+});
 
 test("a collector fraction repeated as a release year is repaired from the submitted words", () => {
     const query = "Charizard ex 199/165, Buy It Now only";
@@ -249,6 +293,29 @@ test("an exact set frame preserves named cards, printed variants and explicit co
     assert.throws(() => validate(reading({ cardName: "Charizard", sets: ["Aquapolis"] }, { setMentions }), request), /omitted part/);
 });
 
+test("a card tag repeating the verified release cannot turn a set search into a missing-card error", () => {
+    for (const set of ["Neo Destiny", "Aquapolis"]) {
+        const taggedSet = { kind: "CARD", text: set, cardName: set };
+        const saved = reading({ sets: [set] }, { setMentions: [{ text: set, name: set }], subjectMentions: [taggedSet] });
+        const original = structuredClone(saved);
+        for (const answer of [saved, { ...saved, intent: { ...saved.intent, cardName: set } }]) {
+            const plan = validateSearchPlan(answer, { query: set, filters: { ...filters, minPrice: 50 } }, knownSets);
+            assert.equal(plan.query, set);
+            assert.equal(plan.intent.cardName, null);
+            assert.equal(plan.workflow, "named_search");
+            assert.deepEqual(plan.marketPreferences.sets, [set]);
+            assert.equal(plan.maxDelivered, null);
+        }
+        assert.deepEqual(saved, original);
+        const query = `Dark Espeon from ${set}`;
+        const mixed = { ...saved, intent: { ...saved.intent, cardName: "Dark Espeon" } };
+        const withCard = { ...mixed, subjectMentions: [taggedSet, { kind: "CARD", text: "Dark Espeon", cardName: "Dark Espeon" }] };
+        assert.equal(validate(withCard, query).intent.cardName, "Dark Espeon");
+        assert.throws(() => validate(mixed, query), /omitted a requested card/);
+        assert.throws(() => validate(saved, query), /omitted a requested card/);
+    }
+});
+
 test("release recovery cannot discard a different requested set, an unknown word or a conflicting model identity", () => {
     const aquapolis = { text: "Aquapolis", name: "Aquapolis" }, skyridge = { text: "Skyridge", name: "Skyridge" };
     for (const request of ["Aquapolis and Skyridge", "Aquapolis holographic Merely", "Pokemon card set"]) {
@@ -385,7 +452,7 @@ test("an incompatible legacy wording uses the new subject contract, while corrup
     await assert.rejects(malformed({ query: "find an underpriced pokemon card", filters }), /incomplete search plan/);
 });
 
-test("the exact raw submission goes to OpenAI and identical submissions reuse their accepted answer", async () => {
+test("the exact submission goes to OpenAI once across equivalent spelling, spacing and filter controls", async () => {
     const saved = new Map<string, unknown>();
     const requests: { prompt: string }[] = [];
     const run = createModelExperimentRunner({ cached: async key => saved.get(key) ?? null,
@@ -394,13 +461,76 @@ test("the exact raw submission goes to OpenAI and identical submissions reuse th
             requests.push(request);
             return { result: reading({ cardName: "Venusaur", minYear: 1999, maxYear: 1999 }), usage: { inputTokens: 100, outputTokens: 100 } };
         } });
-    const interpreter = createSearchInterpreter({ run, setNames: async () => knownSets });
+    const interpreter = createSearchInterpreter({ run, cached: async key => saved.get(key) ?? null, setNames: async () => knownSets });
     const input = { query: "  1999 Venusaur  ", filters };
     const first = await withAiUsageContext({ searchId: "a498c2b9-2aa4-41e9-9bcc-b2caad2da99a" }, () => interpreter(input));
-    const second = await withAiUsageContext({ searchId: "8231a7e6-7029-4404-a3c2-68da45fd0fef" }, () => interpreter(input));
-    assert.deepEqual(first, second);
+    for (const equivalent of [input, { query: "1999   venusaur" }, { query: "1999 VENUSAUR", filters: {
+        kindFilter: filters.kindFilter, typeFilter: filters.typeFilter, minPrice: 50 } }]) {
+        const second = await withAiUsageContext({ searchId: "8231a7e6-7029-4404-a3c2-68da45fd0fef" }, () => interpreter(equivalent));
+        assert.deepEqual(first, second);
+    }
     assert.equal(requests.length, 1);
     assert.equal(JSON.parse(requests[0].prompt).submittedText, input.query);
+});
+
+test("different printed forms keep separate interpretations", async () => {
+    const saved = new Map<string, unknown>(), calls: string[] = [];
+    const cached = async (key: string) => saved.get(key) ?? null;
+    const run = createModelExperimentRunner({ cached, save: async (key, value) => { saved.set(key, value); },
+        run: async ({ prompt }) => {
+            const name = JSON.parse(prompt).submittedText;
+            calls.push(name);
+            return { result: reading({ cardName: name }), usage: { inputTokens: 10, outputTokens: 10 } };
+        } });
+    const interpret = createSearchInterpreter({ run, cached, setNames: async () => knownSets });
+    for (const name of ["Charizard ex", "Charizard EX", "Charizard ex"]) {
+        const plan = await withAiUsageContext({ searchId: "8231a7e6-7029-4404-a3c2-68da45fd0fef" }, () => interpret({ query: name, filters }));
+        assert.equal(plan.intent.cardName, name);
+    }
+    assert.deepEqual(calls, ["Charizard ex", "Charizard EX"]);
+});
+
+test("invalid search controls fail before catalog or provider work and a BIN minimum does not exclude an auction", async () => {
+    let reads = 0;
+    const interpret = createSearchInterpreter({ cached: async () => null, setNames: async () => { reads++; return knownSets; },
+        run: async () => { throw new Error("no live service"); } });
+    for (const invalid of [{ typeFilter: "other" }, { kindFilter: "unknown" }, { minPrice: -1 }, { maxPrice: -0.01 },
+        { minPrice: "50" }, { minPrice: 75, maxPrice: 50 }, [], null]) {
+        await assert.rejects(interpret({ query: "Ampharos Aquapolis", filters: invalid as typeof filters }),
+            error => error instanceof SearchPlanInputError && error.status === 400);
+    }
+    assert.equal(reads, 0);
+    await assert.rejects(interpret({ query: "Ampharos Aquapolis auction", filters: { ...filters, minPrice: 75, maxPrice: 50 } }),
+        error => error instanceof SearchPlanInputError && error.status === 503);
+    assert.equal(reads, 1);
+    for (const maxPrice of [0, 0.75]) {
+        await assert.rejects(interpret({ query: "Ampharos", filters: { ...filters, maxPrice } }),
+            error => error instanceof SearchPlanInputError && error.status === 503);
+    }
+    assert.equal(reads, 3);
+});
+
+test("fresh interpretations exclude price controls and old v2 filter prompts can still be read without dispatch", async () => {
+    const selected = { kindFilter: "all" as const, minPrice: 50, maxPrice: 200, typeFilter: "FIXED_PRICE" as const };
+    const input = { query: "Mewtwo", filters: selected };
+    const oldAnswer = reading({ cardName: "Mewtwo" }, { maxDelivered: 50 });
+    const oldPrompt = JSON.stringify({ submittedText: input.query, selectedFilters: selected, knownSets });
+    let oldKey = "";
+    const fresh = createSearchInterpreter({ setNames: async () => knownSets, cached: async () => null,
+        run: async options => {
+            assert.deepEqual(JSON.parse(options.request.prompt), {
+                submittedText: input.query, selectedFilters: { kindFilter: "all", typeFilter: "FIXED_PRICE" }, knownSets,
+            });
+            oldKey = modelExperimentKey({ ...options, request: { ...options.request, prompt: oldPrompt } });
+            return { result: options.validate(reading({ cardName: "Mewtwo" })), reused: false, key: "mock",
+                usage: { inputTokens: 10, outputTokens: 10 }, answeredAt: new Date().toISOString() };
+        } });
+    assert.equal((await fresh(input)).maxDelivered, null);
+    const replay = createSearchInterpreter({ setNames: async () => knownSets,
+        cached: async key => key === oldKey ? { version: 1, key, model: TEXT_MODEL, answeredAt: new Date().toISOString(),
+            result: oldAnswer, usage: { inputTokens: 10, outputTokens: 10 } } : null,
+        run: async () => { throw new Error("A saved v2 interpretation must not be repurchased"); } });
+    assert.equal((await replay(input)).maxDelivered, null);
 });
 
 test("liquidity is recovered on every read of the original accepted interpretation without a paid repeat", async () => {

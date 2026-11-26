@@ -1,8 +1,11 @@
+import { parseListingLink } from "../../../shared/listing-link.ts";
 import { useEffect, useRef, useState } from "react";
-import { screeningSaleGroups, type BuyerPriceComparison, type ListingMarketPrices, type ProviderPrice, type TileSale } from "../../../shared/listing-market-prices.ts";
+import { buyerVisiblePrice, screeningSaleGroups, type BuyerPriceComparison, type ListingMarketPrices, type ProviderPrice, type TileSale } from "../../../shared/listing-market-prices.ts";
 import { fetchMarketPrices } from "../api";
 import type { Screen } from "../../../shared/types.ts";
 import { dollars } from "../format";
+import { PriceTrajectory } from "./analysis/PriceHistory";
+import { median } from "../../../shared/sold-evidence.ts";
 import styles from "./MarketPrices.module.css";
 
 const saved = new Map<string, { until: number; result: BuyerPriceComparison }>();
@@ -19,7 +22,7 @@ function SaleList({ sales }: { sales: TileSale[] }) {
     </li>)}</ul>;
 }
 
-export function MarketPrices({ prices, now, screen, loadAdditional = true }: { prices?: ListingMarketPrices; now: number; screen?: Screen; loadAdditional?: boolean }) {
+export function MarketPrices({ prices, now, screen, loadAdditional = true, flip = false }: { prices?: ListingMarketPrices; now: number; screen?: Screen; loadAdditional?: boolean; flip?: boolean }) {
     const inFlight = useRef<AbortController | null>(null);
     const [pending, setPending] = useState<string>();
     const [loaded, setLoaded] = useState<BuyerPriceComparison>();
@@ -57,12 +60,13 @@ export function MarketPrices({ prices, now, screen, loadAdditional = true }: { p
     const problem = failure?.market === market ? failure?.message : undefined;
     const extra = new Map<string, ProviderPrice>();
     for (const row of [...(current?.additional ?? []), ...(comparison?.prices ?? [])])
-        if (row.validUntil > now) extra.set(rowKey(row), row);
+        if (row.validUntil > now && buyerVisiblePrice(row)) extra.set(rowKey(row), row);
     const sold = current?.sold && (current.sold.validUntil ?? current.validUntil) > now ? current.sold : undefined;
     const tcg = current?.tcg && (current.tcg.validUntil ?? current.validUntil) > now ? current.tcg : undefined;
     const offer = tcg && (tcg.offerValidUntil ?? tcg.validUntil ?? 0) > now ? tcg.delivered : undefined;
     const fetchedGroups = comparison?.saleGroups?.filter(group => group.validUntil > now);
-    const groups = sold?.sales?.length ? [{ scope: "", sales: sold.sales, median: sold.price, days: sold.days }] :
+    const groups = comparison?.recheckedSales && fetchedGroups?.length ? fetchedGroups :
+        sold?.sales?.length ? [{ scope: "", sales: sold.sales, median: sold.price, days: sold.days }] :
         fetchedGroups?.length ? fetchedGroups : screeningSaleGroups(screen?.soldEvidence?.references ?? [], now);
     const label = [current?.printing, current?.scope].filter(Boolean).join(" · ");
     const rows = [...extra.values()];
@@ -75,11 +79,27 @@ export function MarketPrices({ prices, now, screen, loadAdditional = true }: { p
     const gradeScope = current?.scope && /^(PSA|CGC|BGS|SGC|TAG) /i.test(current.scope);
     const loading = Boolean(market && pending === market);
     const empty = !loadAdditional ? "Pending" : loading ? "Checking…" : problem ? "Unavailable" : current ? (market && !comparison ? "Not checked" : "No match") : "Unverified";
+    const emptySold = loading ? "Checking…" : current?.soldChecked ? "No matching sales" : empty;
+    const forecast = flip && current?.flipResale && (!current.flipResale.competitor || current.flipResale.competitor.validUntil > now)
+        ? current.flipResale : null;
+    const comparable = forecast?.competitor ?? (flip && current?.verifiedComparable && current.verifiedComparable.validUntil > now ? current.verifiedComparable : null);
+    const currentValue = flip ? current?.flipResale?.current : undefined;
     const referenceOnly = !sold && groups.length > 0;
     const shown = new Set([estimate, tcgMarket, cardmarket]);
+    function observedDays(sales: TileSale[]) {
+        const days = new Map<string, number[]>();
+        for (const sale of sales) {
+            const day = sale.soldAt.slice(0, 10);
+            const prices = days.get(day) ?? [];
+            prices.push(sale.price);
+            days.set(day, prices);
+        }
+        return [...days.keys()].sort().map(day => ({ day, price: median(days.get(day)!) }));
+    }
     function saleGroup(group: typeof groups[number], index: number) {
         return <div key={group.scope || index}>
             {group.scope && <p className={styles.detail}>{group.scope} · Median {dollars(group.median)}</p>}
+            <PriceTrajectory points={observedDays(group.sales)} source="eBay sold · daily median" />
             <SaleList sales={group.sales.slice(0, 3)} />
             {group.sales.length > 3 && <details><summary>Show {group.sales.length - 3} more {group.sales.length === 4 ? "sale" : "sales"}</summary>
                 <SaleList sales={group.sales.slice(3)} /></details>}
@@ -88,14 +108,16 @@ export function MarketPrices({ prices, now, screen, loadAdditional = true }: { p
     return <section className={styles.panel} aria-label={label ? "Resale comparisons · " + label : "Market prices"}>
         <strong className={styles.heading}>Market prices{label && " · " + label}</strong>
         <dl className={styles.prices}>
-            <div><dt>{referenceOnly || !estimate && sold?.sellerCondition ? "eBay sold reference" : "eBay resale estimate"}</dt>
-                <dd>{ebayPrice != null ? dollars(ebayPrice) + " USD" : groups.length ? "See sales" : empty}</dd>
-                {sold?.average ? <dd className={styles.detail}>Average of {sold.average.count} {sold.average.fixedPrice && "fixed-price "}{sold.average.count === 1 ? "sale" : "sales"} in {sold.average.days} days</dd> :
+            <div><dt>{currentValue != null ? "Current value" : referenceOnly || !estimate && sold?.sellerCondition ? "eBay sold reference" : "eBay resale estimate"}</dt>
+                <dd>{currentValue != null ? dollars(currentValue) + " USD" : ebayPrice != null ? dollars(ebayPrice) + " USD" : groups.length ? "See sales" : emptySold}</dd>
+                {!flip && <>{sold?.average ? <dd className={styles.detail}>Average of {sold.average.count} {sold.average.fixedPrice && "fixed-price "}{sold.average.count === 1 ? "sale" : "sales"} in {sold.average.days} days</dd> :
                     sold && <dd className={styles.detail}>{sold.filteredMean ? "Sold average · " : estimate ? "Median " + dollars(sold.price) + " · " : ""}{sold.count} {sold.count === 1 ? "sale" : "sales"} in {sold.days} days{sold.sellerCondition && " · seller-described condition"}</dd>}
-                {sold?.sales30 !== undefined && <dd className={styles.detail}>{sold.sales30} observed in 30 days{sold.typicalRange && ` · Middle half ${dollars(sold.typicalRange[0])}–${dollars(sold.typicalRange[1])}`}</dd>}</div>
+                {sold?.sales30 !== undefined && <dd className={styles.detail}>{sold.sales30} observed in 30 days{sold.typicalRange && ` · Middle half ${dollars(sold.typicalRange[0])}–${dollars(sold.typicalRange[1])}`}</dd>}</>}</div>
+            {forecast && <div><dt>Expected resale</dt><dd>{dollars(forecast.expected)} USD</dd>
+                <dd className={styles.detail}>Well-presented listing</dd></div>}
             <div><dt>TCGplayer market</dt><dd>{tcgPrice != null ? dollars(tcgPrice) + " USD" : gradeScope ? "Raw only" : empty}</dd>
                 {tcgPrice != null && <dd className={styles.detail}>{tcg?.condition ?? tcgMarket?.basis} · {dayOf(tcg?.marketRecordAt || tcg?.checkedAt || tcgMarket?.asOf)}</dd>}</div>
-            <div><dt>Cardmarket</dt><dd>{cardmarket ? eur.format(cardmarket.price) + " EUR" : empty}</dd>
+            <div><dt>Cardmarket</dt><dd>{cardmarket ? eur.format(cardmarket.price) + " EUR" : current?.cardmarketConditionUnsupported ? "No equivalent condition" : empty}</dd>
                 {cardmarket && <dd className={styles.detail}>{cardmarket.basis} · {dayOf(cardmarket.asOf)}</dd>}</div>
             {offer != null && <div><dt>TCGplayer lowest offer</dt><dd>{dollars(offer)} USD</dd>
                 <dd className={styles.detail}>{tcg?.condition} · shipped{tcg?.snapshotAt && " · " + dayOf(tcg.snapshotAt)}</dd></div>}
@@ -103,13 +125,31 @@ export function MarketPrices({ prices, now, screen, loadAdditional = true }: { p
                 <dd className={styles.detail}>{row.url ? <a href={row.url} target="_blank" rel="noopener noreferrer">{row.basis}</a> : row.basis}
                     {" · "}{row.source === "Pokémon Price Tracker" && /median|provider estimate/i.test(row.basis) ? "latest sale " : ""}{dayOf(row.asOf)}</dd></div>)}
         </dl>
-        {groups.length > 0 && <div className={styles.history}>
-            <strong className={styles.heading}>Recent eBay sales</strong>
+        {current?.trend && <p className={styles.detail}>{current.trend}</p>}
+        {comparable && <a href={parseListingLink(comparable.listingId)?.url} target="_blank" rel="noopener noreferrer">
+            Lowest verified comparable · {dollars(comparable.delivered)} shipped</a>}
+        {groups.length > 0 && <details className={styles.history} open={flip ? undefined : true}>
+            <summary>Recent eBay sales</summary>
             {referenceOnly && <p className={styles.detail}>{current ? "Grading or condition as listed by the seller." : "Market references. This copy still needs a photo match."}</p>}
             {saleGroup(groups[0], 0)}
             {groups.length > 1 && <details><summary>Other comparable markets ({groups.length - 1})</summary>{groups.slice(1).map(saleGroup)}</details>}
-        </div>}
+        </details>}
         {!current && !groups.length && <p className={styles.empty}>Waiting for matching price evidence.</p>}
+        {comparison?.silphHistory && <details className={styles.history}>
+            <summary>Silph Co eBay sale records ({comparison.silphHistory.sales.length})</summary>
+            <PriceTrajectory points={comparison.silphHistory.points} source="Silph Co · daily median of linked eBay sales" />
+            <ul className={styles.sales}>{comparison.silphHistory.sales.map(sale => <li key={sale.url}>
+                <a href={sale.url} target="_blank" rel="noopener noreferrer">{sale.date}</a><strong>{dollars(sale.priceUsd)}</strong>
+            </li>)}</ul>
+        </details>}
+        {!!comparison?.priceChartingHistory?.sales.length && <details>
+            <summary>More eBay sales · {comparison.priceChartingHistory.scope}</summary>
+            <ul className={styles.sales}>{comparison.priceChartingHistory.sales.map(sale => <li key={sale.url}>
+                <a href={sale.url} target="_blank" rel="noopener noreferrer"><time dateTime={sale.date}>{sale.date}</time></a>
+                <strong>{dollars(sale.priceUsd)}</strong>
+            </li>)}</ul>
+        </details>}
+        {comparison?.context?.map(note => <p key={note} className={styles.detail}>{note}</p>)}
         {comparison?.notes.map(note => <p key={note} className={styles.empty}>{note}</p>)}
         {problem && <p className={styles.empty}>{problem}</p>}
         {loadAdditional && market && id && (!comparison || problem || !!comparison.notes.length) &&

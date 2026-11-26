@@ -53,10 +53,13 @@ It covers visible candidates before completion, shared-account Both, Stop and
 navigation cancellation, temporary versus hard failures, a bound synthetic Buy
 and a stale Buy that must remain Wait. No new live deal was established.
 
-Remaining limits are explicit: the provider's per-query retrieval ceiling still
-exists, active-hunt backlog is currently in memory, and durable whole-hunt
-resume remains future work. Live acceptance must use another card, not Venusaur,
-with current quota and exact condition/printing/grade evidence.
+Subsequent changes persist guided search backlogs, source cursors, accepted
+copy checks and outstanding dispatches in the local SQLite journal. An open
+browser can reconnect when the server returns. A retained batch can be
+reviewed before another market-ranking lookup. Continuation across a permanently
+closed browser and unattended background operation remain separate work.
+The provider's per-query retrieval ceiling still applies. Live acceptance
+requires a card other than Venusaur with current terms and exact resale evidence.
 
 ## Central finding
 

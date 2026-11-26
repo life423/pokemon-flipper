@@ -11,11 +11,15 @@ import { outsideSearchYears } from "../../shared/search-years.ts";
 export type Match = NonNullable<ListingSummary["match"]>;
 
 export function titleMatches(title: string, intent: SearchIntent): boolean {
-    const text = normalizeWords(title);
+    // Sellers also write the printed VSTAR suffix as "V Star" or "V-Star".
+    // This comparison admits the listing for research. Printing, number and
+    // physical identity are still checked independently.
+    const titleWords = (s: string) => normalizeWords(s).replace(/\bv star\b/g, "vstar");
+    const text = titleWords(title);
 
     if (cardLanguageStatus(title) === "OTHER") return false;
 
-    return intent.titleWords.every((word) => text.includes(normalizeWords(word)));
+    return intent.titleWords.every((word) => text.includes(titleWords(word)));
 }
 
 export function gradingMatches(isGraded: boolean, intent: SearchIntent): boolean {

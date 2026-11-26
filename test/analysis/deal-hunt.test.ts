@@ -478,6 +478,55 @@ test("an unrelated transport parse exception is never treated as a planner choic
     await assert.rejects(runDealHunt({ searchId, goal: "collect_slab", candidates: [candidate] }, undefined, model.choose), error => error === broken);
 });
 
+test("Buy It Now overlaps two equally ranked galleries under the original account, then verifies the lead", async () => {
+    const started: string[] = [];
+    const actions: string[] = [];
+    const progress: string[] = [];
+    let active = 0, peak = 0;
+    const candidates: DealHuntCandidate[] = ["lead", "peer", "third", "below"].map((id, index) => ({
+        listingId: id, title: id, summary: "", reviewPriority: { band: index === 3 ? 0 : 2, market: id },
+        available: done => done.has("inspect_photos") ? ["check_sales"] : ["inspect_photos"],
+        async read(action) {
+            assert.equal(getAiUsageContext().listingId, id);
+            assert.equal(getAiUsageContext().searchId, searchId);
+            actions.push(id + "/" + action);
+            if (action === "inspect_photos") {
+                started.push(id);
+                peak = Math.max(peak, ++active);
+                await new Promise(resolve => setImmediate(resolve));
+                assert.deepEqual(started, ["lead", "peer"]);
+                active--;
+            }
+            return "Completed " + action;
+        },
+        outcome: done => done.has("check_sales") ? { decision: "BUY", section: "sales", reason: "Matched sales and terms." } : null,
+    }));
+    const report = await runDealHunt({ searchId, goal: "resell", freshListings: true, guidedResale: true, candidates,
+        progress: { stage(_phase, label) { if (label) progress.push(label); }, checked() {} } });
+    assert.equal(peak, 2);
+    assert.equal(report.destination?.listingId, "lead");
+    assert.deepEqual(actions, ["lead/inspect_photos", "peer/inspect_photos", "lead/check_sales"]);
+    assert.deepEqual(report.steps.slice(0, 2).map(s => s.parallelGroup), [1, 1]);
+    assert.ok(progress.some(s => s.includes("2 listings") && s.includes("peer")));
+});
+
+test("stopping from the first photo review prevents dispatch of its pending companion", async () => {
+    const controller = new AbortController();
+    const dispatched: string[] = [];
+    const candidates: DealHuntCandidate[] = ["first", "second"].map(id => ({
+        listingId: id, title: id, summary: "", reviewPriority: { band: 2, market: id },
+        available: () => ["inspect_photos"], outcome: () => null,
+        read() {
+            dispatched.push(id);
+            controller.abort(new Error("Buyer stopped"));
+            return "Accepted photo evidence";
+        },
+    }));
+    await assert.rejects(runDealHunt({ searchId, goal: "resell", freshListings: true, guidedResale: true, candidates },
+        controller.signal), /Buyer stopped/);
+    assert.deepEqual(dispatched, ["first"]);
+});
+
 test("the auction planner can check two different copies together and reuse the decision", async () => {
     const cache = new Map();
     let selections = 0;

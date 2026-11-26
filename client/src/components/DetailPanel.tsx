@@ -1,3 +1,4 @@
+import { purchaseNeedsRecheck } from "../../../shared/fresh-listing.ts";
 import { MarketPrices } from "./MarketPrices";
 import { listingMarketPrices } from "../../../shared/listing-market-prices.ts";
 import { MarketReferences } from "./analysis/MarketReferences";
@@ -75,9 +76,10 @@ export function DetailPanel({ listing, analysis, automaticDecision: receipt, rev
     const comparisonMarket = evaluation && cardmarketComparisonKey(evaluation);
     const pricingExpired = analysis?.status === "done" && analysis.pricingExpired;
     const prices = !checking && !pricingExpired && !unavailable && evaluation ? listingMarketPrices(evaluation, listing, now) : undefined;
+    const needsRecheck = purchaseNeedsRecheck(evaluation, now) && !priceEvidenceGap(evaluation!);
     const canRefreshPrices = onRefreshPrices && !unavailable && evaluation?.photoCheck &&
         (readyForPricing(evaluation.identity) || evaluation.pricingDeferred?.identityLookupPending) &&
-        (pricingExpired || priceEvidenceGap(evaluation) || evaluation.underwriting?.verdict === "CANT_PRICE");
+        (needsRecheck || pricingExpired || priceEvidenceGap(evaluation) || evaluation.underwriting?.verdict === "CANT_PRICE");
     const refreshingPrices = priceRefresh?.status === "loading";
     const reviewing = photoReviewState?.status === "loading" || refreshingPrices;
     // A new listing opens at the top of the panel.
@@ -88,7 +90,7 @@ export function DetailPanel({ listing, analysis, automaticDecision: receipt, rev
         !override.auctionOpportunity && !unavailable;
     const section = (collecting || showPurchaseScenarios || sameWaitDecision) && evaluation && destination?.listingId === listing.id ? destination.section : null;
     const label = section === "sales" ? "Price evidence" : section === "grading" ? "Grading breakdown" : "Photo evidence";
-    const actions = section === "sales" ? ["check_sales", "check_price_references", "check_price_tracker", "search_web_sales", "check_price_history", "compare_cardmarket", "check_raw_resale"] :
+    const actions = section === "sales" ? ["check_market_guides", "review_resale", "check_sales", "check_price_references", "check_price_tracker", "search_web_sales", "check_price_history", "compare_cardmarket", "check_raw_resale"] :
         section === "grading" ? ["calculate_grading"] : ["inspect_photos", "resolve_printing"];
     const observation = huntFocus?.report.steps.filter(step => step.listingId === listing.id && actions.includes(step.action)).at(-1)?.observation;
 
@@ -161,7 +163,7 @@ export function DetailPanel({ listing, analysis, automaticDecision: receipt, rev
                 {!checking && (canRefreshPrices || priceRefresh) && <div className={styles.cta}>
                     {canRefreshPrices && <>
                         <p>Check current listing terms and sold prices. This uses marketplace requests and no new AI.</p>
-                        <button type="button" className={styles.primary} disabled={reviewing} onClick={onRefreshPrices}>{refreshingPrices ? "Refreshing pricing…" : "Refresh pricing"}</button>
+                        <button type="button" className={styles.primary} disabled={reviewing} onClick={onRefreshPrices}>{refreshingPrices ? "Refreshing pricing…" : needsRecheck ? "Recheck price" : "Refresh pricing"}</button>
                     </>}
                     {priceRefresh?.status === "error" && <p role="alert" className={styles.bad}>Pricing refresh failed. {priceRefresh.message}</p>}
                     {priceRefresh?.status === "done" && <p role="status">{priceRefresh.message}</p>}

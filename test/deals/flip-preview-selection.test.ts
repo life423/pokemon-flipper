@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { cheapestComparableFirst, sampleRawAsks } from "../../shared/bin-market-comparison.ts";
-import { selectFlipPreviews } from "../../server/deals/flip-preview-selection.ts";
+import { orderFlipPreviewCopies, selectFlipPreviews } from "../../server/deals/flip-preview-selection.ts";
+import { salesSummary } from "../fixtures/card-evaluation.ts";
 import { createModelExperimentRunner } from "../../server/analysis/model-experiment.ts";
 import { withAiUsageContext } from "../../server/ai/usage-context.ts";
 import type { ListingSummary } from "../../shared/types.ts";
@@ -47,4 +48,72 @@ test("visual ranking ties observations to seen previews, reuses accepted pixels 
         assert.deepEqual((await select()).leads, []);
         assert.equal(calls, 2);
     });
+});
+
+test("a lone possible seller mistake can earn gallery review from a distinct alternate view", async () => {
+    const row = copy("mistitled", 42, { researchIdentity: true });
+    const first = row.images[0];
+    const alternate = first.replace("mistitled", "alternate");
+    const smaller = alternate.replace("1600", "500");
+    row.images.push(first.replace("1600", "500"), smaller);
+    const fetched: string[] = [];
+    let calls = 0;
+    const run = createModelExperimentRunner({ cached: async () => null, save: async () => {}, run: async request => {
+        calls++;
+        assert.deepEqual(request.photos.map(photo => photo.label), ["mistitled · photo 3"]);
+        assert.ok(request.maxOutputTokens! > 320);
+        return { usage: { inputTokens: 1, outputTokens: 1 }, result: { leads: [{
+            id: row.id, observation: "Photo 3 shows a different collector number.", question: "Which set mark is visible on the original front?" }] } };
+    } });
+    const select = (rows: ListingSummary[]) => selectFlipPreviews(rows, { minProfit: 0, minRoi: 0 }, new AbortController().signal, now,
+        async (url, _signal, size) => {
+            fetched.push(url);
+            assert.equal(size, 1024);
+            if (url !== smaller) throw new Error("Photo unavailable");
+            return "data:image/jpeg;base64,AA==";
+        }, run);
+    await withAiUsageContext({ searchId: "64d3f1e4-e655-422e-8755-fb933bf9b618" }, async () => {
+        assert.equal((await select([copy("ordinary", 42)])).source, "rules");
+        const result = await select([row]);
+        assert.deepEqual(result.seen, [row.id]);
+        assert.deepEqual(result.leads.map(lead => lead.id), [row.id]);
+        assert.deepEqual(fetched, [first, alternate, smaller]);
+        assert.equal(calls, 1);
+    });
+});
+
+test("flagged listings beyond the ordinary four get previews and all other copies remain queued", async () => {
+    const rows = Array.from({ length: 8 }, (_, i) => copy("copy" + i, 20 + i, i >= 4 ? { researchIdentity: true } : {}));
+    const run = createModelExperimentRunner({ cached: async () => null, save: async () => {}, run: async request => {
+        assert.equal(request.photos.length, 6);
+        return { usage: { inputTokens: 1, outputTokens: 1 }, result: { leads: [] } };
+    } });
+    await withAiUsageContext({ searchId: "64d3f1e4-e655-422e-8755-fb933bf9b618" }, async () => {
+        const result = await selectFlipPreviews(rows, { minProfit: 0, minRoi: 0 }, new AbortController().signal, now,
+            async () => "data:image/jpeg;base64,AA==", run);
+        assert.ok(["copy4", "copy5", "copy6"].every(id => result.seen.includes(id)));
+        assert.deepEqual(result.cheapest, rows.map(row => row.id));
+    });
+});
+
+test("a cheap, visibly worn copy keeps its place in research but a comparable front gets the first gallery check", () => {
+    const cheap = copy("worn", 20), other = copy("ordinary", 35);
+    const unrelated = copy("unrelated", 40);
+    unrelated.screen = { ...other.screen!, card: { ...other.screen!.card!, name: "Umbreon" } };
+    const rows = [cheap, unrelated, other];
+    const order = (observation: string) => orderFlipPreviewCopies(rows, {
+        seen: rows.map(row => row.id), cheapest: rows.map(row => row.id),
+        leads: [{ id: cheap.id, observation, question: "Could a close-up reveal deep creases?" }],
+    }, { minProfit: 0, minRoi: 0 }, now);
+    for (const observation of ["The front shows substantial edge/corner wear.", "Multiple diagonal creases cross the card."])
+        assert.deepEqual(order(observation), ["ordinary", "unrelated", "worn"]);
+    for (const observation of ["Visible glare.", "No visible creases.", "The sleeve has heavy wear.", "The back is missing."])
+        assert.deepEqual(order(observation), ["worn", "unrelated", "ordinary"]);
+
+    const summary = { ...salesSummary("RAW", "DAMAGED", [100, 110, 120]), newestSale: stamp, windowDays: 60 };
+    for (const row of [cheap, other]) row.screen = { ...row.screen!, soldEvidence: { status: "AVAILABLE", exactScope: true, note: "",
+        references: [{ recordId: 1, name: "Ampharos", set: "Neo Genesis", cardNumber: "1/111", printing: "UNLIMITED",
+            finish: "HOLO", condition: "DAMAGED", grader: null, grade: null, summary }] } };
+    assert.deepEqual(order("Multiple diagonal creases."), ["worn", "unrelated", "ordinary"],
+        "a comparable Damaged sale that covers costs preserves priority");
 });

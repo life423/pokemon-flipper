@@ -6,10 +6,10 @@ import { DataImportError } from "../server/storage-import/types.ts";
 import { inspectLegacyData, latestSnapshot, loadSnapshot, prepareSnapshot, summarizeImport } from "../server/storage-import/source.ts";
 import { importSnapshot, verifySnapshot } from "../server/storage-import/migrate.ts";
 
-interface Arguments { command: "status" | "migrate" | "import" | "verify"; directory: string; ownerId: string; dryRun: boolean; snapshot?: string }
+interface Arguments { command: "status" | "migrate" | "import" | "import-diagnostics" | "verify"; directory: string; ownerId: string; dryRun: boolean; snapshot?: string }
 export function databaseArguments(args: string[]): Arguments {
     const command = args[0];
-    if (!["status", "migrate", "import", "verify"].includes(command ?? "")) throw new DataImportError("Usage: npm run db -- status|migrate|import [--dry-run]|verify [--data-dir PATH] [--owner ID] [--snapshot PATH]");
+    if (!["status", "migrate", "import", "import-diagnostics", "verify"].includes(command ?? "")) throw new DataImportError("Usage: npm run db -- status|migrate|import [--dry-run]|import-diagnostics|verify [--data-dir PATH] [--owner ID] [--snapshot PATH]");
     const result: Arguments = { command: command as Arguments["command"], directory: DATA_DIR, ownerId: process.env.AZURE_SQL_OWNER_ID?.trim() || "local-owner", dryRun: false };
     for (let index = 1; index < args.length; index++) {
         const flag = args[index];
@@ -39,6 +39,10 @@ export async function runDatabaseCommand(args: string[], signal?: AbortSignal): 
         if (options.command === "migrate") return await sql.migrateDatabase();
         if (options.command === "status") return await sql.databaseStatus();
         if (options.ownerId !== sql.localOwner()) throw new DataImportError("--owner must match AZURE_SQL_OWNER_ID so private caches and evaluations migrate to the same owner. Set the local owner configuration explicitly before importing.");
+        if (options.command === "import-diagnostics") {
+            const { createSearchDiagnosticStore } = await import("../server/analysis/search-diagnostic-store.ts");
+            return await createSearchDiagnosticStore({ directory: path.join(options.directory, "search-diagnostics"), backend: () => "azure-sql" }).importLocalDiagnostics();
+        }
         const status = await sql.databaseStatus(), target = await sql.getSqlRepositories();
         if (options.command === "verify") {
             const snapshot = options.snapshot ?? await latestSnapshot(options.directory);

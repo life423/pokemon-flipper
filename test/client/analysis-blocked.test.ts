@@ -44,6 +44,6 @@ test("guard failures show their cause once and offer a same-search manual retry"
     const app = renderToStaticMarkup(createElement(App));
     const views = app.match(/<div[^>]*aria-label="Show">([\s\S]*?)<\/div>/)?.[1];
     assert.ok(views, "the result views remain present before a search");
-    assert.match(views, /^<button[^>]*aria-pressed="true"[^>]*>[\s\S]*?All matching/);
+    assert.match(views, /^<button[^>]*aria-pressed="true"[^>]*><span[^>]*data-view="deals"/);
     assert.equal(requests, 0);
 });

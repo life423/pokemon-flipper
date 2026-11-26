@@ -22,6 +22,9 @@
 .card[data-tone="buy"], .card[data-tone="grade"] { --result-color: var(--success); }
 .card[data-tone="watch"] { --result-color: var(--warning); }
 .card[data-tone="offer"] { --result-color: var(--accent); }
+.card[data-tone="comparison"] { --result-color: var(--accent); }
+.card[data-tone="comparison"] .badge { color: var(--action-text); }
+.comparisonReason { color: var(--text); font-size: var(--text-sm); line-height: 1.5; }
 .card[data-tone="pass"] { --result-color: var(--pass-text); }
 .head { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: var(--space-4); min-width: 0; }
 .photo { position: relative; display: grid; place-items: center; width: 100%; height: clamp(11rem, 62cqw, 17rem); padding: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-muted); cursor: pointer; }
@@ -54,6 +57,8 @@
 .actions > button { flex: 1; }
 .actions > button { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); min-height: var(--tap); padding: var(--space-2) var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface-alt); color: var(--text); font-size: var(--text-sm); font-weight: 600; cursor: pointer; white-space: nowrap; }
 .actions > .open { color: var(--action-text); }
+.actions > a { display: inline-flex; align-items: center; min-height: var(--tap); padding-inline: var(--space-2); color: var(--action-text); font-size: var(--text-sm); }
+.notices:empty { display: none; }
 .actions > button[aria-pressed="true"] { color: var(--action-text); border-color: var(--accent); }
 .actions > button[aria-disabled="true"] { opacity: .65; cursor: wait; }
 .notices { display: grid; gap: var(--space-1); margin: 0 var(--space-5) var(--space-3); padding-left: var(--space-3); border-left: 2px solid var(--border); }

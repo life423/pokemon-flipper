@@ -1,4 +1,5 @@
 import type { Evaluation } from "../../types";
+import { buyerVisiblePrice } from "../../../../shared/listing-market-prices.ts";
 import { CONDITION_NAMES } from "../../../../shared/conditions.ts";
 import { dollars } from "../../format";
 import { Section } from "./primitives";
@@ -7,7 +8,9 @@ import styles from "../DetailPanel.module.css";
 export function MarketReferences({ evaluation }: { evaluation: Evaluation }) {
     const tracker = evaluation.trackerPriceReference, web = evaluation.webPriceResearch;
     const raw = evaluation.trackerRawReference;
-    if (!tracker && !raw && !web && !evaluation.supplementalPriceNote) return null;
+    const citations = web?.observations.filter(buyerVisiblePrice);
+    const showWeb = web && (!web.observations.length || !!citations?.length);
+    if (!tracker && !raw && !showWeb && !evaluation.supplementalPriceNote) return null;
     const grade = tracker?.gradedMarket;
     return <Section title="Additional price evidence">
         {raw && <div>
@@ -22,10 +25,10 @@ export function MarketReferences({ evaluation }: { evaluation: Evaluation }) {
             {grade.marketplaces.length > 0 && <p className={styles.small}>Marketplaces · {grade.marketplaces.join(", ")}</p>}
             <p className={styles.small}>{tracker.caveat}</p>
         </div>}
-        {web && <div>
+        {showWeb && <div>
             <h4 className={styles.subTitle}>Web price check · {web.checkedAt.slice(0, 10)}</h4>
-            {web.observations.length ? <>
-                <ul>{web.observations.map(row => <li key={row.url}>
+            {citations?.length ? <>
+                <ul>{citations.map(row => <li key={row.url}>
                     {row.kind === "SOLD" ? "Reported sale" : "Asking price"} · {dollars(row.priceUsd)}
                     {row.date && ` · ${row.date}`}. <a href={row.url} target="_blank" rel="noopener noreferrer">{row.title}</a>
                 </li>)}</ul>

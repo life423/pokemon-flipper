@@ -200,13 +200,21 @@ async function reach(url: string, init?: RequestInit): Promise<Response> {
         return await fetch(url, { ...init, headers });
     } catch (error) {
         if (init?.signal?.aborted) throw error;
-        throw new ApiRequestError("The app connection was interrupted. Reconnect to continue.", true);
+        throw new ApiRequestError("The app connection was interrupted. Reconnect to continue.", true, 1500,
+            url === "/api/deal-hunt" ? "FLIP_CONNECTION" : undefined);
     }
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
     const response = await reach(url, init);
-    const body = await response.json().catch(() => null);
+    const body = await response.json().catch((error: unknown) => {
+        init?.signal?.throwIfAborted();
+        if (url === "/api/deal-hunt" && response.ok) {
+            if (error instanceof TypeError) throw new ApiRequestError("The connection closed while receiving the search result.", true, 1500, "FLIP_CONNECTION");
+            throw new ApiRequestError("The app returned an unreadable search result.");
+        }
+        return null;
+    });
 
     if (!response.ok) {
         const declared = Number(body?.retryAfterMs);
@@ -221,7 +229,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 export type DealsMessage =
     | { type: "progress"; found: number; screened: number }
-    | { type: "start"; total: number; found: number; count: number; skipped: number; intent: SearchIntent; continuation?: SearchContinuation; sourceLimitReached?: boolean; reviewSelection?: SearchReviewSelection; mode?: "new" | "development"; deferred?: number; previouslySeen?: number; screened?: number; priceExcluded?: number; unresolvedOverflow?: number; soldPurchaseCeiling?: number; marketplaceOrder?: DiscoveryOrder; pricePass?: { status: "COMPLETE" | "UNAVAILABLE"; newListings: number; candidates: number } }
+    | { type: "start"; comparisonQuote?: ListingSummary; total: number; found: number; count: number; skipped: number; intent: SearchIntent; continuation?: SearchContinuation; sourceLimitReached?: boolean; reviewSelection?: SearchReviewSelection; mode?: "new" | "development"; deferred?: number; previouslySeen?: number; screened?: number; priceExcluded?: number; unresolvedOverflow?: number; soldPurchaseCeiling?: number; marketplaceOrder?: DiscoveryOrder; pricePass?: { status: "COMPLETE" | "UNAVAILABLE"; newListings: number; candidates: number } }
     | { type: "listing"; listing: ListingSummary }
     | ({ type: "done" } & SearchSourceCoverage)
     | { type: "error"; error: string; code?: string; retryable?: boolean; scope?: "listing" | "search" };

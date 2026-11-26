@@ -188,7 +188,7 @@ test("raw BIN discovery reaches Blastoise titles missing the year and edition, t
     const { evaluate } = harness({ lookup: market.lookupCards, fetchRawComps: market.fetchRawComps, fetchComps: market.fetchComps,
         details: async id => {
             const row = source.find(value => value.id === id)!;
-            return details({ id, title: row.title, price: row.currentPrice, shipping: row.shipping, images: row.images,
+            return details({ id, retrievedAt: new Date(now).toISOString(), title: row.title, price: row.currentPrice, shipping: row.shipping, images: row.images,
                 aspects: { "Card Name": "Blastoise", Set: "Base Set", "Card Number": "2/102", Language: "English", Finish: "Holo" } });
         },
         assess: async (item, photos) => {
@@ -226,7 +226,7 @@ test("raw BIN discovery reaches Blastoise titles missing the year and edition, t
         }
         const visible = filterSearchResults({ listings: rows, analyses, page: "search", intent, now,
             filters: { ...filters, minPrice: "", maxPrice: "", minGrade: 0 } });
-        const grouped = groupSearchResults(visible, analyses, false, new Set());
+        const grouped = groupSearchResults(visible, analyses, false, new Set(), {}, undefined, now);
         assert.deepEqual(grouped.deals.map(row => row.id), [source[1].id]);
         assert.deepEqual(grouped.losses.map(row => row.id), [source[0].id]);
         const win = analyses[source[1].id].evaluation.underwriting!.best!;
@@ -914,7 +914,7 @@ test("raw sold research gates condition cohorts but selects by recency independe
         const live = reading(); live.condition!.rawCondition = "LIGHTLY_PLAYED"; live.condition!.gradeRange = null;
         const attempted: (string | undefined)[] = [], read: (string | undefined)[] = [];
         const { evaluate } = harness({
-            details: async id => details({ id, price: 100, shipping: 5.96 }),
+            details: async id => details({ id, retrievedAt: new Date(now).toISOString(), price: 100, shipping: 5.96 }),
             assess: async () => ({ result: live, usage: { inputTokens: 700, outputTokens: 450 } }),
             fetchRawComps: async () => scenario.sales,
             soldCondition: () => ({ usage: [],
@@ -947,7 +947,7 @@ test("raw sold research gates condition cohorts but selects by recency independe
             assert.equal(raw?.priceCondition, "MODERATELY_PLAYED");
             assert.equal(raw?.salePrice, scenario.sales.find(source => source.id === scenario.expected)!.price);
             assert.equal(result.underwriting?.verdict, scenario.profitable === false ? "CANT_PRICE" : "BUY_RAW");
-            assert.equal(resultGroup({ ...details(), currentPrice: 100, isGraded: false }, result) === "deals", scenario.profitable ?? true);
+            assert.equal(resultGroup({ ...details(), currentPrice: 100, isGraded: false }, result, false, false, now) === "deals", scenario.profitable ?? true);
         } else assert.equal(result.underwriting?.verdict, "CANT_PRICE");
     });
 });
@@ -1037,7 +1037,7 @@ test("raw sold-photo work stops when no remaining comp can meet targets and resu
 
 test("an explicit crease prices the damaged raw resale and skips grading research the verdict would discard", async t => {
     t.mock.method(globalThis, "fetch", () => assert.fail("use only the saved listing and sold fixtures"));
-    const item = details({ price: 12, shipping: 3, conditionNotes: ["Seller description: Card is in played condition heavy scratches creases edge wear"] });
+    const item = details({ retrievedAt: new Date(now).toISOString(), price: 12, shipping: 3, conditionNotes: ["Seller description: Card is in played condition heavy scratches creases edge wear"] });
     const soldChecks: string[] = [];
     const sale: Comp = { id: "damaged", title: "Venusaur Base Set 15/102 Unlimited Holo Damaged", price: 125,
         sold_at: new Date(now - 86400000).toISOString(), variant: "Holofoil", currency: "USD", attribution: "exact",
@@ -1060,7 +1060,7 @@ test("an explicit crease prices the damaged raw resale and skips grading researc
     assert.equal(result.underwriting?.verdict, "BUY_RAW");
     assert.equal(result.underwriting?.best?.priceCondition, "DAMAGED");
     const summary = { ...item, currentPrice: item.price, isGraded: false };
-    assert.equal(resultGroup(summary, result), "deals");
+    assert.equal(resultGroup(summary, result, false, false, now), "deals");
     const replay = await evaluate(item.id, { automatic: true });
     assert.ok(replay.reusedSteps.includes("savedEvaluation"));
     assert.deepEqual(soldChecks, ["damaged"]);
@@ -1100,7 +1100,7 @@ test("a newly verified Best Offer reopens an economically relevant raw sold-phot
 });
 
 test("catalog-corroborated photos correct stale seller fields without repurchasing the accepted reading or restoring a generic mismatch hold", async () => {
-    const listing = details({ aspects: { ...details().aspects, "Card Number": "14/102", Finish: "Regular" } });
+    const listing = details({ retrievedAt: new Date(now).toISOString(), aspects: { ...details().aspects, "Card Number": "14/102", Finish: "Regular" } });
     const accepted = reading(); accepted.condition!.rawCondition = "LIGHTLY_PLAYED"; accepted.condition!.gradeRange = null;
     accepted.photoCheck.cardMatch = { verdict: "MISMATCH", problems: [
         "The visible collector number is 15/102, not seller aspects 14/102.",
@@ -1119,7 +1119,7 @@ test("catalog-corroborated photos correct stale seller fields without repurchasi
     assert.equal(result.identity?.cardNumber, "15/102");
     assert.equal(result.identity?.finish, "HOLO");
     assert.equal(result.underwriting?.verdict, "BUY_RAW");
-    assert.equal(resultGroup({ ...listing, currentPrice: listing.price, isGraded: false }, result), "deals");
+    assert.equal(resultGroup({ ...listing, currentPrice: listing.price, isGraded: false }, result, false, false, now), "deals");
     assert.equal(photoReviewStatus(result).needsYourReview, false);
     assert.equal(calls.assessed, 0);
     assert.deepEqual(result.usage, []);
@@ -1157,7 +1157,7 @@ test("a stale generic finish disagreement is repriced from saved photo evidence"
 
 test("a seller set typo with matching title, saved photos and exact sales can reach Deals", async t => {
     t.mock.method(globalThis, "fetch", () => assert.fail("seller set replay must stay offline"));
-    const listing = details({ aspects: { ...details().aspects, Set: "Base Set 2", "Card Number": "15/130" } });
+    const listing = details({ retrievedAt: new Date(now).toISOString(), aspects: { ...details().aspects, Set: "Base Set 2", "Card Number": "15/130" } });
     const accepted = reading(); accepted.condition!.gradeRange = null;
     accepted.photoCheck.cardMatch = { verdict: "MISMATCH", problems: [
         "The seller item specifics say Base Set 2, but the photographed set is Base Set.",
@@ -1181,7 +1181,7 @@ test("a seller set typo with matching title, saved photos and exact sales can re
     assert.equal(result.identity?.set, "Base Set");
     assert.equal(result.identity?.cardNumber, "15/102");
     assert.equal(result.underwriting?.verdict, "BUY_RAW");
-    assert.equal(resultGroup({ ...listing, currentPrice: listing.price, isGraded: false }, result), "deals");
+    assert.equal(resultGroup({ ...listing, currentPrice: listing.price, isGraded: false }, result, false, false, now), "deals");
     assert.equal(calls.assessed, 0);
     assert.deepEqual(result.usage, []);
     assert.deepEqual(cache.get(plan.key), stored);
@@ -1190,10 +1190,10 @@ test("a seller set typo with matching title, saved photos and exact sales can re
 
 test("a sold-copy AI allowance denial preserves a supported grading deal", async t => {
     t.mock.method(globalThis, "fetch", () => assert.fail("the allowance regression must remain offline"));
-    const item = details();
+    const item = details({ retrievedAt: new Date(now).toISOString() });
     const live = reading(); live.condition!.rawCondition = "NEAR_MINT";
     let soldPhotoAttempts = 0;
-    const { evaluate, calls, cache } = harness({
+    const { evaluate, calls, cache } = harness({ details: async id => ({ ...item, id }),
         assess: async () => assert.fail("the accepted listing assessment must be reused"),
         soldCondition: options => createSoldConditionAcquirer({ ...options, assess: async () => {
             soldPhotoAttempts++;
@@ -1212,7 +1212,7 @@ test("a sold-copy AI allowance denial preserves a supported grading deal", async
     assert.equal(calls.comps, 6);
     assert.equal(result.underwriting?.verdict, "BUY_AND_GRADE");
     assert.equal(currentPriceEvidence({ ...result, pricingVersion: "ebay-resale-17" }, now), true, "a supported grading deal needs no raw-floor migration");
-    assert.equal(resultGroup({ ...item, currentPrice: item.price, isGraded: false }, result), "deals");
+    assert.equal(resultGroup({ ...item, currentPrice: item.price, isGraded: false }, result, false, false, now), "deals");
     assert.deepEqual(cache.get(plan.key), saved);
     assert.deepEqual(result.usage, []);
 
@@ -1485,7 +1485,7 @@ test("clear added back and detail photos can unlock an evidenced grading deal wi
     const complete = await evaluate(listing.id, { addedPhotosOnly: true });
     assert.deepEqual(batches, [[1], [2, 3, 4]]);
     assert.equal(complete.underwriting?.verdict, "BUY_AND_GRADE");
-    assert.equal(resultGroup({ ...listing, currentPrice: listing.price, isGraded: false }, complete), "deals");
+    assert.equal(resultGroup({ ...listing, currentPrice: listing.price, isGraded: false }, complete, false, false, now), "deals");
 });
 
 test("saved legacy full evidence is preferred without overwriting or repurchasing it", async () => {

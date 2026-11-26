@@ -103,17 +103,17 @@ test("compact photo progress distinguishes loaded listings, completed assessment
     const prioritized = render({ phase: "done", checked: 50, total: 50, buyerProgress: buyer });
     const visible = prioritized.slice(0, prioritized.indexOf('inert=""'));
     assert.match(visible, /Checking priority listings/);
-    assert.match(visible, /50 listings loaded · 6 of 50 buyer decisions ready/);
+    assert.match(visible, /50 listings loaded · 6 of 50 listings reviewed/);
     assert.match(visible, /Checking 2 listings/);
     assert.match(visible, /4 of 15 priority listings checked/);
     assert.match(visible, /3 with photo assessments/);
     assert.match(visible, /2 checks unavailable/);
     assert.doesNotMatch(prioritized, /Reviewing photos|Reviewing 2 cards|awaiting assessment|assessments completed/);
     const sorting = render({ phase: "ai", buyerProgress: { ...buyer, priorityDone: 13, priorityUnavailable: 2 } });
-    assert.match(sorting, /Sorting remaining listings/);
+    assert.match(sorting, /Reviewing remaining listings/);
     const buyerDone = render({ phase: "done", checked: 50, buyerProgress: { ...buyer, finished: 48, priorityDone: 15, active: 0 } });
     assert.match(buyerDone, /Search complete/);
-    assert.match(buyerDone, /48 of 50 buyer decisions ready/);
+    assert.match(buyerDone, /48 of 50 listings reviewed/);
     assert.match(buyerDone, /2 checks unavailable/);
     assert.doesNotMatch(buyerDone, /Reviewing photos|awaiting assessment/);
 

@@ -84,21 +84,21 @@ export const trackedAiFetch: typeof fetch = async (input, init) => {
     const dispatchSignal = getAiDispatchSignal();
     dispatchSignal?.throwIfAborted();
     requireLiveProvider("OPENAI");
+    let reservation: Awaited<ReturnType<typeof aiSpending.reserve>> = null;
     return sqlAiDispatch(body, async beforeSend => {
-        const reservation = await aiSpending.reserve(body, getBudgetContext());
+        reservation = await aiSpending.reserve(body, getBudgetContext());
         // Stop may arrive while waiting for the spending lock/preflight/fsync.
         // Keep the conservative reservation, but never send a cancelled request.
         dispatchSignal?.throwIfAborted();
         await beforeSend();
         dispatchSignal?.throwIfAborted();
-        let response: Response;
-        try { response = await globalThis.fetch(input, init); }
+        try { return await globalThis.fetch(input, init); }
         catch (error) {
             await save({ ...base, ...usageFields(null), status: null, durationMs: Date.now() - started,
                 responseId: null, requestId: null, serviceTier: null, responseStatus: null, hasRefusal: false });
             throw error;
         }
-        const result: any = await response.clone().json().catch(() => null);
+    }, dispatchSignal, async (response, result) => {
         // A failed/unknown reconciliation keeps its full conservative reservation.
         // The accepted provider answer remains available for normal checkpoints.
         await aiSpending.settle(reservation, result).catch(() => console.error("AI spending reconciliation could not finish; its reservation was retained."));
@@ -110,8 +110,7 @@ export const trackedAiFetch: typeof fetch = async (input, init) => {
             responseId: text(result?.id), requestId: response.headers.get("x-request-id"),
             serviceTier: text(result?.service_tier), responseStatus: text(result?.status), hasRefusal,
         });
-        return response;
-    }, dispatchSignal);
+    });
 };
 
 function addReported(total: number | null | undefined, value: unknown): number | null {

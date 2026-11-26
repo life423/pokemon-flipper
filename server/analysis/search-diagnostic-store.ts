@@ -1,7 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import {
-    SEARCH_DIAGNOSTIC_OUTCOMES, SEARCH_DIAGNOSTIC_REASONS, SOURCE_REJECTION_REASONS,
+    SEARCH_DIAGNOSTIC_OUTCOMES, SEARCH_DIAGNOSTIC_REASONS, SEARCH_DIAGNOSTIC_STATUSES, SOURCE_REJECTION_REASONS,
     type SearchCompetition, type SearchDiagnosticDiscovery, type SearchDiagnosticOverflow, type SearchDiagnosticResult, type SearchDiagnosticRow, type SourceDispositionRow,
 } from "../../shared/search-diagnostic.ts";
 import { FIRST_REVIEW_COUNT } from "../../shared/search-review-selection.ts";
@@ -10,7 +11,8 @@ import { DEVELOPMENT_SEARCH_LIMIT, SEARCH_SOURCE_PAGE_LIMIT } from "../../shared
 import { writeJsonAtomic } from "../lib/atomic-json.ts";
 import { withFileLease } from "../lib/file-lease.ts";
 import { DATA_DIR } from "../lib/paths.ts";
-import { StorageUnavailableError } from "../storage/index.ts";
+import { StorageUnavailableError, storageBackend } from "../storage/index.ts";
+import { sqlSearchDiagnostics } from "../storage/search-diagnostics.ts";
 
 const SEARCH_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const LISTING_ID = /^[\w|\-]{1,120}$/;
@@ -31,7 +33,7 @@ export interface SavedSearchDiagnostic<T> extends SavedSearchDiagnosticDiscovery
 }
 
 interface Entry<T> extends SavedSearchDiagnosticDiscovery {
-    snapshot?: SavedSearchDiagnostic<T>;
+    snapshot?: Pick<SavedSearchDiagnostic<T>, "savedAt" | "rows" | "data"> & Partial<SavedSearchDiagnosticDiscovery>;
     result?: SearchDiagnosticResult;
 }
 interface Ledger<T> { version: 1; entries: Entry<T>[] }
@@ -196,20 +198,24 @@ function validateEntry<T>(entry: Entry<T>) {
     discoveryRecord(entry.discovery);
     if (entry.snapshot) {
         const snapshot = entry.snapshot;
-        if (snapshot.searchId !== entry.searchId || typeof snapshot.savedAt !== "string" ||
+        if (snapshot.searchId !== undefined && snapshot.searchId !== entry.searchId || typeof snapshot.savedAt !== "string" ||
             !Number.isFinite(Date.parse(snapshot.savedAt)) || !Object.hasOwn(snapshot, "data")) throw new Error("Invalid diagnostic snapshot.");
         validateSearchDiagnosticRows(snapshot.rows, entry.discovery.retainedIds);
     }
     if (entry.result && (!entry.snapshot || entry.result.searchId !== entry.searchId ||
-        !["complete", "skipped", "unavailable"].includes(entry.result.status))) throw new Error("Invalid diagnostic review.");
+        !SEARCH_DIAGNOSTIC_STATUSES.includes(entry.result.status))) throw new Error("Invalid diagnostic review.");
 }
 
 export function createSearchDiagnosticStore<T>({
-    directory = path.join(DATA_DIR, "search-diagnostics"), now = Date.now, maxAgeMs = MAX_AGE_MS, maxSearches = MAX_SEARCHES,
-}: { directory?: string; now?: () => number; maxAgeMs?: number; maxSearches?: number } = {}) {
+    directory = path.join(DATA_DIR, "search-diagnostics"), now = Date.now, maxAgeMs = MAX_AGE_MS, maxSearches = MAX_SEARCHES, backend = storageBackend,
+}: { directory?: string; now?: () => number; maxAgeMs?: number; maxSearches?: number; backend?: typeof storageBackend } = {}) {
     if (!Number.isSafeInteger(maxSearches) || maxSearches < 1 || maxSearches > MAX_SEARCHES ||
         !Number.isSafeInteger(maxAgeMs) || maxAgeMs < 1 || maxAgeMs > MAX_AGE_MS) throw new RangeError("Invalid search diagnostic retention.");
     const file = path.join(directory, "index.json");
+    const sql = async () => {
+        const { getSqlExecutor } = await import("../storage/client.ts");
+        return sqlSearchDiagnostics<Entry<T>>(await getSqlExecutor(), validateEntry);
+    };
     const read = async (): Promise<Ledger<T>> => {
         try {
             const value = JSON.parse(await fs.readFile(file, "utf8")) as Ledger<T>;
@@ -227,9 +233,14 @@ export function createSearchDiagnosticStore<T>({
     const active = (entry: Entry<T>, at = now()) => Date.parse(entry.savedAt) > at - maxAgeMs;
     async function find(searchId: string): Promise<Entry<T> | null> {
         requireSearchId(searchId);
-        return (await read()).entries.find(entry => entry.searchId === searchId && active(entry)) ?? null;
+        const entry = backend() === "azure-sql" ? await (await sql()).get(searchId) : (await read()).entries.find(e => e.searchId === searchId);
+        return entry && active(entry) ? entry : null;
     }
-    async function edit<R>(change: (entries: Entry<T>[], at: number) => R): Promise<R> {
+    async function edit<R>(searchId: string, change: (entries: Entry<T>[], at: number) => R): Promise<R> {
+        if (backend() === "azure-sql") {
+            const at = now();
+            return (await sql()).edit(searchId, new Date(at - maxAgeMs), maxSearches, entries => change(entries, at));
+        }
         return withFileLease(file, async () => {
             const at = now();
             const book = await read();
@@ -246,16 +257,46 @@ export function createSearchDiagnosticStore<T>({
     function snapshotFrom(entry: Entry<T>): SavedSearchDiagnostic<T> | null {
         if (!entry.snapshot) return null;
         const discovery = discoveryRecord(entry.discovery);
-        return { ...entry.snapshot, discovery, rows: validateSearchDiagnosticRows(entry.snapshot.rows, discovery.retainedIds) };
+        return { ...entry.snapshot, searchId: entry.searchId, discovery, rows: validateSearchDiagnosticRows(entry.snapshot.rows, discovery.retainedIds) };
     }
     function requireRecordSize(value: unknown) {
         if (Buffer.byteLength(JSON.stringify(value), "utf8") > MAX_RECORD_SIZE) throw new Error("The search diagnostic exceeds its saved size limit.");
     }
     return {
+        async importLocalDiagnostics() {
+            if (backend() !== "azure-sql") throw new Error("Select Azure SQL to import saved search diagnostics.");
+            const saved = (await read()).entries.filter(entry => active(entry));
+            const target = await sql();
+            let imported = 0;
+            let verified = 0;
+            for (const entry of saved) {
+                const snapshot = entry.snapshot && { savedAt: entry.snapshot.savedAt, rows: entry.snapshot.rows, data: entry.snapshot.data };
+                await target.edit(entry.searchId, new Date(now() - maxAgeMs), maxSearches, items => {
+                    const existing = items[0];
+                    if (!existing) {
+                        items.push({ ...entry, snapshot });
+                        imported++;
+                    } else {
+                        if (!isDeepStrictEqual(existing.discovery, entry.discovery)) throw new Error("Saved search discovery differs between the source and database.");
+                        if (existing.snapshot && snapshot && !isDeepStrictEqual(snapshotFrom(existing), snapshotFrom(entry)))
+                            throw new Error("Saved search decisions differ between the source and database.");
+                        if (!existing.snapshot && snapshot) existing.snapshot = snapshot;
+                        if (!existing.result || existing.result.status === "unavailable" && entry.result?.status === "complete")
+                            existing.result = entry.result;
+                    }
+                });
+                const check = await target.get(entry.searchId);
+                if (!check || !isDeepStrictEqual(entry.discovery, check.discovery) ||
+                    snapshot && !isDeepStrictEqual(snapshotFrom(entry), snapshotFrom(check)) || entry.result && !check.result)
+                    throw new Error("Imported search evidence could not be verified in Azure SQL.");
+                verified++;
+            }
+            return { local: saved.length, imported, verified };
+        },
         async saveDiscovery(searchId: string, discovery: SearchDiagnosticDiscovery, verifiedContinuation = false): Promise<SavedSearchDiagnosticDiscovery> {
             requireSearchId(searchId);
             const clean = discoveryRecord(discovery);
-            return edit((entries, at) => {
+            return edit(searchId, (entries, at) => {
                 const index = entries.findIndex(entry => entry.searchId === searchId);
                 const previous = entries[index];
                 if (previous) {
@@ -277,7 +318,9 @@ export function createSearchDiagnosticStore<T>({
             return entry ? discoveryFrom(entry) : null;
         },
         async recentAssessedListingIds(): Promise<string[]> {
-            const rows = (await read()).entries.filter(entry => active(entry)).map(entry => entry.snapshot?.rows ?? []);
+            const entries = backend() === "azure-sql" ? await (await sql()).recent(new Date(now() - maxAgeMs), maxSearches)
+                : (await read()).entries.filter(entry => active(entry));
+            const rows = entries.map(entry => entry.snapshot?.rows ?? []);
             const result = new Set<string>();
             // Sample across searches so one set's 50 copies cannot crowd out the rest.
             for (const eligible of [(r: SearchDiagnosticRow) => r.priced, (r: SearchDiagnosticRow) => r.photoChecked]) {
@@ -293,16 +336,14 @@ export function createSearchDiagnosticStore<T>({
         },
         async saveSnapshot(searchId: string, rows: unknown, data: T): Promise<SavedSearchDiagnostic<T> | null> {
             requireSearchId(searchId);
-            return edit((entries, at) => {
+            return edit(searchId, (entries, at) => {
                 const entry = entries.find(entry => entry.searchId === searchId);
                 if (!entry) return null;
                 const cleanRows = validateSearchDiagnosticRows(rows, entry.discovery.retainedIds);
                 const previous = snapshotFrom(entry);
                 if (previous) return previous;
                 const snapshot = { ...discoveryFrom(entry), savedAt: new Date(at).toISOString(), rows: cleanRows, data };
-                // Per-listing coverage is stored once and restored on read.
-                const { overflow: _overflow, sourceDispositions: _sourceDispositions, sourceCoverage: _sourceCoverage, ...snapshotDiscovery } = snapshot.discovery;
-                const stored = { ...snapshot, discovery: snapshotDiscovery };
+                const stored = { savedAt: snapshot.savedAt, rows: cleanRows, data };
                 requireRecordSize(stored);
                 entry.snapshot = stored;
                 return snapshot;
@@ -315,7 +356,8 @@ export function createSearchDiagnosticStore<T>({
         async saveResult(searchId: string, result: SearchDiagnosticResult): Promise<SearchDiagnosticResult | null> {
             requireSearchId(searchId);
             if (result.searchId !== searchId) throw new SearchDiagnosticInputError("The review belongs to another search.");
-            return edit(entries => {
+            if (!SEARCH_DIAGNOSTIC_STATUSES.includes(result.status)) throw new SearchDiagnosticInputError("Invalid diagnostic result status.");
+            return edit(searchId, entries => {
                 const entry = entries.find(entry => entry.searchId === searchId);
                 if (!entry?.snapshot) return null;
                 // Across app processes, an unavailable result can arrive before

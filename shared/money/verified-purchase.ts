@@ -1,14 +1,15 @@
+import { relistEstimate, type ComparableAsk, type RelistModel, type SaleStatistic } from "./relist-estimate.ts";
 import { cents, meetsMoneyTargets } from "./cents.ts";
 import { releaseIssue } from "../base-set-release.ts";
 import { MONEY_CONFIG } from "./config.ts";
 import { rateDeal } from "./rating.ts";
 import { acquisitionCost, affordableItemLimit, maxBid, netFromSale } from "./underwriting.ts";
 import { currentPriceEvidence } from "../pricing-freshness.ts";
-import { BEST_BUY_TERMS_MAX_AGE_MS } from "../search-diagnostic.ts";
+import { currentQuote } from "../fresh-listing.ts";
 import type { Evaluation, PricedPath, Targets } from "../types.ts";
 
 export interface VerifiedPurchase {
-    relist?: { price: number; profit: number; lowestOtherDelivered: number | null };
+    relist?: { model?: RelistModel; statistic?: SaleStatistic; competitor?: ComparableAsk | null; price: number; profit: number; lowestOtherDelivered: number | null };
     listingId: string;
     itemPrice: number;
     termsCheckedAt: string;
@@ -43,11 +44,10 @@ export function verifiedPurchase(evaluation: Evaluation, path: PricedPath, targe
 export function applyVerifiedPurchase(evaluation: Evaluation | null, purchase: VerifiedPurchase | undefined, targets: Targets, now: number, maxDelivered?: number): Evaluation | null {
     if (!evaluation || !purchase || !evaluation.underwriting?.verdict.startsWith("BUY") || evaluation.identity?.notThisCard || releaseIssue(evaluation)) return null;
     const { listing, underwriting } = evaluation;
-    const age = now - Date.parse(purchase.termsCheckedAt);
     if (listing.id !== purchase.listingId || listing.buyingOption !== "FIXED_PRICE" || listing.availability !== "ACTIVE" ||
         Date.parse(listing.endTime ?? "") <= now || listing.price !== purchase.itemPrice || listing.termsCheckedAt !== purchase.termsCheckedAt ||
         (listing.shippingDestination ?? null) !== (purchase.shippingDestination ?? null) ||
-        listing.shipping === null || underwriting.shippingUnconfirmed || !(age >= 0 && age < BEST_BUY_TERMS_MAX_AGE_MS) ||
+        listing.shipping === null || underwriting.shippingUnconfirmed || !currentQuote(purchase.termsCheckedAt, now) ||
         evaluation.pricesCheckedAt !== purchase.pricesCheckedAt || !currentPriceEvidence(evaluation, now) ||
         purchase.targets?.minProfit !== targets.minProfit || purchase.targets?.minRoi !== targets.minRoi) return null;
     const savedPath = JSON.stringify(purchase.path);
@@ -58,7 +58,12 @@ export function applyVerifiedPurchase(evaluation: Evaluation | null, purchase: V
     const cap = purchase.maxItemPrice;
     if (purchase.relist) {
         const { price, profit, lowestOtherDelivered } = purchase.relist;
-        if (path.path === "GRADE" || !path.salePrice || !(price > 0) ||
+        if (path.path === "GRADE" || !path.salePrice || !(price > 0)) return null;
+        if (purchase.relist.model === "matched-sales-v1" || purchase.relist.model === "matched-sales-v2") {
+            if (purchase.relist.model === "matched-sales-v2" && purchase.relist.statistic !== "median" && purchase.relist.statistic !== "mean") return null;
+            const projected = relistEstimate(evaluation, path, purchase.relist.competitor ?? null, now, purchase.relist.statistic, purchase.relist.model);
+            if (!projected || projected.price !== price || projected.lowestOtherDelivered !== lowestOtherDelivered) return null;
+        } else if (purchase.relist.model !== undefined ||
             lowestOtherDelivered !== null && !(Number.isFinite(lowestOtherDelivered) && lowestOtherDelivered > 0) ||
             price !== Math.min(path.salePrice, lowestOtherDelivered ?? Infinity)) return null;
         const net = netFromSale(price, path.path === "RAW" ? "raw" : "graded", MONEY_CONFIG.selling);

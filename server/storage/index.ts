@@ -35,7 +35,9 @@ export async function assertSqlStorageReady(): Promise<void> {
     if (storageBackend() === "file") return;
     const { getSqlExecutor } = await import("./client.ts");
     const { SCHEMA_VERSION } = await import("./schema.ts");
-    const rows = await (await getSqlExecutor()).query<{ version: number }>("SELECT MAX(version) AS version FROM dbo.StorageMigrations");
-    if (rows[0]?.version !== SCHEMA_VERSION) throw new StorageUnavailableError("Azure SQL storage migrations must be applied before provider work can start.");
+    const [state] = await (await getSqlExecutor()).query<{ version: number; diagnostics: number | null }>(
+        "SELECT MAX(version) AS version, OBJECT_ID('dbo.SearchDiagnostics','U') AS diagnostics FROM dbo.StorageMigrations");
+    if (state?.version !== SCHEMA_VERSION || state.diagnostics == null)
+        throw new StorageUnavailableError("Azure SQL storage migrations must be applied before provider work can start.");
 }
 export async function closeDatabase() { const { closeDatabase } = await import("./client.ts"); await closeDatabase(); }

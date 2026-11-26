@@ -91,7 +91,7 @@ test("every unsorted retained copy with missing sold screening can receive a bou
     const [one, two] = await Promise.all([1, 2].map(() => review(searchId, listingId, targets, true, true, signal())));
     assert.equal(count, 1); assert.deepEqual(one, two);
     assert.equal(one.decision, "BUY", one.reason); assert.equal(one.evidence, "photos");
-    assert.match(one.reason, /3 observed matching Lightly Played raw sales in the last 60 days/);
+    assert.equal(one.evaluation?.rawPricing?.prices?.[0].comps?.count, 3);
 });
 
 test("unsupported stale prices use price-only research under the assessment's original allowance; a replay coalesces unresolved evidence", async () => {

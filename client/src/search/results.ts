@@ -22,6 +22,7 @@ import { isPrinting } from "../../../shared/identity.ts";
 import { soldMarketPrice } from "../../../shared/sold-evidence.ts";
 import { obscuredDisclosedWear, observedCardKind, photoCoverage } from "../../../shared/photo-evidence.ts";
 import { parseListingLink } from "../../../shared/listing-link.ts";
+import { lowestQuotedOffer } from "../../../shared/listed-offer.ts";
 
 export type View = ResultGroup | "all" | "new" | "losses" | "bids";
 
@@ -90,7 +91,7 @@ export function groupSearchResults(filtered: ListingSummary[], analyses: Record<
         const analysis = analyses[listing.id];
         const evaluation = evaluationOf(analysis);
         const group = analysis?.status === "done" && analysis.pricingExpired && !photoReviewStatus(evaluation).needsYourReview
-            ? "candidates" : resultGroup(listing, evaluation, includeOffers, analysis?.status === "error" || analysis?.status === "inconclusive" || analysis?.status === "held");
+            ? "candidates" : resultGroup(listing, evaluation, includeOffers, analysis?.status === "error" || analysis?.status === "inconclusive" || analysis?.status === "held", now);
         const decision = decisions[listing.id]?.decision;
         const opportunity = decisions[listing.id]?.auctionOpportunity;
         if (listing.buyingOption === "AUCTION" && decision === "WAIT" && opportunity?.listingId === listing.id &&
@@ -194,6 +195,30 @@ export type BestCurrentBuy = SearchCompetition & {
     pricing: NonNullable<SearchCompetition["pricing"]>;
 };
 
+// The exact-slab comparison can find an eBay copy outside the retained search page.
+export function competitionListingSummary(reference: SearchCompetition | undefined, destination?: string | null): ListingSummary | null {
+    const link = reference && parseListingLink(reference.url);
+    if (!reference || !link) return null;
+    return { id: link.itemId, url: link.url, title: reference.title, currentPrice: reference.price,
+        shipping: reference.shipping, shippingDestination: destination, termsCheckedAt: reference.checkedAt,
+        seller: reference.seller ?? null, images: reference.image ? [reference.image] : [],
+        buyingOption: "FIXED_PRICE", isGraded: true, bids: 0, endTime: null };
+}
+
+export function buyingComparisonRows(filtered: ListingSummary[], analyses: Record<string, AnalysisState>,
+    decisions: Readonly<Record<string, Pick<BuyerListingReview, "decision" | "waitReason" | "unavailable" | "failure">>>,
+    destination: string | null | undefined, minGrade: number) {
+    return filtered.filter(row => {
+        const review = decisions[row.id], value = evaluationOf(analyses[row.id]);
+        if (review?.unavailable || review?.failure || (row.shippingDestination ?? null) !== destination ||
+            (value && (value.listing.shippingDestination ?? null) !== destination) || (minGrade > 0 && !value)) return false;
+        if (review?.waitReason && !["PRICE_EVIDENCE_UNAVAILABLE", "PRICING_DEFERRED"].includes(review.waitReason)) return false;
+        // A resale loss does not disqualify a collector's purchase. Physical
+        // mismatches, expired terms and other skips still need to be excluded.
+        return review?.decision !== "SKIP" || value?.underwriting?.verdict === "PASS";
+    });
+}
+
 function currentCompetition(reference: SearchCompetition | null | undefined, analyses: Record<string, AnalysisState>, intent: SearchIntent | null | undefined, now: number): BestCurrentBuy | null {
     if (!reference) return null;
     const link = parseListingLink(reference.url), age = now - Date.parse(reference.checkedAt ?? ""), pricing = reference.pricing;
@@ -225,7 +250,8 @@ export function eligibleAssessedListing(listing: ListingSummary, state: Analysis
         listing.match || listing.screen?.junk || value.listing.id !== listing.id ||
         !englishListingEligible(listing, value) || intent && evaluatedCriteriaMismatch(value, intent) ||
         listing.buyingOption !== format || value.listing.buyingOption !== format ||
-        listing.availability !== "ACTIVE" || value.listing.availability !== "ACTIVE" ||
+        value.listing.availability !== "ACTIVE" || !(listing.availability === "ACTIVE" ||
+            listing.availability === undefined && checkedTerms(listing, value, now)) ||
         listing.endTime && !(Date.parse(listing.endTime) > now) || value.listing.endTime && !(Date.parse(value.listing.endTime) > now) ||
         obscuredDisclosedWear(value) || deeperPhotoConcerns(value).length ||
         photoReviewStatus(value).needsYourReview) return null;
@@ -248,7 +274,7 @@ export function checkedTerms(listing: ListingSummary, evaluation: Evaluation, no
 
 // Each copy is valued against its own market. Relative savings let a broad
 // search compare options without pooling prices from different markets.
-export function selectBestCurrentBuy(filtered: ListingSummary[], analyses: Record<string, AnalysisState>, intent: SearchIntent | null | undefined, now: number, comparison?: SearchCompetition | null): BestCurrentBuy | null {
+export function rankCurrentBuys(filtered: ListingSummary[], analyses: Record<string, AnalysisState>, intent: SearchIntent | null | undefined, now: number, comparison?: SearchCompetition | null, maxDelivered = Infinity): BestCurrentBuy[] {
     const candidates = filtered.flatMap<BestCurrentBuy>(listing => {
         const value = assessedPurchase(listing, analyses[listing.id], intent, now);
         if (!value || value.underwriting?.shippingUnconfirmed) return [];
@@ -285,12 +311,26 @@ export function selectBestCurrentBuy(filtered: ListingSummary[], analyses: Recor
     const compared = currentCompetition(comparison, analyses, intent, now);
     if (compared && !candidates.some(candidate => candidate.listingId === compared.listingId)) candidates.push(compared);
     const ranked = candidates.filter(({ pricing, price, shipping }) =>
-        cents(pricing.totalCost) >= cents(price) + cents(shipping) && cents(pricing.totalCost) < cents(pricing.resale)).sort((a, b) =>
+        pricing.totalCost <= maxDelivered && cents(pricing.totalCost) >= cents(price) + cents(shipping)).sort((a, b) =>
         a.pricing.totalCost / a.pricing.resale - b.pricing.totalCost / b.pricing.resale ||
         b.pricing.sales - a.pricing.sales || a.pricing.totalCost - b.pricing.totalCost || a.listingId.localeCompare(b.listingId));
-    const best = ranked[0];
-    if (!best || best === compared) return best ?? null;
-    return { ...best, coverage };
+    return ranked.map(copy => copy === compared ? copy : { ...copy, coverage });
+}
+
+export function selectBestCurrentBuy(...args: Parameters<typeof rankCurrentBuys>): BestCurrentBuy | null {
+    return rankCurrentBuys(...args)[0] ?? null;
+}
+
+// An asking price remains useful when matched sales are missing. This is a
+// comparison of current offers only, so never give it a market value or verdict.
+export function lowestListedCopy(filtered: ListingSummary[], analyses: Record<string, AnalysisState>, intent: SearchIntent | undefined,
+    now: number, maxDelivered?: number) {
+    const eligible = filtered.filter(listing => {
+        const state = analyses[listing.id];
+        return state?.status !== "held" && state?.status !== "inconclusive" &&
+            (state?.status !== "done" || Boolean(eligibleAssessedListing(listing, state, intent, now)));
+    });
+    return lowestQuotedOffer(eligible, now, maxDelivered);
 }
 
 export interface RawBuyingComparison {
@@ -353,26 +393,61 @@ export function rawComparisonQuoteIds(filtered: ListingSummary[], analyses: Reco
     return candidates.sort((a, b) => a.ratio - b.ratio || a.id.localeCompare(b.id)).slice(0, 5).map(copy => copy.id);
 }
 
-export function selectRawBuyingComparison(filtered: ListingSummary[], analyses: Record<string, AnalysisState>,
-    intent: SearchIntent | null | undefined, now: number): RawBuyingComparison | null {
+export function rankRawBuyingComparisons(filtered: ListingSummary[], analyses: Record<string, AnalysisState>,
+    intent: SearchIntent | null | undefined, now: number, maxDelivered = Infinity): RawBuyingComparison[] {
     const quotedGroups = comparableRawMarkets(filtered, analyses, intent, now).map(group =>
-        group.filter((copy): copy is RawCopy & { totalCost: number } => copy.totalCost !== null)
+        group.filter((copy): copy is RawCopy & { totalCost: number } => copy.totalCost !== null && copy.totalCost <= maxDelivered)
             .sort((a, b) => a.totalCost - b.totalCost || a.listing.id.localeCompare(b.listing.id)));
-    const [selected] = quotedGroups.filter(group => group.length >= 2).sort((a, b) =>
+    const groups = quotedGroups.filter(group => group.length >= 2).sort((a, b) =>
         a[0].totalCost / soldMarketPrice(a[0].sales)! - b[0].totalCost / soldMarketPrice(b[0].sales)! ||
         b.length - a.length || a[0].listing.id.localeCompare(b[0].listing.id));
-    if (!selected) return null;
-    const [best, next] = selected;
-    const cost = cents(best.totalCost);
-    // Show a checked condition upgrade at a premium of at most 5% or $5, whichever is lower.
-    const maxExtra = Math.min(Math.floor(cost / 20), 500);
-    const [upgrade] = quotedGroups.filter(group => group.length > 0).map(group => group[0]).filter(copy =>
-        best.verifiedMarket !== null && copy.verifiedMarket === best.verifiedMarket && conditionGap(best.condition, copy.condition) < 0 &&
-        cents(copy.totalCost) <= cost + maxExtra).sort((a, b) => a.totalCost - b.totalCost || conditionGap(b.condition, a.condition));
-    return { listing: best.listing, condition: best.condition, totalCost: best.totalCost, sales: best.sales, sellerReported: best.sellerReported,
-        copies: selected.length, nextTotal: next.totalCost, highestTotal: selected[selected.length - 1].totalCost,
-        ...(upgrade && { betterConditionCopy: { listing: upgrade.listing, condition: upgrade.condition,
-            totalCost: upgrade.totalCost, difference: (cents(upgrade.totalCost) - cost) / 100 } }) };
+    return groups.map((selected, index) => {
+        const [best, next] = selected;
+        const cost = cents(best.totalCost);
+        // Show a checked condition upgrade at a premium of at most 5% or $5, whichever is lower.
+        const maxExtra = Math.min(Math.floor(cost / 20), 500);
+        const [upgrade] = index > 0 ? [] : quotedGroups.filter(group => group.length > 0).map(group => group[0]).filter(copy =>
+            best.verifiedMarket !== null && copy.verifiedMarket === best.verifiedMarket && conditionGap(best.condition, copy.condition) < 0 &&
+            cents(copy.totalCost) <= cost + maxExtra).sort((a, b) => a.totalCost - b.totalCost || conditionGap(b.condition, a.condition));
+        return { listing: best.listing, condition: best.condition, totalCost: best.totalCost, sales: best.sales, sellerReported: best.sellerReported,
+            copies: selected.length, nextTotal: next.totalCost, highestTotal: selected[selected.length - 1].totalCost,
+            ...(upgrade && { betterConditionCopy: { listing: upgrade.listing, condition: upgrade.condition,
+                totalCost: upgrade.totalCost, difference: (cents(upgrade.totalCost) - cost) / 100 } }) };
+    });
+}
+
+export function selectRawBuyingComparison(...args: Parameters<typeof rankRawBuyingComparisons>): RawBuyingComparison | null {
+    return rankRawBuyingComparisons(...args)[0] ?? null;
+}
+
+export type DealComparison =
+    | { kind: "sales"; value: BestCurrentBuy }
+    | { kind: "copies"; value: RawBuyingComparison }
+    | { kind: "asking"; total: number; soldEstimate?: number };
+
+// Keep resale decisions intact. A price comparison can earn a place in Find a deal
+// when the buyer hasn't set a resale target. The first, strongest reason wins.
+export function dealTabResults(verified: ListingSummary[], bids: ListingSummary[], rows: ListingSummary[],
+    sales: BestCurrentBuy[], copies: RawBuyingComparison[], lowest: ReturnType<typeof lowestListedCopy>, targets: Targets) {
+    const listings = new Map([...verified, ...bids].map(row => [row.id, row]));
+    const reasons = new Map<string, DealComparison>();
+    function add(row: ListingSummary | undefined, reason: DealComparison) {
+        if (!row || listings.has(row.id)) return;
+        listings.set(row.id, row);
+        reasons.set(row.id, reason);
+    }
+    if (!targets.minProfit && !targets.minRoi) {
+        const byId = new Map(rows.map(row => [row.id, row]));
+        for (const value of sales) {
+            if (cents(value.pricing.totalCost) >= cents(value.pricing.resale) || value.identity === "LISTING" ||
+                value.concerns?.length || (value.seller?.feedbackScore ?? Infinity) < 10 || (value.seller?.feedbackPercentage ?? 100) < 98) continue;
+            add(byId.get(value.listingId), { kind: "sales", value });
+        }
+        for (const value of copies) add(value.listing, { kind: "copies", value });
+        if (lowest) add(lowest.listing, { kind: "asking", total: lowest.total,
+            soldEstimate: sales.find(copy => copy.listingId === lowest.listing.id)?.pricing.resale });
+    }
+    return { listings: [...listings.values()], reasons };
 }
 
 export function countSearchResults({ listings, analyses, newMode, newIds, page, intent, filters }: ResultsContext & { newMode: boolean; newIds: ReadonlySet<string>; filters?: SearchFilters }) {

@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { relistEstimate } from "../../shared/money/relist-estimate.ts";
 import type { DealHuntAction } from "../../shared/deal-hunt.ts";
 import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { acquisitionCost, underwrite } from "../../shared/money/underwriting.ts";
+import { applyVerifiedPurchase } from "../../shared/money/verified-purchase.ts";
 import { cents, meetsMoneyTargets } from "../../shared/money/cents.ts";
 import { PRICING_VERSION } from "../../shared/pricing-freshness.ts";
 import { dealHuntCandidate, flipResaleEvidence } from "../../server/analysis/deal-hunt-evidence.ts";
@@ -45,7 +47,7 @@ test("an asking quote alone cannot authorize buying or establish a liquid market
     assert.equal(listingMarketPrices(comparison, { ...e.listing, images: e.listing.photos ?? [] }, now)?.tcg?.market, 175);
 });
 
-test("a liquid flip needs three exact, distinct eBay sales over multiple days in the last month", () => {
+test("resale review admits recent exact sales without a daily or monthly volume requirement", () => {
     const e = rawCard();
     e.gradedPricing = null;
     const prior = new Date(now - 62 * 86_400_000).toISOString();
@@ -65,8 +67,8 @@ test("a liquid flip needs three exact, distinct eBay sales over multiple days in
     assert.equal(prevented.recentSales, 0);
     assert.equal(prevented.verifiedPurchase, undefined);
     assert.match(prevented.reason, /liquidity is unverified/i);
-    for (const [ages, decision] of [[[1], "WAIT"], [[1, 2], "WAIT"], [[1, 1, 1], "WAIT"],
-        [[2, 2, 31], "WAIT"], [[2, 2, 30], "BUY"]] as const) {
+    for (const [ages, decision] of [[[1], "BUY"], [[1, 2], "BUY"], [[1, 1, 1], "BUY"],
+        [[2, 2, 31], "BUY"], [[2, 2, 30], "BUY"]] as const) {
         const row = matchedRawPrice(175, soldAt(ages[0]), ages.length);
         row.comps.sales.forEach((sale, i) => { sale.soldAt = soldAt(ages[i]); });
         e.rawPricing.prices = [row];
@@ -76,25 +78,81 @@ test("a liquid flip needs three exact, distinct eBay sales over multiple days in
         assert.equal(outcome.recentSales, ages.length);
         assert.equal(outcome.verifiedPurchase?.path.path, decision === "BUY" ? "RAW" : undefined);
     }
+    const steady = matchedRawPrice(80, stamp, 15);
+    steady.comps.sales.forEach((sale, i) => { sale.soldAt = soldAt(i * 2 + 1); });
+    const replay = structuredClone(e);
+    replay.rawPricing!.prices = [steady];
+    replay.listing.price = 25;
+    replay.underwriting = underwrite(replay, { ...MONEY_CONFIG, targets });
+    const decision = dealHuntCandidate(replay, "resell", now, unmatched, targets, undefined, liquidity)!.outcome(checked)!;
+    assert.equal(decision.recentSales, 15);
+    assert.equal(decision.decision, "BUY", decision.reason);
+    assert.ok(decision.liquidityValidThrough);
+    assert.doesNotMatch(decision.reason, /per day|daily demand/);
     const sales = e.rawPricing.prices![0].comps!.sales;
+    e.listing.id = "123111111950";
     const withCompetition = (lowestOtherDelivered: number) => dealHuntCandidate(e, "resell", now, unmatched, targets, undefined,
-        { ...liquidity, competingCopies: () => ({ count: 1, lowestDelivered: lowestOtherDelivered }) })!.outcome(checked)!;
+        { ...liquidity, competingCopies: () => ({ count: 1, cheapest: { listingId: "123111111951", checkedAt: stamp, destination: null, validUntil: now + 1000, delivered: lowestOtherDelivered } }) })!.outcome(checked)!;
     const undercut = withCompetition(55);
     assert.equal(undercut.decision, "WAIT", undercut.reason);
     const competitive = withCompetition(135);
     assert.equal(competitive.decision, "BUY", competitive.reason);
-    assert.equal(competitive.verifiedPurchase?.relist?.price, 135);
-    assert.ok(competitive.verifiedPurchase!.relist!.profit < competitive.verifiedPurchase!.path.profit);
+    assert.equal(competitive.verifiedPurchase?.relist?.price, 175, "one ask cannot reprice three identical sales");
     sales[2].url = sales[0].url;
-    assert.equal(dealHuntCandidate(e, "resell", now, unmatched, targets, undefined, liquidity)!.outcome(checked)!.decision, "WAIT");
+    // Conflicting dates for one receipt are quarantined. The remaining sale still counts.
+    assert.equal(dealHuntCandidate(e, "resell", now, unmatched, targets, undefined, liquidity)!.outcome(checked)!.recentSales, 1);
     sales[2].url = "https://www.ebay.com/itm/123111111199";
     sales[2].conditionEvidence = [];
+    const partiallyMatched = dealHuntCandidate(e, "resell", now, unmatched, targets, undefined, liquidity)!.outcome(checked)!;
+    assert.equal(partiallyMatched.decision, "BUY");
+    assert.equal(partiallyMatched.verifiedPurchase?.relist?.price, 175);
+    sales.forEach(sale => { sale.conditionEvidence = []; });
     assert.equal(dealHuntCandidate(e, "resell", now, unmatched, targets, undefined, liquidity)!.outcome(checked)!.decision, "WAIT");
+});
+
+test("competitive resale keeps current value and buyer ceiling separate from one active ask", () => {
+    const value = rawCard();
+    const targets = { minProfit: 0, minRoi: 0 };
+    Object.assign(value.listing, { id: "123111111950", price: 25, shipping: 0 });
+    value.gradedPricing = null;
+    const amounts = [76, 80, 85, 92, 999];
+    const row = matchedRawPrice(85, stamp, amounts.length);
+    row.comps.sales.forEach((sale, i) => Object.assign(sale, { price: amounts[i], soldAt: new Date(now - i * 86_400_000).toISOString() }));
+    Object.assign(row.comps, { low: 76, high: 999 });
+    value.rawPricing = { status: "PRICED", source: "pkmnprices", printing: "UNLIMITED", variant: "holo", finish: "HOLO",
+        conditionEvidence: "AI_PHOTOS", prices: [row] };
+    value.underwriting = underwrite(value, { ...MONEY_CONFIG, targets });
+    const quote = { listingId: "123111111951", delivered: 120, checkedAt: stamp, validUntil: now + 100000, destination: null as string | null };
+    const decision = (ask: typeof quote | null) => dealHuntCandidate(value, "resell", now, undefined, targets, 40, {
+        preferRecentSales: true, competingCopies: () => ({ count: ask ? 1 : 0, cheapest: ask }) })!.outcome(checked)!;
+    const first = decision(null);
+    assert.equal(first.decision, "BUY", first.reason);
+    const baseline = first.verifiedPurchase!;
+    assert.equal(baseline.path.salePrice, 85);
+    assert.equal(baseline.relist?.price, 82.5);
+    assert.equal(relistEstimate(value, baseline.path, quote, now, "mean")?.price, 83.25);
+    const legacy = relistEstimate(value, baseline.path, quote, now, "median", "matched-sales-v1")!;
+    assert.equal(legacy.price, 88.5);
+    assert.ok(applyVerifiedPurchase(value, { ...baseline, relist: legacy }, targets, now));
+    for (const [delivered, expected] of [[120, 82.50], [60, 82.50], [84, 82.50]]) {
+        const purchase = decision({ ...quote, delivered }).verifiedPurchase!;
+        assert.equal(purchase.relist?.price, expected);
+        assert.equal(purchase.path.salePrice, 85);
+        assert.equal(purchase.maxItemPrice, baseline.maxItemPrice);
+        assert.ok(acquisitionCost(purchase.maxItemPrice, 0, MONEY_CONFIG.buying) <= 40);
+        assert.ok(applyVerifiedPurchase(value, purchase, targets, now));
+        assert.equal(applyVerifiedPurchase(value, purchase, targets, quote.validUntil), null);
+        assert.equal(applyVerifiedPurchase(value, { ...purchase, relist: { ...purchase.relist!, price: 999 } }, targets, now), null);
+    }
+    assert.equal(decision({ ...quote, delivered: 22 }).decision, "WAIT");
+    assert.equal(decision({ ...quote, destination: "10001" }).verifiedPurchase?.relist, undefined);
 });
 
 test("competing supply counts other active copies of the exact exit and expires old observations", () => {
     const e = rawCard();
     e.identity!.hasEditions = false;
+    e.identity!.recordId = "123";
+    e.listing.id = "123111111950";
     Object.assign(e.photoCheck!, { cardIdentity: { name: e.identity!.name, set: e.identity!.set, cardNumber: e.identity!.cardNumber,
         language: "English", finish: "HOLO", confidence: "HIGH", evidence: ["Readable front."] } });
     e.rawPricing = { status: "PRICED", source: "pkmnprices", printing: "UNLIMITED", variant: "holo", finish: "HOLO",
@@ -104,10 +162,20 @@ test("competing supply counts other active copies of the exact exit and expires 
     const copies = new FlipEvaluations();
     copies.set(e.listing.id, e);
     const rival = structuredClone(e);
-    rival.listing.id = "other";
+    rival.listing.id = "123111111951";
     copies.set(rival.listing.id, rival);
     copies.set(rival.listing.id, rival);
     assert.equal(copies.competingCopies(e, path, now).count, 1);
+    assert.equal(copies.competingCopies(e, path, now).cheapest?.listingId, rival.listing.id);
+    const alias = structuredClone(e);
+    alias.listing.id = "v1|123111111950|12345";
+    copies.set(alias.listing.id, alias);
+    assert.equal(copies.competingCopies(e, path, now).count, 1);
+    rival.listing.shippingDestination = "10001";
+    copies.set(rival.listing.id, rival);
+    assert.equal(copies.competingCopies(e, path, now).cheapest, null);
+    rival.listing.shippingDestination = e.listing.shippingDestination;
+    copies.set(rival.listing.id, rival);
     assert.equal(copies.competingCopies(e, path, now + 120001).count, 0);
     rival.condition!.rawCondition = "DAMAGED";
     copies.set(rival.listing.id, rival);
@@ -324,18 +392,18 @@ test("a loss one grade lower can still leave an independently supported raw resa
     assert.equal(decision?.decision, "BUY");
     assert.equal(decision?.section, "sales");
     assert.equal(decision?.alternateSections, undefined);
-    assert.match(decision!.reason, /3 observed matching Lightly Played raw sales in the last 60 days/);
+    assert.equal(decision?.recentSales, 3);
     const [lead] = rankHuntMarkets([e], null, "resell", "any_card", now);
     // The matching sale histories overlap. A thin copy can reuse the exact
     // market's three distinct sales, but cannot borrow another printing's count.
     sales.sales.splice(1);
     const thin = dealHuntCandidate(e, "resell", now)!.outcome(checked);
     assert.equal(thin?.decision, "BUY");
-    assert.match(thin!.reason, /1 observed matching Lightly Played raw sale/);
+    assert.equal(thin?.recentSales, 1);
     assert.equal(dealHuntCandidate(e, "resell", now, lead)!.outcome(checked)?.decision, "BUY");
     const wrongPrinting = dealHuntCandidate(e, "resell", now, { ...lead, printing: "FIRST_EDITION" })!.outcome(checked)!;
     assert.equal(wrongPrinting.decision, "BUY");
-    assert.match(wrongPrinting.reason, /1 observed matching Lightly Played raw sale/, "activity from another printing is never borrowed");
+    assert.equal(wrongPrinting.recentSales, 1, "activity from another printing is never borrowed");
     assert.equal(dealHuntCandidate(e, "resell", now, { ...lead, liquidThrough: now - 1 })!.outcome(checked)?.decision, "BUY", "a legacy volume deadline is not a purchase veto");
 });
 
@@ -351,7 +419,7 @@ test("slab resale reports activity at that holder grade without a sales quota", 
     summary.sales.splice(1);
     assert.equal(dealHuntCandidate(e, "collect_slab", now)!.outcome(checked)?.decision, "BUY");
     assert.equal(dealHuntCandidate(e, "resell", now, { ...liquid, grade: 9 })!.outcome(checked)?.decision, "BUY");
-    assert.match(dealHuntCandidate(e, "resell", now, { ...liquid, grader: "PSA" })!.outcome(checked)!.reason, /1 observed matching CGC 8.5 sale/);
+    assert.equal(dealHuntCandidate(e, "resell", now, { ...liquid, grader: "PSA" })!.outcome(checked)!.recentSales, 1);
     e.underwriting = underwrite(e, { ...MONEY_CONFIG, targets: { minProfit: 3000, minRoi: 0 } });
     assert.match(dealHuntCandidate(e, "resell", now, liquid)!.outcome(checked)!.reason, /falls short of your profit or ROI target/);
 });
@@ -373,7 +441,7 @@ test("a profitable grading exit remains eligible with sparse activity", () => {
     likely.sales.forEach((sale, i) => sale.url = `https://www.ebay.com/itm/${321111000000 + i}`);
     const graded = candidate.outcome(checked);
     assert.equal(graded?.decision, "BUY");
-    assert.match(graded!.reason, /3 observed matching PSA 7 sales in the last 60 days/);
+    assert.equal(graded?.recentSales, 3);
     assert.equal(graded?.section, "grading");
 });
 
@@ -449,7 +517,7 @@ test("the planner can inspect a raw exit directly on both auctions and Buy It No
     assert.equal(dealHuntCandidate(e, "resell", now)!.outcome(choices)?.decision, "BID", "one exact sale can support value without a three-sale veto");
 });
 
-test("an otherwise profitable bid requires repeated exact resale activity in the last month", () => {
+test("an otherwise profitable bid with some exact resale activity can advance", () => {
     const e = rawCard(15);
     e.gradedPricing = null;
     Object.assign(e.listing, { buyingOption: "AUCTION", bids: 1, price: 35, shipping: 2, endTime: new Date(now + 3_600_000).toISOString(),
@@ -472,8 +540,7 @@ test("an otherwise profitable bid requires repeated exact resale activity in the
     for (const count of [1, 2]) {
         comps.sales[count - 1].soldAt = new Date(now - (45 + count) * 86_400_000).toISOString();
         const outcome = dealHuntCandidate(e, "resell", now, undefined, targets, undefined, liquidity)!.outcome(checked)!;
-        assert.equal(outcome.decision, "WAIT");
+        assert.equal(outcome.decision, "BID");
         assert.equal(outcome.recentSales, count);
-        assert.match(outcome.reason, /liquidity is unverified/i);
     }
 });

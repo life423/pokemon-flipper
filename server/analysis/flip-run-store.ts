@@ -6,7 +6,9 @@ import { setTimeout as delay } from "node:timers/promises";
 import { DATA_DIR } from "../lib/paths.ts";
 import type { DealHuntAction } from "../../shared/deal-hunt.ts";
 
-export class FlipRunConflict extends Error {}
+export class FlipRunConflict extends Error {
+    constructor(message: string, readonly running = false) { super(message); }
+}
 export interface FlipTask<T> {
     round?: number;
     done: DealHuntAction[];
@@ -19,7 +21,7 @@ export interface FlipJournal<W, R, T> {
     savePage(state: W): Promise<void>;
     task(key: string): { receipt: FlipTask<T> | null; inFlight: DealHuntAction | null } | null;
     start(key: string, action: DealHuntAction): Promise<void>;
-    accept(key: string, receipt: FlipTask<T>): Promise<void>;
+    accept(key: string, receipt: FlipTask<T>, checkpoint?: W): Promise<void>;
     finish(state: W, result: R, pending?: string[]): Promise<void>;
 }
 
@@ -57,7 +59,7 @@ export async function withFlipRun<W, R, T>(file: string, leg: string, owner: str
             const row = db.prepare("SELECT * FROM runs WHERE leg=?").get(leg)!;
             if (row.owner !== owner || row.criteria !== criteria) throw new FlipRunConflict("This search belongs to different settings, shipping destination or spending account.");
             if (row.pid !== null) {
-                try { process.kill(Number(row.pid), 0); throw new FlipRunConflict("This search is already running."); }
+                try { process.kill(Number(row.pid), 0); throw new FlipRunConflict("This search is already running.", true); }
                 catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
             }
             write("UPDATE runs SET pid=?,token=? WHERE leg=?", process.pid, token, leg);
@@ -74,7 +76,14 @@ export async function withFlipRun<W, R, T>(file: string, leg: string, owner: str
             },
             start: async (key, action) => { await retry(() => write(`INSERT INTO tasks(leg,copy,action) VALUES (?,?,?)
                 ON CONFLICT (leg,copy) DO UPDATE SET action=excluded.action`, leg, key, action)); },
-            accept: async (key, receipt) => { await retry(() => write("UPDATE tasks SET receipt=?,action=NULL WHERE leg=? AND copy=?", JSON.stringify(receipt), leg, key)); },
+            accept: async (key, receipt, checkpoint) => {
+                const acceptTask = () => write("UPDATE tasks SET receipt=?,action=NULL WHERE leg=? AND copy=?", JSON.stringify(receipt), leg, key);
+                if (checkpoint === undefined) await retry(acceptTask);
+                else await retry(() => atomic(() => {
+                    acceptTask();
+                    write("UPDATE runs SET checkpoint=? WHERE leg=?", JSON.stringify(checkpoint), leg);
+                }));
+            },
             finish: async (state, result, pending = []) => { await retry(() => atomic(() => {
                 write("UPDATE runs SET checkpoint=?,result=? WHERE leg=?", JSON.stringify(state), JSON.stringify(result), leg);
                 // Keep interrupted dispatches held across inventory passes.

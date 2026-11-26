@@ -24,6 +24,8 @@ interface ExperimentInput {
 }
 export interface ModelExperimentOptions<T> extends ExperimentInput {
     validate(value: unknown): T;
+    /** Equivalent search wording for cache identity. Generation still receives the submitted prompt. */
+    cachePrompt?: string;
     /** A caller may recover from a completed, paid response whose body was malformed. */
     onMalformedOutput?(): T;
     /** Also use the fallback for an incomplete response that reached its output limit. */
@@ -85,11 +87,12 @@ function acceptedRecord(value: unknown, key: string, model: string, now: number)
 export function createModelExperimentRunner(overrides: Partial<Dependencies> = {}) {
     const deps: Dependencies = { run: request => runStructured<unknown>(request), cached: readCache, save: writeCache, now: Date.now, ...overrides };
     const share = createSharedWork();
-    return async function experiment<T>({ sourceKey, model, request, validate, onMalformedOutput, recoverOutputLimit, signal }: ModelExperimentOptions<T>): Promise<{
+    return async function experiment<T>({ sourceKey, model, request, cachePrompt, validate, onMalformedOutput, recoverOutputLimit, signal }: ModelExperimentOptions<T>): Promise<{
         result: T; usage: Usage; reused: boolean; answeredAt: string; key: string;
     }> {
         signal?.throwIfAborted();
-        const snapshot = normalizedRequest(request), key = modelExperimentKey({ sourceKey, model, request: snapshot });
+        const snapshot = normalizedRequest(request);
+        const key = modelExperimentKey({ sourceKey, model, request: cachePrompt === undefined ? snapshot : { ...snapshot, prompt: cachePrompt } });
         const context = { ...getAiUsageContext() };
         const answer = await share(JSON.stringify([context.searchId ?? null, key]), workSignal => withAiUsageContext(context, async () => {
             workSignal.throwIfAborted();

@@ -230,7 +230,7 @@ test("Buy It Now emits a profitable slab, a loss and an unresolved row and repla
         details: async id => {
             const row = id === candidate.id ? candidate : id === loss.id ? loss : assert.fail("a missing exact market should not reach photo assessment");
             return { ...row, price: row.currentPrice, shipping: id === loss.id ? 175 : row.shipping,
-                availability: "ACTIVE", condition: "Graded", cardCondition: null, conditionNotes: [],
+                retrievedAt: new Date(NOW).toISOString(), availability: "ACTIVE", condition: "Graded", cardCondition: null, conditionNotes: [],
                 aspects: { "Card Name": "Charizard", Set: "Base Set", "Card Number": "4/102", Language: "English", Finish: "Holo", "Professional Grader": "PSA", Grade: "8" } };
         },
         assess: async () => { assessments++; return { result: reading, usage: { inputTokens: 500, outputTokens: 250 } }; },

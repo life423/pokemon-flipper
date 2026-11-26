@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { readFlipEvents } from "../server/analysis/flip-diagnostic.ts";
 import { createHuntInventoryScanner } from "../server/deals/find-deals.ts";
 import { freshResaleCandidates } from "../server/deals/discovery-order.ts";
+import { orderFlipPreviewCopies } from "../server/deals/flip-preview-selection.ts";
 import { readTitleByRules } from "../server/ai/title-reader.ts";
 import { createCacheStore } from "../server/lib/cache.ts";
 import { createScreeningPriceSource } from "../server/pricing/pkmnprices.ts";
@@ -21,6 +22,8 @@ if (file === "--pass") {
     const start = events.find(e => e.event === "started");
     const end = events.find(e => e.event === "finished");
     const rows = new Map<string, { id: string; title?: string; history: string[]; reason?: string }>();
+    const screened = new Map<string, ListingSummary>();
+    const previewComparisons = [];
     function record(id: string, stage: string, reason?: string, title?: string) {
         if (!id) return;
         const row = rows.get(id) ?? { id, history: [] };
@@ -38,9 +41,16 @@ if (file === "--pass") {
             for (const copy of v.page.listings) record(copy.id, "FOUND", undefined, copy.title);
             for (const copy of v.page.rejections ?? []) record(copy.id, copy.reason);
         } else if (e.event === "screened") {
+            for (const copy of v.listings ?? []) screened.set(copy.id, copy);
             for (const copy of v.dispositions) record(copy.id, copy.reason);
             for (const id of v.pending) record(id, "PENDING_CONTINUATION");
             for (const copy of v.excludedPrices ?? []) record(copy.id, "SOLD_PRICE_EXCLUDED", copy.screen?.reason);
+        } else if (e.event === "selection" && v.source === "vision" && start?.evidence.request?.targets) {
+            const pool = (v.previous as string[]).map(id => screened.get(id));
+            if (pool.every((copy): copy is ListingSummary => !!copy)) {
+                const replay = orderFlipPreviewCopies(pool, v, start.evidence.request.targets, Date.parse(e.at));
+                previewComparisons.push({ index: e.index, previewsSeen: v.seen.length, recordedOrder: v.ordered, replayOrder: replay });
+            }
         } else if (e.event === "queue") {
             for (const copy of v.dispositions) record(copy.id, copy.reason === "ELIGIBLE_FOR_REVIEW" ? "ELIGIBLE_NOT_REACHED" : copy.reason, copy.evidence);
         } else if (e.event === "check") record(v.id, "STARTED_" + v.action);
@@ -65,7 +75,7 @@ if (file === "--pass") {
         elapsedMs: start && end ? Date.parse(end.at) - Date.parse(start.at) : null, firstSupportedDecision: firstDecision,
         browseRequests: diff(before?.ebayBrowseRequests, after?.ebayBrowseRequests),
         pricingRequests: diff(before?.pricing?.used, after?.pricing?.used), pricingCredits: diff(before?.pricing?.reportedCredits, after?.pricing?.reportedCredits),
-        aiUsd: diff(before?.budget?.settledUsd, after?.budget?.settledUsd), counts, rows: [...rows.values()] }, null, 2));
+        aiUsd: diff(before?.budget?.settledUsd, after?.budget?.settledUsd), counts, previewComparisons, rows: [...rows.values()] }, null, 2));
     process.exit(0);
 }
 if (!file) throw new Error("Supply a saved flip page event, or a Browse cache file followed by the card name, collector number and set.");

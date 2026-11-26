@@ -1,4 +1,4 @@
-import { cardmarketComparisonKey } from "./cardmarket.ts";
+import { cardmarketComparisonKey, cardmarketRawCondition } from "./cardmarket.ts";
 import { cardLanguageStatus } from "./card-language.ts";
 import { releaseIssue } from "./base-set-release.ts";
 import { CONDITION_NAMES, isRawCondition } from "./conditions.ts";
@@ -40,13 +40,26 @@ export interface ProviderPrice {
     validUntil: number;
     url?: string;
 }
+// Covers mapped guides and a web search that independently cited the same provider.
+export function buyerVisiblePrice(row: { source?: string; url?: string }) {
+    return row.source !== "PriceCharting" && !/^https?:\/\/(?:[a-z0-9-]+\.)*pricecharting\.com(?:[/?#]|$)/i.test(row.url ?? "");
+}
 export interface BuyerPriceComparison {
+    recheckedSales?: boolean;
+    priceChartingHistory?: { scope: string; sales: { date: string; priceUsd: number; url: string }[] };
     market: string;
     prices: ProviderPrice[];
     notes: string[];
+    context?: string[];
+    silphHistory?: { points: import("./price-history.ts").DailyPrice[]; sales: { date: string | null; priceUsd: number; url: string }[] };
     saleGroups?: ReturnType<typeof screeningSaleGroups>;
 }
 export interface ListingMarketPrices {
+    soldChecked?: boolean;
+    cardmarketConditionUnsupported?: boolean;
+    trend?: string;
+    verifiedComparable?: import("./money/relist-estimate.ts").ComparableAsk;
+    flipResale?: { current: number; expected: number; competitor: import("./money/relist-estimate.ts").ComparableAsk | null };
     lookup?: { listingId: string; market: string };
     printing?: string;
     additional?: ProviderPrice[];
@@ -109,6 +122,7 @@ export function listingMarketPrices(e: Evaluation | null | undefined, listing: P
             ? sale.sellerCondition === wear : sale.photoCondition === wear && sale.conditionEvidence?.length));
         return observedSoldSales(sales, now, { maxDays: s.windowDays ?? 90, slab: kind === "graded" });
     };
+    const soldChecked = Boolean(summary);
     let sales = soldRows(summary, false);
     if (hasPrices && !sales.length && kind === "raw" && e.rawPricing?.printing === e.identity!.printing && e.rawPricing?.finish === e.identity!.finish) {
         summary = e.rawPricing?.sellerConditionComps ?? undefined;
@@ -136,6 +150,8 @@ export function listingMarketPrices(e: Evaluation | null | undefined, listing: P
         listingEvidenceKey({ title: e.listing.title, images: e.listing.photos ?? [] })]);
     const ended = e.listing.availability === "UNAVAILABLE" || Date.parse(e.listing.endTime ?? "") <= now;
     return { scope, additional, printing: printingName(e.identity!.printing), ...(ended ? {} : { lookup: { listingId: listing.id, market } }),
+        ...(soldChecked && { soldChecked: true }),
+        ...(kind === "raw" && isRawCondition(wear) && !cardmarketRawCondition(wear) && { cardmarketConditionUnsupported: true }),
         validUntil, tcg, sold: sales.length ? {
         latestSale: new Date(sales[0].at).toISOString(), validUntil: sampleUntil, sales: tileSales(sales),
         price: filteredMean ? estimate! : medianPrice!, ...(filteredMean && { filteredMean }), ...(average && { average }), count: sales.length, days, sellerCondition, sales30,

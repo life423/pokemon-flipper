@@ -88,7 +88,9 @@ test("diagnostic retention expires discovery, its decisions, and the review toge
     const oldId = randomUUID();
     await store.saveDiscovery(oldId, discovery);
     const snapshot = await store.saveSnapshot(oldId, rows, {});
-    await store.saveResult(oldId, { searchId: oldId, savedAt: snapshot!.savedAt, status: "skipped" });
+    const recorded = { searchId: oldId, savedAt: snapshot!.savedAt, status: "recorded" as const };
+    await store.saveResult(oldId, recorded);
+    assert.deepEqual(await createSearchDiagnosticStore({ directory, now: () => now }).loadResult(oldId), recorded);
 
     const newId = randomUUID();
     await store.saveDiscovery(newId, discovery);

@@ -46,9 +46,23 @@ const unknownOutcome = () => new AiSpendingError("AI_EVIDENCE_HELD", "A previous
 interface ProviderReply {
     status?: unknown;
     id?: unknown;
+    model?: unknown;
+    service_tier?: unknown;
     output?: unknown;
     usage?: unknown;
     error?: { code?: unknown; type?: unknown };
+}
+// Metering, SQL checkpointing and the SDK must all see the same reply. Read
+// the provider stream once, including on file storage and on HTTP errors.
+async function captureReply(response: Response) {
+    const text = await response.text();
+    let result: ProviderReply | null = null;
+    try { result = JSON.parse(text); } catch { /* The SDK also handles non-JSON provider errors. */ }
+    const headers = new Headers(response.headers);
+    headers.delete("content-encoding");
+    headers.delete("content-length");
+    const reply = new Response(response.body === null ? null : text, { status: response.status, statusText: response.statusText, headers });
+    return { reply, text, result };
 }
 const RATE_LIMIT_CODES = ["rate_limit_exceeded", "rate_limit_error"];
 function rejectedByRateLimit(response: Response, result: ProviderReply | null): boolean {
@@ -72,9 +86,19 @@ async function saveRecovery(file: string, value: Recovery) {
 // replace the spending guard. No SQL transaction stays open during AI work.
 export function createSqlAiDispatch({ enabled = () => storageBackend() === "azure-sql", repository = getSqlRepositories,
     recoveryDirectory = path.join(DATA_DIR, "ai-response-recovery"), scope = localOwner, pollMs = 250, waitMs = 125_000 }: Options = {}) {
-    return async function dispatch(body: unknown, send: (beforeSend: () => Promise<void>) => Promise<Response>, signal?: AbortSignal): Promise<Response> {
+    return async function dispatch(body: unknown, send: (beforeSend: () => Promise<void>) => Promise<Response>, signal?: AbortSignal,
+        observe?: (response: Response, result: ProviderReply | null) => Promise<void>): Promise<Response> {
         signal?.throwIfAborted();
-        if (!enabled()) return send(async () => {});
+        const receive = async (beforeSend: () => Promise<void>) => {
+            const response = await send(beforeSend);
+            const captured = await captureReply(response).catch(async cause => {
+                await observe?.(response, null);
+                throw new StorageUnavailableError("The AI reply could not be read. Its spending reservation was kept.", { cause });
+            });
+            await observe?.(captured.reply, captured.result);
+            return captured;
+        };
+        if (!enabled()) return (await receive(async () => {})).reply;
         const hash = createHash("sha256").update(JSON.stringify([scope(), body])).digest("hex");
         const key = `ai-dispatch:v1:${hash}`;
         const recoveryFile = path.join(recoveryDirectory, `${hash}.json`);
@@ -114,15 +138,12 @@ export function createSqlAiDispatch({ enabled = () => storageBackend() === "azur
         let dispatched = false;
         try {
             signal?.throwIfAborted();
-            const response = await send(async () => {
+            const { reply: response, text, result } = await receive(async () => {
                 signal?.throwIfAborted();
                 await repos.markTaskDispatched(key, owner);
                 dispatched = true;
                 signal?.throwIfAborted();
             });
-            const text = await response.clone().text();
-            let result: ProviderReply | null = null;
-            try { result = JSON.parse(text); } catch {}
             if (dispatched && rejectedByRateLimit(response, result)) {
                 // A confirmed refusal can be retried after the provider's delay.
                 // The transport still owns its accounting and no hold is refunded here.
@@ -144,9 +165,7 @@ export function createSqlAiDispatch({ enabled = () => storageBackend() === "azur
                 console.error(recoverySaved ? "An accepted AI answer is saved locally for SQL recovery; its shared claim remains held."
                     : "An accepted AI answer could not be checkpointed. Its shared claim remains held and the answer is returned to its caller.");
             }
-            // Give the first caller its own readable body, as with a replay.
-            // Checkpointing may disturb the provider stream on some runtimes.
-            return new Response(accepted.body, { status: response.status, statusText: response.statusText, headers: response.headers });
+            return response;
         } catch (error) {
             if (dispatched) await repos.markTaskUnknown(key, owner).catch(() => {});
             else await repos.releaseTask(key, owner).catch(() => {});

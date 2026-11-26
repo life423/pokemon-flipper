@@ -13,6 +13,7 @@ import { isRawSoldPrice, isUsableRawPrice, unsupportedVariantReason } from "./mo
 import { acquisitionCost, affordableItemLimit as affordableBidLimit, maxBid } from "./money/underwriting.ts";
 import { observedCardKind, photoCoverage } from "./photo-evidence.ts";
 import { currentPriceEvidence, maxPriceEvidenceAge } from "./pricing-freshness.ts";
+import { currentQuote } from "./fresh-listing.ts";
 import { BEST_BUY_TERMS_MAX_AGE_MS } from "./search-diagnostic.ts";
 import { verifiedSlabMarketKey } from "./slab-market.ts";
 import { soldMarketPrice } from "./sold-evidence.ts";
@@ -25,10 +26,6 @@ const day = 86_400_000;
 export { withinOpportunityWindow, AUCTION_OPPORTUNITY_HOURS } from "./auction-window.ts";
 
 type BidListing = Pick<Evaluation["listing"], "auctionQuote" | "bids" | "price">;
-function currentQuote(checkedAt: string | undefined, now: number) {
-    const age = now - Date.parse(checkedAt ?? "");
-    return age >= 0 && age < BEST_BUY_TERMS_MAX_AGE_MS;
-}
 
 export function nextAuctionBid(listing: BidListing, now: number): number | null {
     const { auctionQuote, bids, price } = listing;

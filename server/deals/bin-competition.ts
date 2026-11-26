@@ -237,7 +237,7 @@ async function verifyCandidate(candidate: CollectorListingCandidate, reference: 
     } else if (!strategy && exactListingIdentity(listing, reference)) {
         identity = "LISTING";
     } else {
-        if (!strategy && (resale === null || numbers.cost > resale)) return unresolved("An exact slab label would be needed.");
+        if (!strategy && resale === null) return unresolved("A matched sold price is needed for this comparison.");
         if (!listing.images.length || !await checkLabel(listing, reference, signal)) return unresolved("The listing photo could not verify the exact English slab and grade.");
         signal?.throwIfAborted();
         identity = "LABEL";

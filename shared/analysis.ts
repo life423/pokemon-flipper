@@ -1,3 +1,4 @@
+import { purchaseNeedsRecheck } from "./fresh-listing.ts";
 import type { Evaluation, ListingSummary } from "./types.ts";
 import { offerFor, offerWorthMaking } from "./money/offer.ts";
 import { canRetryPricing } from "./pricing-retries.ts";
@@ -66,7 +67,7 @@ export function canAutoAnalyze(listing: ListingSummary): boolean {
 
 export type ResultGroup = "deals" | "offers" | "candidates" | "review";
 
-export function resultGroup(listing: ListingSummary, evaluation: Evaluation | null, includeOffers = false, analysisIncomplete = false): ResultGroup | null {
+export function resultGroup(listing: ListingSummary, evaluation: Evaluation | null, includeOffers = false, analysisIncomplete = false, now = Date.now()): ResultGroup | null {
     const verdict = evaluation?.underwriting?.verdict;
     const availability = evaluation?.listing?.availability ?? listing.availability;
     if (verdict === "PASS" && evaluation && obscuredDisclosedWear(evaluation)) return null;
@@ -107,7 +108,7 @@ export function resultGroup(listing: ListingSummary, evaluation: Evaluation | nu
         return unquotedBuyItNowShipping(evaluation?.listing ?? listing) ? "candidates" : "offers";
     }
     if (evaluation?.researchMode === "DEFERRED_LOW_RESALE") return photoReviewStatus(evaluation).needsYourReview ? "review" : null;
-    if (verdict?.startsWith("BUY")) return availability === "UNKNOWN" ? "review" : "deals";
+    if (verdict?.startsWith("BUY")) return availability === "UNKNOWN" || availability === "UNAVAILABLE" || purchaseNeedsRecheck(evaluation, now) ? "review" : "deals";
     if (verdict === "NEEDS_REVIEW" || verdict === "CANT_PRICE") return "review";
     if (evaluation && !verdict) return "review";
     // An incomplete check is unresolved, never a priced rejection or a queued analysis.

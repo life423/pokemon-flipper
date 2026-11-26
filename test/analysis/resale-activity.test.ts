@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { activityDescription, resaleActivity } from "../../server/analysis/resale-activity.ts";
-import { rankCatalogMarkets } from "../../server/pricing/liquid-markets.ts";
+import { liquidMarkets, rankCatalogMarkets } from "../../server/pricing/liquid-markets.ts";
 
 test("steady selling days and typical prices distinguish markets of equal volume", () => {
     const prices = [49, 50, 50, 50, 51, 4900];
@@ -23,4 +23,14 @@ test("catalog ranking retains every measured card and prioritizes monthly comple
             : [bucket("2026-11-25", id === 1 ? 12 : 1)] }));
     assert.deepEqual(ranked.map(m => m.name), ["Burst", "Daily", "Fourth", "Third"]);
     assert.deepEqual([ranked[1].activeDays, ranked[1].sales], [3, 9]);
+});
+
+test("a discovery lead with fifteen monthly sales can enter research without daily sales", async () => {
+    const card = { id: 7, name: "Ampharos", set: { name: "Aquapolis" }, number: "1", total_set_number: "147" };
+    const now = Date.parse("2026-11-25T12:00:00Z");
+    const markets = await liquidMarkets("raw", now, new AbortController().signal,
+        async () => ({ data: [card] }), async () => ({ data: Array.from({ length: 15 }, (_, i) => ({
+            date: new Date(now - i * 2 * 86_400_000).toISOString().slice(0, 10), currency: "USD", sales: 1, graded: false,
+        })) }), async () => [{ name: card.name, set: card.set.name, number: card.number }]);
+    assert.deepEqual(markets.map(({ id, sales, activeDays }) => [id, sales, activeDays]), [[7, 15, 15]]);
 });

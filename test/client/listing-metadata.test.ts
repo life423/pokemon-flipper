@@ -271,12 +271,12 @@ test("cards show real listed dates, distinguish creation, and keep the card-type
         assert.equal((html.match(/Card type/g) ?? []).length, 1);
         assert.ok(html.indexOf("Card type") < html.indexOf('hidden=""'), "the picker must be outside the hidden results toolbar");
         assert.match(html, new RegExp(`<option value="${kind}" selected="">`));
-        assert.match(html, />Both<\/option>/); assert.match(html, />Raw cards<\/option>/); assert.match(html, />Graded cards<\/option>/);
+        assert.match(html, />Ungraded and graded<\/option>/); assert.match(html, />Ungraded cards<\/option>/); assert.match(html, />Graded cards<\/option>/);
         const beforeResults = html.slice(0, html.indexOf('hidden=""'));
-        assert.match(beforeResults, /English cards only/);
-        assert.match(beforeResults, /Identity and condition remain preliminary until photo assessment/);
-        assert.match(beforeResults, /Minimum Buy It Now price/); assert.match(beforeResults, /Maximum purchase price/);
-        assert.match(beforeResults, /All prices by default/);
+        assert.match(beforeResults, /compare English cards on eBay/);
+        assert.match(beforeResults, /Photo reviews check which version the seller has and what condition/);
+        assert.match(beforeResults, /Minimum Buy It Now price/); assert.match(beforeResults, /Maximum item price/);
+        assert.match(beforeResults, /The maximum applies to both formats, before shipping and tax/);
         assert.equal((beforeResults.match(/type="number"/g) ?? []).length, 4, "price, profit and ROI controls are available before a search");
         assert.match(beforeResults, /Minimum profit, dollars/);
         assert.match(beforeResults, /Minimum return, percent/);

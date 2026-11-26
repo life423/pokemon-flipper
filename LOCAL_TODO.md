@@ -1,9 +1,25 @@
 # Pokémon Flipper — current checklist
 
-Updated November 25, 2026. This is the active work list. Current decisions and
+Updated November 26, 2026. This is the active work list. Current decisions and
 resource locations are in [LOCAL_PLAN.md](LOCAL_PLAN.md); verified audit findings
 are in [the maintained audit](docs/deal-search-audit.md). Git retains removed
 reports. Provider payloads, paid evidence, credentials and user data stay private.
+
+## November 26 offline work before the next live flip
+
+- [ ] Show the current one or two photo reviews as they start and finish, with a layout and heading that reflect the number of active cards.
+- [ ] Break down PKMNPrices credits per screened market and compare the incremental value of deeper sold-page lookups before the next broad inventory run.
+
+1. [x] Reconnect a guided search after a dropped connection or a reply from an active worker. Preserve its settings, format IDs, spending account and accepted evidence. Keep account conflicts and spending holds actionable.
+2. [x] Give recovered inventory the first turn. For a blank search with saved price comparisons and no cached sales-volume ranking, try the saved targets and an independent page first. Look up additional cards by completed sales volume when those targets run out.
+3. [x] Replay gallery order using the original preview observations. Prefer another comparable copy when the cheap one shows substantial wear and lacks supporting sales at that wear level. Keep the worn copy eligible. Use `scripts/replay-flip-page.ts --pass` to compare recorded and current order.
+4. [x] Replay original Buy It Now previews, queue decisions and pre-photo rejections. Compare current ordering against cheapest comparable first. Preserve original titles and gallery links for future provider exclusions. A real seller’s “V Star” spelling now reaches review for a VSTAR search. The November 26 replay covered seven passes. Only 37 of 382 distinct listings rejected before recorded photo work retained a title and gallery. None of those exclusions had independent evidence confirming a missed profitable flip. More independently reviewed examples are needed to measure missed bargains.
+5. [x] Record issue-time raw finalist forecasts and competing quotes and score on later same-market, physically condition-matched eBay sales. Report signed and absolute errors by sale method. Three later fixed-price transactions qualified across two damaged-card markets. Continue collecting prospective forecasts and validating other conditions, accepted offers and any proposed time-to-sell estimates.
+6. [ ] Verify one available Buy It Now flip under current terms after the offline checks. Record the exact copy, matched sales, after-cost profit, elapsed time and actual provider usage.
+
+The early photo check can examine a second distinct seller photo for a lone flagged listing. The competitor regression covers two cheaper copies with the wrong printing or wear, an unquoted shipping charge, and a third gallery that verifies the equivalent copy. Check more of the same sorted page while an ask can still affect the resale comparison.
+
+The finalist market review can consult fresh PKMNPrices sold pages, eBay inventory, TCGplayer, Cardmarket, Pokémon Price Tracker, cited web research, PokéPrice, Silph Co and mapped PriceCharting guides. The latest Windows provider check found active eBay inventory, condition-specific PKMNPrices sales and the public PokéPrice card feed. The Windows installation verified authenticated Silph Co access and retrieved dated condition-specific eBay sales for Fossil Dragonite. Buyer-facing PriceCharting needs its authorized product mapping. Continue to measure those sources separately and compare timestamped forecasts against later, independent condition-matched sales.
 
 ## November 25 Find a flip repair
 
@@ -68,10 +84,10 @@ The original 1,621-test suite passed despite those missing cases.
   reserve and inspect current usage before another live scan.
 - [x] For a general Find a flip request, let the AI choose which card to research
   and when to switch. Honor the buyer's explicit filters. Prioritize copies with
-  frequent daily sales, stable resale prices and a profit after all costs.
+  repeated monthly sales, stable resale prices and a profit after all costs.
   Use completed sales of the same printing, language, finish and condition or slab
-  grade. Show observed sales per day, how many days had sales, and the typical
-  sold-price range. Distinguish steady demand from a one-day spike and account
+  grade. Keep the pace and number of selling days in research and the
+  individual sold comparisons in expandable evidence. Distinguish steady demand from a one-day spike and account
   for incomplete sales coverage. Use these signals to order research without
   imposing a fixed sales-count cutoff.
 - [x] When a buyer names a card in Find a flip, search that card first. If the
@@ -298,7 +314,7 @@ no push was requested for the break.
 ## 1. Prove the live buying workflow
 
 - [x] Audit every explicit gate from eBay discovery to the Deal label. The
-  [complete blocker audit](docs/deal-blockers-audit.md) covers source admission,
+  The complete blocker audit covers source admission,
   matching, prices, photos, money, liquidity, auctions, budgets, recovery and UI.
 - [x] Remove the reproduced one-versus-three raw-sale dead-end. Supported
   condition-specific TCGplayer quotes can value raw resale; observed 60-day
@@ -552,6 +568,9 @@ no push was requested for the break.
 - [ ] Use transactional shortlist/history writes and shared provider/spending quota
   authority before independent processes or machines. Preserve original limits,
   spent counts, uncertain holds and account boundaries through migration.
+- [x] Save each Find a Deal batch's admitted IDs, decisions and recorded outcome
+  in owner-scoped Azure SQL. Read back legacy searches, avoid duplicating source
+  coverage in decision snapshots, and report completion only after admission is saved.
 - [ ] Build durable server-owned research jobs with saved progress, subscriptions,
   cancellation and recovery after browser disconnect/restart. SQL caches alone
   do not complete a search or make its current client queue durable.
@@ -709,6 +728,9 @@ no push was requested for the break.
 - [ ] Exercise a timed Sandbox bid and verify its receipt in the connected
   account. Obtain production Offer API approval before enabling real-money
   bidding. Keep ambiguous submissions from sending a second bid.
+  On November 26 the scheduled Windows test remained armed after close.
+  The local server was unreachable at inspection and eBay confirmed no buyer
+  bidding activity. Repeat with an always-on scheduler to verify submission.
 - [ ] Test the buyer flow from an auction card through eBay consent, a maximum
   bid and explicit scheduling. Before offering background bids to customers,
   run the scheduler on an always-on host and isolate each buyer’s grant and jobs.

@@ -177,6 +177,20 @@ const slabSales: ScreeningSoldEvidence = { status: "AVAILABLE", exactScope: true
 }] };
 const binFilters = { typeFilter: "FIXED_PRICE", kindFilter: "graded", minPrice: 25, maxPrice: 125 } as const;
 
+test("a collector still receives the lowest quoted match when every slab exceeds the resale ceiling", async () => {
+    const rows = [180, 150].map((price, i) => {
+        const id = String(123456789010 + i);
+        return { ...slab("v1|" + id + "|0", price), url: "https://www.ebay.com/itm/" + id, availability: "ACTIVE" as const,
+            termsCheckedAt: new Date().toISOString(), shippingDestination: "76133" };
+    });
+    let summary: SearchSummary | undefined;
+    const results = await findDeals(slabQuery, { filters: { typeFilter:"FIXED_PRICE", kindFilter:"graded" },
+        onStart: message => { summary = message; } }, offlineSearchSteps(rows, { soldScreening: () => async () => slabSales }));
+    assert.equal(results.length, 0);
+    assert.equal(summary?.comparisonQuote?.id, rows[1].id);
+    assert.equal(summary.priceExcluded, 2);
+});
+
 test("a weak newest BIN pass admits a cheaper candidate even with all matching slots filled", async () => {
     const cheap = slab("cheap-deferred", 40);
     const newest = [...Array.from({ length: 50 }, (_, index) => slab(`newest-${index}`)), cheap];

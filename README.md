@@ -82,16 +82,24 @@ The [checklist](LOCAL_TODO.md) records their implementation and validation work.
 Auction sniper development is on hold. For personal guide research, run
 `npm run pricecharting:guide -- PRODUCT_ID PRODUCT_URL` with the canonical
 Pokémon product page. The importer saves the USD guide values and all sale rows
-published on that page for Ungraded and grades 7, 8 and 9. It records the published
-counts, unreadable rows and conflicting grade labels. Each product reuses its daily
+published in its recognized ungraded, numeric grade and grader-specific sale tabs. It records the published
+counts, unreadable rows and conflicting grade labels. It also captures the full labeled grade guide
+and published monthly USD series. Each product reuses its daily
 snapshot. Azure SQL also retains individual sales by product, marketplace and
 transaction ID across snapshots. File storage keeps a dated snapshot per product.
+
+Set `PRICECHARTING_PERSONAL_RESEARCH=true` for private research on the local installation.
+An explicit price comparison then cross-checks overlapping eBay transactions for the identified printing.
+A disagreement triggers one fresh sold-page check under the original account. A finalist review
+also receives the matching guide, its dated trend and additional linked eBay sales as research context. Personal mode keeps PriceCharting
+prices and transaction records out of buyer responses.
 
 Find a flip can request this comparison when it checks sales for a photo-identified
 card. The buyer can also request a guide through **Check additional prices**. A guide uses the exact catalog mapping and keeps its source grade labels. Customer-facing use requires express written permission under PriceCharting's
 [terms](https://www.pricecharting.com/page/terms-of-service). With that permission,
-set `PRICECHARTING_BUYER_USE_AUTHORIZED=true` and supply validated product mappings
-as a JSON array in `PRICECHARTING_PRODUCT_MAP`. For example:
+set `PRICECHARTING_BUYER_USE_AUTHORIZED=true`. Aquapolis Ampharos and Espeon each have
+separate mappings for regular, reverse holo and numbered holo copies. Add other
+verified products as a JSON array in `PRICECHARTING_PRODUCT_MAP`. For example:
 
 ```json
 [{"name":"Dark Gengar","set":"Neo Destiny","cardNumber":"6/105","language":"English","printing":"UNLIMITED","finish":"HOLO","id":"762567","url":"https://www.pricecharting.com/game/pokemon-neo-destiny/dark-gengar-6"}]
@@ -105,12 +113,14 @@ spans conditions. The flip calculation uses verified resale comparisons.
 
 ## Search workflow
 
+Set `SILPHCO_API_KEY` in the local `.env` to enable Silph Co’s authenticated sales, prices and active listings. PokéPrice’s public card pages and sold feed require no key.
+
 Describe a card or buying goal in ordinary language, such as “find me a liquid
 holographic card from the years 1999–2003 to flip” or “holo card no newer than
 2020.” The latter includes 2020 and earlier. The app shows the interpreted
-criteria. Find a Flip looks for at least three comparable eBay sales across two
-days in the past month. For a profitable Buy It Now finalist, the reviewer can
-weigh those sales against competing listings. A filtered eBay query can include
+criteria. Recent comparable eBay sales establish activity for the specific printing
+and condition or slab grade. For a profitable Buy It Now finalist, the reviewer
+weighs the dates and spread of sale prices against current competing listings. A filtered eBay query can include
 other printings, grades and conditions. A few sales establish past activity
 while leaving the time to sell this copy uncertain.
 
@@ -449,16 +459,24 @@ bytes outside SQL and references/fingerprints inside it.
 npm run db -- import --dry-run
 npm run db -- migrate
 npm run db -- import
+npm run db -- import-diagnostics
 npm run db -- verify
 npm run db -- status
 npm run db:check
 ```
 
-Shared response/assessment storage and task-claim foundations exist. Current
-runtime spending/quota guards, shortlist, history and usage records still rely
-on local files. Full shared transactional accounting, durable server-owned
-research and authenticated user ownership remain unfinished. Do not deploy
-independent replicas with separate local allowances.
+Azure SQL stores provider responses, accepted photo assessments, owner valuations
+and recent search diagnostics. The diagnostics import reads back each search's
+admitted listing IDs, saved decisions and outcome. Each computer sharing these
+private records must use the same owner ID. Search diagnostics retain the most
+recent 50 searches for up to 30 days.
+
+The shortlist, search history, continuation receipts, local flip queue and
+spending and quota ledgers still require their local stores. Keep them until
+their replacements have been migrated and verified. Independent machines still
+need shared transactional spending and quota enforcement for concurrent paid runs.
+Keep private audit captures and their replay fixtures outside the operational
+database. Database migration snapshots are recovery backups.
 
 Keep `data/`, credentials, paid evidence and private user settings out of Git.
 Back up local state; do not clear caches or ledgers as code cleanup. Use
@@ -487,7 +505,7 @@ text review. Private packets under `data/search-diagnostics/` help identify
 specific blockers. Verify their claims against saved listing evidence and code;
 a review is a proposal, not authority to relax identity or invent resale prices.
 
-The [Deal blocker audit](docs/deal-blockers-audit.md) lists the current rules
+The maintained [deal-search audit](docs/deal-search-audit.md) lists the retained findings
 that can exclude, hold, reject or hide a card, and the reproduced integration
 defects that still prevent some economically profitable candidates from qualifying.
 

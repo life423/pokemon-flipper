@@ -100,8 +100,7 @@ export function GradingWatch({ listings, decisions, now, canScan, onScan, onOpen
     }
     return <section className={styles.panel} aria-label="Newly listed grading watch">
         <button type="button" aria-pressed={active} onClick={toggle}>{active ? "Stop grading watch" : "Watch for grading opportunities"}</button>
-        <p>{active ? `Watching this search until ${new Date(watch.until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. ${watch.checks} of 2 new-listing checks used.`
-            : "Watch this search for 30 minutes. While Results is open, up to two checks look for raw Buy It Now listings from the last 24 hours using this search’s remaining allowance."}</p>
+        {active && <p>Watching this search until {new Date(watch.until).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}. {watch.checks} of 2 new-listing checks used.</p>}
         {scanStatus && <p role="status">{scanStatus}</p>}
         <span role="status" className={styles.announcement}>{active && matches.length > 0 && announcement}</span>
         {matches.map(({ listing, value }) => <article key={listing.id}>

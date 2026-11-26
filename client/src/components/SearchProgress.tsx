@@ -13,6 +13,7 @@ const COLLAPSED_KEY = "searchProgressCollapsed";
 
 interface Props {
     phase: SearchPhase;
+    comparisonOnly?: boolean;
     discoveryPaused?: boolean;
     query: string;
     error: string | null;
@@ -44,7 +45,7 @@ function readCollapsed(): boolean {
 
 // The search's progress, expanded with every step and count, or collapsed
 // to one line to leave room for results.
-export function SearchProgress({ phase: requestedPhase, discoveryPaused, query, error, ebayTotal, checked, total, discoveryProgress, ai, buyerProgress, stats, usage, onStop, canStopAssessment, actions, details }: Props) {
+export function SearchProgress({ phase: requestedPhase, comparisonOnly, discoveryPaused, query, error, ebayTotal, checked, total, discoveryProgress, ai, buyerProgress, stats, usage, onStop, canStopAssessment, actions, details }: Props) {
     const [collapsed, setCollapsed] = useState(readCollapsed);
     const listingWork = requestedPhase === "finding" || requestedPhase === "filtering";
     // A paid-AI pause does not stop the independently bounded metadata stream.
@@ -75,10 +76,10 @@ export function SearchProgress({ phase: requestedPhase, discoveryPaused, query, 
     const completed = Math.max(0, ai.done - ai.failed - inconclusive - held);
     const priority = buyerProgress && buyerProgress.priorityTotal > 0
         ? `${buyerProgress.priorityDone.toLocaleString()} of ${buyerProgress.priorityTotal.toLocaleString()} priority listings checked` : null;
-    const decisions = buyerProgress && `${buyerProgress.finished.toLocaleString()} of ${buyerProgress.total.toLocaleString()} buyer decisions ready`;
+    const decisions = buyerProgress && `${buyerProgress.finished.toLocaleString()} of ${buyerProgress.total.toLocaleString()} listings reviewed`;
     const priorityRemaining = buyerProgress
         ? buyerProgress.priorityTotal - buyerProgress.priorityDone - (buyerProgress.priorityUnavailable ?? 0) : 0;
-    const buyerTask = buyerProgress && (priorityRemaining > 0 ? "Checking priority listings" : "Sorting remaining listings");
+    const buyerTask = buyerProgress && (priorityRemaining > 0 ? "Checking priority listings" : "Reviewing remaining listings");
     const loaded = `${checked.toLocaleString()} ${checked === 1 ? "listing" : "listings"} loaded`;
     const assessed = `${completed.toLocaleString()} ${completed === 1 ? "assessment" : "assessments"} completed`;
     const aiStatus = aiState === "stopped" ? "Photo reviews stopped"
@@ -184,7 +185,8 @@ export function SearchProgress({ phase: requestedPhase, discoveryPaused, query, 
 
                 <div className={styles.titles} aria-live="polite">
                     <h2 className={styles.title}>{title}</h2>
-                    <p className={styles.sub}>{collapsed || buyerProgress || discoveryProgress ? compact : subtitle}</p>
+                    <p className={styles.sub}>{comparisonOnly && phase === "done" ? "1 buying comparison available" :
+                        collapsed || buyerProgress || discoveryProgress ? compact : subtitle}</p>
                     {collapsed && running && <ProgressBar percent={percent} thin />}
                 </div>
 

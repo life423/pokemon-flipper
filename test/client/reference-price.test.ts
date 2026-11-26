@@ -31,22 +31,22 @@ test("best current buy shows an honest losing resale scenario and seller risk", 
     assert.match(markup, /\$16\.17 estimated tax/);
     assert.match(markup, /\$212\.12/);
     assert.match(markup, /Projected resale loss/);
-    assert.match(markup, /Outside Deals because a resale/);
-    assert.match(markup, /\$162\.12 after selling costs/);
+    assert.match(render({ ...reference, pricing: { ...reference.pricing, resale: 200 } }), /\$12\.12 above sold estimate/);
+    assert.match(render({ ...reference, pricing: { ...reference.pricing, resale: 212.12 } }), /At sold estimate/);
     assert.match(markup, /-24% return/);
     assert.match(markup, /4 matched sales/);
     assert.match(markup, /photos not checked/);
     assert.match(markup, /limited or weak seller feedback/);
-    assert.match(markup, /3 listings checked from 40 fetched/);
+    assert.match(markup, /3 listings compared out of 40 found/);
     assert.doesNotMatch(markup, /Guaranteed|Profitable deal|AI review/i);
     assert.equal(render({ ...reference, url: "https://example.com/fake" }), "", "purchase action only links to a validated eBay listing");
     const profitable = render({ ...reference, pricing: { ...reference.pricing, profit: 15, roi: .1 } });
     assert.match(profitable, /Projected resale profit/);
     assert.doesNotMatch(profitable, /Projected resale loss|Outside Deals/);
     const labelChecked = { ...reference, identity: "LABEL", seller: { username: "example", feedbackScore: 350, feedbackPercentage: 100 } };
-    assert.match(render(labelChecked), /Fair buy for a collector/);
+    assert.match(render(labelChecked), />Deal</);
     assert.match(render(labelChecked), /Matched the card and PSA label/);
-    assert.doesNotMatch(render({ ...labelChecked, seller: reference.seller }), /Fair buy for a collector/);
+    assert.doesNotMatch(render({ ...labelChecked, seller: reference.seller }), />Deal</);
     assert.match(render({ ...reference, shipping: 0 }), /free shipping/);
 });
 
@@ -92,7 +92,7 @@ test("a raw deal explains when sold photos support a lower-condition resale floo
     const { DealCard } = await server.ssrLoadModule("/src/components/DealCard.tsx");
     const { CompsRow } = await server.ssrLoadModule("/src/components/analysis/PricingSections.tsx");
     const targets = { minProfit: 0, minRoi: 0 }, value = cardEvaluation(targets);
-    value.listing = { ...value.listing, buyingOption: "FIXED_PRICE", price: 40, shipping: 5 };
+    value.listing = { ...value.listing, buyingOption: "FIXED_PRICE", price: 40, shipping: 5, availability: "ACTIVE", termsCheckedAt: new Date().toISOString() };
     value.photoCheck!.cardCount = "ONE";
     value.condition!.rawCondition = "NEAR_MINT";
     value.condition!.gradeRange = null;
@@ -102,12 +102,16 @@ test("a raw deal explains when sold photos support a lower-condition resale floo
     value.rawPricing = { status: "PRICED", conditionEvidence: "AI_PHOTOS", prices: [{ condition: "LIGHTLY_PLAYED", basis: "EBAY_SOLD", price: 100, updatedAt: comps.newestSale, comps }] };
     value.underwriting = underwrite(value, { ...MONEY_CONFIG, targets });
     assert.equal(value.underwriting.verdict, "BUY_RAW");
-    const render = () => renderToStaticMarkup(createElement(DealCard, {
+    const checked = Date.parse(value.listing.termsCheckedAt!);
+    const render = (now = checked) => renderToStaticMarkup(createElement(DealCard, {
         listing: { ...value.listing, currentPrice: 40, isGraded: false, images: [] }, analysis: { status: "done", evaluation: value },
-        targets, now: Date.now(), includeOffers: false, selected: false, onOpen() {}, years: {},
+        targets, now, includeOffers: false, selected: false, onOpen() {}, years: {},
     }));
     assert.match(render(), /Photos support Near Mint\. The \$100\.00 resale estimate uses 3 photo-checked Lightly Played sales\./i);
     assert.match(renderToStaticMarkup(createElement(CompsRow, { summary: comps })), /Whitening visible on the bottom edge/);
+    const expires = checked + BEST_BUY_TERMS_MAX_AGE_MS;
+    assert.doesNotMatch(render(expires - 1), /Recheck price/);
+    assert.match(render(expires), /Recheck price/);
     value.rawPricing.conditionEvidence = "SELLER_TEXT";
     assert.doesNotMatch(render(), /photo-checked Lightly Played sales/i);
 });
@@ -193,7 +197,7 @@ test("expired Buy It Now competition leaves Deals and the direct listing keeps p
     const targets = { minProfit: 0, minRoi: 0 }, evaluation = cardEvaluation(targets);
     const checkedAt = "2026-11-09T12:00:00Z", now = Date.parse(checkedAt) + 120_000;
     const photo = "https://i.ebayimg.com/images/g/offline/s-l1600.jpg";
-    evaluation.listing = { ...evaluation.listing, buyingOption: "FIXED_PRICE", price: 40, shipping: 0, bids: 0, endTime: null, photos: [photo] };
+    evaluation.listing = { ...evaluation.listing, buyingOption: "FIXED_PRICE", price: 40, shipping: 0, bids: 0, endTime: null, availability: "ACTIVE", termsCheckedAt: checkedAt, photos: [photo] };
     evaluation.pricesCheckedAt = checkedAt;
     evaluation.rawPricing = null;
     evaluation.gradedPricing = null;
@@ -208,7 +212,7 @@ test("expired Buy It Now competition leaves Deals and the direct listing keeps p
     evaluation.slabPricing = { status: "PRICED", summary: salesSummary(), activeReference };
     const listing: ListingSummary = { ...evaluation.listing, currentPrice: 40, isGraded: true, images: [photo] };
     const display = (at: number) => displayAnalysis({ status: "done", evidenceKey: "saved-photos", evaluation }, targets, at, listing);
-    const group = (at: number) => groupSearchResults([listing], { [listing.id]: display(at) }, true, new Set());
+    const group = (at: number) => groupSearchResults([listing], { [listing.id]: display(at) }, true, new Set(), {}, undefined, at);
     assert.deepEqual(group(now - 1).deals, [listing]);
     assert.deepEqual(group(now).deals, []);
     assert.deepEqual(group(now).candidates, [listing]);
@@ -363,7 +367,7 @@ test("the live buyer-review path displays only the verified resale route and cou
     assert.equal(floor.verifiedPurchase?.path.profit, 30.20);
     assert.equal(floor.verifiedPurchase?.maxItemPrice, 67.89);
     assert.match(floor.reason, /photo-checked Lightly Played resale floor of \$100\.00/);
-    assert.match(floor.reason, /3 observed matching Lightly Played raw sales in the last 60 days/);
+    assert.doesNotMatch(floor.reason, /sales in the last/);
     const floorCard = renderToStaticMarkup(createElement(DealCard, { ...props, listing: { ...listing, currentPrice: 40 },
         automaticDecision: floor, analysis: { status: "done", evaluation: floor.evaluation } }));
     assert.match(floorCard, /3 matching sold comps \/ 60 days/);

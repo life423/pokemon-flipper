@@ -108,10 +108,12 @@ export interface SearchDiagnosticReview {
     proposedTasks: SearchDiagnosticTask[];
 }
 
+export const SEARCH_DIAGNOSTIC_STATUSES = ["recorded", "complete", "skipped", "unavailable"] as const;
+
 export interface SearchDiagnosticResult {
     searchId: string;
     savedAt: string;
-    status: "recorded" | "complete" | "skipped" | "unavailable";
+    status: typeof SEARCH_DIAGNOSTIC_STATUSES[number];
     message?: string;
     review?: SearchDiagnosticReview;
     examples?: Record<string, string>;

@@ -1,5 +1,12 @@
 import type { Evaluation } from "./types.ts";
 
+// The US and European played grades have no exact mapping.
+export function cardmarketRawCondition(condition: NonNullable<Evaluation["condition"]>["rawCondition"]) {
+    if (condition === "MINT") return "Mint";
+    if (condition === "NEAR_MINT") return "Near Mint";
+    return null;
+}
+
 // An assessment can be revised in another tab while the buyer is viewing it.
 export function cardmarketComparisonKey(value: Evaluation): string {
     const identity = value.identity, slab = value.slab;

@@ -144,7 +144,7 @@ function freshDate(input: unknown, maxDays: number, now: number): string | null 
     return age >= 0 && age <= maxDays * 86_400_000 ? new Date(time).toISOString() : null;
 }
 
-function exactProduct(card: CardRecord, value: Evaluation): boolean {
+export function matchesStandardCatalogProduct(card: CardRecord, value: Evaluation): boolean {
     const identity = value.identity!;
     return !!card.tcgPlayerId && Number.isSafeInteger(card.tcgPlayerId) && card.tcgPlayerId > 0 &&
         String(card.id) === String(identity.recordId) && !!card.setName && sameCatalogName(card.name, identity.name) &&
@@ -221,7 +221,7 @@ interface TrackerOptions { cacheOnly?: boolean }
 async function trackerProduct(value: Evaluation, signal: AbortSignal | undefined, cacheOnly: boolean) {
     signal?.throwIfAborted();
     const card = await cachedPricingRecord(String(value.identity!.recordId));
-    if (!card || !exactProduct(card, value)) return null;
+    if (!card || !matchesStandardCatalogProduct(card, value)) return null;
     const id = card.tcgPlayerId!;
     const key = `pokemonpricetracker:card-by-tcg:v2:${id}:ebay:limit1`;
     let body = await readCache<unknown>(key, 24);

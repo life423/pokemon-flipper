@@ -22,6 +22,7 @@ export interface DealHuntOutcome {
     recentSales?: number;
     resalePriority?: number;
     hasSupplyEvidence?: boolean;
+    marketReviewed?: boolean;
     priceGap?: DealHuntReport["priceGap"];
 }
 
@@ -69,7 +70,7 @@ export interface DealHuntMarket {
 }
 
 type ResearchChoice = { action: DealHuntAction; index: number };
-type DestinationChoice = { action: "finish"; index: number; section: DealHuntSection; decision: DealHuntOutcome["decision"]; reason: string; recentSales?: number; resalePriority?: number; hasSupplyEvidence?: boolean };
+type DestinationChoice = { action: "finish"; index: number; section: DealHuntSection; decision: DealHuntOutcome["decision"]; reason: string; recentSales?: number; resalePriority?: number; hasSupplyEvidence?: boolean; marketReviewed?: boolean };
 type MarketChoice = { action: "find_listings"; index: number; title: string; summary: string; source?: DealHuntMarket["source"]; differentCard?: boolean; releaseYear?: number };
 type Option = ResearchChoice | DestinationChoice | MarketChoice;
 
@@ -84,6 +85,8 @@ type Turnover = keyof typeof turnoverNotes;
 // Send only the contracts the current Find a flip decision can actually execute.
 const toolDescriptions: Record<Option["action"], string> = {
     find_listings: "Search the selected market within the buyer’s filters. Returns eligible eBay copies or observations from the next inventory page.",
+    review_resale: "Check live competing listings, review market references, and assess demand and the supported resale estimate.",
+    check_market_guides: "Compare PriceCharting, PokéPrice and Silph Co for this specific printing. Check source scope and recency.",
     check_listing: "Read or refresh eBay availability, item price, shipping and delivered total. For an auction, check its end time and next legal bid.",
     inspect_photos: "Assess this listing’s original photos or read its saved assessment. Returns visible identity, printing, raw condition or slab label evidence.",
     resolve_printing: "Inspect the relevant marking on the original card photo when a focused check could resolve the printing.",
@@ -122,7 +125,7 @@ function isListingCheck(option: Option): option is ResearchChoice {
 }
 
 const supplementalChecks = new Set<DealHuntAction>([
-    "check_price_references", "check_price_tracker", "search_web_sales", "check_price_history", "compare_cardmarket",
+    "check_market_guides", "check_price_references", "check_price_tracker", "search_web_sales", "check_price_history", "compare_cardmarket",
 ]);
 
 function isPrimaryCheck(option: Option): option is ResearchChoice {
@@ -161,7 +164,7 @@ function inventoryEntry({ listingId, title, summary, freshRawGradingLead }: Deal
 async function selectOption(options: Option[], searchId: string, goal: DealHuntGoal,
     inventory: ReturnType<typeof inventoryEntry>[], steps: DealHuntReport["steps"],
     choose: typeof experiment, remainingChecks: number, signal?: AbortSignal, auction = false, pivot = false, preferRecentSales = false, afterMiss = false, guidedResale = false) {
-    const weighTurnover = preferRecentSales && goal === "resell" && options.some(option => option.action === "finish" && option.hasSupplyEvidence) &&
+    const weighTurnover = preferRecentSales && goal === "resell" && options.some(option => option.action === "finish" && option.hasSupplyEvidence && !option.marketReviewed) &&
         options.every(option => option.action === "finish" && option.decision === "BUY");
     if (options.length === 1 && !weighTurnover) return {
         selected: options[0], reason: pivot ? "Only one eligible market remains to search and verify." : "This is the next available check.", reused: null,
@@ -412,7 +415,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                 if (outcome) {
                     for (const section of new Set([outcome.section, ...(outcome.alternateSections ?? [])])) {
                         options.push({ action: "finish", index, section, decision: outcome.decision, reason: outcome.reason,
-                            ...(outcome.recentSales !== undefined && { recentSales: outcome.recentSales, resalePriority: outcome.resalePriority, hasSupplyEvidence: outcome.hasSupplyEvidence }) });
+                            ...(outcome.recentSales !== undefined && { recentSales: outcome.recentSales, resalePriority: outcome.resalePriority, hasSupplyEvidence: outcome.hasSupplyEvidence, marketReviewed: outcome.marketReviewed }) });
                     }
                 }
             }
@@ -432,7 +435,9 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                     options.push({ action: "finish", index, section: outcome.section, decision: outcome.decision, reason: outcome.reason });
                 }
             }
-            const lastCopy = steps.at(-1)?.listingId;
+            const lastStep = steps.at(-1);
+            // Follow up the primary ranked copy first after reviewing a pair.
+            const lastCopy = reviewQueue && lastStep?.parallelGroup ? steps[lastStep.parallelGroup - 1].listingId : lastStep?.listingId;
             // Rotate discovery after the first group of copies. Finish the current
             // copy's primary checks before rotating, and keep the pending queue.
             // Turn a page early only after repeatedly checking one market and
@@ -616,10 +621,19 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                     ...(current.priceGap && { priceGap: current.priceGap }),
                     destination: { listingId: candidates[selectedIndex].listingId, section } };
             }
-            const checks = also ? [selected, also] : [selected];
+            // Two independently eligible Buy It Now copies can have their galleries
+            // checked together. Keep below-target leads and each copy's follow-ups sequential.
+            const band = candidate.reviewPriority?.band;
+            const otherPhoto = reviewQueue && selected.action === "inspect_photos" && band !== undefined && band >= resaleReviewBand.unresolved
+                ? choiceMenu.find((option): option is ResearchChoice => option.action === "inspect_photos" && option.index !== selected.index &&
+                    candidates[option.index].reviewPriority?.band === band)
+                : undefined;
+            const companion = also ?? otherPhoto;
+            const checks = companion ? [selected, companion] : [selected];
             stage = "checking " + candidate.title.slice(0, 150);
-            progress?.stage("reviewing", candidate.title, selected.action);
+            progress?.stage("reviewing", otherPhoto ? `2 listings · ${candidate.title} and ${candidates[otherPhoto.index].title}` : candidate.title, selected.action);
             const results = await Promise.allSettled(checks.map(async ({ index, action }) => {
+                signal?.throwIfAborted();
                 const listing = candidates[index];
                 if (action === "check_listing" && completed[index].has(action)) refreshedTerms.add(index);
                 const observation = await withAiUsageContext({ searchId, listingId: listing.listingId }, () => listing.read(action, signal));
@@ -628,13 +642,16 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                 return observation.slice(0, 1800);
             }));
             signal?.throwIfAborted();
-            const parallelGroup = also && results.every(result => result.status === "fulfilled") ? steps.length + 1 : undefined;
+            const parallelGroup = companion && results.every(result => result.status === "fulfilled") ? steps.length + 1 : undefined;
             for (const [i, result] of results.entries()) {
                 if (result.status === "rejected") continue;
                 const { index, action } = checks[i], { listingId, title } = candidates[index];
                 completed[index].add(action);
                 if (guidedResale && !supplementalChecks.has(action)) copiesCheckedSinceDiscovery.add(index);
-                steps.push({ listingId, title, action, reason, observation: result.value, reused, selectedBy,
+                const selection = otherPhoto && i === 1
+                    ? { reason: "Check the next equally ranked listing’s photos in parallel.", reused: null, selectedBy: "app" as const }
+                    : { reason, reused, selectedBy } as const;
+                steps.push({ listingId, title, action, observation: result.value, ...selection,
                     ...(parallelGroup && { parallelGroup }) });
             }
             const failed = results.find(result => result.status === "rejected");

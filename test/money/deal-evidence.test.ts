@@ -13,6 +13,8 @@ const legacyQuote = (condition: RawPrice["condition"], price: number): RawPrice 
     JSON.parse(JSON.stringify({ condition, price, basis: "TCGPLAYER", updatedAt: null }));
 function rawReference(): Evaluation {
     const evaluation = cardEvaluation(any);
+    evaluation.listing.availability = "ACTIVE";
+    evaluation.listing.termsCheckedAt = new Date().toISOString();
     evaluation.listing.price = 380;
     evaluation.listing.shipping = 0;
     evaluation.listing.buyingOption = "FIXED_PRICE";
@@ -188,7 +190,9 @@ test("unknown eBay availability withholds an otherwise profitable deal and prese
     const evaluation = slabReference();
     evaluation.slabPricing!.summary = salesSummary("PSA", "9", [900, 1000, 1100]);
     const previous = retargetEvaluation(evaluation, any);
-    assert.equal(resultGroup(summary(previous), previous), "deals", "unstamped legacy evidence remains readable");
+    assert.equal(resultGroup(summary(previous), previous), "deals");
+    delete previous.listing.termsCheckedAt;
+    assert.equal(resultGroup(summary(previous), previous), "review", "an unstamped legacy valuation requires a current quote");
     previous.listing.availability = "UNKNOWN";
     assert.equal(resultGroup(summary(previous), previous), "review", "cached BUY also needs confirmation");
     const unresolved = retargetEvaluation(previous, any);
@@ -198,6 +202,7 @@ test("unknown eBay availability withholds an otherwise profitable deal and prese
     assert.equal(unresolved.slab, previous.slab);
     assert.equal(unresolved.photoCheck, previous.photoCheck);
     unresolved.listing.availability = "ACTIVE";
+    unresolved.listing.termsCheckedAt = new Date().toISOString();
     assert.equal(resultGroup(summary(unresolved), retargetEvaluation(unresolved, any)), "deals");
 });
 

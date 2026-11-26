@@ -463,7 +463,8 @@ async function readPricingRecord(recordId: string, get: typeof cachedApiGet) {
     if (!detail || String(detail.id) !== recordId || !detail.name || !detail.set?.name || !Array.isArray(detail.prices)) return null;
     return toCardRecord(detail);
 }
-export const cardmarketRecord = (recordId: string) => readPricingRecord(recordId, apiGet);
+export const pricingRecord = (recordId: string) => readPricingRecord(recordId, apiGet);
+export const cardmarketRecord = pricingRecord;
 export const cachedPricingRecord = (recordId: string) => readPricingRecord(recordId, cachedApiGet);
 export async function cardmarketOfferPage(recordId: string, params: URLSearchParams): Promise<unknown[]> {
     const body = await apiGet(`/cards/${recordId}/listings/cardmarket?${params}`, 1);
@@ -610,7 +611,7 @@ export async function fetchTcgplayerMarketData(recordId: CardRecord["id"], cache
     return (cachedOnly ? cachedApiGet : apiGet)(`/cards/${recordId}`, DAY);
 }
 
-export function createScreeningPriceSource({ signal: sourceSignal }: { signal?: AbortSignal } = {},
+export function createScreeningPriceSource({ signal: sourceSignal, maxSoldAgeHours }: { signal?: AbortSignal; maxSoldAgeHours?: number } = {},
     replay?: { read: typeof readApiCache }) {
     const signal = combinedSignal(sourceSignal, getPriceResearchSignal());
     let requests = 0;
@@ -661,7 +662,9 @@ export function createScreeningPriceSource({ signal: sourceSignal }: { signal?: 
         const params = grader && grade
             ? new URLSearchParams({ graded: "true", grader, grade, limit: "20", sort: "date_desc", period: "180d", variant })
             : new URLSearchParams({ graded: "false", period: "90d", sort: "date_desc", limit: "20", variant });
-        return readSoldPage(recordId, params, { cursor, stream, stopWhen }, get, cached, signal);
+        const age = (hours = 6) => Math.min(hours, maxSoldAgeHours ?? hours);
+        return readSoldPage(recordId, params, { cursor, stream, stopWhen },
+            (path, hours) => get(path, age(hours)), (path, hours) => cached(path, age(hours)), signal);
     };
     const source: { lookupCards: LookupCards; lookupQueryCards: LookupQueryCards; fetchComps: FetchComps; fetchRawComps: FetchRawComps; fetchSoldPage: FetchSoldPage; stats(): { requests: number } } = {
         lookupCards: query => {

@@ -30,7 +30,7 @@ export function evaluationFailure(error: unknown) {
     if (spending) return { status: spending.code === "AI_EVIDENCE_HELD" ? 409 : 503, code: spending.code, error: spending.message,
         retryable: false, ...(spending.scope && { scope: spending.scope }) };
     if (error instanceof RejectedPhotoAssessmentError) return { status: 422, code: "PHOTO_ASSESSMENT_REJECTED", error: error.message, retryable: false };
-    const value = error as { status?: number; name?: string; code?: string; message?: string };
+    const value = (error ?? {}) as { status?: number; name?: string; code?: string; message?: string };
     if (error instanceof EbayError && [404, 410].includes(error.status)) return { status: 404, error: "Listing not found or no longer available", retryable: false };
     if ([401, 403].includes(value.status ?? 0)) return { status: 503, error: "The AI service rejected the API key or model access. Check the configured key and model.", retryable: false };
     if (isAiCreditFailure(error)) return { status: 503, code: "AI_CREDITS", error: new AiCreditsError().message, retryable: false };

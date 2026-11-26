@@ -1,6 +1,7 @@
 import { cleanPhotoCard } from "./photo-card-schema.ts";
 import { MODEL } from "./openai.ts";
 import { readCache } from "../lib/cache.ts";
+import { fullSizeEbayPhoto } from "../../shared/listing-evidence.ts";
 import { normalizeWords, sameCardNumber, sameSetFamily, photoPrinting } from "../identity/card-identity.ts";
 import type { PhotoCardReading, PrintingMarks, SearchIntent } from "../../shared/types.ts";
 
@@ -17,11 +18,7 @@ export interface PhotoInspection {
 
 // Keep accepted discovery readings and their original URL-based cache keys
 // readable after retiring the unused paid discovery writer.
-function fullSizePhoto(url: string): string {
-    return url.replace(/\/s-l\d+\./, "/s-l1600.");
-}
-
-const cacheKey = (url: string) => `photo-find:v${FIND_VERSION}:${MODEL}:${fullSizePhoto(url)}`;
+const cacheKey = (url: string) => `photo-find:v${FIND_VERSION}:${MODEL}:${fullSizeEbayPhoto(url)}`;
 export async function savedPhotoInspection(url: string): Promise<PhotoInspection | null> {
     const saved = await readCache<PhotoInspection>(cacheKey(url), YEAR_HOURS);
     return saved ? { ...saved, card: cleanPhotoCard(saved.card) } : null;

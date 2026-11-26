@@ -117,6 +117,50 @@ test("different backend dispatchers share one provider attempt and replay the sa
     assert.equal([...state.rows.values()][0].state, "COMPLETED");
 });
 
+test("accounting, shared storage and the SDK see the same provider body and only a live send is metered", async t => {
+    const directory = await temporary(t);
+    for (const enabled of [true, false]) {
+        const state = memoryRepository();
+        const dispatch = createSqlAiDispatch({ ...options(state, directory), enabled: () => enabled });
+        const network = response();
+        network.headers.set("content-encoding", "gzip");
+        network.headers.set("content-length", "42");
+        t.mock.method(network, "clone", () => { throw new Error("provider body must be read once"); });
+        const consume = t.mock.method(network, "text");
+        let observed = 0;
+        const result = await dispatch(body, async before => { await before(); return network; }, undefined, async (reply, parsed) => {
+            observed++;
+            assert.equal(parsed?.id, "offline-answer");
+            assert.equal(reply.headers.get("x-request-id"), "offline-request");
+        });
+        assert.equal((await result.json()).id, "offline-answer");
+        assert.equal(result.headers.get("content-encoding"), null);
+        assert.equal(result.headers.get("content-length"), null);
+        assert.equal(consume.mock.callCount(), 1);
+        if (enabled) {
+            const reused = await dispatch(body, async () => assert.fail("duplicate send"), undefined, async () => { observed++; });
+            assert.equal((await reused.json()).id, "offline-answer");
+            assert.equal([...state.rows.values()][0].state, "COMPLETED");
+        }
+        assert.equal(observed, 1);
+    }
+});
+
+test("a broken provider stream records unknown usage and preserves the shared claim on retry", async t => {
+    const state = memoryRepository(), dispatch = createSqlAiDispatch(options(state, await temporary(t)));
+    let sends = 0, observations = 0;
+    const send = async (before: () => Promise<void>) => {
+        await before(); sends++;
+        return new Response(new ReadableStream({ start(controller) { controller.error(new Error("incomplete body")); } }));
+    };
+    await assert.rejects(dispatch(body, send, undefined, async (_reply, parsed) => {
+        observations++; assert.equal(parsed, null);
+    }), StorageUnavailableError);
+    assert.equal([...state.rows.values()][0].state, "UNKNOWN");
+    await assert.rejects(dispatch(body, send), { code: "AI_EVIDENCE_HELD" });
+    assert.equal(observations, 1); assert.equal(sends, 1);
+});
+
 test("a confirmed OpenAI 429 defers the exact task, then retries once across waiting workers", async t => {
     const directory = await temporary(t);
     for (const code of ["rate_limit_exceeded", "insufficient_quota"] as const) {

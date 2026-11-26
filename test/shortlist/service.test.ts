@@ -134,11 +134,25 @@ test("edits during refresh survive and removing a listing cannot be undone by a 
     let releaseAgain:()=>void=()=>{};let startedAgain:()=>void=()=>{};const readyAgain=new Promise<void>(resolve=>startedAgain=resolve);const waitAgain=new Promise<void>(resolve=>releaseAgain=resolve);
     const later=createShortlistService({store,details:async()=>{startedAgain();await waitAgain;return details();},now:()=>Date.now()+120_000});const pending=later.refresh([listing().id]);await readyAgain;await store.remove(listing().id);releaseAgain();assert.deepEqual((await pending).entries,[]);
 });
-test("refresh globally bounds concurrency to two and ignores IDs outside the shortlist",async t=>{
-    const store=await fixture(t);let active=0;let maximum=0;let calls=0;
-    for(let i=0;i<8;i++)await store.save({...listing(),id:`v1|${i}|0`},null);
-    const service=createShortlistService({store,details:async id=>{calls++;active++;maximum=Math.max(maximum,active);await new Promise(resolve=>setTimeout(resolve,5));active--;return {...details(),id};}});
-    await service.refresh(["not-saved",...Array.from({length:8},(_,i)=>`v1|${i}|0`)]);assert.equal(calls,8);assert.equal(maximum,2);
+test("refresh globally bounds concurrency to two and ignores IDs outside the shortlist", async t => {
+    const store = await fixture(t);
+    const ids = Array.from({ length: 8 }, (_, i) => `v1|${i}|0`);
+    for (const id of ids) await store.save({ ...listing(), id }, null);
+    let active = 0, maximum = 0;
+    const calls: string[] = [];
+    let releasePair!: () => void;
+    const pairReady = new Promise<void>(resolve => { releasePair = resolve; });
+    const service = createShortlistService({ store, details: async id => {
+        calls.push(id);
+        maximum = Math.max(maximum, ++active);
+        if (active === 2) releasePair();
+        await pairReady;
+        active--;
+        return { ...details(), id };
+    } });
+    await service.refresh(["not-saved", ...ids]);
+    assert.deepEqual(calls.sort(), ids);
+    assert.equal(maximum, 2);
 });
 
 test("fresh evaluations update saved terms and photos without losing notes; later refresh evidence wins", async t => {

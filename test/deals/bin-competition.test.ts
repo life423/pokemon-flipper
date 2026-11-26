@@ -142,9 +142,11 @@ test("checks the label of an affordable Gallery copy above the flip ceiling", as
         { minProfit: 0, minRoi: 0 }, undefined, undefined, {
             now: () => now, search: async () => ({ listings: [source], total: 1, skipped: 0 }),
             details: async () => ({ ...listing, shipping: 12 }), loadEvaluation: async () => null,
-            checkLabel: async () => assert.fail("The updated shipping quote already prices this copy above its sold reference."),
+            checkLabel: async () => true,
         });
-    assert.equal(overMarket, undefined);
+    assert.equal(overMarket?.identity, "LABEL");
+    assert.ok(overMarket!.pricing!.totalCost > overMarket!.pricing!.resale);
+    assert.ok(overMarket!.pricing!.profit < 0);
 });
 
 test("respects user price bounds in discovery and after current terms change", async () => {
