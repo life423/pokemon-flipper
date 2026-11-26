@@ -9,10 +9,11 @@ import { retargetEvaluation } from "../../shared/money/targets.ts";
 import { PRICING_VERSION } from "../../shared/pricing-freshness.ts";
 import type { Evaluation, ListingSummary, SearchIntent } from "../../shared/types.ts";
 import { getAiUsageContext, getBudgetContext, withAiUsageContext } from "../../server/ai/usage-context.ts";
-import { huntPhotoIdentityIssue } from "../../server/analysis/deal-hunt-market-checks.ts";
+import { huntPhotoIdentityIssue, marketItemLimit } from "../../server/analysis/deal-hunt-market-checks.ts";
 import { huntProgress } from "../../server/analysis/deal-hunt-progress.ts";
 import { guidedInventoryTargets } from "../../server/analysis/guided-inventory.ts";
 import { createDealHuntService, dealHuntRequest } from "../../server/analysis/deal-hunt-service.ts";
+import { withFlipRun, flipRunFile } from "../../server/analysis/flip-run-store.ts";
 import { runDealHunt } from "../../server/analysis/deal-hunt.ts";
 import { createModelExperimentRunner } from "../../server/analysis/model-experiment.ts";
 import { evaluationContextKey } from "../../server/analysis/private-evaluation.ts";
@@ -39,9 +40,9 @@ const stamp = new Date(now).toISOString();
 const old = new Date(now - 3_600_000).toISOString();
 const goal: DealHuntRequest = { listingIds: [listingId], goal: "grade_raw", targets: { minProfit: 0, minRoi: 0 } };
 
-function example() {
+function example(ask = 5) {
     const e = cardEvaluation(goal.targets);
-    Object.assign(e.listing, { id: listingId, price: 5, shipping: 0, termsCheckedAt: stamp, availability: "ACTIVE", buyingOption: "FIXED_PRICE",
+    Object.assign(e.listing, { id: listingId, price: ask, shipping: 0, termsCheckedAt: stamp, availability: "ACTIVE", buyingOption: "FIXED_PRICE",
         title: "1999 Base Set Venusaur 15/102 Holo", url: "https://www.ebay.com/itm/120000000001", photos: ["https://i.ebayimg.com/images/g/front/s-l1600.jpg", "https://i.ebayimg.com/images/g/back/s-l1600.jpg"] });
     e.photoCheck!.cardCount = "ONE";
     clearReleaseFixture(e);
@@ -50,7 +51,7 @@ function example() {
         Object.assign(pricing, { printing: "UNLIMITED", source: "pkmnprices", variant: "holo" });
         for (const summary of pricing.byGrade!) for (const sale of summary.sales) Object.assign(sale, { saleType: "fixed_price", soldAt: old });
     }
-    const row: ListingSummary = { id: listingId, title: e.listing.title, buyingOption: "FIXED_PRICE", currentPrice: 5,
+    const row: ListingSummary = { id: listingId, title: e.listing.title, buyingOption: "FIXED_PRICE", currentPrice: ask,
         shipping: 0, images: e.listing.photos!, url: e.listing.url, endTime: null, bids: 0, isGraded: false, seller: e.listing.seller };
     const intent: SearchIntent = { cardName: "Venusaur", sets: [], cardNumber: null, printing: null, graded: false, titleWords: ["venusaur"], source: "rules" };
     const inventory = { intent, filters: { typeFilter: "FIXED_PRICE" as const }, rows: [{ listing: row, assessable: true }] };
@@ -132,6 +133,53 @@ test("server-observed purchase terms stay with the account, destination and newe
 });
 
 const signal = () => new AbortController().signal;
+
+test("Find a flip filters the Buy It Now ask at eBay and before screening, regardless of shipping", async () => {
+    const request: DealHuntRequest = { ...goal, goal: "resell", standalone: true, scope: "any_card", listingIds: [] };
+    const bin = { typeFilter: "FIXED_PRICE" as const };
+    assert.equal(dealHuntRequest(request).filters?.minPrice, 50);
+    assert.equal(dealHuntRequest({ ...request, filters: { ...bin, minPrice: 75 } }).filters?.minPrice, 75);
+    assert.throws(() => dealHuntRequest({ ...request, filters: { ...bin, maxPrice: 49.99 } }), /minimum Buy It Now/);
+    assert.equal(dealHuntRequest({ ...request, filters: { typeFilter: "AUCTION" } }).filters?.minPrice, undefined);
+    assert.equal(dealHuntRequest({ ...goal, goal: "resell", filters: { ...bin, minPrice: 5 } }).filters?.minPrice, 5);
+    const filters = dealHuntRequest({ ...request, filters: { ...bin, minPrice: 1 } }).filters!;
+    const { inventory } = example(50);
+    const rows = [49.99, 50, 75].map((currentPrice, i) => ({ ...inventory.rows[0].listing,
+        id: `v1|${120000043000 + i}|0`, title: "Lugia Neo Genesis 9/111 Holo", currentPrice, shipping: i === 0 ? 15 : 0 }));
+    const scan = createHuntInventoryScanner(signal(), offlineSearchSteps([], {
+        search: async (_query, options) => {
+            assert.equal(options?.filters?.minPrice, 50);
+            return { listings: rows, total: rows.length, skipped: 0 };
+        },
+    }));
+    const intent = { ...inventory.intent, cardName: "Lugia", titleWords: ["lugia"] };
+    const result = await scan("Lugia", intent, filters, goal.targets, now,
+        { excludeIds: new Set(), freshGrading: false, freshListings: true });
+    assert.deepEqual(result.listings.map(row => row.currentPrice).sort((a, b) => a! - b!), [50, 75]);
+});
+
+test("a resumed Buy It Now flip discards an old price range and preserves its spending account", async () => {
+    const request: DealHuntRequest = { ...goal, goal: "resell", standalone: true, watch: true, scope: "any_card", listingIds: [],
+        filters: { typeFilter: "FIXED_PRICE", minPrice: 0 } };
+    const oldRequest = { ...dealHuntRequest(request), filters: request.filters };
+    const id = crypto.randomUUID();
+    await withFlipRun(flipRunFile, id, id, JSON.stringify([oldRequest, configuredShippingZip()]), signal(), async journal => {
+        await journal.start("saved-copy:pricing", "check_sales");
+        await journal.finish({ nextCheckAt: now + HUNT_RECHECK_MS }, { oldDecision: true });
+    });
+    let passes = 0;
+    const hunt = service(example(), { plan: async () => {
+        passes++;
+        return { searchId: id, goal: "resell", decision: "WAIT", reason: "No match", steps: [], destination: null };
+    } });
+    await hunt(id, request, signal());
+    assert.equal(passes, 1);
+    const criteria = JSON.stringify([dealHuntRequest(request), configuredShippingZip()]);
+    await withFlipRun(flipRunFile, id, id, criteria, signal(), async journal => {
+        assert.equal(journal.task("saved-copy:pricing")?.inFlight, "check_sales");
+    });
+    await assert.rejects(hunt(id, { ...request, filters: { ...request.filters, minPrice: 75 } }, signal()), /different settings/);
+});
 
 test("a thin exact search recovers contradictory holder clues only for photo verification", async () => {
     const { inventory, e } = example();
@@ -536,8 +584,8 @@ function liquidGradingMarket() {
 const freshHuntRequest: DealHuntRequest = { ...goal, listingIds: [], scope: "any_card", standalone: true,
     filters: { typeFilter: "FIXED_PRICE", kindFilter: "raw", maxPrice: 100 } };
 
-function freshCopy(number: number) {
-    const f = example(), row = f.inventory.rows[0].listing;
+function freshCopy(number: number, ask = 5) {
+    const f = example(ask), row = f.inventory.rows[0].listing;
     const id = `v1|${number}|0`, url = `https://www.ebay.com/itm/${number}`;
     const images = ["front", "back"].map(side => `https://i.ebayimg.com/images/g/${number}-${side}/s-l1600.jpg`);
     Object.assign(row, { id, url, images, listedAt: old,
@@ -638,12 +686,12 @@ test("a broad hunt with no saved markets screens new releases under its original
     const f = example();
     const budgetId = "42c350cb-1b6c-4780-9b7a-bd2dc9d9a6c6";
     const copy = (number: number, title: string): ListingSummary => ({ ...f.inventory.rows[0].listing, title,
-        id: `v1|${number}|0`, url: `https://www.ebay.com/itm/${number}`, currentPrice: 14 });
+        id: `v1|${number}|0`, url: `https://www.ebay.com/itm/${number}`, currentPrice: 60 });
     const lugia = copy(120000000031, "Lugia 9/111 Neo Genesis Unlimited Holo English");
     const gengar = copy(120000000032, "Dark Gengar 6/105 Neo Destiny Unlimited Holo English");
     const modern = copy(120000000033, "Pikachu 58/102 Celebrations Classic Collection Holo English");
     const reverse = copy(120000000034, "Lugia 9/111 Neo Genesis Unlimited Reverse Holo English");
-    const filters = { typeFilter: "FIXED_PRICE", kindFilter: "raw", minPrice: 7, maxPrice: 30 } as const;
+    const filters = { typeFilter: "FIXED_PRICE", kindFilter: "raw", minPrice: 55, maxPrice: 80 } as const;
     const releases: string[] = [], snapshots: string[] = [], notes: string[] = [];
     let priceSources = 0;
     const hunt = service(f, {
@@ -742,11 +790,11 @@ test("quota and cancellation stop an unseeded inventory hunt before photos", asy
 });
 
 test("a flip with no seed searches the liquid market with the buyer's filters and returns the checked copy", async () => {
-    const f = example(), lead = liquidGradingMarket();
-    const filters = { typeFilter: "FIXED_PRICE" as const, kindFilter: "raw" as const, minPrice: 3, maxPrice: 23 };
+    const f = example(55), lead = liquidGradingMarket();
+    const filters = { typeFilter: "FIXED_PRICE" as const, kindFilter: "raw" as const, minPrice: 55, maxPrice: 65 };
     let marketReads = 0, termsChecks = 0;
     const other: ListingSummary = { ...f.inventory.rows[0].listing, id: "v1|120000000002|0",
-        url: "https://www.ebay.com/itm/120000000002", currentPrice: 6,
+        url: "https://www.ebay.com/itm/120000000002", currentPrice: 56,
         screen: { status: "UNSCREENED", needsAnalysis: "IDENTITY", reason: "Check the original photos.",
             bestCase: null, assumed: null, card: null, evidence: { photos: 2, mainPhoto: "UNKNOWN" } } };
     const hunt = service(f, {
@@ -813,7 +861,7 @@ test("standalone auctions return actual live copies on a hunt-wide Wait and drop
 });
 
 test("two empty live markets lead to a third copy and its checked grading breakdown in the same hunt", async () => {
-    const f = example(), lead = liquidGradingMarket();
+    const f = example(50), lead = liquidGradingMarket();
     const names: string[] = [];
     const hunt = service(f, {
         discovery: unexpected, inventory: unexpected, evaluate: unexpected,
@@ -834,17 +882,17 @@ test("two empty live markets lead to a third copy and its checked grading breakd
 });
 
 test("one raw search considers each affordable exit after the photos rule out the first interpretation", async () => {
-    const f = example(), lead = liquidGradingMarket();
-    const damaged = { ...lead, grader: null, grade: null, condition: "DAMAGED" as const, medianUsd: 25 };
+    const f = example(50), lead = liquidGradingMarket();
+    const damaged = { ...lead, grader: null, grade: null, condition: "DAMAGED" as const, medianUsd: 85 };
     const otherCard = { ...lead, name: "Blastoise", cardNumber: "2/102" };
     const reads: string[] = [];
     const result = await service(f, {
         discovery: unexpected, inventory: unexpected, snapshot: async () => null,
         markets: async () => [damaged, otherCard, lead],
-        evaluate: async () => f.e,
+        evaluate: async () => retargetEvaluation(f.e, goal.targets),
         discoverMarket: async (_id, intent, filters) => {
             reads.push(intent.cardName!);
-            assert.ok(filters.maxPrice! > damaged.medianUsd, "one Browse covers the higher grading exit ceiling");
+            assert.ok(filters.maxPrice! > marketItemLimit(damaged, "resell", goal.targets, 0), "one Browse covers the higher grading exit ceiling");
             return [{ ...f.inventory.rows[0].listing, screen: { status: "UNSCREENED", needsAnalysis: "IDENTITY",
                 reason: "A photo assessment is needed.", bestCase: null, assumed: null, card: null,
                 evidence: { photos: 2, mainPhoto: "UNKNOWN" } } }];
@@ -858,7 +906,7 @@ test("one raw search considers each affordable exit after the photos rule out th
 });
 
 test("a liquid comparison market cannot qualify a copy whose assessed printing differs", async () => {
-    const f = example(), lead = liquidGradingMarket();
+    const f = example(50), lead = liquidGradingMarket();
     f.e.identity!.printing = "FIRST_EDITION";
     const result = await service(f, {
         inventory: unexpected, discovery: unexpected, markets: async () => [lead],
@@ -873,7 +921,7 @@ test("a liquid comparison market cannot qualify a copy whose assessed printing d
 });
 
 test("a number-discovered Leafeon can reach the buyer only after its original artwork matches the target", async () => {
-    const f = freshCopy(120000000167);
+    const f = freshCopy(120000000167, 50);
     const lead = { ...liquidGradingMarket(), name: "Leafeon V (Alternate Full Art)", set: "Evolving Skies", cardNumber: "167/203" };
     f.row.title = f.e.listing.title = f.details.title = "Evolving Skies shiny card 167/203";
     Object.assign(f.e.identity!, { name: lead.name, set: lead.set, cardNumber: lead.cardNumber, hasEditions: false });
@@ -885,6 +933,7 @@ test("a number-discovered Leafeon can reach the buyer only after its original ar
     for (const summary of f.e.gradedPricing!.PSA!.byGrade!) {
         for (const sale of summary.sales) sale.title = `Leafeon V Alternate Full Art 167/203 Evolving Skies Holo PSA ${summary.grade}`;
     }
+    Object.assign(f.e, retargetEvaluation(f.e, goal.targets));
     f.snapshot.evidenceKey = listingEvidenceKey(f.row);
     f.snapshot.contextKey = evaluationContextKey(f.details);
     const request: DealHuntRequest = { ...goal, goal: "resell", listingIds: [], scope: "any_card", standalone: true };
@@ -959,7 +1008,7 @@ test("a broad hunt rejects an invented source ID, incompatible scope or malforme
 });
 
 test("an alternate copy reuses its existing photo assessment and original price allowance when sales expire", async () => {
-    const f = example(), lead = liquidGradingMarket();
+    const f = example(50), lead = liquidGradingMarket();
     const sourceSearch = "581ca4c5-4184-4495-873c-0db4f3688442";
     f.snapshot.searchId = sourceSearch;
     f.e.pricesCheckedAt = "2026-11-19T12:00:00Z";
@@ -1289,7 +1338,7 @@ test("a blank flip hunt passes sampled markets and three source pages to find a 
     const root = "fb81c58b-7b64-4d58-bb77-dc67334c1048";
     const rows: ListingSummary[] = Array.from({ length: 800 }, (_, i) => ({
         id: `v1|${120000020000 + i}|0`, title: "Nidoking 11/102 Base Set Unlimited Holo English",
-        currentPrice: i === 660 ? 5 : 90, shipping: 0, buyingOption: "FIXED_PRICE", bids: 0, endTime: null,
+        currentPrice: i === 660 ? 50 : 90, shipping: 0, buyingOption: "FIXED_PRICE", bids: 0, endTime: null,
         images: [`offline-front-${i}`, `offline-back-${i}`], isGraded: false, seller: null,
         url: `https://www.ebay.com/itm/${120000020000 + i}`,
     }));
@@ -1418,7 +1467,7 @@ test("ranked queries and independent inventory share turns without losing their 
                 const listings = Array.from({ length: 200 }, (_, i): ListingSummary => ({
                     id: `v1|${120000030000 + market.id * 1000 + i}|0`,
                     title: `${market.name} ${market.number} ${market.set} Unlimited Holo English`,
-                    currentPrice: 10, shipping: 0, buyingOption: "FIXED_PRICE", bids: 0, endTime: null,
+                    currentPrice: 50, shipping: 0, buyingOption: "FIXED_PRICE", bids: 0, endTime: null,
                     images: [`offline-${market.id}-${i}`], isGraded: false, seller: null, url: "#",
                 }));
                 return { listings, total: 400, nextOffset: 200, skipped: 0, rejections: [] };
@@ -1682,9 +1731,9 @@ test("Buy It Now widens Dark Gengar, resumes a cited sale after an outage and di
         url: "https://www.ebay.com/itm/" + (120000077000 + index), images: ["front-" + index, "back-" + index],
     });
     const seeds = Array.from({ length: 8 }, (_, i) => row(i, dark, 250));
-    const candidate = row(20, older, 35), alternate = row(21, older, 30);
+    const candidate = row(20, older, 51), alternate = row(21, older, 50);
     const rows = [...seeds, candidate, alternate];
-    const transactionPrices = [320, 100, 98, 102, 99, 101, 100, 100, 100];
+    const transactionPrices = [320, 110, 108, 112, 109, 111, 110, 110, 110];
     const sales = transactionPrices.map((price, i) => ({
         id: 100 + i, price, title: candidate.title + " LP", currency: "USD", sale_type: "fixed_price" as const,
         sold_at: new Date(now - (i + 1) * 12 * 3_600_000).toISOString(), variant: "Unlimited Holofoil", grader: null, grade: null,
@@ -1742,7 +1791,7 @@ test("Buy It Now widens Dark Gengar, resumes a cited sale after an outage and di
         },
         supplement: async () => ({}), marketHistory: unexpected, compareCardmarket: unexpected,
         priceCharting: async id => id.name === older.name ? { prices: [{ source: "PriceCharting", basis: "Ungraded guide · mixed conditions",
-            price: 110, currency: "USD", asOf: stamp, validUntil: now + 86_400_000 }], observation: "Ungraded guide $110.00.",
+            price: 115, currency: "USD", asOf: stamp, validUntil: now + 86_400_000 }], observation: "Ungraded guide $115.00.",
             sales: citations } : null,
         verifyCitedSales: async (e, cites, at, signal) => {
             assert.equal(cites.size, 1);
@@ -1768,7 +1817,7 @@ test("Buy It Now widens Dark Gengar, resumes a cited sale after an outage and di
     const held = await run(id, request, signal());
     assert.equal(held.report.decision, "WAIT");
     assert.deepEqual(seen.slice(0, 2), [seeds[0].id, candidate.id], JSON.stringify({ seen, queries }));
-    assert.deepEqual(checkedSales, [320, 100]);
+    assert.deepEqual(checkedSales, [320, 110]);
     assert.equal(held.waitingFor, "provider");
     const reads = queries.length;
     firstPass = false;
@@ -1784,9 +1833,9 @@ test("Buy It Now widens Dark Gengar, resumes a cited sale after an outage and di
     assert.ok(!queries.includes("modern"));
     const prices = buy.candidatePrices?.[candidate.id];
     assert.equal(checkedSales.filter(price => price === 320).length, 1, "an unchanged rejected outlier is not rechecked after a timeout");
-    assert.equal(prices?.sold?.price, 100);
+    assert.equal(prices?.sold?.price, 110);
     assert.equal(prices?.tcg?.delivered, 120);
-    assert.equal(prices?.additional?.find(r => r.source === "PriceCharting")?.price, 110);
+    assert.equal(prices?.additional?.find(r => r.source === "PriceCharting")?.price, 115);
     const { createServer } = await import("vite");
     const vite = await createServer({ configFile: "client/vite.config.js", envFile: false, appType: "custom", logLevel: "silent",
         server: { middlewareMode: true, hmr: false, watch: null } });
@@ -1797,7 +1846,7 @@ test("Buy It Now widens Dark Gengar, resumes a cited sale after an outage and di
     const html = renderToStaticMarkup(createElement(DealHuntResult, { result: { ...buy, listing: buy.alternative!.listing }, now: clock,
         targets, updatedTerms: new Map(), onEvidence() {}, shortlistButton: () => null }));
     assert.match(html, /data-decision="BUY"/);
-    for (const label of ["Matched eBay sales", "TCGplayer lowest offer", "PriceCharting", "$100.00", "$120.00", "$110.00"]) assert.ok(html.includes(label), label);
+    for (const label of ["Matched eBay sales", "TCGplayer lowest offer", "PriceCharting", "$110.00", "$120.00", "$115.00"]) assert.ok(html.includes(label), label);
     t.diagnostic(buy.report.reason);
     expensiveShipping = true;
     const next = await run("35114912-1c12-40ae-94f6-c96592de5af4", request, signal());
@@ -1818,7 +1867,7 @@ test("a watched Find a flip at the eBay reserve waits until reset without starti
 });
 test("an exact guided copy resumes at its next action on restart and different artwork never reaches the buyer", async () => {
     for (const artMatches of [false, true]) {
-        const root = crypto.randomUUID(), leg = crypto.randomUUID(), f = example();
+        const root = crypto.randomUUID(), leg = crypto.randomUUID(), f = example(50);
         const row = f.inventory.rows[0].listing;
         Object.assign(f.e.identity!, { name: "Venusaur", cardNumber: "15/102", set: "Base Set" });
         let pages = 0, pictures = 0, comparisons = 0, attempt = 0;

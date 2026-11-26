@@ -130,6 +130,7 @@ export function marketItemLimit(m: HuntMarket, goal: DealHuntGoal, targets: Targ
 export function shortlistMarketCopies(listings: ListingSummary[], market: HuntMarket, goal: DealHuntGoal, targets: Targets, filters: ListingFilters) {
     const delivered = (row: ListingSummary) => acquisitionCost(row.currentPrice!, row.shipping ?? 0, MONEY_CONFIG.buying);
     return listings.filter(row => row.currentPrice !== null && row.currentPrice > 0 &&
+        (row.buyingOption !== "FIXED_PRICE" || row.currentPrice >= (filters.minPrice ?? 0)) &&
         row.currentPrice <= marketItemLimit(market, goal, targets, row.shipping ?? 0) &&
         delivered(row) <= (filters.maxPrice ?? Infinity) && (goal !== "collect_slab" || delivered(row) <= market.medianUsd))
         .sort((a, b) => delivered(a) - delivered(b) || a.id.localeCompare(b.id));

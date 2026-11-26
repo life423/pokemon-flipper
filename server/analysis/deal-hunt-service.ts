@@ -2,7 +2,7 @@ import { silphComparison } from "../pricing/silphco.ts";
 import { tcgplayerComparison } from "../../shared/money/price-evidence.ts";
 import { browsePressure } from "../lib/provider-usage.ts";
 import { createHash } from "node:crypto";
-import { HUNT_RECHECK_MS } from "../../shared/deal-hunt.ts";
+import { HUNT_RECHECK_MS, MIN_FLIP_BIN_ASK } from "../../shared/deal-hunt.ts";
 import { releaseIssue } from "../../shared/base-set-release.ts";
 import { auctionOpportunity, nextAuctionBid, withinOpportunityWindow } from "../../shared/auction-opportunity.ts";
 import { collectorAuction } from "../../shared/collector-auction.ts";
@@ -133,8 +133,12 @@ export function dealHuntRequest(input: unknown): DealHuntRequest {
         ![targets.minProfit, targets.minRoi].every(amount => Number.isFinite(amount) && amount >= 0)) {
         throw new DealHuntInputError("Choose a buying goal, valid profit and ROI targets, and listings from one completed search.");
     }
+    const fixedPriceFlip = body.standalone && body.goal === "resell" && filters?.typeFilter !== "AUCTION";
+    const minPrice = fixedPriceFlip ? Math.max(MIN_FLIP_BIN_ASK, filters?.minPrice ?? 0) : filters?.minPrice;
+    if (fixedPriceFlip && filters?.maxPrice !== undefined && filters.maxPrice < MIN_FLIP_BIN_ASK)
+        throw new DealHuntInputError(`The maximum delivered price must cover the minimum Buy It Now asking price of ${dollars(MIN_FLIP_BIN_ASK)}.`);
     return { goal: body.goal, scope, ...(body.watch && { watch: true }), ...(body.freshListings && { freshListings: true }), standalone: body.standalone === true, minPotentialGrade: minimumGrade,
-        filters: filters && { typeFilter: filters.typeFilter, kindFilter: filters.kindFilter, minPrice: filters.minPrice, maxPrice: filters.maxPrice },
+        filters: filters || fixedPriceFlip ? { typeFilter: filters?.typeFilter, kindFilter: filters?.kindFilter, minPrice, maxPrice: filters?.maxPrice } : undefined,
         ...(preferences && { marketPreferences: { ...(seed && { seed: { name: seed.name?.trim() || null, number: seed.number?.trim() || null, expand: seed.expand } }), minYear: preferences.minYear, maxYear: preferences.maxYear, finish: preferences.finish,
             printing: preferences.printing, grader: preferences.grader, minGrade: preferences.minGrade, maxGrade: preferences.maxGrade,
             ...(preferences.minimumCondition && { minimumCondition: preferences.minimumCondition }),
@@ -1327,7 +1331,13 @@ export function createDealHuntService(overrides: Partial<Dependencies> = {}) {
         })));
         return share(JSON.stringify([budgetSearchId, searchId, criteria]), active => {
             if (!request.watch) return execute(active, null);
-            return withFlipRun<WatchCheckpoint, DealHuntResponse, CopyProgress>(flipRunFile, searchId, budgetSearchId, criteria, active, journal => execute(active, journal))
+            const upgradeOldFloor = (saved: string) => {
+                const [previous, destination] = JSON.parse(saved) as [DealHuntRequest, string | null];
+                return previous.standalone === true && previous.goal === "resell" && previous.filters?.typeFilter !== "AUCTION" &&
+                    (previous.filters?.minPrice ?? 0) < MIN_FLIP_BIN_ASK && (previous.filters?.maxPrice ?? Infinity) >= MIN_FLIP_BIN_ASK &&
+                    JSON.stringify([dealHuntRequest(previous), destination]) === criteria;
+            };
+            return withFlipRun<WatchCheckpoint, DealHuntResponse, CopyProgress>(flipRunFile, searchId, budgetSearchId, criteria, active, journal => execute(active, journal), upgradeOldFloor)
                 .catch(error => { if (error instanceof FlipRunConflict) throw new DealHuntInputError(error.message, 409); throw error; });
         }, signal);
     };

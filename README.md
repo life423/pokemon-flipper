@@ -57,7 +57,7 @@ the purchase ceiling. The result opens the relevant listing and evidence in the
 inspector, with the choices recorded under **Research steps**.
 
 - In a flexible Find a flip search, the planner can stay with another copy or switch to a different eligible card as soon as the evidence favors it. It keeps unreviewed copies and the original buyer constraints.
-- Named Buy It Now searches start with eBay’s lowest price including shipping. For “Near Mint or better”, Find a flip also retrieves raw and graded listings independently and deduplicates their eBay IDs. A seller’s condition claim can earn a photo check. The purchase requires condition evidence for that copy.
+- Find a flip checks Buy It Now listings with an item price of at least $50 before shipping and tax. Buyers can set a higher minimum. Named searches start with eBay’s lowest price including shipping. For “Near Mint or better”, Find a flip also retrieves raw and graded listings independently and deduplicates their eBay IDs. A seller’s condition claim can earn a photo check. The purchase requires condition evidence for that copy.
 - Auction hunts support collectors buying below market and resellers seeking
   positive profit after costs. Candidates must be live with strictly less than
   ten hours remaining. Alerts retain the original bid limit for outcome tracking.

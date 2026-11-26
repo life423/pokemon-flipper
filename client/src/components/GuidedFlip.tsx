@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import type { DealHuntResponse } from "../../../shared/deal-hunt.ts";
+import { MIN_FLIP_BIN_ASK, type DealHuntResponse } from "../../../shared/deal-hunt.ts";
 import type { ListingFilters } from "../../../shared/listing-filters.ts";
 import type { BuyingOption, ListingSummary, Targets } from "../../../shared/types.ts";
 import type { AiUsageDay } from "../../../shared/ai-usage.ts";
@@ -31,17 +31,18 @@ export function GuidedFlip({ filters: initialFilters, targets: initialTargets, m
     const startingFilters = session?.filters ?? initialFilters, startingTargets = session?.targets ?? initialTargets;
     const [kindFilter, setKind] = useState<NonNullable<ListingFilters["kindFilter"]>>(startingFilters.kindFilter ?? "all");
     const [maxCost, setMaxCost] = useState(String(startingFilters.maxPrice ?? ""));
-    const [minCost, setMinCost] = useState(String(startingFilters.minPrice || ""));
+    const [minCost, setMinCost] = useState(String(Math.max(MIN_FLIP_BIN_ASK, startingFilters.minPrice ?? 0)));
     const [profit, setProfit] = useState(String(startingTargets.minProfit || ""));
     const [roi, setRoi] = useState(String(startingTargets.minRoi * 100 || ""));
     const [minGrade, setGrade] = useState(session?.minGrade ?? initialGrade);
-    const filters: ListingFilters = { kindFilter, minPrice: Number(minCost), ...(maxCost && { maxPrice: Number(maxCost) }) };
+    const [format, setFormat] = useState<BuyingOption | "all">(session?.format ?? "FIXED_PRICE");
+    const minAsk = Math.max(MIN_FLIP_BIN_ASK, Number(minCost));
+    const filters: ListingFilters = { kindFilter, minPrice: format === "AUCTION" ? 0 : minAsk, ...(maxCost && { maxPrice: Number(maxCost) }) };
     const targets: Targets = { minProfit: Number(profit), minRoi: Number(roi) / 100 };
     const activeLimits = [kindFilter !== "all" && kindFilter, maxCost && "up to $" + maxCost + " delivered",
-        minCost && "Buy It Now from $" + minCost, profit && "$" + profit + " minimum profit", roi && roi + "% ROI",
+        format !== "AUCTION" && "Buy It Now from $" + filters.minPrice, profit && "$" + profit + " minimum profit", roi && roi + "% ROI",
         minGrade > 0 && "potential grade " + minGrade + "+"].filter(Boolean);
     const [text, setText] = useState(session?.text ?? "");
-    const [format, setFormat] = useState<BuyingOption | "all">(session?.format ?? "FIXED_PRICE");
     const [expand, setExpand] = useState(session?.expand ?? true);
     const [run, setRun] = useState<{ id: string; started: number; legs: ActiveLeg[] } | null>(null);
     const [message, setMessage] = useState(session ? leftSearch : "");
@@ -89,7 +90,7 @@ export function GuidedFlip({ filters: initialFilters, targets: initialTargets, m
     async function start(event: FormEvent) {
         event.preventDefault();
         if (!active || pending.current || !ready || destination === undefined) return;
-        if (maxCost && Number(minCost) > Number(maxCost)) {
+        if (format === "FIXED_PRICE" && maxCost && minAsk > Number(maxCost)) {
             setError("The minimum item price exceeds your maximum delivered price.");
             return;
         }
@@ -121,8 +122,10 @@ export function GuidedFlip({ filters: initialFilters, targets: initialTargets, m
             const asksAuction = /\bauctions?\b/i.test(text);
             const asksFixed = /\b(?:buy it now|fixed.price)\b/i.test(text);
             const both = format === "all" && asksAuction === asksFixed;
-            const formats: BuyingOption[] = plan?.listingFormats ?? (both ? ["FIXED_PRICE", "AUCTION"] : [plan?.format ?? (format === "all" ? "FIXED_PRICE" : format)]);
-            const legs = session?.prepared?.legs ?? formats.map(format => ({ format, id: formats.length > 1 ? newWatchScanId(id) : id, started: Date.now() }));
+            const requestedFormats: BuyingOption[] = plan?.listingFormats ?? (both ? ["FIXED_PRICE", "AUCTION"] : [plan?.format ?? (format === "all" ? "FIXED_PRICE" : format)]);
+            const formats = requestedFormats.filter(option => option === "AUCTION" || minAsk <= ceiling);
+            if (!formats.length) throw new Error(`The maximum delivered price is below the minimum Buy It Now asking price of $${minAsk}.`);
+            const legs = session?.prepared?.legs.filter(leg => formats.includes(leg.format)) ?? formats.map(format => ({ format, id: formats.length > 1 ? newWatchScanId(id) : id, started: Date.now() }));
             for (const leg of legs) restoreWatchBudget(leg.id, id);
             remember({ ...submitted, prepared: { plan, legs } });
             prepared = true;
@@ -139,7 +142,7 @@ export function GuidedFlip({ filters: initialFilters, targets: initialTargets, m
                     const result = await runDealHunt(leg.id, { standalone: true, watch: true, listingIds: [], scope: "any_card", goal: "resell",
                         marketPreferences: scoped, targets: actualTargets, minPotentialGrade: minGrade,
                         ...(leg.format === "FIXED_PRICE" && { freshListings: true }),
-                        filters: { typeFilter: leg.format, kindFilter: kind, minPrice: leg.format === "AUCTION" ? 0 : filters.minPrice,
+                        filters: { typeFilter: leg.format, kindFilter: kind, minPrice: leg.format === "AUCTION" ? 0 : minAsk,
                             ...(Number.isFinite(ceiling) && { maxPrice: ceiling }) } }, legSignal);
                     legSignal.throwIfAborted();
                     const listing = selectedHuntListing(result, leg.id, "resell", "any_card", [], leg.format, { allowExpiredBid: true });
@@ -205,7 +208,7 @@ export function GuidedFlip({ filters: initialFilters, targets: initialTargets, m
                         <option value="all">Raw and graded</option><option value="raw">Raw</option><option value="graded">Graded</option>
                     </select></label>
                     <label>Maximum delivered price ($)<input type="number" min="0.01" step="0.01" value={maxCost} disabled={!!session} onChange={e => setMaxCost(e.target.value)} placeholder="Any" /></label>
-                    <label>Minimum Buy It Now price ($)<input type="number" min="0" step="0.01" value={minCost} disabled={!!session} onChange={e => setMinCost(e.target.value)} placeholder="Any" /></label>
+                    {format !== "AUCTION" && <label>Minimum Buy It Now asking price ($)<input type="number" min={MIN_FLIP_BIN_ASK} step="0.01" value={minCost} disabled={!!session} onChange={e => setMinCost(e.target.value)} placeholder={String(MIN_FLIP_BIN_ASK)} /></label>}
                     <label>Minimum net profit ($)<input type="number" min="0" step="0.01" value={profit} disabled={!!session} onChange={e => setProfit(e.target.value)} placeholder="Positive profit" /></label>
                     <label>Minimum ROI (%)<input type="number" min="0" step="0.01" value={roi} disabled={!!session} onChange={e => setRoi(e.target.value)} placeholder="Any" /></label>
                     <label>Minimum potential grade<input type="number" min="1" max="10" step="1" value={minGrade || ""} disabled={!!session} onChange={e => setGrade(Number(e.target.value))} placeholder="Any" /></label>

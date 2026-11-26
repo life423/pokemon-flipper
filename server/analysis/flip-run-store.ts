@@ -26,7 +26,7 @@ export interface FlipJournal<W, R, T> {
 // The installation owns this journal alongside its spending accounts. Each write commits
 // before dispatch or after acceptance. No SQLite transaction spans a provider request.
 export async function withFlipRun<W, R, T>(file: string, leg: string, owner: string, criteria: string, signal: AbortSignal,
-    work: (journal: FlipJournal<W, R, T>) => Promise<R>): Promise<R> {
+    work: (journal: FlipJournal<W, R, T>) => Promise<R>, canUpgradeCriteria?: (previous: string) => boolean): Promise<R> {
     await fs.mkdir(path.dirname(file), { recursive: true });
     const db = new DatabaseSync(file), token = randomUUID();
     const write = (sql: string, ...args: SQLInputValue[]) => db.prepare(sql).run(...args);
@@ -55,12 +55,19 @@ export async function withFlipRun<W, R, T>(file: string, leg: string, owner: str
             signal.throwIfAborted();
             write("INSERT OR IGNORE INTO runs (leg, owner, criteria) VALUES (?,?,?)", leg, owner, criteria);
             const row = db.prepare("SELECT * FROM runs WHERE leg=?").get(leg)!;
-            if (row.owner !== owner || row.criteria !== criteria) throw new FlipRunConflict("This search belongs to different settings, shipping destination or spending account.");
+            const changed = row.criteria !== criteria;
+            if (row.owner !== owner || changed && !canUpgradeCriteria?.(String(row.criteria))) throw new FlipRunConflict("This search belongs to different settings, shipping destination or spending account.");
             if (row.pid !== null) {
                 try { process.kill(Number(row.pid), 0); throw new FlipRunConflict("This search is already running."); }
                 catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
             }
             write("UPDATE runs SET pid=?,token=? WHERE leg=?", process.pid, token, leg);
+            if (changed) {
+                // eBay offsets and past decisions belong to the old price range.
+                // Keep accepted copy checks and pending charges on the original account.
+                write("UPDATE runs SET criteria=?,checkpoint=NULL,result=NULL WHERE leg=?", criteria, leg);
+                return { checkpoint: null, previous: null };
+            }
             return { checkpoint: row.checkpoint ? JSON.parse(String(row.checkpoint)) as W : null,
                 previous: row.result ? JSON.parse(String(row.result)) as R : null };
         }));
