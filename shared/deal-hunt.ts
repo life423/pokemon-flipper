@@ -52,6 +52,7 @@ export interface DealHuntReport {
     waitingForQuota?: true;
     destination: { listingId: string; section: DealHuntSection } | null;
     verifiedPurchase?: VerifiedPurchase;
+    liquidityValidThrough?: number;
     priceGap?: { allIn: number; maxItemPrice: number; drop: number };
     steps: {
         listingId: string | null;

@@ -8,7 +8,13 @@ import { createSharedWork } from "../lib/shared-work.ts";
 import type { ProviderPrice } from "../../shared/listing-market-prices.ts";
 import { SALES_ACTIVITY_DAYS } from "../../shared/sales-activity.ts";
 import { median } from "../../shared/sold-evidence.ts";
-import type { Identity } from "../../shared/types.ts";
+import { normalizeCardNumber } from "../../shared/card-number.ts";
+import { finishClaim } from "../../shared/finish.ts";
+import { printingClaimFromText } from "../../shared/identity.ts";
+import { parseListingLink } from "../../shared/listing-link.ts";
+import { observedCardKind } from "../../shared/photo-evidence.ts";
+import type { Evaluation, Identity } from "../../shared/types.ts";
+import { matchesSoldTarget, readSoldTitleClaims } from "./sold-comps.ts";
 import { DATA_DIR } from "../lib/paths.ts";
 import { getSqlRepositories, storageBackend, type SqlRepositories } from "../storage/index.ts";
 
@@ -211,19 +217,72 @@ const identityFields = ["name", "set", "cardNumber", "language", "printing", "fi
 const normalize = (value: unknown) => typeof value === "string" ? value.trim().toLowerCase() : "";
 const shareGuide = createSharedWork();
 
+function matchesProductField(field: typeof identityFields[number], identity: Identity, product: CatalogProduct) {
+    const raw = normalize(identity[field]), mapped = normalize(product[field]);
+    if (!raw || raw === "unknown" || !mapped) return false;
+    if (raw === mapped) return true;
+    if (field !== "cardNumber" || raw.split("/").length > 2 || mapped.split("/").length > 2) return false;
+    const a = normalizeCardNumber(raw), b = normalizeCardNumber(mapped);
+    return a?.number != null && b?.number === a.number && a.numberPrefix === b.numberPrefix &&
+        a.total === b.total && a.totalPrefix === b.totalPrefix;
+}
+
+function ebayActivity(guide: Observation, value: Evaluation) {
+    const id = value.identity, kind = observedCardKind(value), slab = value.slab;
+    if (!id?.name || !id.set || !id.cardNumber || !kind) return;
+    const label = kind === "raw" ? "Ungraded" : "Grade " + slab?.grade;
+    if (!Object.values(saleTabs).some(bucket => bucket === label) || kind === "graded" && !slab?.grader) return;
+    const seen = new Map<string, Set<number>>();
+    const comps = [value.slabPricing?.summary, ...(value.rawPricing?.prices ?? []).map(row => row.comps),
+        ...Object.values(value.gradedPricing ?? {}).flatMap(row => row.byGrade ?? [])];
+    for (const group of comps) for (const sale of [...(group?.sales ?? []), ...(group?.activitySales ?? [])]) {
+        const key = parseListingLink(sale.url)?.itemId;
+        if (!key) continue;
+        const itemId = key.split("|")[1], prices = seen.get(itemId) ?? new Set<number>();
+        if (Number.isFinite(sale.price) && sale.price > 0) prices.add(Math.round(sale.price * 100));
+        seen.set(itemId, prices);
+    }
+    const last = Date.parse(guide.observedAt.slice(0, 10));
+    const first = last - 29 * 86_400_000;
+    const market = kind === "raw" ? "ungraded, across conditions" : slab!.grader + " " + slab!.grade;
+    const found = new Set<string>();
+    let overlap = 0, disagreements = 0;
+    for (const sale of guide.history.sales) {
+        const date = Date.parse(sale.soldOn);
+        if (sale.source.toLowerCase() !== "ebay" || sale.bucketConflict || sale.guideBuckets.length !== 1 ||
+            sale.guideBuckets[0] !== label || date < first || date > last || !Number.isFinite(date)) continue;
+        const key = parseListingLink(sale.transactionId)?.itemId.split("|")[1];
+        if (!key || parseListingLink(sale.url)?.itemId.split("|")[1] !== key || found.has(key)) continue;
+        const printing = printingClaimFromText(sale.title), finish = finishClaim(sale.title);
+        if (printing !== "NOT_STATED" && printing !== id.printing || finish !== "NOT_STATED" && finish !== id.finish) continue;
+        const claims = readSoldTitleClaims(sale.title, [id.set]);
+        if (!matchesSoldTarget(sale, { name: id.name, setName: id.set, cardNumber: id.cardNumber, requireTitleIdentity: true }) ||
+            (kind === "graded" ? claims.grader !== slab!.grader || Number(claims.grade) !== Number(slab!.grade) : !!claims.grader)) continue;
+        found.add(key);
+        const previous = seen.get(key);
+        if (previous) {
+            overlap++;
+            if (previous.size && (previous.size !== 1 || !previous.has(Math.round(sale.price * 100)))) disagreements++;
+        }
+    }
+    const overlapNote = `${overlap} of these already appear in the eBay comparisons.`;
+    const discrepancy = disagreements ? `The sources disagree on the price of ${disagreements} shared ${disagreements === 1 ? "transaction" : "transactions"}.` : "";
+    return [`PriceCharting shows ${found.size} distinct eBay ${found.size === 1 ? "sale" : "sales"} (${market}) in its 30-day sample.`,
+        overlapNote, discrepancy, "Additional rows are research leads."].filter(Boolean).join(" ");
+}
+
 // Use exact, operator-verified product mappings. Similar products can have
 // different guide pages even when their name and collector number are identical.
 export async function priceChartingComparison(identity: Identity, signal?: AbortSignal, {
     authorized = process.env.PRICECHARTING_BUYER_USE_AUTHORIZED === "true",
     catalog = process.env.PRICECHARTING_PRODUCT_MAP,
-    load = importPriceChartingGuide,
-} = {}): Promise<{ observation: string; prices: ProviderPrice[] } | null> {
+    load = importPriceChartingGuide, evaluation,
+}: { authorized?: boolean; catalog?: string; load?: typeof importPriceChartingGuide; evaluation?: Evaluation } = {}): Promise<{ observation: string; prices: ProviderPrice[]; ebayActivity?: string } | null> {
     if (!authorized || !catalog || identity.status !== "IDENTIFIED" || identity.notThisCard) return null;
     let products: CatalogProduct[];
     try { products = JSON.parse(catalog); } catch { return null; }
     if (!Array.isArray(products)) return null;
-    const matches = products.filter(p => p && identityFields.every(field =>
-        normalize(identity[field]) && normalize(identity[field]) !== "unknown" && normalize(identity[field]) === normalize(p[field])));
+    const matches = products.filter(p => p && identityFields.every(field => matchesProductField(field, identity, p)));
     if (matches.length !== 1) return null;
     const { id, url } = matches[0];
     try { validateProduct({ id, url }); } catch { return null; }
@@ -235,7 +294,8 @@ export async function priceChartingComparison(identity: Identity, signal?: Abort
         }));
         const labels = prices.map(row => row.basis + " $" + row.price.toFixed(2));
         const conflicts = guide.history.sales.filter(sale => sale.bucketConflict).length;
-        return { prices, observation: `PriceCharting guide (${guide.observedAt.slice(0, 10)}), ${labels.join(", ")}. Published product-page history includes ${guide.history.sales.length} distinct transactions, ${conflicts} with conflicting grade labels and ${guide.history.unreadableRows} unreadable or unavailable rows.${guide.history.unpublishedRows ? " Another " + guide.history.unpublishedRows + " advertised rows were absent from the page." : ""} ${publishedActivity(guide)} Ungraded spans conditions and numeric grades can span graders. Verify individual sales before using them to price this copy. ${guide.url}` };
+        const activity = evaluation && ebayActivity(guide, evaluation);
+        return { prices, ...(activity && { ebayActivity: activity }), observation: [activity, `PriceCharting guide (${guide.observedAt.slice(0, 10)}), ${labels.join(", ")}. Published product-page history includes ${guide.history.sales.length} distinct transactions, ${conflicts} with conflicting grade labels and ${guide.history.unreadableRows} unreadable or unavailable rows.${guide.history.unpublishedRows ? " Another " + guide.history.unpublishedRows + " advertised rows were absent from the page." : ""} ${publishedActivity(guide)} Ungraded spans conditions and numeric grades can span graders. Verify individual sales before using them to price this copy. ${guide.url}`].filter(Boolean).join(" ") };
     } catch {
         signal?.throwIfAborted();
         return { prices: [], observation: "The PriceCharting comparison is unavailable for this check." };

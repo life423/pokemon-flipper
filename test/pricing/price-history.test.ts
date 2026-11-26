@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { marketHistory, weeklyOutlook } from "../../server/pricing/price-history.ts";
 import type { Evaluation } from "../../shared/types.ts";
+import { matchedRawPrice } from "../fixtures/card-evaluation.ts";
 
 const day = 86400000;
 const now = Date.UTC(2026, 10, 25, 12);
@@ -35,6 +36,14 @@ test("history retains only the photographed market, dates and currency and omits
     });
     assert.deepEqual(result.points, [{day:row.date,price:32}]);
     assert.equal(result.outlook, "Insufficient evidence");
+    const matched = matchedRawPrice(32, new Date(now - day).toISOString(), 4);
+    matched.comps.sales.forEach((sale, i) => { sale.soldAt = new Date(now - (i + 1) * day).toISOString(); });
+    value.rawPricing!.prices = [matched];
+    const fromSales = await marketHistory(value, now, async () => assert.fail("Use existing exact eBay receipts"));
+    assert.match(fromSales.source, /eBay/);
+    assert.equal(fromSales.points.length, 4);
+    matched.comps.sales[0].photoCondition = "DAMAGED";
+    assert.match((await marketHistory(value, now, async () => ({ data: [row] }))).source, /TCGplayer/);
     const wrong = await marketHistory({ ...value, photoCheck: null }, now, async () => assert.fail("An unverified copy must use no credits"));
     assert.deepEqual(wrong.points, []);
 });

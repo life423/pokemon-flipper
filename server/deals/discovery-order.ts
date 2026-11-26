@@ -42,20 +42,44 @@ export function orderBroadDiscovery(rows: ListingSummary[], targets: Targets | u
 
 // Research priority only. A poor title can conceal a card, but better marketing
 // never adds a premium to its estimated resale value.
+export const resaleReviewBand = { belowTarget: 0, unresolved: 1, possibleUpside: 2, matchedUpside: 3 } as const;
+export type ResaleReviewBand = typeof resaleReviewBand[keyof typeof resaleReviewBand];
+
+export function resaleReviewPriority(row: ListingSummary, targets: Targets, now: number): ResaleReviewBand {
+    const evidence = row.screen?.soldEvidence;
+    const card = row.screen?.card;
+    const cost = row.currentPrice == null || row.shipping == null ? null : acquisitionCost(row.currentPrice, row.shipping, MONEY_CONFIG.buying);
+    let priced = false;
+    let possibleUpside = false;
+    // An exact query can return public prices even for an unidentified copy.
+    // A partial number alone is shared by many sets and cannot support priority.
+    const anchored = evidence?.exactScope || card?.cardNumber?.includes("/") || card?.set && (card.name || card.cardNumber);
+    if (evidence && anchored && cost !== null) {
+        for (const ref of evidence.references) {
+            if (!usableSoldReference(ref, row.isGraded)) continue;
+            const age = now - Date.parse(ref.summary.newestSale ?? "");
+            if (!(age >= 0 && age <= 60 * 86_400_000)) continue;
+            priced = true;
+            const net = netFromSale(soldMarketPrice(ref.summary)!, row.isGraded ? "graded" : "raw", MONEY_CONFIG.selling);
+            if (meetsMoneyTargets(cents(net), cents(cost), targets.minProfit, targets.minRoi)) {
+                if ((row.isGraded || ref.condition) && hasExactSoldScope(evidence, row.screen?.card?.printing))
+                    return resaleReviewBand.matchedUpside;
+                possibleUpside = true;
+            }
+        }
+    }
+    if (possibleUpside || usableGradingLead(row)) return resaleReviewBand.possibleUpside;
+    if (row.mistakes?.length || row.screen?.priceAnomaly) return resaleReviewBand.unresolved;
+    return priced ? resaleReviewBand.belowTarget : resaleReviewBand.unresolved;
+}
+
 export function freshResaleCandidates(rows: ListingSummary[], targets: Targets, now: number) {
-    const funded: ListingSummary[] = [], overlooked: ListingSummary[] = [], other: ListingSummary[] = [];
+    const funded: ListingSummary[] = [], overlooked: ListingSummary[] = [], other: ListingSummary[] = [], below: ListingSummary[] = [];
     const priorities = new Map<string, number>();
     for (const row of orderBroadDiscovery(rows, targets, now)) {
         if (!row.images.some(Boolean) || row.currentPrice == null) continue;
-        const cost = row.shipping === null ? null : acquisitionCost(row.currentPrice, row.shipping, MONEY_CONFIG.buying);
         const references = row.screen?.soldEvidence?.references ?? [];
-        const potential = cost !== null && references.some(ref => {
-            if (!usableSoldReference(ref, row.isGraded)) return false;
-            const date = Date.parse(ref.summary.newestSale ?? "");
-            if (!(date <= now && now - date <= 60 * 86_400_000)) return false;
-            const net = netFromSale(soldMarketPrice(ref.summary)!, row.isGraded ? "graded" : "raw", MONEY_CONFIG.selling);
-            return meetsMoneyTargets(cents(net), cents(cost), targets.minProfit, targets.minRoi);
-        });
+        const band = resaleReviewPriority(row, targets, now);
         // Compare transactions within one condition/grade and printing at a time.
         // This only orders checks. The pictured copy still needs to match the market.
         const evidence = row.screen?.soldEvidence;
@@ -74,7 +98,8 @@ export function freshResaleCandidates(rows: ListingSummary[], targets: Targets, 
             const headroom = ceiling > 0 ? Math.max(0, (ceiling - row.currentPrice) / ceiling) : 0;
             priorities.set(row.id, Math.max(priorities.get(row.id) ?? 0, activity.priority * (1 + headroom)));
         }
-        if (potential || usableGradingLead(row)) funded.push(row);
+        if (band >= resaleReviewBand.possibleUpside) funded.push(row);
+        else if (band === resaleReviewBand.belowTarget) below.push(row);
         else if (row.mistakes?.length || row.screen?.priceAnomaly ||
             row.screen?.incomplete && /\d+\s*\/\s*\d+/.test(row.title)) overlooked.push(row);
         else other.push(row);
@@ -83,7 +108,7 @@ export function freshResaleCandidates(rows: ListingSummary[], targets: Targets, 
     // Its condition may make it the profitable one even when its title and
     // provisional market match a copy already checked. The caller's bounded
     // review batch controls concurrency; it is not a lifetime candidate limit.
-    for (const tier of [funded, overlooked, other]) {
+    for (const tier of [funded, overlooked, other, below]) {
         tier.sort((a, b) => (priorities.get(b.id) ?? 0) - (priorities.get(a.id) ?? 0));
         // Preserve each market's turns. Prefer the cheaper copy only among
         // otherwise identical seller claims with comparable research evidence.
@@ -104,5 +129,5 @@ export function freshResaleCandidates(rows: ListingSummary[], targets: Targets, 
     }
     const priority = [...funded.slice(0, 8), ...overlooked.slice(0, 2), ...other.slice(0, 1)];
     const selected = new Set(priority.map(row => row.id));
-    return [...priority, ...[...funded, ...overlooked, ...other].filter(row => !selected.has(row.id))];
+    return [...priority, ...[...funded, ...overlooked, ...other, ...below].filter(row => !selected.has(row.id))];
 }

@@ -167,6 +167,9 @@ export interface SellerMistake {
 
 // One search result, with the free check once it's run.
 export interface ListingSummary {
+    /** Asking-price context from a sampled page. Seller claims, never a sold price or a condition assessment. */
+    askingSample?: { observed: number; missingShipping: number; lowestOtherDelivered: number | null;
+        condition: string; checkedAt: string; destination: string | null };
     /** Destination for the quoted shipping; missing on older saved evidence. */
     shippingDestination?: string | null;
     // eBay first-available time and creation time are separate facts.

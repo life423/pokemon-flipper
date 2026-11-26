@@ -24,6 +24,13 @@ The original 1,621-test suite passed despite those missing cases.
 
 - [x] Keep every eligible/deferred copy and source cursor in the active hunt's
   backlog. Rank the first fifteen, then continue instead of dropping the rest.
+- [x] Apply preliminary after-cost resale evidence across incoming Buy It Now pages.
+  Give different printings a turn among comparable leads, keep unidentified copies
+  eligible for photos, and recognize extended-art magnetic or acrylic case listings.
+- [ ] Improve the share of incoming listings with a usable sold comparison before
+  photos. Replay unresolved seller titles against the catalog and measure how many
+  additional exact markets are identified without borrowing another printing's sales.
+  Verify the improvement and a qualifying flip on live inventory.
 - [x] Keep broad inventory discovery available beyond ranked card suggestions,
   including empty samples; preserve explicit set, year and exact-card limits.
 - [x] Remove the default total-step ceiling for resale hunts; retain Stop,
@@ -325,6 +332,8 @@ no push was requested for the break.
 - [x] Import the exact PriceCharting product on demand, reuse the daily guide and store the published sale rows for Ungraded and grades 7, 8 and 9. Retain transaction IDs, source buckets, accepted prices and grade conflicts.
 - [ ] Obtain express written permission for buyer-facing PriceCharting data and validate additional product mappings. Establish the available licensed historical coverage beyond the product page.
 - [x] Give the Find a flip reviewer its pricing tools on an eligible TCGplayer-only copy even when the buyer omitted a liquidity preference.
+- [x] Check a standalone resale recommendation against recent comparable eBay transactions and show how competing Buy It Now listings affect the turnover assessment. Reuse the inventory query and count distinct, verified competing copies separately.
+- [ ] Extend the later-sale validation beyond graded Charizard markets. Pair raw forecasts with sales that have independently verified condition and measure fixed-price and accepted-offer errors separately from auctions.
 - [x] Report the published 60-day PriceCharting sample by grade bucket, with distinct sales, selling days, observed daily pace and median USD. These buckets cover mixed conditions or graders.
 - [x] Withhold the auction bid ceiling on a TCGplayer-only resale estimate. Show a supported maximum snipe with the estimated delivered cost and net profit if won at that maximum.
 - [ ] Apply the final photographed identity and recent exit-sale check to newly discovered Bid recommendations wherever the finder currently applies it to Buy. Replay a wrong printing and an older sale.

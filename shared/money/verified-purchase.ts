@@ -1,13 +1,14 @@
-import { cents } from "./cents.ts";
+import { cents, meetsMoneyTargets } from "./cents.ts";
 import { releaseIssue } from "../base-set-release.ts";
 import { MONEY_CONFIG } from "./config.ts";
 import { rateDeal } from "./rating.ts";
-import { acquisitionCost, affordableItemLimit } from "./underwriting.ts";
+import { acquisitionCost, affordableItemLimit, maxBid, netFromSale } from "./underwriting.ts";
 import { currentPriceEvidence } from "../pricing-freshness.ts";
 import { BEST_BUY_TERMS_MAX_AGE_MS } from "../search-diagnostic.ts";
 import type { Evaluation, PricedPath, Targets } from "../types.ts";
 
 export interface VerifiedPurchase {
+    relist?: { price: number; profit: number; lowestOtherDelivered: number | null };
     listingId: string;
     itemPrice: number;
     termsCheckedAt: string;
@@ -55,6 +56,16 @@ export function applyVerifiedPurchase(evaluation: Evaluation | null, purchase: V
         purchase.maxItemPrice < purchase.itemPrice || path.shipping !== listing.shipping) return null;
 
     const cap = purchase.maxItemPrice;
+    if (purchase.relist) {
+        const { price, profit, lowestOtherDelivered } = purchase.relist;
+        if (path.path === "GRADE" || !path.salePrice || !(price > 0) ||
+            lowestOtherDelivered !== null && !(Number.isFinite(lowestOtherDelivered) && lowestOtherDelivered > 0) ||
+            price !== Math.min(path.salePrice, lowestOtherDelivered ?? Infinity)) return null;
+        const net = netFromSale(price, path.path === "RAW" ? "raw" : "graded", MONEY_CONFIG.selling);
+        if (!Number.isFinite(profit) || cents(profit) !== cents(net) - cents(path.cost) ||
+            !meetsMoneyTargets(cents(net), cents(path.cost), targets.minProfit, targets.minRoi) ||
+            cap > maxBid({ expectedNet: net, shipping: path.shipping, fixedCosts: path.fixedCosts }, { ...MONEY_CONFIG, targets })) return null;
+    }
     if (purchase.marketMaxItemPrice !== undefined && (!Number.isFinite(purchase.marketMaxItemPrice) ||
         purchase.marketMaxItemPrice < cap || purchase.marketMaxItemPrice > path.maxBid)) return null;
     for (const budget of [purchase.maxDelivered, maxDelivered]) {

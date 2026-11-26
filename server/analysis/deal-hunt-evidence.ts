@@ -13,7 +13,7 @@ import { retargetEvaluation } from "../../shared/money/targets.ts";
 import { isRawSoldPrice, isUsableRawPrice, photoMatchedRawPrice, tcgplayerComparison, referencePriceReason } from "../../shared/money/price-evidence.ts";
 import { rawBuyGuidance, rawPriceReferences } from "../../shared/money/raw-buy-guidance.ts";
 import { slabBuyGuidance } from "../../shared/money/slab-buy-guidance.ts";
-import { acquisitionCost, maxBid } from "../../shared/money/underwriting.ts";
+import { acquisitionCost, maxBid, netFromSale } from "../../shared/money/underwriting.ts";
 import { verifiedPurchase } from "../../shared/money/verified-purchase.ts";
 import { displayedRawGrade, observedCardKind, photoCoverage, slabLabelConfidence } from "../../shared/photo-evidence.ts";
 import { huntPrintingCheck, huntPrintingTerms, huntPrintingObservation } from "./deal-hunt-printing.ts";
@@ -182,9 +182,10 @@ export function huntReferenceEvidence(value: Evaluation, now: number): string | 
     return null;
 }
 
-function liquidityNote(sales: number) {
-    if (!sales) return "Liquidity is unverified for this resale route.";
-    return sales < 3 ? "Liquidity confidence is low with this small sample." : "";
+function liquidityNote(month?: ReturnType<typeof activityForExit>["month"]) {
+    const count = month?.count ?? 0, days = month?.days ?? 0;
+    const evidence = `${count} comparable eBay ${count === 1 ? "sale" : "sales"} on ${days} ${days === 1 ? "day" : "days"} in the last 30 days.`;
+    return month?.qualifies ? evidence : `Liquidity is unverified. ${evidence} A flip needs at least three sales across two days.`;
 }
 
 // Find a flip can use asks to prioritize research. Only a supported exit
@@ -208,7 +209,8 @@ export function flipResaleEvidence(value: Evaluation, goal: DealHuntGoal, target
 }
 
 export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: number | (() => number) = Date.now, market?: HuntMarket | HuntMarket[], targets: Targets = MONEY_CONFIG.targets,
-    maxDelivered?: number, { preferRecentSales = false }: { preferRecentSales?: boolean } = {}): DealHuntCandidate | null {
+    maxDelivered?: number, { preferRecentSales = false, competingCopies }: { preferRecentSales?: boolean;
+        competingCopies?: (value: Evaluation, path: PricedPath, now: number) => { count: number; lowestDelivered: number | null } } = {}): DealHuntCandidate | null {
     value = flipResaleEvidence(value, goal, targets);
     const timestamp = typeof clock === "number" ? () => clock : clock;
     const kind = observedCardKind(value);
@@ -327,13 +329,14 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
             const section = offer.routeKind === "GRADE" ? "grading" : "sales";
             const path = value.underwriting?.paths.find((p): p is PricedPath => p.status === "PRICED" && p.path === offer.routeKind &&
                 (p.path !== "GRADE" || p.grader === offer.grading?.grader));
-            const activity = requiresLiquidity && path && activityForExit(value, path, rankHuntMarkets([value], null, "resell", "any_card", now), now).activity;
-            if (requiresLiquidity && recentSales === 0) return { decision: "WAIT", section, recentSales,
-                reason: liquidityNote(recentSales) + " No matching sales for this resale route were observed in the last 60 days." };
+            const resale = requiresLiquidity && path ? activityForExit(value, path, rankHuntMarkets([value], null, "resell", "any_card", now), now) : undefined;
+            if (requiresLiquidity && !resale?.month.qualifies) return { decision: "WAIT", section, recentSales,
+                reason: liquidityNote(resale?.month) };
             return { decision: offer.status === "BID" ? "BID" : "WAIT",
                 section, reason: [offer.reason, requiresLiquidity && `${recentSales} matching ${recentSales === 1 ? "sale" : "sales"} observed in the last 60 days.`,
-                    activity && activityDescription(activity), requiresLiquidity && liquidityNote(recentSales)].filter(Boolean).join(" "),
-                ...(requiresLiquidity && { recentSales, resalePriority: activity ? activity.priority : undefined }) };
+                    resale?.activity && activityDescription(resale.activity), requiresLiquidity && liquidityNote(resale?.month)].filter(Boolean).join(" "),
+                ...(resale?.month.validThrough && { liquidityValidThrough: resale.month.validThrough }),
+                ...(requiresLiquidity && { recentSales, resalePriority: resale?.activity?.priority }) };
         }
         if (!slab && !readyForPricing(value.identity)) {
             const status = value.listing.availability === "UNAVAILABLE" ? "The listing has ended. " : "";
@@ -403,17 +406,35 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
         }
         const resale = goal === "resell" && exit ? activityForExit(value, exit, markets, now) : null;
         const recentSales = resale?.count ?? null;
+        const competitors = requiresLiquidity && exit ? competingCopies?.(value, exit, now) : undefined;
         if (recentSales !== null && exit) {
             const label = exit.path === "RAW" && exit.priceCondition ? `${CONDITION_NAMES[exit.priceCondition]} raw` :
                 exit.path === "GRADE" ? `${exit.grader} ${grade}` : `${value.slab?.grader} ${value.slab?.grade}`;
             reason += ` ${recentSales} observed matching ${label} ${recentSales === 1 ? "sale" : "sales"} in the last 60 days.`;
             if (resale?.activity) reason += " " + activityDescription(resale.activity);
             if (requiresLiquidity) {
-                supported &&= recentSales > 0;
-                const note = liquidityNote(recentSales);
-                if (note) reason += " " + note;
+                supported &&= resale?.month.qualifies === true;
+                reason += " " + liquidityNote(resale?.month);
+                if (competitors !== undefined) {
+                    const count = competitors.count;
+                    reason += count ? ` This search verified ${count} other active Buy It Now ${count === 1 ? "copy" : "copies"} matching that resale market. Total supply is unknown.` :
+                        "The search has yet to verify another active copy in that resale market. Total supply is unknown.";
+                }
             } else if (!recentSales) reason += " The returned evidence supplies no matching transactions in that window; a price quote alone does not establish sales activity.";
             if (exit.profit > 0 && !exit.clears) reason += " The projected return falls short of your profit or ROI target.";
+        }
+        let relist: { price: number; profit: number; lowestOtherDelivered: number | null } | undefined;
+        if (requiresLiquidity && !auction && exit && exit.path !== "GRADE" && exit.salePrice && terms.total !== null) {
+            const ask = competitors?.lowestDelivered ?? null;
+            const price = Math.min(exit.salePrice, ask ?? Infinity);
+            const net = netFromSale(price, exit.path === "RAW" ? "raw" : "graded", MONEY_CONFIG.selling);
+            relist = { price, profit: (cents(net) - cents(exit.cost)) / 100, lowestOtherDelivered: ask };
+            if (ask !== null && ask < exit.salePrice) {
+                const clears = meetsMoneyTargets(cents(net), cents(exit.cost), targets.minProfit, targets.minRoi);
+                supported &&= clears;
+                reviewedLimit = Math.min(exit.maxBid, maxBid({ expectedNet: net, fixedCosts: exit.fixedCosts, shipping: exit.shipping }, { ...MONEY_CONFIG, targets }));
+                reason += ` A photo-matched competing copy is offered at ${dollars(ask)} including shipping. Matching it projects ${dollars(relist.profit)} after costs.`;
+            }
         }
         if (!supported && completed.has("check_price_references") && !reference) {
             reason = [checkedReferences(now), reason].join(" ");
@@ -429,16 +450,19 @@ export function dealHuntCandidate(value: Evaluation, goal: DealHuntGoal, clock: 
         const termsCaution = previewTermsRefresh && terms.status === STALE_PURCHASE_TERMS ? "" : terms.status;
         const cautions = [termsCaution, stalePrices && "The market prices need updating.", sellerConcern && "The seller has limited or low feedback."].filter(Boolean);
         const purchase = exit && supported && cautions.length === 0 ? verifiedPurchase(value, exit, targets, reviewedLimit, maxDelivered) : undefined;
+        if (purchase && relist) purchase.relist = relist;
         const effectiveLimit = exit && maxDelivered !== undefined && value.listing.shipping !== null
             ? affordableBidLimit(exit.maxBid, value.listing.shipping, maxDelivered) : exit?.maxBid;
         const priceGap = goal === "resell" && exit && exit.path !== "GRADE" && (raw || slabSales) &&
             !cautions.length && !referencePriceReason(value, exit) && currentPriceEvidence(value, now) &&
             !value.deeperPhotoReview?.findings.some(f => f.impact === "NEW_CONCERN") &&
-            terms.total !== null && value.listing.price !== null && recentSales && recentSales > 0 &&
+            terms.total !== null && value.listing.price !== null && recentSales && recentSales > 0 && (!requiresLiquidity || resale?.month.qualifies) &&
             value.underwriting?.verdict === "PASS" && effectiveLimit !== undefined && effectiveLimit > 0 && effectiveLimit < value.listing.price
             ? { allIn: terms.total, maxItemPrice: effectiveLimit, drop: (cents(value.listing.price) - cents(effectiveLimit)) / 100 } : undefined;
         return { decision: supported && cautions.length === 0 && (goal === "collect_slab" || purchase) ? "BUY" : "WAIT",
             reason: [reason, ...cautions].join(" "), section, ...(purchase && { verifiedPurchase: purchase }), ...(priceGap && { priceGap }),
+            ...(requiresLiquidity && resale?.month.validThrough && { liquidityValidThrough: resale.month.validThrough }),
+            ...(competitors?.count && { hasSupplyEvidence: true }),
             ...(requiresLiquidity && recentSales !== null && { recentSales, resalePriority: resale?.activity?.priority }),
             alternateSections: section === "grading" && hasGradeComparisons ? ["sales"] : undefined };
     }

@@ -29,17 +29,17 @@ export function GuidedFlip({ filters: initialFilters, targets: initialTargets, m
     const startingFilters = session?.filters ?? initialFilters, startingTargets = session?.targets ?? initialTargets;
     const [kindFilter, setKind] = useState<NonNullable<ListingFilters["kindFilter"]>>(startingFilters.kindFilter ?? "all");
     const [maxCost, setMaxCost] = useState(String(startingFilters.maxPrice ?? ""));
-    const [minCost, setMinCost] = useState(String(startingFilters.minPrice || ""));
+    const [minCost, setMinCost] = useState(String(startingFilters.minPrice || (session ? "" : 10)));
     const [profit, setProfit] = useState(String(startingTargets.minProfit || ""));
     const [roi, setRoi] = useState(String(startingTargets.minRoi * 100 || ""));
     const [minGrade, setGrade] = useState(session?.minGrade ?? initialGrade);
     const filters: ListingFilters = { kindFilter, minPrice: Number(minCost), ...(maxCost && { maxPrice: Number(maxCost) }) };
     const targets: Targets = { minProfit: Number(profit), minRoi: Number(roi) / 100 };
-    const activeLimits = [kindFilter !== "all" && kindFilter, maxCost && "up to $" + maxCost + " delivered",
-        minCost && "Buy It Now from $" + minCost, profit && "$" + profit + " minimum profit", roi && roi + "% ROI",
-        minGrade > 0 && "potential grade " + minGrade + "+"].filter(Boolean);
     const [text, setText] = useState(session?.text ?? "");
     const [format, setFormat] = useState<BuyingOption | "all">(session?.format ?? "FIXED_PRICE");
+    const activeLimits = [kindFilter !== "all" && kindFilter, maxCost && "up to $" + maxCost + " delivered",
+        format !== "AUCTION" && Number(minCost) > 0 && "Buy It Now from $" + minCost, profit && "$" + profit + " minimum profit", roi && roi + "% ROI",
+        minGrade > 0 && "potential grade " + minGrade + "+"].filter(Boolean);
     const [expand, setExpand] = useState(session?.expand ?? true);
     const [run, setRun] = useState<{ id: string; started: number; legs: ActiveLeg[] } | null>(null);
     const [message, setMessage] = useState(session ? leftSearch : "");
@@ -200,7 +200,7 @@ export function GuidedFlip({ filters: initialFilters, targets: initialTargets, m
                         <option value="all">Raw and graded</option><option value="raw">Raw</option><option value="graded">Graded</option>
                     </select></label>
                     <label>Maximum delivered price ($)<input type="number" min="0.01" step="0.01" value={maxCost} disabled={!!session} onChange={e => setMaxCost(e.target.value)} placeholder="Any" /></label>
-                    <label>Minimum Buy It Now price ($)<input type="number" min="0" step="0.01" value={minCost} disabled={!!session} onChange={e => setMinCost(e.target.value)} placeholder="Any" /></label>
+                    {format !== "AUCTION" && <label>Minimum Buy It Now price ($)<input type="number" min="0" step="0.01" value={minCost} disabled={!!session} onChange={e => setMinCost(e.target.value)} placeholder="Any" /></label>}
                     <label>Minimum net profit ($)<input type="number" min="0" step="0.01" value={profit} disabled={!!session} onChange={e => setProfit(e.target.value)} placeholder="Positive profit" /></label>
                     <label>Minimum ROI (%)<input type="number" min="0" step="0.01" value={roi} disabled={!!session} onChange={e => setRoi(e.target.value)} placeholder="Any" /></label>
                     <label>Minimum potential grade<input type="number" min="1" max="10" step="1" value={minGrade || ""} disabled={!!session} onChange={e => setGrade(Number(e.target.value))} placeholder="Any" /></label>

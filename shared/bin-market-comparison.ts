@@ -12,7 +12,7 @@ import type { Evaluation, ListingSummary, Screen, ScreeningSoldReference } from 
 
 type Comparison = NonNullable<Screen["marketComparison"]>;
 
-function delivered(listing: Pick<ListingSummary, "currentPrice" | "shipping">) {
+export function deliveredAsk(listing: Pick<ListingSummary, "currentPrice" | "shipping">) {
     const { currentPrice, shipping } = listing;
     if (currentPrice == null || shipping == null || !(currentPrice > 0) || !(shipping >= 0)) return null;
     const total = cents(currentPrice) + cents(shipping);
@@ -40,6 +40,60 @@ function itemKey(id: string) {
     return parseListingLink(id)?.itemId.split("|")[1] ?? id;
 }
 
+// Each group describes the returned page at one destination. Missing finish,
+// printing or condition stays in its own group, never in a verified market.
+export function sampleRawAsks(rows: ListingSummary[], now: number) {
+    const groups = new Map<string, Map<string, ListingSummary>>();
+    for (const row of rows) {
+        const checked = Date.parse(row.termsCheckedAt ?? ""), age = now - checked;
+        if (row.buyingOption !== "FIXED_PRICE" || row.isGraded || row.researchKind || row.screen?.junk ||
+            row.availability === "UNAVAILABLE" || !(age >= 0 && age < BEST_BUY_TERMS_MAX_AGE_MS) ||
+            Date.parse(row.endTime ?? "") <= now || row.match && row.match !== "UNCONFIRMED_CRITERIA") continue;
+        const card = row.screen?.card, language = cardLanguageStatus(row.title);
+        if (!card?.set || !card.name || !card.cardNumber || language === "OTHER") continue;
+        const claim = sellerConditionClues(row);
+        const condition = claim.conflict || claim.ambiguous ? "DISPUTED" : claim.claim ?? "UNKNOWN";
+        const stated = finishClaim(row.title), attribute = row.listedAttributes?.finish;
+        const finish = attribute && stated !== "NOT_STATED" && stated !== attribute ? "CONFLICTING" : attribute ?? stated;
+        const key = JSON.stringify([setKey(card.set), card.name.toLowerCase(), card.cardNumber.toLowerCase(), card.printing,
+            finish, language, condition, row.shippingDestination ?? null]);
+        const copies = groups.get(key) ?? new Map<string, ListingSummary>();
+        const id = itemKey(row.id);
+        if (!copies.has(id) || checked > Date.parse(copies.get(id)!.termsCheckedAt!)) copies.set(id, row);
+        groups.set(key, copies);
+    }
+    const samples = new Map<string, NonNullable<ListingSummary["askingSample"]>>();
+    for (const copies of groups.values()) {
+        const all = [...copies.values()];
+        const priced = all.flatMap(row => {
+            const amount = deliveredAsk(row);
+            return amount === null ? [] : [{ id: row.id, amount }];
+        }).sort((a,b) => a.amount - b.amount);
+        const checkedAt = new Date(Math.min(...all.map(row => Date.parse(row.termsCheckedAt!)))).toISOString();
+        const missingShipping = all.filter(copy => copy.shipping == null).length;
+        for (const row of all) {
+            const claim = sellerConditionClues(row);
+            samples.set(row.id, { observed: all.length, missingShipping,
+                lowestOtherDelivered: priced[priced[0]?.id === row.id ? 1 : 0]?.amount ?? null,
+                condition: claim.ambiguous ? "DISPUTED" : claim.claim ?? "UNKNOWN", checkedAt, destination: row.shippingDestination ?? null });
+        }
+    }
+    return { samples, groups };
+}
+
+export function cheapestComparableFirst(rows: ListingSummary[], groups: ReturnType<typeof sampleRawAsks>["groups"]) {
+    const result = [...rows], positions = new Map(rows.map((row, i) => [row.id, i]));
+    for (const copies of groups.values()) {
+        const slots = [...copies.values()].flatMap(row => {
+            const i = positions.get(row.id);
+            return i === undefined ? [] : [i];
+        }).sort((a,b) => a-b);
+        const ordered = slots.map(i => rows[i]).sort((a,b) => (deliveredAsk(a) ?? Infinity) - (deliveredAsk(b) ?? Infinity));
+        slots.forEach((slot, i) => { result[slot] = ordered[i]; });
+    }
+    return result;
+}
+
 function recentSalePrices(reference: ScreeningSoldReference, asOf: number) {
     const distinct = new Map<string, number>();
     for (const sale of reference.summary.sales ?? []) {
@@ -58,7 +112,7 @@ export function addBinMarketComparisons(rows: ListingSummary[], excludedByPrice:
     const groups = new Map<string, { asks: Map<string, number>; asOf: number }>();
     const markets = new Map<string, { key: string; reference: ScreeningSoldReference; item: string }>();
     for (const row of [...rows, ...excludedByPrice]) {
-        const price = delivered(row), reference = referenceFor(row);
+        const price = deliveredAsk(row), reference = referenceFor(row);
         if (price === null || !reference) continue;
         const key = JSON.stringify([soldReferenceScope(reference), reference.condition]);
         // A resumed Browse page can predate this search. Never extend the
@@ -78,7 +132,7 @@ export function addBinMarketComparisons(rows: ListingSummary[], excludedByPrice:
         const group = groups.get(market.key)!;
         const { asks } = group;
         if (asks.size < 4) return;
-        const price = delivered(row)!;
+        const price = deliveredAsk(row)!;
         const peers = [...asks].filter(([id]) => id !== market.item).map(([, amount]) => amount);
         const otherAskMedian = median(peers);
         if (price >= otherAskMedian) return;
@@ -106,7 +160,7 @@ export function addBinMarketComparisons(rows: ListingSummary[], excludedByPrice:
 
 export function currentBinComparison(listing: ListingSummary, evaluation?: Evaluation | null, now = Date.now()) {
     const comparison = listing.screen?.marketComparison;
-    if (!comparison || delivered(listing) !== comparison.delivered) return null;
+    if (!comparison || deliveredAsk(listing) !== comparison.delivered) return null;
     const age = now - Date.parse(comparison.asOf);
     if (!Number.isFinite(age) || age < 0 || age >= BEST_BUY_TERMS_MAX_AGE_MS) return null;
     const ref = referenceFor(listing);
@@ -114,7 +168,7 @@ export function currentBinComparison(listing: ListingSummary, evaluation?: Evalu
     if (evaluation) {
         const { identity, listing: current, slab, condition } = evaluation;
         if (current.availability !== "ACTIVE" || current.buyingOption !== "FIXED_PRICE" ||
-            delivered({ currentPrice: current.price, shipping: current.shipping }) !== comparison.delivered ||
+            deliveredAsk({ currentPrice: current.price, shipping: current.shipping }) !== comparison.delivered ||
             identity?.status !== "IDENTIFIED" || identity.notThisCard || identity.printing !== ref.printing ||
             finishClaim(identity.finish) !== ref.finish || setKey(identity.set ?? "") !== setKey(ref.set) ||
             compareCardNumbers(identity.cardNumber, ref.cardNumber) !== true ||

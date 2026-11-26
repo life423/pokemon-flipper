@@ -35,6 +35,8 @@ export interface HuntMarket {
     activityScope?: "PHOTO_CONDITION" | "SELLER_CONDITION" | "GRADE";
     /** Actual distinct transaction dates, so a long-running hunt can recount its window. */
     activityDates?: string[];
+    /** Dates of distinct price-comparable transactions with physical condition or exact grade evidence. */
+    comparableDates?: string[];
     activity?: ResaleActivity;
     comparableActivity?: ResaleActivity;
     /** Active fixed-price copies observed within the last day. Research leads only. */
@@ -186,14 +188,16 @@ export function rankHuntMarkets(evaluations: Evaluation[], origin: HuntOrigin | 
             return sale && now - sale.at <= SALES_ACTIVITY_MS ? [sale] : [];
         });
         const bounds = supported.length ? comparablePriceBounds(supported.map(sale => sale.price)) : null;
-        const comparableActivity = bounds && resaleActivity(supported.filter(sale => sale.price >= bounds.low && sale.price <= bounds.high));
+        const ordinary = supported.filter(sale => bounds && sale.price >= bounds.low && sale.price <= bounds.high);
+        const comparableActivity = resaleActivity(ordinary);
         // Activity describes observed transactions. It cannot veto a supported
         // value quote, and zero observations never becomes invented volume.
         if (!values.length || !verified.length && !market.valueBasis?.startsWith("TCGPLAYER_")) continue;
         const listings = [...copies].sort((a, b) => (b[1] ?? -Infinity) - (a[1] ?? -Infinity) || a[0].localeCompare(b[0]));
         ranked.push({ ...market, sales30: recent.filter(s => now - s.at <= 30 * day).length, sales60: recent.length,
             sales90: verified.filter(s => now - s.at <= 90 * day).length, medianUsd: money(median(values)),
-            activity: resaleActivity(recent), ...(comparableActivity && { comparableActivity }), activityDates: verified.map(sale => new Date(sale.at).toISOString()),
+            activity: resaleActivity(recent), ...(comparableActivity && { comparableActivity,
+                comparableDates: ordinary.map(sale => new Date(sale.at).toISOString()) }), activityDates: verified.map(sale => new Date(sale.at).toISOString()),
             latestSaleAt: verified.length ? new Date(Math.max(...verified.map(sale => sale.at))).toISOString() : "",
             listingIds: listings.map(([id]) => id), projectedProfit: listings[0]?.[1] ?? null });
     }
@@ -216,14 +220,28 @@ export function verifiedRawFloor(value: Evaluation, path: PricedPath, now: numbe
     return comparisons.length === summary.sales.length ? { row, summary } : null;
 }
 
+function monthlyLiquidity(dates: readonly string[], now: number) {
+    const recent = dates.map(date => Date.parse(date)).filter(at => at <= now && now - at <= 30 * day);
+    recent.sort((a, b) => b - a);
+    const days = new Set(recent.map(at => Math.floor(at / day))).size;
+    const otherDay = recent.find(at => Math.floor(at / day) !== Math.floor(recent[0] / day));
+    const validThrough = recent.length >= 3 && otherDay !== undefined ? Math.min(recent[2], otherDay) + 30 * day : null;
+    return { count: recent.length, days, qualifies: validThrough !== null, validThrough };
+}
+
 export function activityForExit(value: Evaluation, path: PricedPath, markets: HuntMarket[], now: number) {
+    const empty = { count: 0, activity: undefined, month: monthlyLiquidity([], now) };
     const id = value.identity;
-    if (!id?.name || !id.set || !id.cardNumber) return { count: 0, activity: undefined };
+    if (!id?.name || !id.set || !id.cardNumber) return empty;
     if (path.path === "RAW" && path.priceCondition !== value.condition?.rawCondition) {
         const floor = verifiedRawFloor(value, path, now);
         const sales = observedSoldSales(floor?.summary.activitySales ?? floor?.summary.sales ?? [], now, { maxDays: SALES_ACTIVITY_DAYS })
             .filter(({ sale }) => sale.photoCondition === path.priceCondition && sale.conditionEvidence?.length);
-        return { count: sales.length, activity: resaleActivity(sales) };
+        const comparable = observedSoldSales(floor?.summary.sales ?? [], now, { maxDays: 30 })
+            .filter(({ sale }) => sale.photoCondition === path.priceCondition && sale.conditionEvidence?.length);
+        const bounds = comparablePriceBounds(comparable.map(sale => sale.price));
+        return { count: sales.length, activity: resaleActivity(sales), month: monthlyLiquidity(comparable
+            .filter(sale => sale.price >= bounds.low && sale.price <= bounds.high).map(({ sale }) => sale.soldAt), now) };
     }
     const slab = path.path === "GRADED_RESALE";
     const grade = slab ? Number(value.slab?.grade) : value.condition?.gradeRange?.likely;
@@ -238,9 +256,11 @@ export function activityForExit(value: Evaluation, path: PricedPath, markets: Hu
         const count = market.activityDates
             ? market.activityDates.filter(date => { const age = now - Date.parse(date); return age >= 0 && age <= SALES_ACTIVITY_MS; }).length
             : market.sales60 ?? market.sales30;
-        return { count, activity: market.activity?.count === count ? market.activity : undefined };
-    }).sort((a, b) => b.count - a.count || Number(!!b.activity) - Number(!!a.activity));
-    return strongest[0] ?? { count: 0, activity: undefined };
+        return { count, activity: market.activity?.count === count ? market.activity : undefined,
+            month: monthlyLiquidity(market.comparableDates ?? [], now) };
+    }).sort((a, b) => Number(b.month.qualifies) - Number(a.month.qualifies) || b.month.count - a.month.count ||
+        b.count - a.count || Number(!!b.activity) - Number(!!a.activity));
+    return strongest[0] ?? empty;
 }
 
 export function salesForExit(value: Evaluation, path: PricedPath, markets: HuntMarket[], now: number) {

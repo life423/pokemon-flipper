@@ -97,18 +97,22 @@ as a JSON array in `PRICECHARTING_PRODUCT_MAP`. For example:
 [{"name":"Dark Gengar","set":"Neo Destiny","cardNumber":"6/105","language":"English","printing":"UNLIMITED","finish":"HOLO","id":"762567","url":"https://www.pricecharting.com/game/pokemon-neo-destiny/dark-gengar-6"}]
 ```
 
-A guide comparison can direct further research. The flip calculation uses matched
-resale evidence. An ungraded guide spans several raw conditions, and a generic
-graded guide can include multiple grading companies.
+A guide comparison can direct further research. The reviewer receives the
+observed 30-day eBay sale count for that product, how many of those transactions
+already appear in the copy's comparisons, and the guide values. Individual slab
+sales must name the grader and grade to enter that count. Ungraded activity
+spans conditions. The flip calculation uses verified resale comparisons.
 
 ## Search workflow
 
 Describe a card or buying goal in ordinary language, such as “find me a liquid
 holographic card from the years 1999–2003 to flip” or “holo card no newer than
 2020.” The latter includes 2020 and earlier. The app shows the interpreted
-criteria. An explicit liquidity request prioritizes recent matched activity;
-zero observed matching sales keeps a profitable estimate at Wait, and small
-samples retain low confidence rather than a promised resale date.
+criteria. Find a Flip looks for at least three comparable eBay sales across two
+days in the past month. For a profitable Buy It Now finalist, the reviewer can
+weigh those sales against competing listings. A filtered eBay query can include
+other printings, grades and conditions. A few sales establish past activity
+while leaving the time to sell this copy uncertain.
 
 While a hunt runs, its progress panel shows the current market or evidence
 check and observed listing, pricing and review counts. It includes elapsed time

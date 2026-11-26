@@ -6,8 +6,11 @@ import { withAiUsageContext } from "../ai/usage-context.ts";
 import { EbayBudgetError } from "../ebay/daily-budget.ts";
 import { PriceResearchBudgetError } from "../pricing/research-budget.ts";
 import { createModelExperimentRunner } from "./model-experiment.ts";
+import { evaluationFailure } from "./failure.ts";
 import { isSearchDiagnosticId } from "./search-diagnostic-store.ts";
 import type { HuntProgressObserver } from "./deal-hunt-progress.ts";
+import { FlipReviewQueue, type FlipReviewPriority } from "./flip-review-queue.ts";
+import { resaleReviewBand } from "../deals/discovery-order.ts";
 
 export interface DealHuntOutcome {
     decision: DealHuntReport["decision"];
@@ -15,8 +18,10 @@ export interface DealHuntOutcome {
     section: DealHuntSection;
     alternateSections?: DealHuntSection[];
     verifiedPurchase?: DealHuntReport["verifiedPurchase"];
+    liquidityValidThrough?: number;
     recentSales?: number;
     resalePriority?: number;
+    hasSupplyEvidence?: boolean;
     priceGap?: DealHuntReport["priceGap"];
 }
 
@@ -26,6 +31,7 @@ export interface DealHuntCandidate {
     title: string;
     summary: string;
     resumedActions?: DealHuntAction[];
+    reviewPriority?: FlipReviewPriority;
     /** Host-screened, recently listed raw copy. Its condition and grading economics still need evidence. */
     freshRawGradingLead?: boolean;
     available(completed: ReadonlySet<DealHuntAction>): DealHuntAction[];
@@ -46,6 +52,7 @@ interface DealHuntInput {
     preferRecentSales?: boolean;
     freshListings?: boolean;
     guidedResale?: boolean;
+    onInterruption?: (stage: string, error: unknown) => Promise<void>;
     progress?: Pick<HuntProgressObserver, "stage" | "checked" | "guidance">;
 }
 
@@ -62,9 +69,16 @@ export interface DealHuntMarket {
 }
 
 type ResearchChoice = { action: DealHuntAction; index: number };
-type DestinationChoice = { action: "finish"; index: number; section: DealHuntSection; decision: DealHuntOutcome["decision"]; reason: string; recentSales?: number; resalePriority?: number };
+type DestinationChoice = { action: "finish"; index: number; section: DealHuntSection; decision: DealHuntOutcome["decision"]; reason: string; recentSales?: number; resalePriority?: number; hasSupplyEvidence?: boolean };
 type MarketChoice = { action: "find_listings"; index: number; title: string; summary: string; source?: DealHuntMarket["source"]; differentCard?: boolean; releaseYear?: number };
 type Option = ResearchChoice | DestinationChoice | MarketChoice;
+
+const turnoverNotes = {
+    COMPETITION: "Competing listings could keep your money tied up for longer.",
+    DEMAND: "Repeated comparable sales show demand at the observed prices.",
+    UNCERTAIN: "The available sales and listings leave resale speed uncertain.",
+};
+type Turnover = keyof typeof turnoverNotes;
 
 // The validated menu binds a listing or market index to each of these operations.
 // Send only the contracts the current Find a flip decision can actually execute.
@@ -147,7 +161,9 @@ function inventoryEntry({ listingId, title, summary, freshRawGradingLead }: Deal
 async function selectOption(options: Option[], searchId: string, goal: DealHuntGoal,
     inventory: ReturnType<typeof inventoryEntry>[], steps: DealHuntReport["steps"],
     choose: typeof experiment, remainingChecks: number, signal?: AbortSignal, auction = false, pivot = false, preferRecentSales = false, afterMiss = false, guidedResale = false) {
-    if (options.length === 1) return {
+    const weighTurnover = preferRecentSales && goal === "resell" && options.some(option => option.action === "finish" && option.hasSupplyEvidence) &&
+        options.every(option => option.action === "finish" && option.decision === "BUY");
+    if (options.length === 1 && !weighTurnover) return {
         selected: options[0], reason: pivot ? "Only one eligible market remains to search and verify." : "This is the next available check.", reused: null,
     };
     const choices = options.map(key);
@@ -171,7 +187,8 @@ async function selectOption(options: Option[], searchId: string, goal: DealHuntG
         ? "Direct the research for the buyer's goal. Choose a primary check and optionally an independent check on another listing."
         : "Direct the research for the buyer's goal. Choose exactly one option from the supplied menu on each turn.";
     const guidance: string[] = [];
-    if (preferRecentSales) guidance.push("The buyer asked for a liquid card. Prefer frequent sales spread across different days and a tight typical price range for the exact resale route. Treat sampled coverage as a lower bound. Prioritize recent matched sales ahead of larger projected profit, while preserving the buyer's profit and ROI targets. A price estimate alone does not establish liquidity.");
+    if (weighTurnover) guidance.push("Assess the selected copy's turnover from the supplied eBay sales and competing listings. Choose COMPETITION for evidence of crowding, DEMAND for supported repeat demand, or UNCERTAIN when sparse or broader-market counts cannot answer the question.");
+    if (preferRecentSales) guidance.push("The buyer asked for a liquid card. Prefer frequent sales spread across different days and a tight typical price range for the exact resale route. Compare completed eBay sales with active Buy It Now competition to judge how long the buyer’s money might be tied up. Distinguish verified competitors from broader filtered search totals. Partial samples cannot establish a market-wide sell-through rate or days to resale. Treat sampled coverage as a lower bound. Prioritize recent matched sales ahead of larger projected profit, while preserving the buyer's profit and ROI targets. A price estimate alone does not establish liquidity.");
     if (auction) {
         guidance.push("Only consider active auctions ending in under ten hours. Compare the next legal bid, destination shipping, estimated tax and time remaining.");
         guidance.push(goal === "collect_slab"
@@ -219,19 +236,20 @@ async function selectOption(options: Option[], searchId: string, goal: DealHuntG
     const offeredCopies = new Set(checks.map(check => check.index));
     const shownInventory = afterMiss || steps.length > 24 ? inventory.filter(row => offeredCopies.has(row.index)) : inventory;
     const answer = await withAiUsageContext({ searchId }, () => choose<{
-        choice: string; also?: ResearchChoice; reason: string; fallback: boolean;
+        choice: string; also?: ResearchChoice; reason: string; fallback: boolean; turnover?: Turnover;
     }>({
         sourceKey: `deal-hunt:v1:${searchId}`, model: "gpt-6-luna", signal,
         request: {
             step: "Choose deal research", schemaName: "deal_hunt_action",
             instructions: [choiceInstruction, instructions, ...guidance].join(" ") + pivotInstructions + referenceInstructions,
             photos: [], maxOutputTokens: allowPair ? 240 : 160,
-            prompt: JSON.stringify({ goal: dealHuntGoals[goal], inventory: shownInventory, observed,
+            prompt: JSON.stringify({ goal: dealHuntGoals[goal], inventory: weighTurnover ? inventory.filter(row => options.some(o => o.index === row.index)) : shownInventory, observed: weighTurnover ? [] : observed,
                 ...(guidedResale && { tools: Object.fromEntries([...new Set(options.map(option => option.action))]
                     .map(action => [action, toolDescriptions[action]])) }),
                 remainingChecks: Number.isFinite(remainingChecks) ? remainingChecks : "Continue until a verified purchase, inventory exhaustion, cancellation or provider stop.", menu }),
-            schema: { type: "object", additionalProperties: false, required: allowPair ? ["choice", "reason", "also"] : ["choice", "reason"], properties: {
+            schema: { type: "object", additionalProperties: false, required: ["choice", "reason", ...(allowPair ? ["also"] : []), ...(weighTurnover ? ["turnover"] : [])], properties: {
                 choice: { type: "string", enum: choices }, reason: { type: "string", maxLength: 240 },
+                ...(weighTurnover && { turnover: { type: "string", enum: Object.keys(turnoverNotes) } }),
                 ...(allowPair && { also: { type: ["string", "null"], enum: [...checks.map(key), null] } }),
             } },
         },
@@ -253,22 +271,38 @@ async function selectOption(options: Option[], searchId: string, goal: DealHuntG
             return { choice: key(fallback), reason: "The AI returned an unreadable choice. The app used an available evidence check.", fallback: true };
         },
         validate(value) {
-            const result = value as { choice?: unknown; reason?: unknown; also?: unknown } | null;
+            const result = value as { choice?: unknown; reason?: unknown; also?: unknown; turnover?: unknown } | null;
             if (typeof result?.choice !== "string" || !choices.includes(result.choice) || typeof result.reason !== "string" ||
                 !result.reason.trim() || result.reason.length > 240) throw new Error("Invalid deal hunt selection.");
             const first = options[choices.indexOf(result.choice)];
             // A second choice can never mutate the same listing or dispatch a market search.
             const also = allowPair && isListingCheck(first)
                 ? checks.find(check => check.index !== first.index && key(check) === result.also) : undefined;
-            return { choice: result.choice, also, reason: result.reason.trim(), fallback: false };
+            if (weighTurnover && (typeof result.turnover !== "string" || !Object.hasOwn(turnoverNotes, result.turnover)))
+                throw new Error("Invalid turnover assessment.");
+            return { choice: result.choice, also, reason: result.reason.trim(), fallback: false,
+                ...(weighTurnover && { turnover: result.turnover as Turnover }) };
         },
-    }));
+    })).catch(error => {
+        signal?.throwIfAborted();
+        if (!weighTurnover && (!guidedResale || evaluationFailure(error).status !== 500)) throw error;
+        // Every offered action already passed the app's eligibility checks.
+        // A failed planner response need not discard a verified buy or the next legal check.
+        return null;
+    });
+    if (!answer) {
+        const preferred = options.find(option => option.action === "check_listing") ?? options.find(isListingCheck) ?? options[0];
+        const selected = weighTurnover ? options.reduce((best, option) => option.action === "finish" && best.action === "finish" &&
+            (option.resalePriority ?? 0) > (best.resalePriority ?? 0) ? option : best) : preferred;
+        return { selected, reason: weighTurnover ? "Use the verified purchase evidence." : "Continue with the next eligible check.", reused: null };
+    }
     return { selected: options[choices.indexOf(answer.result.choice)], also: answer.result.also,
-        reason: answer.result.reason, reused: answer.reused, fallback: answer.result.fallback };
+        reason: answer.result.reason, reused: answer.reused, fallback: answer.result.fallback,
+        turnoverNote: answer.result.turnover && turnoverNotes[answer.result.turnover] };
 }
 
 export async function runDealHunt({ searchId, goal, candidates: initial, markets = [], auction = false, maxSteps,
-    preferRecentSales = false, freshListings = false, guidedResale = false, progress }: DealHuntInput, signal?: AbortSignal, choose = experiment): Promise<DealHuntReport> {
+    preferRecentSales = false, freshListings = false, guidedResale = false, onInterruption, progress }: DealHuntInput, signal?: AbortSignal, choose = experiment): Promise<DealHuntReport> {
     signal?.throwIfAborted();
     const format = auction ? "auction" : "Buy It Now";
     const candidates = [...initial];
@@ -282,6 +316,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
         throw new Error("Choose a valid search, a buyer goal and distinct listings.");
     }
     const steps: DealHuntReport["steps"] = [];
+    let stage = "checking purchase evidence";
     const wait = (reason: string): DealHuntReport => {
         const photo = huntGradingMarkets && steps.findLast(step => step.action === "inspect_photos");
         return { searchId, goal, decision: "WAIT", reason: photo ? `${reason} Photo check for ${photo.title}. ${photo.observation}` : reason, destination: null, steps };
@@ -293,6 +328,8 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
     const deferredReferences = new Set<number>();
     const initialActions = new Map<number, DealHuntAction[]>();
     const incremental = goal === "resell" && maxSteps === undefined;
+    const reviewQueue = incremental && guidedResale && freshListings && !auction ? new FlipReviewQueue() : null;
+    if (reviewQueue) candidates.forEach((copy, index) => reviewQueue.add(index, copy.reviewPriority));
     function admit(index: number) {
         if (queuedIndices.delete(index)) activeCopies.add(index);
     }
@@ -317,10 +354,14 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             const windowSize = candidates.length <= DEVELOPMENT_SEARCH_LIMIT && steps.length <= 24
                 ? DEVELOPMENT_SEARCH_LIMIT : FIRST_REVIEW_COUNT;
             if (incremental) {
-                if (firstNewCopy !== undefined) admit(firstNewCopy);
-                for (const index of queuedIndices.keys()) {
-                    if (activeCopies.size >= windowSize) break;
-                    admit(index);
+                if (reviewQueue) {
+                    while (queuedIndices.size && activeCopies.size < windowSize) admit(reviewQueue.take());
+                } else {
+                    if (firstNewCopy !== undefined) admit(firstNewCopy);
+                    for (const index of queuedIndices.keys()) {
+                        if (activeCopies.size >= windowSize) break;
+                        admit(index);
+                    }
                 }
                 if (!queuedIndices.size) {
                     for (const index of deferredReferences) {
@@ -330,7 +371,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                     }
                 }
             }
-            for (const index of incremental ? [...activeCopies].sort((a, b) => a - b) : candidates.keys()) {
+            for (const index of incremental ? [...activeCopies].sort(reviewQueue?.compare ?? ((a, b) => a - b)) : candidates.keys()) {
                 const candidate = candidates[index];
                 const checked = completed[index];
                 const closed = closedWaits.get(index);
@@ -371,7 +412,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                 if (outcome) {
                     for (const section of new Set([outcome.section, ...(outcome.alternateSections ?? [])])) {
                         options.push({ action: "finish", index, section, decision: outcome.decision, reason: outcome.reason,
-                            ...(outcome.recentSales !== undefined && { recentSales: outcome.recentSales, resalePriority: outcome.resalePriority }) });
+                            ...(outcome.recentSales !== undefined && { recentSales: outcome.recentSales, resalePriority: outcome.resalePriority, hasSupplyEvidence: outcome.hasSupplyEvidence }) });
                     }
                 }
             }
@@ -394,7 +435,16 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             const lastCopy = steps.at(-1)?.listingId;
             // Rotate discovery after the first group of copies. Finish the current
             // copy's primary checks before rotating, and keep the pending queue.
-            const discoveryTurn = guidedResale && copiesCheckedSinceDiscovery.size >= FIRST_REVIEW_COUNT &&
+            // Turn a page early only after repeatedly checking one market and
+            // finding no promising primary work in the current window.
+            const primary = options.filter(isPrimaryCheck);
+            const weakWindow = reviewQueue && copiesCheckedSinceDiscovery.size >= 3 &&
+                copiesCheckedSinceDiscovery.size < FIRST_REVIEW_COUNT && primary.length &&
+                primary.every(({ index }) => {
+                    const priority = candidates[index].reviewPriority;
+                    return priority && priority.band <= resaleReviewBand.unresolved;
+                }) && new Set(Array.from(copiesCheckedSinceDiscovery, index => candidates[index].reviewPriority?.market)).size === 1;
+            const discoveryTurn = guidedResale && (weakWindow || copiesCheckedSinceDiscovery.size >= FIRST_REVIEW_COUNT) &&
                 !options.some(option => isPrimaryCheck(option) && candidates[option.index].listingId === lastCopy);
             const canVerifyNewCopy = remainingChecks > verificationSteps;
             const canBrowse = huntMarketsForBuyer ? canVerifyNewCopy && (discoveryTurn || !hasUncheckedMarketCopy || canSwitchCopy)
@@ -423,12 +473,19 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             const buys = options.filter((option): option is DestinationChoice => option.action === "finish" && option.decision !== "WAIT");
             const resalePriority = (option: DestinationChoice) => option.resalePriority ?? (option.recentSales ?? 0) / 60;
             const highestPriority = Math.max(0, ...buys.map(resalePriority));
-            const eligible = buys.length ? preferRecentSales ? buys.filter(option => resalePriority(option) === highestPriority) : buys :
+            const compareSupply = preferRecentSales && buys.some(option => option.hasSupplyEvidence && option.decision === "BUY");
+            const eligible = buys.length ? preferRecentSales && !compareSupply ? buys.filter(option => resalePriority(option) === highestPriority) : buys :
                 huntMarketsForBuyer && (hasUncheckedMarketCopy || options.some(option => option.action === "find_listings" || guidedResale && isListingCheck(option)))
                 ? options.filter(option => option.action !== "finish") : options;
             const discoveryChoices = discoveryTurn && !buys.length ? eligible.filter(option => option.action === "find_listings") : [];
-            const nextOptions = discoveryChoices.length ? discoveryChoices : guidedResale && eligible.some(isPrimaryCheck)
+            let nextOptions = discoveryChoices.length ? discoveryChoices : guidedResale && eligible.some(isPrimaryCheck)
                 ? eligible.filter(option => !isListingCheck(option) || isPrimaryCheck(option)) : eligible;
+            if (reviewQueue && !discoveryChoices.length && !buys.length) {
+                const checks = nextOptions.filter(isPrimaryCheck);
+                const highest = Math.max(...checks.map(({ index }) => candidates[index].reviewPriority?.band ?? resaleReviewBand.unresolved));
+                nextOptions = nextOptions.filter(option => !isPrimaryCheck(option) || candidates[option.index].listingId === lastCopy ||
+                    (candidates[option.index].reviewPriority?.band ?? resaleReviewBand.unresolved) >= highest);
+            }
             // Give the first newly ranked copy a turn before returning to the existing queue.
             const freshChecks = firstNewCopy !== undefined && !copiesCheckedSinceDiscovery.size
                 ? nextOptions.filter(option => isPrimaryCheck(option) && option.index === firstNewCopy) : [];
@@ -470,16 +527,18 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             const chooseRoute = routes.length > 1 && !chooseAfterMiss && !providerDecision &&
                 routes.some(option => option.action === "calculate_grading" || option.action === "resolve_printing");
             if (chooseRoute) choiceMenu = routes;
-            const nextFresh = freshListings && !chooseAfterMiss && !providerDecision && !chooseRoute && discoveryChoices.length <= 1 && (nextCopy ?? menu[0]);
-            const { selected, also, reason, reused, fallback } = nextFresh
+            const nextFresh = freshListings && !compareSupply && !chooseAfterMiss && !providerDecision && !chooseRoute && discoveryChoices.length <= 1 && (nextCopy ?? menu[0]);
+            stage = "choosing the next listing or evidence check";
+            const { selected, also, reason, reused, fallback, turnoverNote } = nextFresh
                 ? { selected: nextFresh, also: undefined, reason: nextFresh.action === "find_listings" ? "Check newly listed Buy It Now cards." :
-                    nextFresh.action === "finish" ? "Use the checked purchase evidence." : "Verify this copy against the purchase criteria.", reused: null, fallback: false }
+                    nextFresh.action === "finish" ? "Use the checked purchase evidence." : "Verify this copy against the purchase criteria.", reused: null, fallback: false, turnoverNote: undefined }
                 : await selectOption(choiceMenu, searchId, goal, inventory, chooseAfterMiss ? steps.slice(-6) : steps, choose,
                 remainingChecks, signal, auction, pivot, preferRecentSales, Boolean(chooseAfterMiss), guidedResale);
             const selectedBy = reused === null || fallback ? "app" : "model";
             if ((chooseAfterMiss || chooseRoute) && selectedBy === "model") progress?.guidance?.(reason);
             signal?.throwIfAborted();
             if (selected.action === "find_listings") {
+                stage = "checking the next market";
                 copiesCheckedSinceDiscovery.clear();
                 searchedMarkets.add(selected.index);
                 const queries: string[] = [];
@@ -511,12 +570,22 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                     if (copyIds.has(candidate.listingId)) continue;
                     copyIds.add(candidate.listingId);
                     queuedIndices.add(candidates.length);
+                    reviewQueue?.add(candidates.length, candidate.reviewPriority);
                     inventory.push(inventoryEntry(candidate, candidates.length));
                     candidates.push(candidate);
                     completed.push(new Set(candidate.resumedActions));
                     added++;
                 }
-                firstNewCopy = guidedResale && added ? previousCount : undefined;
+                if (reviewQueue && added) {
+                    // Let the new evidence compete for every unstarted slot. A copy
+                    // already under examination retains its accepted checks and place.
+                    for (const index of activeCopies) if (!completed[index].size) {
+                        activeCopies.delete(index);
+                        queuedIndices.add(index);
+                        reviewQueue.requeue(index);
+                    }
+                }
+                firstNewCopy = guidedResale && !reviewQueue && added ? previousCount : undefined;
                 const observation = [selected.summary, ...queries, `Found ${added} additional eligible ${format} ${added === 1 ? "listing" : "listings"} to check.`].join(" ");
                 steps.push({ listingId: null, title: selected.title, action: selected.action, reason: choiceReason, observation,
                     reused: choiceReused, selectedBy: choiceSource });
@@ -540,12 +609,15 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
                 const section = current.section === selected.section || current.alternateSections?.includes(selected.section)
                     ? selected.section : current.section;
                 return { searchId, goal, steps, decision: current.decision,
-                    reason: fallback ? `${current.reason} The app selected this evidence after an unreadable AI choice.` : current.reason,
+                    reason: [current.reason, current.decision === "BUY" && turnoverNote,
+                        fallback && "The app selected this evidence after an unreadable AI choice."].filter(Boolean).join(" "),
                     ...(current.verifiedPurchase && { verifiedPurchase: current.verifiedPurchase }),
+                    ...(current.liquidityValidThrough && { liquidityValidThrough: current.liquidityValidThrough }),
                     ...(current.priceGap && { priceGap: current.priceGap }),
                     destination: { listingId: candidates[selectedIndex].listingId, section } };
             }
             const checks = also ? [selected, also] : [selected];
+            stage = "checking " + candidate.title.slice(0, 150);
             progress?.stage("reviewing", candidate.title, selected.action);
             const results = await Promise.allSettled(checks.map(async ({ index, action }) => {
                 const listing = candidates[index];
@@ -577,6 +649,11 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             reason = "The search reached its pricing allowance before the evidence supported a decision.";
         } else {
             const guard = aiSpendingFailure(error);
+            if (!guard && guidedResale && steps.length && evaluationFailure(error).status === 500) {
+                await onInterruption?.(stage, error);
+                const copies = new Set(steps.flatMap(step => step.listingId ? [step.listingId] : [])).size;
+                return { ...wait(`Search paused while ${stage}. ${copies} ${copies === 1 ? "listing has" : "listings have"} completed checks. Resume to continue from that point.`), needsAttention: true };
+            }
             if (!guard || guard.code === "AI_EVIDENCE_HELD") throw error;
             reason = guard.message;
         }
@@ -586,6 +663,7 @@ export async function runDealHunt({ searchId, goal, candidates: initial, markets
             if (outcome && outcome.decision !== "WAIT") return {
                 searchId, goal, steps, decision: outcome.decision, reason: outcome.reason,
                 ...(outcome.verifiedPurchase && { verifiedPurchase: outcome.verifiedPurchase }),
+                ...(outcome.liquidityValidThrough && { liquidityValidThrough: outcome.liquidityValidThrough }),
                 destination: { listingId: candidate.listingId, section: outcome.section },
             };
         }

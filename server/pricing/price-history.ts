@@ -6,7 +6,7 @@ import { observedSoldSales } from "../../shared/sales-activity.ts";
 import { verifiedSlabMarketKey } from "../../shared/slab-market.ts";
 import { observedCardKind } from "../../shared/photo-evidence.ts";
 import { releaseIssue } from "../../shared/base-set-release.ts";
-import { unsupportedVariantReason } from "../../shared/money/price-evidence.ts";
+import { photoMatchedRawPrice, unsupportedVariantReason } from "../../shared/money/price-evidence.ts";
 import { dailyRawHistory } from "./pkmnprices.ts";
 
 const dayMs = 86400000;
@@ -61,6 +61,21 @@ export async function marketHistory(value: Evaluation, now = Date.now(), history
         }
     } else {
         const condition = value.condition?.rawCondition, pricing = value.rawPricing;
+        if (value.photoCheck && isRawCondition(condition) && pricing?.printing === id.printing && pricing?.finish === id.finish) {
+            const receipts = pricing?.prices?.filter(row => row.condition === condition && photoMatchedRawPrice(row.comps, condition) !== null)
+                .flatMap(row => row.comps?.sales ?? []) ?? [];
+            const sales = observedSoldSales(receipts, now);
+            for (const sale of sales) {
+                const day = new Date(sale.at).toISOString().slice(0, 10);
+                days.set(day, [...(days.get(day) ?? []), sale.price]);
+            }
+            if (days.size >= 4 && sales[0].at >= now - 14 * dayMs) {
+                const points = [...days].sort(([a], [b]) => a.localeCompare(b)).map(([day, prices]) => ({ day, price: median(prices) }));
+                return { source: "Photo-matched eBay sales · daily median in USD", scope: CONDITION_NAMES[condition], points,
+                    ...weeklyOutlook(points, now) };
+            }
+            days.clear();
+        }
         if (!value.photoCheck || !/^\d+$/.test(String(id.recordId)) || !isRawCondition(condition) || condition === "MINT" ||
             pricing?.source !== "pkmnprices" || pricing.printing !== id.printing || pricing.finish !== id.finish || !pricing.variant)
             return unavailable("The assessed condition and printing need an exact TCGplayer history series.");

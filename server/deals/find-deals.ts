@@ -1,6 +1,6 @@
 import { researchAuctionSellers } from "./auction-seller-research.ts";
 import { freshListingTime } from "../../shared/grading-watch.ts";
-import { addBinMarketComparisons } from "../../shared/bin-market-comparison.ts";
+import { addBinMarketComparisons, cheapestComparableFirst, sampleRawAsks } from "../../shared/bin-market-comparison.ts";
 import { searchListings } from "../ebay/listings.ts";
 import { isSportsTradingCardListing } from "../ebay/filters.ts";
 import { readSearchWithAi } from "../search/query-assistance.ts";
@@ -158,6 +158,14 @@ async function findDealsBatch(search: string, {
         if (signal?.aborted) return [];
     }
     const requestedFullNumber = intent.cardNumber?.includes('/') === true;
+    function researchNumber(claims: ReturnType<typeof readTitleByRules>) {
+        if (!claims.cardNumber || !sameCardNumber(claims.cardNumber, intent.cardNumber)) return false;
+        if (claims.cardNumber.includes("/")) return true;
+        // A slab title may omit "ex" and the denominator. Keep it for photos only
+        // when the release, printed number and Pokémon name independently agree.
+        return requestedFullNumber && intent.sets.length === 1 && !!claims.set && setMatches(claims.set, intent, claims.cardNumber) &&
+            !!intent.cardName && sameCatalogName(claims.cardName, intent.cardName.replace(/\s+ex$/i, ""));
+    }
     const typedCollectorNumber = intent.cardNumber?.split("/", 1)[0];
     const screenPrices = createPriceFirstSession(intent, { signal, targets, includeOffers, now: asOf, sourceFactory: dependencies.priceSource,
         onScreened: () => { screenedCount++; reportProgress(); } }, dependencies.soldScreening);
@@ -282,7 +290,7 @@ async function findDealsBatch(search: string, {
             const disputed = inventoryScan?.freshListings && !row.researchKind ? disputedHolder(row, pageFilters.kindFilter) : undefined;
             const claims = inventoryScan?.freshListings && intent.cardName && requestedFullNumber && intent.sets.length === 1 &&
                 row.images.some(Boolean) && !titleMatches(row.title, intent) ? readTitleByRules(row.title, intent.sets) : null;
-            const corroboratedNumber = claims?.set && claims.cardNumber?.includes("/") && sameCardNumber(claims.cardNumber, intent.cardNumber) &&
+            const corroboratedNumber = claims?.set && researchNumber(claims) &&
                 setMatches(claims.set, intent, claims.cardNumber);
             const listing = corroboratedNumber ? { ...row, researchIdentity: true as const, ...(disputed && { researchKind: disputed }) } : disputed ? { ...row, researchKind: disputed } : row.researchKind || row.researchIdentity ? row : loaded.get(row.id) ?? row;
             if (!loaded.has(row.id)) {
@@ -342,7 +350,16 @@ async function findDealsBatch(search: string, {
                 rejections.set(listing.id, reason);
             } else prepared.push(mismatch ? { ...screened, match: mismatch } : screened);
         }
-        const ordered = broadSearch ? orderBroadDiscovery(prepared, targets, asOf) : prepared;
+        let ordered = broadSearch ? orderBroadDiscovery(prepared, targets, asOf) : prepared;
+        if (inventoryScan?.freshListings && !inventoryScan.freshGrading) {
+            const { samples, groups } = sampleRawAsks(prepared, Date.now());
+            await inventoryScan.diagnostic?.("inventory", { query, groups: [...groups].map(([market, copies]) =>
+                ({ market, ids: [...copies.values()].map(row => row.id) })), observedAt: new Date().toISOString() });
+            ordered = cheapestComparableFirst(ordered, groups).map(row => {
+                const sample = samples.get(row.id);
+                return sample ? { ...row, askingSample: sample } : row;
+            });
+        }
         // Return the first promising group promptly. The rest of this already fetched
         // page stays in the saved backlog under the original account.
         const photoBatch = inventoryScan?.firstPhotoBatch && inventoryScan.onBacklog && !resume ? 6 : undefined;
@@ -396,7 +413,7 @@ async function findDealsBatch(search: string, {
             for (const row of recovery.listings) {
                 if (matching.some(copy => copy.id === row.id)) continue;
                 const title = readTitleByRules(row.title, intent.sets);
-                const sameNumber = numbered && !!title.cardNumber?.includes("/") && sameCardNumber(title.cardNumber, intent.cardNumber);
+                const sameNumber = numbered && researchNumber(title);
                 const named = intent.cardName ? sameCatalogName(title.cardName, intent.cardName) : true;
                 const numberedSet = requestedFullNumber && exactSet && sameNumber && !!title.set && setMatches(title.set, intent, title.cardNumber);
                 const disputed = disputedHolder(row, kind);
@@ -415,13 +432,20 @@ async function findDealsBatch(search: string, {
         const widenForOffers = !moreDirectListings && soldPurchaseCeiling !== undefined && offerCeiling !== null &&
             offerCeiling > soldPurchaseCeiling && offerCeiling >= firstFilters.minPrice;
         let cheaper: { matching: ListingSummary[]; newListings: number } | undefined;
-        if (!resume && !inventoryScan?.freshGrading && !inventoryScan?.freshListings && filters?.typeFilter === "FIXED_PRICE" && (widenForOffers || moreDirectListings) && promising < MIN_NEWEST_CANDIDATES && !await dependencies.browsePressure?.()) {
+        const compareOlderAsks = inventoryScan?.freshListings && !inventoryScan.offset && exactRawBin && moreDirectListings;
+        const drainFirst = deferred.size > 0 || matching.length >= FIRST_REVIEW_COUNT;
+        if (!resume && compareOlderAsks && drainFirst && firstPage.nextOffset !== undefined) {
+            // Drain the page we already paid for. Before fetching deeper newest listings,
+            // sample the cheapest active copies, including older listings, in the same search.
+            sources.unshift({ query, filters: firstFilters, sort: "price", offset: 0, total: firstPage.total });
+        }
+        if (!resume && !inventoryScan?.freshGrading && (!inventoryScan?.freshListings || compareOlderAsks && !drainFirst) && filters?.typeFilter === "FIXED_PRICE" && (widenForOffers || moreDirectListings) && promising < MIN_NEWEST_CANDIDATES && !await dependencies.browsePressure?.()) {
             const nextFilters = widenForOffers ? {
                 ...firstFilters, minPrice: Math.max(firstFilters.minPrice, (cents(soldPurchaseCeiling) + 1) / 100), maxPrice: offerCeiling,
             } : firstFilters;
             let cheaperPage: typeof firstPage | undefined;
             inventoryScan?.onStage?.("discovering");
-            try { cheaperPage = await dependencies.search(query, { ...sourceOptions, filters: nextFilters, sort: newOnly ? "newlyListed" : "price", keepReserve: true }); }
+            try { cheaperPage = await dependencies.search(query, { ...sourceOptions, offset: 0, filters: nextFilters, sort: newOnly ? "newlyListed" : "price", keepReserve: true }); }
             catch (error) {
                 signal?.throwIfAborted();
                 if (!(error instanceof EbayBudgetError || error instanceof EbayError || error instanceof ProviderError)) throw error;
@@ -573,7 +597,7 @@ export function createHuntInventoryScanner(signal: AbortSignal, dependencies = d
     const exhausted = new Set<string>();
     const observed = new Map<string, Set<string>>();
     return async (query: string, intent: SearchIntent, filters: ListingFilters, targets: Targets, asOf: number, scan: InventoryScan): Promise<{
-        listings: ListingSummary[]; summary: SearchSummary; hasMore?: boolean; sourcePages?: number; backlog?: DiscoveryBacklog;
+        listings: ListingSummary[]; summary: SearchSummary; hasMore?: boolean; sourcePages?: number; activeSearchTotal?: number; backlog?: DiscoveryBacklog;
     }> => {
         active.throwIfAborted();
         const key = JSON.stringify([query, intent, filters, targets, asOf]);
@@ -587,6 +611,7 @@ export function createHuntInventoryScanner(signal: AbortSignal, dependencies = d
         const overflow: ScreenedOverflowRow[] = [];
         const excludedPrices: ListingSummary[] = [];
         let sourcePages = 0;
+        let activeSearchTotal: number | undefined;
         let summary: SearchSummary | undefined;
         const listings = await findDealsBatch(query, { signal: active, filters, targets, asOf,
             onSourceDisposition: row => dispositions.push(row),
@@ -597,6 +622,8 @@ export function createHuntInventoryScanner(signal: AbortSignal, dependencies = d
             ...dependencies, readIntent: async () => intent, releaseYears: async () => intent.releaseYears ?? null,
             search: async (...args) => {
                 const page = await dependencies.search(...args);
+                if (sourcePages === 0 && filters.typeFilter === "FIXED_PRICE" && !args[1]?.anyCategory &&
+                    Number.isSafeInteger(page.total) && page.total >= 0) activeSearchTotal = page.total;
                 await scan.diagnostic?.("page", { query, providerQuery: args[0], providerFilters: args[1]?.filters, intent, filters, targets, asOf, offset: args[1]?.offset ?? 0,
                     sort: args[1]?.sort, page });
                 sourcePages++;
@@ -612,7 +639,7 @@ export function createHuntInventoryScanner(signal: AbortSignal, dependencies = d
         if (!summary) throw new Error("The inventory scan stopped before the listing summary finished.");
         await scan.diagnostic?.("screened", { query, summary, dispositions, overflow, listings, excludedPrices,
             pending: remaining.get(key)?.pending.map(row => row.id) ?? [] });
-        return { listings, summary: { ...summary, found: found.size }, hasMore: remaining.has(key), sourcePages, backlog: remaining.get(key) };
+        return { listings, summary: { ...summary, found: found.size }, hasMore: remaining.has(key), sourcePages, activeSearchTotal, backlog: remaining.get(key) };
     };
 }
 

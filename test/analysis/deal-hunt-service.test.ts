@@ -173,6 +173,21 @@ test("a number-only seller title can enter exact photo verification within one r
     assert.deepEqual(batch.listings.map(l => [l.title, l.researchIdentity]), [["Old Base Set Holo 15/102", true]]);
 });
 
+test("a 151 slab label with a partial number and omitted ex is admitted for photo verification", async () => {
+    const row = example().inventory.rows[0].listing;
+    const intent = { ...example().inventory.intent, sets: ["Scarlet & Violet 151"], graded: null, cardName: "Charizard ex",
+        titleWords: ["charizard", "ex"], cardNumber: "199/165" };
+    const titles = ["2023 Pokemon MEW EN-151 Special Illustration Rare #199 Charizard PSA 10",
+        "2023 Pokemon MEW EN-151 Special Illustration Rare #198 Charizard PSA 10",
+        "2023 Pokemon MEW EN-151 Special Illustration Rare #199 Blastoise PSA 10"];
+    const scan = createHuntInventoryScanner(signal(), offlineSearchSteps([], { search: async () => ({
+        listings: titles.map((title, i) => ({ ...row, title, id: row.id + i, isGraded: true })), total: 88, skipped: 0 }) }));
+    const result = await scan("Charizard ex", intent, { typeFilter: "FIXED_PRICE", kindFilter: "all" }, goal.targets, now,
+        { excludeIds: new Set(), freshGrading: false, freshListings: true });
+    assert.equal(result.activeSearchTotal, 88);
+    assert.deepEqual(result.listings.map(l => [l.title, l.researchIdentity]), [[titles[0], true]]);
+});
+
 test("a restarted flip scanner drains the saved page before making another Browse call", async () => {
     const { inventory } = example();
     const query = "Venusaur";
@@ -982,7 +997,7 @@ test("auction hunt preserves the vintage holo request through two misses and ver
     Object.assign(f.e.listing, terms, { auctionQuote: {currentBid: 5, minimumBid: 6, checkedAt: stamp} });
     const comp = salesSummary("RAW", "LIGHTLY_PLAYED", [80, 85, 90]);
     comp.sales.forEach((sale, i) => Object.assign(sale, { url: "https://www.ebay.com/itm/" + (260000000001 + i),
-        saleType: "auction", soldAt: old, photoCondition: "LIGHTLY_PLAYED", conditionEvidence: ["Light whitening visible on back."] }));
+        saleType: "auction", soldAt: new Date(now - (i + 1) * 86400000).toISOString(), photoCondition: "LIGHTLY_PLAYED", conditionEvidence: ["Light whitening visible on back."] }));
     f.e.photoCheck!.cardMatch = { verdict: "MATCH", problems: [] };
     f.e.rawPricing = { status: "PRICED", source: "pkmnprices", printing: "UNLIMITED", finish: "HOLO", variant: "holo",
         conditionEvidence: "AI_PHOTOS", prices: [{ condition:"LIGHTLY_PLAYED", basis: "EBAY_SOLD", price: 85, updatedAt: stamp, comps: comp }] };
@@ -1020,7 +1035,8 @@ test("auction hunt preserves the vintage holo request through two misses and ver
     assert.equal(result.report.decision, "BID", result.report.reason);
     assert.equal(result.evaluation?.listing.auctionQuote?.minimumBid, 6);
     assert.equal(result.auctionOpportunity?.status, "BID");
-    assert.equal(result.auctionOpportunity?.reason, result.report.reason);
+    assert.ok(result.report.reason.startsWith(result.auctionOpportunity!.reason));
+    assert.match(result.report.reason, /3 comparable eBay sales on 3 days in the last 30 days/);
     assert.equal(result.alternative?.listing.auctionResearch?.otherListings, 100);
     assert.match(result.report.reason, /Bid up to/);
 });
@@ -1268,7 +1284,7 @@ test("blank liquid hunts still inspect independent inventory when the sampled ra
         await assert.rejects(hunt(searchId, { goal: "resell", scope: "any_card", standalone: true, freshListings: true,
             listingIds: [], targets: goal.targets, filters: { typeFilter: "FIXED_PRICE" }, marketPreferences: { preferRecentSales: true } }, signal()),
             error => error === stop);
-        assert.deepEqual(queries, ["Pokemon"], "the first page runs before an uncached ranking is requested");
+        assert.deepEqual(queries, [], "an unavailable ranking account does not spend a broad eBay page before the stop");
     }
 });
 
@@ -1326,13 +1342,13 @@ test("a blank flip hunt passes sampled markets and three source pages to find a 
             Object.assign(e.photoCheck!, { cardIdentity: card, printedName: card.name, printedNumber: card.cardNumber });
             clearReleaseFixture(e);
             e.gradedPricing = null;
-            const comp = salesSummary("RAW", "LIGHTLY_PLAYED", [100]);
-            Object.assign(comp, { median: 100, newestSale: old });
-            Object.assign(comp.sales[0], { title: row.title, saleType: "fixed_price", soldAt: old,
-                photoCondition: "LIGHTLY_PLAYED", conditionEvidence: ["Sold gallery shows the same edge wear."],
-                url: "https://www.ebay.com/itm/120000029999" });
+            const price = matchedRawPrice(100, old, 3);
+            price.comps.sales.forEach((sale, i) => {
+                sale.title = row.title;
+                sale.soldAt = new Date(now - (i + 1) * 86400000).toISOString();
+            });
             e.rawPricing = { status: "PRICED", printing: "UNLIMITED", finish: "HOLO", variant: "holo", conditionEvidence: "AI_PHOTOS",
-                prices: [matchedRawPrice(100, old)], ebayComps: [comp] };
+                prices: [price], ebayComps: [price.comps] };
             return retargetEvaluation(e, goal.targets);
         },
         plan: (input, active) => runDealHunt(input, active, model),
@@ -1356,7 +1372,7 @@ test("a blank flip hunt passes sampled markets and three source pages to find a 
     assert.match(result.report.marketNote ?? "", /across 4 inventory queries/);
 });
 
-test("a blank flip opens broad inventory first and sends the matched printing and item limit into its next scan", async () => {
+test("a blank flip opens the priced market first and still checks independent inventory", async () => {
     const marketIntent: SearchIntent = { cardName: "Blastoise", cardNumber: "2/102", sets: ["Base Set"], printing: "UNLIMITED",
         graded: false, finish: "HOLO", titleWords: ["Blastoise"], source: "rules" };
     const scans: { query: string; intent: SearchIntent; ceiling?: number; owner?: string }[] = [];
@@ -1378,10 +1394,10 @@ test("a blank flip opens broad inventory first and sends the matched printing an
     await withAiUsageContext({ searchId: root }, () => hunt(searchId, { goal: "resell", scope: "any_card", standalone: true,
         freshListings: true, listingIds: [], targets: goal.targets, filters: { typeFilter: "FIXED_PRICE", maxPrice: 50 },
         marketPreferences: { preferRecentSales: true } }, signal()));
-    assert.deepEqual(scans.map(s => s.query), ["Pokemon", "Blastoise 2/102 Base Set"]);
-    assert.deepEqual(scans.map(s => s.ceiling), [50, 32]);
+    assert.deepEqual(scans.map(s => s.query), ["Blastoise 2/102 Base Set", "Pokemon"]);
+    assert.deepEqual(scans.map(s => s.ceiling), [32, 50]);
     assert.deepEqual(scans.map(s => s.owner), [root, root]);
-    assert.deepEqual([scans[1].intent.cardNumber, scans[1].intent.printing, scans[1].intent.finish], ["2/102", "UNLIMITED", "HOLO"]);
+    assert.deepEqual([scans[0].intent.cardNumber, scans[0].intent.printing, scans[0].intent.finish], ["2/102", "UNLIMITED", "HOLO"]);
 });
 
 test("ranked queries and independent inventory share turns without losing their pending physical copies", async t => {
@@ -1427,9 +1443,10 @@ test("ranked queries and independent inventory share turns without losing their 
         freshListings: true, listingIds: [], targets: goal.targets, filters: { typeFilter: "FIXED_PRICE" },
         marketPreferences: { preferRecentSales: true } }, signal()));
     assert.equal(sourceQueries.length, 4, "the fifth turn must reuse the first market's saved backlog");
-    assert.equal(sourceQueries[0].toLowerCase(), "pokemon", "independent discovery starts while market leads are prepared");
-    assert.ok(batches[0][0].includes("120000034000"));
-    assert.ok(batches[4][0].includes("120000034050"), "the first page's later physical copies remain available in a later round");
+    assert.match(sourceQueries[0], /nidoking/i);
+    assert.equal(sourceQueries[1].toLowerCase(), "pokemon", "independent discovery still gets a turn");
+    assert.ok(batches[0][0].includes("120000031000"));
+    assert.ok(batches[4][0].includes("120000031050"), "the first page's later physical copies remain available in a later round");
     assert.equal(new Set(batches.flat()).size, 250);
     assert.deepEqual([...accounts], [root]);
 });
@@ -1493,7 +1510,7 @@ test("new quota pressure between stages prevents both the guided pivot and its n
     });
     const result = await hunt(searchId, {goal:"resell",scope:"any_card",standalone:true,listingIds:[],freshListings:true,
         targets:goal.targets,filters:{typeFilter:"FIXED_PRICE"},marketPreferences:{preferRecentSales:true}}, signal());
-    assert.deepEqual(queries, ["Pokemon"]);
+    assert.deepEqual(queries, ["A 1/147 Aquapolis"]);
     assert.equal(result.report.decision, "WAIT");
     assert.match(result.report.marketNote ?? "", /daily eBay allowance/);
 });

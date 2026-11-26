@@ -12,7 +12,7 @@ const SEALED = /\b(booster (packs?|box(es)?)|elite trainer box(es)?|etb|sealed (
 // Not "sleeve" or "toploader": real single-card listings ship in them.
 const MERCH = /\b(plush(ie)?|stickers?|decals?|figures?|figurines?|funko|keychains?|posters?|art prints?|binders?|playmats?|deck box(es)?|coins?|pins?|burger king|topps|bicycle(?: mini)? playing cards?)\b/i;
 const NOT_A_CARD = /\b(empty (slab|case|box)|(slab|case|label|flip) only|no card)\b/i;
-const EXTENDED_ART_HOLDER = "extended[ -]+art(?:work)?[ -]+(?:display[ -]+)?(?:cases?|frames?|holders?)";
+const EXTENDED_ART_HOLDER = "extended[ -]+art(?:work)?[ -]+(?:(?:magnetic|acrylic|display|protective)[ -]+)*(?:cases?|frames?|holders?)";
 const HOLDER_PRODUCT = new RegExp(`\\b${EXTENDED_ART_HOLDER}\\b`, "i");
 const HOLDER_WITH_CARD = new RegExp(`\\b(?:with|in|includes?|including)[ -]+(?:(?:a|an|the|magnetic|protective|acrylic)[ -]+)*${EXTENDED_ART_HOLDER}\\b|\\b${EXTENDED_ART_HOLDER}[ -]+included\\b`, "gi");
 

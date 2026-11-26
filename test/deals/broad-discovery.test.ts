@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { findDeals } from "../../server/deals/find-deals.ts";
-import { freshResaleCandidates, orderBroadDiscovery } from "../../server/deals/discovery-order.ts";
+import { freshResaleCandidates, orderBroadDiscovery, resaleReviewBand, resaleReviewPriority } from "../../server/deals/discovery-order.ts";
 import { withAiUsageContext } from "../../server/ai/usage-context.ts";
 import { buyerReviewBlock } from "../../shared/wait-skip-review.ts";
 import { createScreeningPriceSource } from "../../server/pricing/pkmnprices.ts";
@@ -90,6 +90,28 @@ test("fresh resale prioritizes rough titles without dropping another physical co
         { ...listing("no-photo", "Missing photo"), images: [] }];
     assert.deepEqual(freshResaleCandidates(rows, { minProfit: 0, minRoi: 0 }, Date.now()).map(r => r.id),
         ["one", "another", "other", "same"]);
+});
+
+test("photo priority distinguishes comparable upside, possible printings, unknown prices and priced misses", () => {
+    const now = Date.parse("2026-11-25T20:00Z"), targets = { minProfit: 0, minRoi: 0 };
+    const copy: ListingSummary = { ...listing("single", "Drifloon 51/156 Ultra Prism"), currentPrice: 4, shipping: 0,
+        screen: { status: "UNSCREENED", bestCase: null, reason: null, assumed: null,
+            card: { name: "Drifloon", set: "Ultra Prism", cardNumber: "51/156", printing: "UNKNOWN", printingLabel: null },
+            soldEvidence: { status: "AVAILABLE", exactScope: true, note: "", references: [{ recordId: 1, name: "Drifloon",
+                set: "Ultra Prism", cardNumber: "51/156", printing: "UNLIMITED", finish: "REVERSE_HOLO",
+                grader: null, grade: null, condition: "NEAR_MINT", summary: { grader: "RAW", grade: "NEAR_MINT",
+                    count: 2, low: 20, high: 20, median: 20, newestSale: new Date(now).toISOString(), windowDays: 60,
+                    confidence: "LOW", dropped: {}, sales: [] } }] } } };
+    const band = (row: ListingSummary) => resaleReviewPriority(row, targets, now);
+    assert.equal(band(copy), resaleReviewBand.matchedUpside);
+    assert.equal(band({ ...copy, currentPrice: 100 }), resaleReviewBand.belowTarget);
+    assert.equal(band({ ...copy, shipping: null }), resaleReviewBand.unresolved);
+    assert.equal(band({ ...copy, currentPrice: 100, mistakes: [{ kind: "SET", detail: "Two different release claims" }] }), resaleReviewBand.unresolved);
+    assert.equal(band({ ...copy, currentPrice: 100, screen: { ...copy.screen!, gradingLead: { grader: "PSA", grade: 9 } } }), resaleReviewBand.possibleUpside);
+    copy.screen!.soldEvidence!.exactScope = false;
+    assert.equal(band(copy), resaleReviewBand.possibleUpside);
+    copy.screen!.card = { ...copy.screen!.card!, name: null, set: null, cardNumber: "51" };
+    assert.equal(band(copy), resaleReviewBand.unresolved, "a query plus a partial number cannot price an unidentified copy");
 });
 
 test("hunt inventory drains every retained and deferred copy before advancing its source cursor", async () => {

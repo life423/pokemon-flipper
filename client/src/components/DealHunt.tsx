@@ -44,6 +44,8 @@ function HuntListingCard({ listing, decision, now, children, onEvidence, evidenc
     onEvidence?: (opener: HTMLElement) => void; evidenceLabel?: string; shortlist: ReactNode;
 }) {
     const auction = listing.buyingOption === "AUCTION";
+    const sample = listing.askingSample;
+    const sampleAge = now - Date.parse(sample?.checkedAt ?? "");
     const images = listing.images.length ? listing.images : fallbackImages ?? [];
     const photo = <ListingThumbnail images={images} alt={listing.title} eager={Boolean(decision)} />;
     return <article className={styles.card} aria-label={listing.title}>
@@ -55,6 +57,10 @@ function HuntListingCard({ listing, decision, now, children, onEvidence, evidenc
             <h3>{decision && <span>{decision} · </span>}{listing.title}</h3>
             {listing.currentPrice !== null && <p className={styles.meta}>{auction ? listing.bids ? "Bid when checked" : "Opening bid" : "Asking price"} {dollars(listing.currentPrice)}
                 {listing.shipping !== null && (listing.shipping === 0 ? " · Free shipping" : ` · ${dollars(listing.shipping)} shipping`)}</p>}
+            {sample && sample.lowestOtherDelivered != null && isRawCondition(sample.condition) && sampleAge >= 0 &&
+                sampleAge < BEST_BUY_TERMS_MAX_AGE_MS && sample.destination === (listing.shippingDestination ?? null) &&
+                <p className={styles.meta}>Lowest other ask with shipping <strong>{dollars(sample.lowestOtherDelivered)}</strong>
+                    {" · "}{sample.observed} listings sampled as {CONDITION_NAMES[sample.condition]}</p>}
             {children}
             <div className={styles.actions}>
                 {onEvidence && <button type="button" onClick={event => onEvidence(event.currentTarget)}>{evidenceLabel}</button>}
@@ -208,6 +214,8 @@ export function DealHuntResult({ result, now, targets, updatedTerms, currentList
             {resaleBid.totalAtMaxBid != null && resaleBid.profitAtMaxBid != null &&
                 ` At that bid, you pay ${dollars(resaleBid.totalAtMaxBid)} delivered and project ${dollars(resaleBid.profitAtMaxBid)} profit after costs.`}</p>}
         {terms && !grading && <p>Estimated total to buy <strong>{dollars(acquisitionCost(terms.price, terms.shipping, MONEY_CONFIG.buying))}</strong> including shipping and estimated tax.</p>}
+        {reviewed && !expired && receipt?.relist && <p>List on receipt at <strong>{dollars(receipt.relist.price)}</strong> with shipping included.
+            {" "}Estimated profit <strong>{dollars(receipt.relist.profit)}</strong> after costs.</p>}
         {rawPrice && !expired && <p>Raw resale used for profit <strong>{dollars(rawPrice.price)}</strong>
             {isRawCondition(rawPrice.condition) && ` · ${CONDITION_NAMES[rawPrice.condition]}`} · {tcgplayerEstimateLabel(rawPrice.basis) ?? "Matched eBay sales"}</p>}
         {exit?.path === "GRADED_RESALE" && exit.salePrice != null && !expired && <p>Slab resale used for profit <strong>{dollars(exit.salePrice)}</strong>

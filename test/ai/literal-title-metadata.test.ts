@@ -9,6 +9,15 @@ import { MODEL } from "../../server/ai/openai.ts";
 import { findDeals } from "../../server/deals/find-deals.ts";
 import type { ListingSummary } from "../../shared/types.ts";
 
+test("a numbered 151 slab can mention another Pokémon's box without matching its Base Set market", async () => {
+    const title = "2024 Pokemon 151 Charmander #004 Charizard ex Super Premium PSA 9";
+    assert.equal(readTitleByRules(title, ["Base Set"]).set, "Scarlet & Violet 151");
+    const { matchesSoldTarget } = await import("../../server/pricing/sold-comps.ts");
+    assert.equal(matchesSoldTarget({ title }, { name: "Charizard", setName: "Base Set", cardNumber: "4/102" }, "PSA", "9"), false);
+    assert.equal(readTitleByRules("2024 Pokemon 151/197 Charizard ex PSA 9").set, null);
+    assert.equal(readTitleByRules("1999 Pokemon 151 Mew #151").set, null);
+});
+
 test("literal slab names survive explicit publisher and accompanying holder metadata", t => {
     t.mock.method(globalThis, "fetch", async () => assert.fail("literal name extraction needs no provider"));
     const cases = [

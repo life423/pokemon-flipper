@@ -15,7 +15,7 @@ export function flipDiagnostic(searchId: string, legId: string, now = Date.now, 
     let warned = false;
     let writing = Promise.resolve();
     let folderReady = false;
-    return async (event: "started" | "page" | "screened" | "queue" | "check" | "observation" | "finished", evidence: object) => {
+    return async (event: "started" | "page" | "inventory" | "selection" | "screened" | "queue" | "check" | "observation" | "interrupted" | "finished", evidence: object) => {
         const index = ++sequence;
         try {
             const receipt = { version: 1, searchId, legId, pass, index, at: new Date(now()).toISOString(), event, evidence };

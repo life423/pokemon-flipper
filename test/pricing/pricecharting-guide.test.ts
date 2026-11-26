@@ -118,6 +118,34 @@ test("an optional guide failure leaves the listing usable and respects cancellat
     assert.equal(requests, 1);
     await assert.rejects(priceChartingComparison(identity, AbortSignal.abort(), options), { name: "AbortError" });
 });
+
+test("PriceCharting shows overlapping eBay IDs once and preserves the exact edition, grade and reporting window", async () => {
+    const identity = { status: "IDENTIFIED", name: "Dark Gengar", set: "Neo Destiny", cardNumber: "006/105",
+        printing: "UNLIMITED", finish: "HOLO", language: "English" };
+    const catalog = JSON.stringify([{ ...identity, cardNumber: "6/105", ...product }]);
+    const snapshot = readPriceChartingGuide(html, product, at);
+    const title = "Dark Gengar 6/105 Neo Destiny Holo";
+    const sale = (transactionId: string, description = title, soldOn = "2026-11-20") => ({
+        source: "ebay", transactionId, soldOn, price: 34, title: description,
+        url: "https://www.ebay.com/itm/" + transactionId, guideBuckets: ["Ungraded"] });
+    const first = sale("123456789101"), slab = sale("123456789102", title + " PSA 7");
+    const history = { ...snapshot.history, sales: [first, first, sale("123456789103"), sale("123456789104", title + " 1st Edition"),
+        sale("123456789105", title, "2026-10-25"), { ...slab, guideBuckets: ["Grade 7"] },
+        { ...sale("123456789106", title + " CGC 7"), guideBuckets: ["Grade 7"] }] };
+    const evaluation = { identity, photoCheck: { cardCount: "ONE", holder: "SLEEVE", images: [{ usable: true, view: "FRONT" }] },
+        rawPricing: { prices: [{ comps: { sales: [{ url: first.url, price: 35 }] } }] } };
+    const options = { authorized: true, catalog, evaluation, load: async () => ({ ...snapshot, history }) };
+    const result = await priceChartingComparison(identity, undefined, options);
+    assert.match(result.ebayActivity, /2 distinct eBay sales \(ungraded, across conditions\)/);
+    assert.match(result.ebayActivity, /1 of these already appear/);
+    assert.match(result.ebayActivity, /disagree on the price of 1 shared transaction/);
+    const graded = { ...evaluation, slab: { grader: "PSA", grade: 7 },
+        photoCheck: { ...evaluation.photoCheck, holder: "GRADED_SLAB", slab: { present: true } } };
+    const reviewed = await priceChartingComparison(identity, undefined, { ...options, evaluation: graded });
+    assert.match(reviewed.ebayActivity, /1 distinct eBay sale \(PSA 7\)/);
+    assert.match(reviewed.ebayActivity, /0 of these already appear/);
+    assert.equal(await priceChartingComparison({ ...identity, cardNumber: "6" }, undefined, options), null);
+});
 test("invalid calendar dates cannot enter guide history", () => {
     const quote = readPriceChartingGuide(html.replace("2026-11-20", "2026-02-30"), product, at);
     assert.equal(quote.history.unreadableRows, 1);

@@ -88,11 +88,14 @@ test("authenticity assurances do not turn named single cards into mystery offers
 
 test("collector-number display case offers do not impersonate the card", () => {
     for (const title of ["Leafeon V Alt Art 167/203 Evolving Skies Pokemon Magnetic 🧲 Extended Art Case",
+        "Pokemon TCG Extended Art Magnetic Case PSA Card Meowth ex 121",
+        "Pokemon TCG Extended Art Acrylic Case Card Leafeon V 167/203",
         "Leafeon V 167/203 Extended Artwork Case", "Extended-Art Frame for Leafeon V 167/203",
         "Leafeon V 167/203 with an extended art case only"]) {
         assert.equal(exclusionReason(single(title)), "Empty slab, case, or label", title);
     }
     for (const title of ["Leafeon V 167/203 with a magnetic extended art case", "Leafeon V 167/203 in an extended artwork frame",
+        "Meowth ex 121/088 with an extended art magnetic case", "Leafeon V extended art acrylic case included",
         "Leafeon V 167/203 extended art case included"]) {
         assert.equal(exclusionReason(single(title)), null, title);
     }

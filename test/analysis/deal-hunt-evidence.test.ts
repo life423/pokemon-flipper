@@ -6,6 +6,7 @@ import { acquisitionCost, underwrite } from "../../shared/money/underwriting.ts"
 import { cents, meetsMoneyTargets } from "../../shared/money/cents.ts";
 import { PRICING_VERSION } from "../../shared/pricing-freshness.ts";
 import { dealHuntCandidate, flipResaleEvidence } from "../../server/analysis/deal-hunt-evidence.ts";
+import { FlipEvaluations } from "../../server/analysis/flip-evaluations.ts";
 import { listingMarketPrices } from "../../shared/listing-market-prices.ts";
 import { rankHuntMarkets } from "../../server/analysis/same-set-markets.ts";
 import { cardEvaluation, matchedRawPrice, salesSummary } from "../fixtures/card-evaluation.ts";
@@ -44,7 +45,7 @@ test("an asking quote alone cannot authorize buying or establish a liquid market
     assert.equal(listingMarketPrices(comparison, { ...e.listing, images: e.listing.photos ?? [] }, now)?.tcg?.market, 175);
 });
 
-test("a liquidity-constrained Buy needs observed recent sales on the exact exit, with one or two allowed at low confidence", () => {
+test("a liquid flip needs three exact, distinct eBay sales over multiple days in the last month", () => {
     const e = rawCard();
     e.gradedPricing = null;
     const prior = new Date(now - 62 * 86_400_000).toISOString();
@@ -64,19 +65,61 @@ test("a liquidity-constrained Buy needs observed recent sales on the exact exit,
     assert.equal(prevented.recentSales, 0);
     assert.equal(prevented.verifiedPurchase, undefined);
     assert.match(prevented.reason, /liquidity is unverified/i);
-    for (const count of [1, 2]) {
-        const recent = salesSummary("RAW", "LIGHTLY_PLAYED", Array(count).fill(160));
-        recent.median = 160;
-        recent.sales.forEach((sale, i) => Object.assign(sale, { saleType: "fixed_price", soldAt: soldAt(45 - i),
-            url: `https://www.ebay.com/itm/${123111111112 + i}`, sellerCondition: "LIGHTLY_PLAYED" }));
-        e.rawPricing.prices = [matchedRawPrice(175, soldAt(45), count)];
+    for (const [ages, decision] of [[[1], "WAIT"], [[1, 2], "WAIT"], [[1, 1, 1], "WAIT"],
+        [[2, 2, 31], "WAIT"], [[2, 2, 30], "BUY"]] as const) {
+        const row = matchedRawPrice(175, soldAt(ages[0]), ages.length);
+        row.comps.sales.forEach((sale, i) => { sale.soldAt = soldAt(ages[i]); });
+        e.rawPricing.prices = [row];
         e.underwriting = underwrite(e, { ...MONEY_CONFIG, targets });
         const outcome = dealHuntCandidate(e, "resell", now, unmatched, targets, undefined, liquidity)!.outcome(checked)!;
-        assert.equal(outcome.decision, "BUY", outcome.reason);
-        assert.equal(outcome.recentSales, count);
-        assert.equal(outcome.verifiedPurchase?.path.path, "RAW");
-        assert.match(outcome.reason, /liquidity confidence is low/i);
+        assert.equal(outcome.decision, decision, outcome.reason);
+        assert.equal(outcome.recentSales, ages.length);
+        assert.equal(outcome.verifiedPurchase?.path.path, decision === "BUY" ? "RAW" : undefined);
     }
+    const sales = e.rawPricing.prices![0].comps!.sales;
+    const withCompetition = (lowestOtherDelivered: number) => dealHuntCandidate(e, "resell", now, unmatched, targets, undefined,
+        { ...liquidity, competingCopies: () => ({ count: 1, lowestDelivered: lowestOtherDelivered }) })!.outcome(checked)!;
+    const undercut = withCompetition(55);
+    assert.equal(undercut.decision, "WAIT", undercut.reason);
+    const competitive = withCompetition(135);
+    assert.equal(competitive.decision, "BUY", competitive.reason);
+    assert.equal(competitive.verifiedPurchase?.relist?.price, 135);
+    assert.ok(competitive.verifiedPurchase!.relist!.profit < competitive.verifiedPurchase!.path.profit);
+    sales[2].url = sales[0].url;
+    assert.equal(dealHuntCandidate(e, "resell", now, unmatched, targets, undefined, liquidity)!.outcome(checked)!.decision, "WAIT");
+    sales[2].url = "https://www.ebay.com/itm/123111111199";
+    sales[2].conditionEvidence = [];
+    assert.equal(dealHuntCandidate(e, "resell", now, unmatched, targets, undefined, liquidity)!.outcome(checked)!.decision, "WAIT");
+});
+
+test("competing supply counts other active copies of the exact exit and expires old observations", () => {
+    const e = rawCard();
+    e.identity!.hasEditions = false;
+    Object.assign(e.photoCheck!, { cardIdentity: { name: e.identity!.name, set: e.identity!.set, cardNumber: e.identity!.cardNumber,
+        language: "English", finish: "HOLO", confidence: "HIGH", evidence: ["Readable front."] } });
+    e.rawPricing = { status: "PRICED", source: "pkmnprices", printing: "UNLIMITED", variant: "holo", finish: "HOLO",
+        conditionEvidence: "AI_PHOTOS", prices: [matchedRawPrice(175, stamp)] };
+    const path = underwrite(e, MONEY_CONFIG).paths.find(p => p.path === "RAW");
+    assert.ok(path?.status === "PRICED");
+    const copies = new FlipEvaluations();
+    copies.set(e.listing.id, e);
+    const rival = structuredClone(e);
+    rival.listing.id = "other";
+    copies.set(rival.listing.id, rival);
+    copies.set(rival.listing.id, rival);
+    assert.equal(copies.competingCopies(e, path, now).count, 1);
+    assert.equal(copies.competingCopies(e, path, now + 120001).count, 0);
+    rival.condition!.rawCondition = "DAMAGED";
+    copies.set(rival.listing.id, rival);
+    assert.equal(copies.competingCopies(e, path, now).count, 0);
+    rival.condition!.rawCondition = e.condition!.rawCondition;
+    rival.condition!.authenticity.concern = "LIKELY_FAKE";
+    copies.set(rival.listing.id, rival);
+    assert.equal(copies.competingCopies(e, path, now).count, 0);
+    rival.condition!.authenticity.concern = "NONE_SEEN";
+    rival.listing.availability = "UNAVAILABLE";
+    copies.set(rival.listing.id, rival);
+    assert.equal(copies.competingCopies(e, path, now).count, 0);
 });
 
 test("grade research uses photo and sales observations and distinguishes likely and lower grade after-cost returns", () => {
@@ -406,7 +449,7 @@ test("the planner can inspect a raw exit directly on both auctions and Buy It No
     assert.equal(dealHuntCandidate(e, "resell", now)!.outcome(choices)?.decision, "BID", "one exact sale can support value without a three-sale veto");
 });
 
-test("an otherwise profitable bid is held when the exact resale has no sales within 60 days", () => {
+test("an otherwise profitable bid requires repeated exact resale activity in the last month", () => {
     const e = rawCard(15);
     e.gradedPricing = null;
     Object.assign(e.listing, { buyingOption: "AUCTION", bids: 1, price: 35, shipping: 2, endTime: new Date(now + 3_600_000).toISOString(),
@@ -429,8 +472,8 @@ test("an otherwise profitable bid is held when the exact resale has no sales wit
     for (const count of [1, 2]) {
         comps.sales[count - 1].soldAt = new Date(now - (45 + count) * 86_400_000).toISOString();
         const outcome = dealHuntCandidate(e, "resell", now, undefined, targets, undefined, liquidity)!.outcome(checked)!;
-        assert.equal(outcome.decision, "BID");
+        assert.equal(outcome.decision, "WAIT");
         assert.equal(outcome.recentSales, count);
-        assert.match(outcome.reason, /liquidity confidence is low/i);
+        assert.match(outcome.reason, /liquidity is unverified/i);
     }
 });

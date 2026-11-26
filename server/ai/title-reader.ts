@@ -56,6 +56,14 @@ function literalSet(title: string, knownSetNames: readonly string[]) {
         const pattern = new RegExp(`\\b${key.split(" ").map(escapePattern).join("[^a-z0-9]+")}\\b`, "ig");
         if (explicit || pattern.test(normalizeText(title))) return { set, pattern };
     }
+    if (!explicit && /\bMEW[ -]+EN[ -]+151\b/i.test(title)) {
+        return { set: "Scarlet & Violet 151", pattern: /\bMEW[ -]+EN[ -]+151\b/gi };
+    }
+    // Slab labels also use "2024 Pokemon 151 Charmander #004". Require a
+    // separate numbered card so a collector number of 151 isn't read as a set.
+    if (!explicit && /\b20(?:2[3-9]|[3-9]\d)[ -]+pok[eé]mon[ -]+151\s+[a-z][a-z '’-]{1,45}\s+#\s*[a-z]*\d+\b/i.test(title)) {
+        return { set: "Scarlet & Violet 151", pattern: /\bpok[eé]mon[ -]+151\b/gi };
+    }
     return gallery;
 }
 export function readTitleByRules(title: string, knownSetNames: readonly string[] = []): TitleReading {

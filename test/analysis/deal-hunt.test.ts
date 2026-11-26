@@ -12,7 +12,7 @@ const searchId = "addc12de-bbbe-4f5a-bae0-9a369a92ced2";
 type Prompt = { inventory: { index: number; title: string; listingId: string; freshRawGradingLead?: boolean }[];
     observed: { listingId: string | null; action: DealHuntAction | "find_listings"; observation: string; hypothesisTested?: string }[];
     menu: { key: string }[]; tools?: Record<string, string>; remainingChecks: number };
-function planner(select: (prompt: Prompt) => string | { choice: string; reason: string }) {
+function planner(select: (prompt: Prompt) => string | { choice: string; reason: string; turnover?: string }) {
     const cache = new Map();
     let dispatches = 0;
     const choose = createModelExperimentRunner({
@@ -29,6 +29,72 @@ function planner(select: (prompt: Prompt) => string | { choice: string; reason: 
     });
     return { choose, dispatches: () => dispatches };
 }
+
+test("the AI can compare verified flips with different sold activity and active supply", async () => {
+    const candidates: DealHuntCandidate[] = [0, 1].map(index => ({
+        listingId: String(index), title: "Copy " + index, summary: "Exact exit checked", resumedActions: ["check_sales"],
+        available: () => [], read: () => "", outcome: () => ({ decision: "BUY", section: "sales",
+            hasSupplyEvidence: true, resalePriority: index ? 0.5 : 1, recentSales: index ? 6 : 10,
+            reason: index ? "6 sold, 1 other active copy verified" : "10 sold, 40 other active copies verified" }),
+    }));
+    const model = planner(prompt => {
+        assert.match(JSON.stringify(prompt.menu), /40 other active/);
+        assert.match(JSON.stringify(prompt.menu), /1 other active/);
+        return { choice: prompt.menu.find(item => item.key.startsWith("1/"))!.key, reason: "Fewer competitors in the second market.", turnover: "DEMAND" };
+    });
+    const result = await runDealHunt({ searchId, goal: "resell", freshListings: true, preferRecentSales: true, candidates },
+        undefined, model.choose);
+    assert.equal(result.destination?.listingId, "1");
+    assert.match(result.reason, /Repeated comparable sales/);
+    assert.equal(model.dispatches(), 1);
+});
+
+test("one finalist gets a bounded turnover assessment and remains usable when that assessment is unavailable", async () => {
+    const candidate: DealHuntCandidate = { listingId: "copy", title: "Verified copy", summary: "Exact market", resumedActions: ["check_sales"], available: () => [],
+        read: () => "", outcome: () => ({ decision: "BUY", section: "sales", recentSales: 4, hasSupplyEvidence: true,
+            reason: "Four comparable sales. Fifty competing copies verified." }) };
+    const input = { searchId, goal: "resell" as const, freshListings: true, preferRecentSales: true, candidates: [candidate] };
+    const model = planner(prompt => {
+        assert.equal(prompt.menu.length, 1);
+        assert.equal(prompt.observed.length, 0);
+        return { choice: prompt.menu[0].key, reason: "Competing supply is substantial.", turnover: "COMPETITION" };
+    });
+    assert.match((await runDealHunt(input, undefined, model.choose)).reason, /money tied up/);
+    assert.match((await runDealHunt(input, undefined, model.choose)).reason, /money tied up/);
+    assert.equal(model.dispatches(), 1);
+    const fallback = await runDealHunt(input, undefined, async () => { throw new Error("Offline"); });
+    assert.equal(fallback.decision, "BUY");
+    assert.match(fallback.reason, /Four comparable sales/);
+});
+
+test("a guided search preserves checked evidence on interruption and can continue when the planner alone fails", async () => {
+    const actions: string[] = [];
+    let failCheck = false;
+    const candidate: DealHuntCandidate = {
+        listingId: "copy", title: "Decidueye promo", summary: "Lightly Played",
+        available: checked => checked.has("inspect_photos") ? ["check_listing", "check_sales"] : ["inspect_photos"],
+        read: action => {
+            actions.push(action);
+            if (failCheck && action !== "inspect_photos") throw new Error("Interrupted evidence check");
+            return "Observed listing evidence.";
+        },
+        outcome: checked => checked.has("check_sales") ? { decision: "WAIT", reason: "Resale does not cover costs.", section: "sales" } : null,
+    };
+    const stops: string[] = [];
+    const input = { searchId, goal: "resell" as const, guidedResale: true, candidates: [candidate],
+        onInterruption: async (stage: string) => { stops.push(stage); } };
+    const offline = async () => { throw new Error("Planner temporarily unavailable"); };
+    const finished = await runDealHunt(input, undefined, offline);
+    assert.equal(finished.decision, "WAIT");
+    assert.ok(actions.includes("check_sales"));
+    assert.equal(stops.length, 0);
+    failCheck = true;
+    const paused = await runDealHunt(input, undefined, offline);
+    assert.equal(paused.needsAttention, true);
+    assert.match(paused.reason, /1 listing has completed checks/);
+    assert.equal(paused.steps[0].action, "inspect_photos");
+    assert.deepEqual(stops, ["checking Decidueye promo"]);
+});
 
 test("a changed observation redirects the hunt to a different listing and section, and identical planning decisions are reused", async () => {
     let photo = "Surface worn";
@@ -665,6 +731,25 @@ test("resale scheduling grows linearly across a 100-copy and a 1,600-copy losing
     }
     assert.ok(counts[1] <= 20 * counts[0]);
     t.diagnostic("Eligibility checks for 100 and 1,600 copies: " + counts.join(", "));
+});
+
+test("fresh resale moves to another market after weak repeats and finds a newly screened lead behind a full backlog", async () => {
+    const checked: string[] = [];
+    const make = (id: string, market: string, band: 0 | 1 | 2): DealHuntCandidate => ({
+        listingId: id, title: id, summary: "", reviewPriority: { band, market },
+        available: done => done.size ? ["check_sales"] : ["inspect_photos"],
+        read(action) { if (action === "inspect_photos") checked.push(id); return "Checked " + action; },
+        outcome: done => done.has("check_sales") ? { decision: id === "variant" ? "BUY" : "WAIT",
+            section: "sales", reason: "Fixture photos, current terms and matched sales checked." } : null,
+    });
+    const pages = [Array.from({ length: 60 }, (_, i) => make("old-" + i, "Meowth", 0)),
+        [make("new-miss", "another", 0), make("vague", "unknown", 1), make("variant", "different printing", 2)]];
+    const report = await runDealHunt({ searchId, goal: "resell", freshListings: true, guidedResale: true, candidates: [],
+        markets: [{ title: "Fixture pages", summary: "", discover: async () => pages.shift()!, hasMore: () => pages.length > 0 }] },
+        undefined, planner(({ menu }) => menu[0].key).choose);
+    assert.deepEqual(checked, ["old-0", "old-1", "old-2", "variant"]);
+    assert.equal(report.destination?.listingId, "variant");
+    assert.equal(report.decision, "BUY");
 });
 
 test("optional price lookups in a full window leave room for an unreviewed primary photo", async () => {
