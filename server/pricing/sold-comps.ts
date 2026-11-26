@@ -1,4 +1,4 @@
-import { comparablePriceBounds, median } from "../../shared/sold-evidence.ts";
+import { comparablePriceBounds, median, rawPriceDeviation } from "../../shared/sold-evidence.ts";
 import {
     mapVariantPrintings,
     printingClaimFromText,
@@ -180,8 +180,20 @@ function marketEstimate(sales: Comp[], now: number): CompSummary["marketEstimate
     if (!sales.length) return undefined;
     const recent = sales.filter(sale => now - Date.parse(sale.sold_at) <= 30 * DAY_MS);
     const window = recent.length ? recent : sales;
-    const fixed = window.filter(sale => sale.sale_type === "fixed_price" || sale.sale_type === "best_offer_accepted");
-    const cohort = fixed.length ? fixed : window;
+    const fixedPrice = (sale: Comp) => sale.sale_type === "fixed_price" || sale.sale_type === "best_offer_accepted";
+    const fixed = window.filter(fixedPrice);
+    let cohort = fixed.length ? fixed : window;
+    let recentOnly = recent.length > 0;
+    if (recentOnly && cohort.length === 1) {
+        const latest = cohort[0];
+        const older = sales.filter(sale => now - Date.parse(sale.sold_at) > 30 * DAY_MS && fixedPrice(sale) === fixedPrice(latest));
+        // A single new high far above every older comparable needs a second sale
+        // at the new level. Falling prices still reach the buyer immediately.
+        if (older.length >= 2 && older.every(sale => latest.price > sale.price * 1.30)) {
+            cohort = older;
+            recentOnly = false;
+        }
+    }
     const amounts = cohort.map(sale => sale.price);
     const bounds = comparablePriceBounds(amounts);
     const middle = median(amounts);
@@ -194,7 +206,7 @@ function marketEstimate(sales: Comp[], now: number): CompSummary["marketEstimate
         price: Math.round(ordinary.reduce((sum, price) => sum + price, 0) * 100 / ordinary.length) / 100,
         method: fixed.length ? "FIXED_PRICE_AVERAGE" : "SOLD_AVERAGE",
         sampleSize: ordinary.length,
-        ...(recent.length && { windowDays: 30 }),
+        ...(recentOnly && { windowDays: 30 }),
     };
 }
 
@@ -233,10 +245,15 @@ export function summarizeComps(
     }
 
     const activity = kept;
+    const photoMatched = criteria.grader === "RAW" && kept.length > 0 &&
+        kept.every(sale => sale.photoCondition === criteria.grade && sale.conditionEvidence?.length);
     if (kept.length >= 2) {
-        const bounds = comparablePriceBounds(kept.map(comp => comp.price));
+        const amounts = kept.map(comp => comp.price);
+        const bounds = comparablePriceBounds(amounts);
+        const center = median(amounts);
+        const deviation = photoMatched ? rawPriceDeviation(amounts, center) : Infinity;
         kept = kept.filter(comp => {
-            const far = comp.price < bounds.low || comp.price > bounds.high;
+            const far = comp.price < bounds.low || comp.price > bounds.high || Math.abs(comp.price - center) > deviation;
             if (far) drop("price far from the other sales");
 
             return !far;
@@ -244,7 +261,8 @@ export function summarizeComps(
     }
 
     const prices = kept.map((comp) => comp.price).sort((a, b) => a - b);
-    const estimate = marketEstimate(uniqueSoldComps(kept), criteria.now);
+    const mean = prices.length ? Math.round(prices.reduce((sum, price) => sum + price, 0) / prices.length * 100) / 100 : null;
+    const estimate = marketEstimate(kept, criteria.now);
     const saleFacts = (comp: Comp) => ({
         ...(comp.photoCondition && { photoCondition: comp.photoCondition }),
         ...(comp.photoCondition && comp.conditionEvidence?.length && { conditionEvidence: comp.conditionEvidence }),
@@ -258,7 +276,7 @@ export function summarizeComps(
         grade: criteria.grade,
         count: kept.length,
         median: prices.length > 0 ? median(prices) : null,
-        mean: prices.length > 0 ? Math.round(prices.reduce((sum, price) => sum + price, 0) / prices.length * 100) / 100 : null,
+        mean,
         ...(estimate ? { marketEstimate: estimate } : {}),
         low: prices[0] ?? null,
         high: prices.at(-1) ?? null,

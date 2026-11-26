@@ -343,6 +343,7 @@ export interface RawPrice {
     updatedAt: string | null;
     basis?: "EBAY_SOLD" | "TCGPLAYER_OFFERS" | "TCGPLAYER_MARKET";
     comps?: CompSummary;
+    // Kept for comparison even when lower matched eBay sales set the selected price.
     offers?: TcgplayerRawEstimate;
 }
 
@@ -366,6 +367,8 @@ interface PriceSource {
 }
 
 export interface RawPricing extends PriceSource {
+    /** Current same-condition TCGplayer competition shown alongside a flip decision. */
+    tcgplayerComparison?: TcgplayerRawEstimate;
     // Price context for a collector. The sold sellers described the condition.
     sellerConditionComps?: CompSummary | null;
     tcgplayerReference?: TcgplayerRawEstimate;
@@ -416,7 +419,7 @@ export interface CompSummary {
     marketEstimate?: {
         price: number;
         windowDays?: number;
-        method: "FIXED_PRICE_AVERAGE" | "SOLD_AVERAGE" | "RECENT_FIXED_PRICE_MEDIAN" | "RECENT_FOUR" | "RECENCY_WEIGHTED_MEDIAN";
+        method: "FIXED_PRICE_AVERAGE" | "SOLD_AVERAGE" | "FILTERED_SOLD_MEAN" | "RECENT_FIXED_PRICE_MEDIAN" | "RECENT_FOUR" | "RECENCY_WEIGHTED_MEDIAN";
         sampleSize?: number;
         recentTrendPercent?: number;
     };

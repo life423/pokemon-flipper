@@ -57,6 +57,8 @@ test("only active auctions strictly under ten hours and under the matching as-li
 test("next bid, delivery and the buyer’s budget control the recommendation while the market opportunity survives", () => {
     const e = raw(), first = receipt(e)!;
     assert.equal(first.nextTotal,44.38);
+    assert.ok(first.totalAtMaxBid! >= first.nextTotal!);
+    assert.equal(first.profitAtMaxBid, Math.round((first.profitAtNext! + first.nextTotal! - first.totalAtMaxBid!) * 100) / 100);
     assert.equal(first.status,"BID"); assert.equal(first.routeKind,"RAW");
     assert.ok(first.maxBid! > first.nextBid! && first.maxBid! < 100);
     assert.equal(receipt(e,44.38)?.maxBid,36); assert.equal(receipt(e,44.37)?.status,"PASS");

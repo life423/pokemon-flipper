@@ -80,18 +80,23 @@ test("CGC 8.5 with no eBay sales still gets both Tracker estimates and matched E
     const deps = { supplement: async () => { providers.push("references"); return { trackerPriceReference: track }; },
         european: async () => { providers.push("Europe"); return { status: "AVAILABLE" as const, reason: null, currency: "EUR" as const, basis: "ACTIVE_ASK" as const,
             checkedAt: stamp, offers: [{ articleId: "a", priceEur: 71, updatedAt: stamp, condition: null, variant: "Unlimited Holofoil", grader: "CGC", grade: "8.5", sellerCountry: "DE" }] }; },
+        priceCharting: async () => {
+            providers.push("guide");
+            return { observation: "Grade guide", prices: [{ source: "PriceCharting", basis: "Grade 9 guide · mixed graders", price: 120, currency: "USD" as const,
+                asOf: stamp, validUntil: now + 86_400_000 }] };
+        },
         rawQuote: unexpected, record: unexpected, recentSales: async () => [] };
     const before = structuredClone(e);
     const comparison = await buyerMarketPrices(e, lookup.market, signal, deps, () => now);
     assert.deepEqual(comparison?.prices.map(row => [row.source, row.price, row.currency]), [
-        ["Pokémon Price Tracker", 90, "USD"], ["Pokémon Price Tracker", 82, "USD"], ["Cardmarket", 71, "EUR"]]);
+        ["Pokémon Price Tracker", 90, "USD"], ["Pokémon Price Tracker", 82, "USD"], ["Cardmarket", 71, "EUR"], ["PriceCharting", 120, "USD"]]);
     assert.deepEqual(e, before);
     track.gradedMarket.grade = "9";
     assert.deepEqual(providerPrices({ ...e, trackerPriceReference: track }, now), []);
     track.gradedMarket.grade = "8.5"; track.printingLabel = "1st Edition Holofoil";
     assert.deepEqual(providerPrices({ ...e, trackerPriceReference: track }, now), []);
     assert.equal(await buyerMarketPrices(e, "earlier assessment", signal, deps, () => now), null);
-    assert.deepEqual(providers, ["references", "Europe"]);
+    assert.deepEqual(providers, ["references", "Europe", "guide"]);
 });
 
 test("one unavailable source preserves the other returned prices and a note", async () => {

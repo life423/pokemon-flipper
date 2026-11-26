@@ -90,7 +90,8 @@ export function MarketPrices({ prices, now, screen, loadAdditional = true }: { p
         <dl className={styles.prices}>
             <div><dt>{referenceOnly || !estimate && sold?.sellerCondition ? "eBay sold reference" : "eBay resale estimate"}</dt>
                 <dd>{ebayPrice != null ? dollars(ebayPrice) + " USD" : groups.length ? "See sales" : empty}</dd>
-                {sold && <dd className={styles.detail}>{estimate && "Median " + dollars(sold.price) + " · "}{sold.count} {sold.count === 1 ? "sale" : "sales"} in {sold.days} days{sold.sellerCondition && " · seller-described condition"}</dd>}
+                {sold?.average ? <dd className={styles.detail}>Average of {sold.average.count} {sold.average.fixedPrice && "fixed-price "}{sold.average.count === 1 ? "sale" : "sales"} in {sold.average.days} days</dd> :
+                    sold && <dd className={styles.detail}>{sold.filteredMean ? "Sold average · " : estimate ? "Median " + dollars(sold.price) + " · " : ""}{sold.count} {sold.count === 1 ? "sale" : "sales"} in {sold.days} days{sold.sellerCondition && " · seller-described condition"}</dd>}
                 {sold?.sales30 !== undefined && <dd className={styles.detail}>{sold.sales30} observed in 30 days{sold.typicalRange && ` · Middle half ${dollars(sold.typicalRange[0])}–${dollars(sold.typicalRange[1])}`}</dd>}</div>
             <div><dt>TCGplayer market</dt><dd>{tcgPrice != null ? dollars(tcgPrice) + " USD" : gradeScope ? "Raw only" : empty}</dd>
                 {tcgPrice != null && <dd className={styles.detail}>{tcg?.condition ?? tcgMarket?.basis} · {dayOf(tcg?.marketRecordAt || tcg?.checkedAt || tcgMarket?.asOf)}</dd>}</div>

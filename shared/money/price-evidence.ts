@@ -1,6 +1,7 @@
-import type { Evaluation, Identity, PricedPath, RawPrice, RawPricing } from "../types.ts";
+import type { CompSummary, Evaluation, Identity, PricedPath, RawPrice, RawPricing } from "../types.ts";
 import { jungleNoSymbolReason, type JungleVariantContext } from "../jungle-no-symbol.ts";
 import { missingTextureReason } from "../grade-qualifier.ts";
+import { observedSoldSales } from "../sales-activity.ts";
 import { soldMarketPrice } from "../sold-evidence.ts";
 import { isPrinting } from "../identity.ts";
 import { isRawCondition } from "../conditions.ts";
@@ -45,6 +46,18 @@ export function isRawSoldPrice(price: RawPrice): boolean {
     return Number.isFinite(price.price) && price.price > 0 && (price.basis === "EBAY_SOLD" ||
         price.basis === undefined && price.comps?.grader === "RAW" && price.comps.grade === price.condition &&
         price.comps.count > 0 && soldMarketPrice(price.comps) === price.price);
+}
+
+export function tcgplayerComparison(raw: RawPricing | null | undefined) {
+    return raw?.tcgplayerReference ?? raw?.tcgplayerComparison;
+}
+
+export function photoMatchedRawPrice(summary: CompSummary | undefined, condition: RawPrice["condition"]): number | null {
+    if (!summary || summary.grader !== "RAW" || summary.grade !== condition || !summary.count ||
+        summary.sales?.length !== summary.count || !summary.sales.every(sale => sale.photoCondition === condition && sale.conditionEvidence?.length)) return null;
+    const anchor = Date.parse(summary.newestSale ?? "");
+    if (!Number.isFinite(anchor) || observedSoldSales(summary.sales, anchor, { maxDays: summary.windowDays ?? 90 }).length !== summary.count) return null;
+    return soldMarketPrice(summary);
 }
 
 // A matched live marketplace or condition-market estimate can price raw resale.

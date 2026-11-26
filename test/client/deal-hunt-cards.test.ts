@@ -76,8 +76,13 @@ test("the hunt displays its decision alongside the actual listing and evidence",
             marketLabel: "Lightly Played raw", marketBasis: "TCGPLAYER_OFFERS", nextBid: 23, nextTotal: 25, maxBid: 37,
             profitAtNext: 12, route: "Sell raw", routeKind: "RAW", exitSales30: 1, exitSales60: 2, grading: null, reason: report.reason };
         const selected = render({ report, evaluation, listing, auctionOpportunity: opportunity });
-        assert.match(selected, /TCGplayer asking-price estimate/);
-        assert.doesNotMatch(selected, /sold estimate|from 2 matching sales/);
+        assert.match(selected, /Waiting for a fresh bid limit/);
+        assert.doesNotMatch(selected, /Bid opportunity|Recommended max snipe/);
+        const verified = render({ report, evaluation, listing, auctionOpportunity: {
+            ...opportunity, marketBasis: "EBAY_SOLD", totalAtMaxBid: 42, profitAtMaxBid: 8,
+        } });
+        assert.match(verified, /Recommended max snipe <strong>\$37.00<\/strong> item bid/);
+        assert.match(verified, /\$42.00 delivered and project \$8.00 profit/);
         const renderPanel = (receipt: AuctionOpportunity) => renderToStaticMarkup(createElement(AuctionOpportunities, { listings: [listing],
             decisions: { [listing.id]: { auctionOpportunity: receipt } }, now, onOpen() {} }));
         const panel = renderPanel(opportunity);

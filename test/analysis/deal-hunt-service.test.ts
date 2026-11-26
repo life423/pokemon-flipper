@@ -21,6 +21,7 @@ import type { ListingDetails } from "../../server/ebay/listings.ts";
 import { EbayBudgetError } from "../../server/ebay/usage.ts";
 import { cardEvaluation, clearReleaseFixture, salesSummary } from "../fixtures/card-evaluation.ts";
 import { offlineSearchSteps } from "../fixtures/search-steps.ts";
+import { tcgplayerRawEstimate } from "../fixtures/tcgplayer-raw-estimate.ts";
 import { matchedRawPrice } from "../fixtures/card-evaluation.ts";
 import { configuredShippingZip } from "../../server/ebay/shipping-destination.ts";
 import { PricingProviderError } from "../../server/pricing/errors.ts";
@@ -1089,6 +1090,11 @@ test("a reseller can consult price history, European offers or either supplement
     f.e.identity!.recordId = "1234";
     f.e.rawPricing = { status: "PRICE_UNAVAILABLE" };
     f.e.gradedPricing = null;
+    // The generic evaluator has already priced this copy from a quote. The flip
+    // planner must still open its research tools under the original budget.
+    f.e.rawPricing = { ...f.e.rawPricing!, status: "PRICED", conditionEvidence: "TCGPLAYER",
+        prices: [tcgplayerRawEstimate(175, stamp)] };
+    f.e.underwriting = retargetEvaluation(f.e, goal.targets).underwriting;
     const calls: string[] = [];
     const model = createModelExperimentRunner({ cached: async () => null, save: async () => {},
         run: async request => {
@@ -1108,9 +1114,9 @@ test("a reseller can consult price history, European offers or either supplement
             outlook:"Insufficient evidence", reason:"Sparse daily prices."}; },
         compareCardmarket: async () => { remember("offers"); return {checkedAt:stamp, currency:"EUR", basis:"ACTIVE_ASK", status:"UNAVAILABLE",
             reason:"No offers match this condition.", offers:[]}; },
-        supplement: async (_value, options) => { if (!options.cacheOnly) remember(options.source!); return {}; },
+        supplement: async (_value, options) => { assert.equal(options.comparePrices, true); if (!options.cacheOnly) remember(options.source!); return {}; },
     });
-    const response = await hunt(searchId, { ...goal, goal:"resell", marketPreferences:{preferRecentSales:true} }, signal());
+    const response = await hunt(searchId, { ...goal, goal:"resell" }, signal());
     assert.deepEqual(calls, ["history", "offers", "web", "tracker"]);
     assert.equal(response.report.decision, "WAIT");
     assert.match(response.report.steps.find(s => s.action === "check_price_history")!.observation, /TCGplayer.*Lightly Played.*\$45\.00/);
@@ -1290,6 +1296,13 @@ test("a blank flip hunt passes sampled markets and three source pages to find a 
             { id: 2, name: "Dragonite", number: "4/62", set: "Fossil", sales: 20 },
             { id: 3, name: "Pikachu", number: "58/102", set: "Base Set", sales: 10 },
         ],
+        priceCharting: async id => {
+            assert.equal(id.name, "Nidoking");
+            return { observation: "PriceCharting published an Ungraded guide.", prices: [
+                { source: "PriceCharting", basis: "Ungraded guide · mixed conditions", price: 61, currency: "USD",
+                    asOf: stamp, validUntil: now + 86_400_000 },
+            ] };
+        },
         selectReviews: async copies => ({ source: "rules", listingIds: copies.slice(0, 15).map(row => row.id) }),
         inventoryScanner: active => createHuntInventoryScanner(active, offlineSearchSteps([], {
             search: async (query, options) => {
@@ -1316,6 +1329,7 @@ test("a blank flip hunt passes sampled markets and three source pages to find a 
             const comp = salesSummary("RAW", "LIGHTLY_PLAYED", [100]);
             Object.assign(comp, { median: 100, newestSale: old });
             Object.assign(comp.sales[0], { title: row.title, saleType: "fixed_price", soldAt: old,
+                photoCondition: "LIGHTLY_PLAYED", conditionEvidence: ["Sold gallery shows the same edge wear."],
                 url: "https://www.ebay.com/itm/120000029999" });
             e.rawPricing = { status: "PRICED", printing: "UNLIMITED", finish: "HOLO", variant: "holo", conditionEvidence: "AI_PHOTOS",
                 prices: [matchedRawPrice(100, old)], ebayComps: [comp] };
@@ -1332,6 +1346,7 @@ test("a blank flip hunt passes sampled markets and three source pages to find a 
     assert.equal(assessed.at(-1), winning.id, "stop at the verified copy from the fourth page");
     t.diagnostic("Distinct photo assessments before the verified fixture winner: " + assessed.length);
     assert.ok(assessed.length < 661, "the cheaper equivalent copy must move ahead of earlier expensive copies");
+    assert.ok(result.candidatePrices?.[winning.id]?.additional?.some(row => row.source === "PriceCharting" && row.price === 61));
     assert.equal(new Set(assessed).size, assessed.length, "accepted photos must not be repurchased in later batches");
     assert.equal(queries.length, 7, "deferred copies drain without repeating source work or stopping at three pages");
     assert.deepEqual(queries.filter(([query]) => query.toLowerCase() === "pokemon").map(([, offset]) => offset), [0, 200, 400, 600]);

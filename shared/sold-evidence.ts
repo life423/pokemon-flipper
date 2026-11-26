@@ -19,11 +19,27 @@ export function median(values: number[]): number {
     return sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
+// The median absolute deviation follows the spread of typical copies while
+// allowing 30% either side of the median in a very tightly clustered sample.
+export function rawPriceDeviation(prices: number[], middle: number): number {
+    if (prices.length < 3) return Infinity;
+    return Math.max(middle * 0.30, 3 * 1.4826 * median(prices.map(price => Math.abs(price - middle))));
+}
+
+// In a sample of three or more, one unusually high sale cannot establish a
+// higher exit price on its own. A second sale at the new level can support it.
+export function capAtSecondHighestSale(price: number, sales: readonly { price: number }[]): number {
+    if (sales.length < 3) return price;
+    const ordered = sales.map(sale => sale.price).sort((a, b) => b - a);
+    return Math.min(price, ordered[1]);
+}
+
 export function soldMarketPrice(summary: CompSummary): number | null {
     if (!summary.marketEstimate) return positive(summary.median) ? summary.median : null;
-    const { price } = summary.marketEstimate;
-    return positive(price) && (summary.low == null || price >= summary.low) &&
-        (summary.high == null || price <= summary.high) ? price : null;
+    const { price, method } = summary.marketEstimate;
+    if (!(positive(price) && (summary.low == null || price >= summary.low) && (summary.high == null || price <= summary.high))) return null;
+    return method === "RECENCY_WEIGHTED_MEDIAN" && summary.sales?.length === summary.count
+        ? capAtSecondHighestSale(price, summary.sales) : price;
 }
 
 // Shared numerical/scope contract for already-matched public sold facts.

@@ -1,3 +1,4 @@
+import { priceChartingComparison } from "./pricecharting.ts";
 import { listingMarketPrices, screeningSaleGroups, type ProviderPrice } from "../../shared/listing-market-prices.ts";
 import { CONDITION_NAMES, isRawCondition } from "../../shared/conditions.ts";
 import { finishClaim } from "../../shared/finish.ts";
@@ -91,7 +92,7 @@ async function recentSales(value: Evaluation, signal: AbortSignal, now: number) 
     return screeningSaleGroups(matched.filter(ref => grader || ref.condition === value.condition?.rawCondition), now);
 }
 
-const sources = { supplement: supplementalResearch, european: compareCardmarket, record: cardmarketRecord, rawQuote: tcgplayerRawPrice, recentSales };
+const sources = { supplement: supplementalResearch, european: compareCardmarket, record: cardmarketRecord, rawQuote: tcgplayerRawPrice, priceCharting: priceChartingComparison, recentSales };
 
 export async function buyerMarketPrices(value: Evaluation, market: string, requestSignal: AbortSignal, deps = sources, now = Date.now) {
     const listing = { ...value.listing, images: value.listing.photos ?? [] };
@@ -126,8 +127,9 @@ export async function buyerMarketPrices(value: Evaluation, market: string, reque
         optional("Cardmarket", () => deps.european(value, { now, fx: async () => null })),
         optional("TCGplayer", missingTcg),
         !prices.sold && value.identity?.recordId ? optional("eBay sales", () => deps.recentSales(value, signal, now())) : null,
+        value.identity && deps.priceCharting ? optional("PriceCharting", () => deps.priceCharting(value.identity!, signal)) : null,
     ] as const);
-    const [supplement, european, quote, saleGroups] = await Promise.all(tasks).catch(async error => {
+    const [supplement, european, quote, saleGroups, guide] = await Promise.all(tasks).catch(async error => {
         stopped.abort(error);
         await Promise.allSettled(tasks);
         throw error;
@@ -135,6 +137,7 @@ export async function buyerMarketPrices(value: Evaluation, market: string, reque
     signal.throwIfAborted();
     if (supplement?.supplementalPriceNote) notes.push(supplement.supplementalPriceNote);
     const extra = providerPrices({ ...value, ...supplement }, now(), european ?? undefined);
+    if (guide) extra.push(...guide.prices);
     if (quote?.offers) {
         const snapshot = quote.offers, expiry = Date.parse(snapshot.checkedAt) + 6 * 3_600_000;
         if (snapshot.marketPrice) extra.push({ source: "TCGplayer", basis: snapshot.marketCondition + " market", price: snapshot.marketPrice,

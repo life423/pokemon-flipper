@@ -77,7 +77,7 @@ function copyMarkets(value: Evaluation, goal: DealHuntGoal, slab: boolean, inclu
         const summary = physical?.grader === "RAW" && physical.grade === condition && physical.count > 0 ? physical : seller?.grader === "RAW" && seller.grade === condition && seller.count > 0 ? seller
             : physical?.grader === "RAW" && physical.grade === condition ? physical : undefined;
         if (row) result.push({ summary, price: row.price, basis: "EBAY_SOLD",
-            quoteAsOf: row.offers?.checkedAt, activityScope: summary === physical ? "PHOTO_CONDITION" : "SELLER_CONDITION", condition, variant: raw.variant,
+            activityScope: summary === physical ? "PHOTO_CONDITION" : "SELLER_CONDITION", condition, variant: raw.variant,
             path: paths.find(path => path.path === "RAW" && path.priceCondition === condition && path.salePrice === row.price) });
     }
     const likely = value.condition.gradeRange?.likely;

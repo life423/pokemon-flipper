@@ -26,13 +26,10 @@ Use buyer decisions, repeat payments and research costs to evaluate the pilot
 in LOCAL_TODO.md. A reseller Deal requires supported positive profit after
 costs. Keep that milestone alongside the collector guide.
 
-When improving search, read the latest completed automatic review in
-`data/search-diagnostics/index.json` before requesting another paid scan. Treat
-the review as a proposal, verify its cited listing IDs against saved evidence
-and code, and replay the relevant decisions before changing provider policy.
-The user wants this work to proceed without routine input. The app runs one
-short text review per completed search with retained listings and tracks its
-AI usage separately. Keep reports and listing evidence out of commits.
+When improving search, inspect recorded outcomes in `data/search-diagnostics/index.json`
+and verify listing IDs against saved evidence before a paid scan. A completed
+search records its outcome without purchasing a written review. Historical reviews
+and explicit diagnostic tools remain available. Keep reports outside commits.
 
 Prioritize raw resale, existing slab resale and raw-to-grade equally. Fresh
 underpriced Buy It Now listings and supported auction snipe limits are key.
@@ -162,12 +159,10 @@ Read docs/architecture.md for the source map and reading order.
   A compact request finding raw does not buy another raw assessment automatically.
   BGS/TAG resale is separate from configured PSA/CGC submission services.
 - Use the photographed set's edition marks. On English Neo Destiny, a clear empty stamp area establishes Unlimited. A manual assessment can resolve an ambiguous reading from the original front and a stamp detail in one metered check. Reuse the saved result on repeat assessment and price refresh. Automatic stamp research requires current terms and evidence that checking could change the purchase decision. Charge the original search account. Artwork-shadow checks apply to eligible original English Base Set cards.
-- Raw resale can use exact condition/printing TCGplayer offers after the live
-  copy's condition is assessed. Use the lowest valid delivered competition,
-  capped by exact condition market value when available; a labeled condition
-  market value can supply fallback pricing. Active offers never become sold
-  activity. Display rolling 60-day transactions separately, without a hard
-  three-sale purchase veto. Preserve exact identity, freshness and all costs.
+- Price raw resale from confirmed eBay transactions matched to the printing,
+  finish and assessed condition. Show TCGplayer offers and market values as
+  comparisons. PriceCharting supplies dated, labeled guides for mapped products.
+  Preserve purchase costs and show recent completed sales separately.
   Historical photo-condition evidence remains reusable. A
   same-condition seller-clue cohort, or otherwise an unspecified-condition
   cohort, merits research if any confirmed sale could cover current costs.

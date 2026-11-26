@@ -17,7 +17,7 @@ const share = createSharedWork();
 export async function restoreRawComparisons(e: Evaluation, now: number, signal?: AbortSignal): Promise<RawPricing | null> {
     const id = e.identity, raw = e.rawPricing, wear = e.condition?.rawCondition;
     if (!readyForPricing(id) || !id?.recordId || !isRawCondition(wear) || !raw?.variant || raw.source !== "pkmnprices" ||
-        raw.printing !== id.printing || raw.finish !== id.finish || raw.conditionEvidence !== "AI_PHOTOS" ||
+        raw.printing !== id.printing || raw.finish !== id.finish || (raw.conditionEvidence !== "AI_PHOTOS" && !raw.tcgplayerReference && !raw.tcgplayerComparison) ||
         e.photoCheck?.cardMatch?.verdict !== "MATCH" || e.slab || e.frontPhotoStop || e.pricingDeferred ||
         e.condition?.authenticity.concern !== "NONE_SEEN" || e.condition.creases === "SUSPECTED" ||
         sellerCreaseOverridesCondition(wear, e.listing.conditionNotes) || unsupportedVariantReason(e) ||
@@ -36,7 +36,7 @@ export async function restoreRawComparisons(e: Evaluation, now: number, signal?:
     }, signal);
     const price = rebuilt?.prices?.find(p => p.condition === wear && p.comps?.count && isRawSoldPrice(p));
     if (!price?.comps) return null;
-    return { ...raw, status: "PRICED", reason: undefined, evidenceNote: rebuilt?.evidenceNote,
+    return { ...raw, status: "PRICED", conditionEvidence: "AI_PHOTOS", reason: undefined, evidenceNote: rebuilt?.evidenceNote,
         reviewedSoldCopies: rebuilt?.reviewedSoldCopies, sampledSoldCopies: rebuilt?.sampledSoldCopies, soldPhotoDeferred: undefined,
         sellerConditionComps: rebuilt?.sellerConditionComps,
         prices: [...(raw.prices ?? []).filter(p => p.condition !== wear), price],

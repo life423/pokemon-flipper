@@ -301,3 +301,22 @@ test("null or foreign acquired copies cannot inject raw sales or trigger a secon
         assert.equal(raw.prices, undefined);
     }
 });
+
+test("an isolated premium cannot set the exit if the cheaper comparison copies remain unresolved", async () => {
+    const sales = [120, 49, 50, 51, 50, 49, 48].map((price, index) => sale(223456789101 + index, price));
+    const proof = { condition: "LIGHTLY_PLAYED" as const, evidence: ["Wear is visible on both faces."], photoCount: 2 };
+    for (const allowReviews of [false, true]) {
+        let calls = 0;
+        const result = await rawPricesWithSales(card, identity, {
+            now, requestedCondition: "LIGHTLY_PLAYED", fetchRawComps: async () => sales,
+            assessCondition: async sold => sold.id === sales[0].id ? proof : null,
+            ...(allowReviews && { acquireCondition: async offered => {
+                calls++;
+                return { sale: offered[0], evidence: { ...proof, condition: "HEAVILY_PLAYED" as const } };
+            } }),
+        });
+        assert.equal(calls, allowReviews ? 2 : 0);
+        assert.equal(result.prices?.find(row => row.condition === "LIGHTLY_PLAYED"), undefined);
+        assert.match(result.evidenceNote!, /isolated high sale/);
+    }
+});

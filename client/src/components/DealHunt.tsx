@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import type { AiUsageDay, HuntProgress } from "../../../shared/ai-usage.ts";
 import { DEAL_HUNT_LISTING_LIMIT, dealHuntGoals, type DealHuntGoal, type DealHuntReport, type DealHuntResponse, type DealHuntScope, type HuntMarketPreferences } from "../../../shared/deal-hunt.ts";
 import type { ListingFilters } from "../../../shared/listing-filters.ts";
+import { CONDITION_NAMES, isRawCondition } from "../../../shared/conditions.ts";
 import { dollars } from "../../../shared/format.ts";
 import { MONEY_CONFIG } from "../../../shared/money/config.ts";
 import { acquisitionCost } from "../../../shared/money/underwriting.ts";
@@ -182,7 +183,9 @@ export function DealHuntResult({ result, now, targets, updatedTerms, currentList
         selectedPrices.additional = savedPrices.additional;
     const mismatch = physical?.identity?.notThisCard;
     const release = mismatch || (physical && releaseIssue(physical));
-    const expired = release || outdated || expiredGrading || expiredPurchase || auction && auction.validUntil <= now;
+    const unverifiedResaleBid = report.decision === "BID" && report.goal === "resell" &&
+        result.auctionOpportunity?.marketBasis?.startsWith("TCGPLAYER_");
+    const expired = release || outdated || expiredGrading || expiredPurchase || unverifiedResaleBid || auction && auction.validUntil <= now;
     const bid = report.decision === "BID";
     const resaleBid = bid && !expired && result.auctionOpportunity?.status === "BID" ? result.auctionOpportunity : null;
     const quoteSource = tcgplayerEstimateLabel(resaleBid?.marketBasis);
@@ -201,8 +204,16 @@ export function DealHuntResult({ result, now, targets, updatedTerms, currentList
     const explanation = <>
         {report.decision === "WAIT" && terms && !release && report.priceGap &&
             <p>Item price would need to drop <strong>{dollars(report.priceGap.drop)}</strong> to {dollars(report.priceGap.maxItemPrice)} to meet your targets.</p>}
+        {resaleBid?.maxBid != null && <p>Recommended max snipe <strong>{dollars(resaleBid.maxBid)}</strong> item bid.
+            {resaleBid.totalAtMaxBid != null && resaleBid.profitAtMaxBid != null &&
+                ` At that bid, you pay ${dollars(resaleBid.totalAtMaxBid)} delivered and project ${dollars(resaleBid.profitAtMaxBid)} profit after costs.`}</p>}
         {terms && !grading && <p>Estimated total to buy <strong>{dollars(acquisitionCost(terms.price, terms.shipping, MONEY_CONFIG.buying))}</strong> including shipping and estimated tax.</p>}
-        {exit && rawPrice && !expired && <p>Resale {dollars(rawPrice.price)} · {tcgplayerEstimateLabel(rawPrice.basis) ?? (reviewed?.rawPricing?.source === "pkmnprices" ? "Matched eBay sales via PKMNPrices" : "Matched eBay sales")}</p>}
+        {rawPrice && !expired && <p>Raw resale used for profit <strong>{dollars(rawPrice.price)}</strong>
+            {isRawCondition(rawPrice.condition) && ` · ${CONDITION_NAMES[rawPrice.condition]}`} · {tcgplayerEstimateLabel(rawPrice.basis) ?? "Matched eBay sales"}</p>}
+        {exit?.path === "GRADED_RESALE" && exit.salePrice != null && !expired && <p>Slab resale used for profit <strong>{dollars(exit.salePrice)}</strong>
+            {" · "}{reviewed?.slab?.grader} {reviewed?.slab?.grade} · Matched eBay sales</p>}
+        {exit?.path === "GRADE" && exit.expectedSale != null && !expired && <p>Estimated resale after {exit.grader} grading <strong>{dollars(exit.expectedSale)}</strong>
+            {" · Weighted across the projected grades"}</p>}
         <p>{release || (expiredGrading ? expiredGradingReason : expired ? bid
             ? "The next search checks the auction terms before calculating a bid limit."
             : "The next search checks current prices and availability before recommending a buy." : report.reason)}</p>

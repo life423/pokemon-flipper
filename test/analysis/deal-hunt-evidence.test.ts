@@ -5,7 +5,8 @@ import { MONEY_CONFIG } from "../../shared/money/config.ts";
 import { acquisitionCost, underwrite } from "../../shared/money/underwriting.ts";
 import { cents, meetsMoneyTargets } from "../../shared/money/cents.ts";
 import { PRICING_VERSION } from "../../shared/pricing-freshness.ts";
-import { dealHuntCandidate } from "../../server/analysis/deal-hunt-evidence.ts";
+import { dealHuntCandidate, flipResaleEvidence } from "../../server/analysis/deal-hunt-evidence.ts";
+import { listingMarketPrices } from "../../shared/listing-market-prices.ts";
 import { rankHuntMarkets } from "../../server/analysis/same-set-markets.ts";
 import { cardEvaluation, matchedRawPrice, salesSummary } from "../fixtures/card-evaluation.ts";
 import { tcgplayerRawEstimate } from "../fixtures/tcgplayer-raw-estimate.ts";
@@ -39,6 +40,8 @@ test("an asking quote alone cannot authorize buying or establish a liquid market
     assert.equal(e.underwriting.verdict, "CANT_PRICE");
     assert.equal(dealHuntCandidate(e, "resell", now)!.outcome(checked)?.verifiedPurchase, undefined);
     assert.deepEqual(rankHuntMarkets([e], null, "resell", "any_card", now), []);
+    const comparison = flipResaleEvidence(e, "resell", { minProfit: 0, minRoi: 0 });
+    assert.equal(listingMarketPrices(comparison, { ...e.listing, images: e.listing.photos ?? [] }, now)?.tcg?.market, 175);
 });
 
 test("a liquidity-constrained Buy needs observed recent sales on the exact exit, with one or two allowed at low confidence", () => {
@@ -63,12 +66,13 @@ test("a liquidity-constrained Buy needs observed recent sales on the exact exit,
     assert.match(prevented.reason, /liquidity is unverified/i);
     for (const count of [1, 2]) {
         const recent = salesSummary("RAW", "LIGHTLY_PLAYED", Array(count).fill(160));
+        recent.median = 160;
         recent.sales.forEach((sale, i) => Object.assign(sale, { saleType: "fixed_price", soldAt: soldAt(45 - i),
             url: `https://www.ebay.com/itm/${123111111112 + i}`, sellerCondition: "LIGHTLY_PLAYED" }));
         e.rawPricing.prices = [matchedRawPrice(175, soldAt(45), count)];
         e.underwriting = underwrite(e, { ...MONEY_CONFIG, targets });
         const outcome = dealHuntCandidate(e, "resell", now, unmatched, targets, undefined, liquidity)!.outcome(checked)!;
-        assert.equal(outcome.decision, "BUY");
+        assert.equal(outcome.decision, "BUY", outcome.reason);
         assert.equal(outcome.recentSales, count);
         assert.equal(outcome.verifiedPurchase?.path.path, "RAW");
         assert.match(outcome.reason, /liquidity confidence is low/i);

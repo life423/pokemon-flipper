@@ -4,7 +4,7 @@ import { releaseIssue } from "./base-set-release.ts";
 import { CONDITION_NAMES, isRawCondition } from "./conditions.ts";
 import { printingName, readyForPricing } from "./identity.ts";
 import { listingEvidenceKey, searchPhotosFitDetails } from "./listing-evidence.ts";
-import { isUsableRawPrice, unsupportedVariantReason } from "./money/price-evidence.ts";
+import { isUsableRawPrice, tcgplayerComparison, unsupportedVariantReason } from "./money/price-evidence.ts";
 import { deeperPhotoConcerns } from "./photo-review.ts";
 import { observedCardKind, obscuredDisclosedWear } from "./photo-evidence.ts";
 import { currentPriceEvidence, maxPriceEvidenceAge } from "./pricing-freshness.ts";
@@ -52,7 +52,7 @@ export interface ListingMarketPrices {
     additional?: ProviderPrice[];
     scope: string;
     validUntil: number;
-    sold?: { price: number; count: number; days: number; sales30?: number; typicalRange?: [number, number]; sellerCondition: boolean; latestSale?: string; validUntil?: number; sales?: TileSale[] };
+    sold?: { price: number; filteredMean?: boolean; average?: { count: number; fixedPrice: boolean; days: number }; count: number; days: number; sales30?: number; typicalRange?: [number, number]; sellerCondition: boolean; latestSale?: string; validUntil?: number; sales?: TileSale[] };
     tcg?: { market?: number; delivered?: number; condition: string; checkedAt?: string; marketRecordAt?: string | null; snapshotAt?: string; validUntil?: number; offerValidUntil?: number };
 }
 
@@ -87,11 +87,12 @@ export function listingMarketPrices(e: Evaluation | null | undefined, listing: P
         const raw = hasPrices && e.rawPricing?.printing === e.identity!.printing && e.rawPricing.finish === e.identity!.finish ? e.rawPricing : null;
         scope = CONDITION_NAMES[wear];
         const rows = raw?.prices?.filter(r => r.condition === wear && isUsableRawPrice(r)) ?? [];
-        const reference = e.rawPricing?.tcgplayerReference;
+        const reference = tcgplayerComparison(e.rawPricing);
         const quote = reference?.condition === wear && e.rawPricing?.printing === e.identity!.printing &&
             e.rawPricing.finish === e.identity!.finish && reference.printing === e.rawPricing.variant
             ? reference : rows.find(r => r.basis?.startsWith("TCGPLAYER_"))?.offers;
-        if (quote) {
+        if (quote && quote.source === "TCGPLAYER" && quote.currency === "USD" && Array.isArray(quote.offers) &&
+            Number.isFinite(Date.parse(quote.checkedAt)) && quote.offers.every(offer => Number.isFinite(offer.total) && offer.total > 0)) {
             tcg = { condition: quote.marketCondition, checkedAt: quote.checkedAt, marketRecordAt: quote.marketRecordAt,
                 snapshotAt: quote.snapshotAt, validUntil: Date.parse(quote.checkedAt) + 6 * 3_600_000 };
             if (Number.isFinite(quote.marketPrice) && quote.marketPrice! > 0) tcg.market = quote.marketPrice;
@@ -102,9 +103,9 @@ export function listingMarketPrices(e: Evaluation | null | undefined, listing: P
         }
         summary = rows.find(r => r.comps?.count)?.comps ?? raw?.ebayComps?.find(s => s.grader === "RAW" && s.grade === wear);
     }
-    const soldRows = (s: CompSummary | null | undefined, seller: boolean) => {
+    const soldRows = (s: CompSummary | null | undefined, seller: boolean, activity = false) => {
         if (!s || kind === "raw" && (s.grader !== "RAW" || s.grade !== wear)) return [];
-        const sales = s.sales.filter(sale => kind === "graded" || (seller
+        const sales = (activity ? s.activitySales ?? s.sales : s.sales).filter(sale => kind === "graded" || (seller
             ? sale.sellerCondition === wear : sale.photoCondition === wear && sale.conditionEvidence?.length));
         return observedSoldSales(sales, now, { maxDays: s.windowDays ?? 90, slab: kind === "graded" });
     };
@@ -116,6 +117,7 @@ export function listingMarketPrices(e: Evaluation | null | undefined, listing: P
     }
     const days = summary?.windowDays ?? 90;
     const sampleUntil = Math.min(validUntil, ...sales.map(s => s.at + days * 86_400_000 + 1));
+    const sales30 = soldRows(summary, sellerCondition, true).filter(row => now - row.at <= 30 * 86_400_000).length;
     const recentPrices = sales.filter(row => now - row.at <= 30 * 86_400_000).map(row => row.price).sort((a, b) => a - b);
     const quartile = (fraction: number) => {
         const rank = (recentPrices.length - 1) * fraction;
@@ -124,7 +126,11 @@ export function listingMarketPrices(e: Evaluation | null | undefined, listing: P
     const medianPrice = sales.length ? median(sales.map(sale => sale.price)) : undefined;
     const estimate = summary?.marketEstimate && summary.count === sales.length && sales.length ? soldMarketPrice(summary) : null;
     const additional: ProviderPrice[] = [];
-    if (estimate && estimate !== medianPrice) additional.push({ source: "eBay", basis: "Resale estimate from matched sales",
+    const method = summary?.marketEstimate;
+    const average = estimate !== null && !sellerCondition && method?.sampleSize && ["FIXED_PRICE_AVERAGE", "SOLD_AVERAGE", "FILTERED_SOLD_MEAN"].includes(method.method)
+        ? { count: method.sampleSize, fixedPrice: method.method === "FIXED_PRICE_AVERAGE", days: method.windowDays ?? days } : undefined;
+    const filteredMean = estimate !== null && kind === "raw" && !sellerCondition && Boolean(summary?.marketEstimate);
+    if (!filteredMean && estimate && estimate !== medianPrice) additional.push({ source: "eBay", basis: "Resale estimate from matched sales",
         price: estimate, currency: "USD", asOf: new Date(sales[0].at).toISOString(), validUntil: sampleUntil });
     const market = JSON.stringify([cardmarketComparisonKey(e), e.answeredAt, e.pricesCheckedAt,
         listingEvidenceKey({ title: e.listing.title, images: e.listing.photos ?? [] })]);
@@ -132,7 +138,7 @@ export function listingMarketPrices(e: Evaluation | null | undefined, listing: P
     return { scope, additional, printing: printingName(e.identity!.printing), ...(ended ? {} : { lookup: { listingId: listing.id, market } }),
         validUntil, tcg, sold: sales.length ? {
         latestSale: new Date(sales[0].at).toISOString(), validUntil: sampleUntil, sales: tileSales(sales),
-        price: medianPrice!, count: sales.length, days, sellerCondition, sales30: recentPrices.length,
+        price: filteredMean ? estimate! : medianPrice!, ...(filteredMean && { filteredMean }), ...(average && { average }), count: sales.length, days, sellerCondition, sales30,
         ...(recentPrices.length >= 4 && { typicalRange: [quartile(0.25), quartile(0.75)] }),
     } : undefined };
 }
