@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { requireLiveProvider } from "../lib/saved-provider-evidence.ts";
 import { createSharedWork } from "../lib/shared-work.ts";
 import { readMarketData, saveMarketData } from "./market-cache.ts";
-import type { TradedCard } from "./traded-cards.ts";
+export interface TradedCard { name: string; set: string; number: string; mover?: "Silph Co set activity" | "PriceCharting Big Movers" | "PokéPrice rising card" }
 const share = createSharedWork();
 const base = "https://silphcoanalytics.xyz/api/v3/";
 type Json = Record<string, unknown>;

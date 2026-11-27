@@ -1,5 +1,5 @@
 import { silphSetSeeds } from "./silphco.ts";
-import type { TradedCard } from "./traded-cards.ts";
+import type { TradedCard } from "./silphco.ts";
 import { setTimeout as pause } from "node:timers/promises";
 import { DomUtils, parseDocument } from "htmlparser2";
 import { fetchMarketHtml, importMarketDay, recentMarketDay, type MarketImportOptions } from "./daily-market-import.ts";
