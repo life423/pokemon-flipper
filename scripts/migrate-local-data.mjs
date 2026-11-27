@@ -76,6 +76,9 @@ try {
             try {
                 const result = sqlite.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
                 if (result.busy) throw Error('SQLite is still in use; stop its writer before migration.');
+                // A later read-only connection must not recreate WAL/SHM files
+                // after inventory. All committed data is already checkpointed.
+                sqlite.exec('PRAGMA journal_mode=DELETE');
                 const check = sqlite.prepare('PRAGMA quick_check').get();
                 if (Object.values(check)[0] !== 'ok') throw Error('SQLite integrity check failed.');
             } finally { sqlite.close(); }
