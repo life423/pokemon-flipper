@@ -106,31 +106,3 @@ a {
         text-decoration-color: currentColor;
     }
 }
-
-/* Placeholders in the shape of what's loading. */
-.shimmer {
-    display: block;
-    background: linear-gradient(100deg, var(--surface-alt) 30%, color-mix(in srgb, var(--surface-alt) 75%, var(--text-muted)) 50%, var(--surface-alt) 70%);
-    background-size: 300% 100%;
-    animation: shimmer 1.4s var(--ease-in-out) infinite;
-}
-
-@keyframes shimmer {
-    from {
-        background-position: 100% 0;
-    }
-    to {
-        background-position: 0 0;
-    }
-}
-
-/* Sorting and filtering: cards glide to their new places. */
-::view-transition-group(*) {
-    animation-duration: var(--dur-base);
-    animation-timing-function: var(--ease-in-out);
-}
-
-::view-transition-old(root),
-::view-transition-new(root) {
-    animation-duration: var(--dur-fast);
-}

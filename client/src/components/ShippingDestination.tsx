@@ -59,7 +59,7 @@ export function ShippingDestination({ busy = false, onSaved }: ShippingDestinati
                 {saving ? "Saving…" : "Save ZIP"}
             </button>
         </div>
-        <p id={`${id}-help`}>{busy ? "Saving will stop the current search. Run it again for updated delivery quotes." : saved ? "Used for eBay delivery quotes. Change it before starting a new search." : "Add your destination so calculated shipping can be included in purchase limits."}</p>
+        <p id={`${id}-help`}>{busy ? "Saving will stop the current search. Run it again for updated delivery quotes." : saved ? "Used for eBay delivery quotes. Change it before starting a new search." : "Add your destination so calculated shipping can be included in auction estimates."}</p>
         {error && <p id={`${id}-error`} role="alert" className={styles.error}>{error}</p>}
         {notice && <p role="status">{notice}</p>}
     </div>;

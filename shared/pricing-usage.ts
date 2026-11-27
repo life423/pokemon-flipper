@@ -18,3 +18,8 @@ export interface PricingResearchUsage {
     // Last observed numeric account headers; not a projected current balance.
     provider: { limit: number | null; remaining: number | null; balance: number | null; resetSeconds: number | null; observedAt?: string } | null;
 }
+
+export interface PricingIssue {
+    kind: "RATE_LIMIT" | "TEMPORARY" | "CREDITS" | "CONFIG";
+    retryAt: string | null;
+}

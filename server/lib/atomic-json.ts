@@ -1,19 +1,7 @@
+import { sqlDocument, writeDocument } from "../storage/documents.ts";
 import fs from "node:fs/promises";
-import { constants } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-
-// Flush the directory entry after an atomic rename. Windows requires a
-// write-capable handle for FlushFileBuffers; POSIX opens directories read-only.
-export async function syncDirectory(directory: string): Promise<void> {
-    const access = process.platform === "win32" ? constants.O_WRONLY : constants.O_RDONLY;
-    const handle = await fs.open(directory, access);
-    try {
-        await handle.sync();
-    } finally {
-        await handle.close();
-    }
-}
 
 // A Windows reader can briefly deny replacement. Retry the same complete
 // file without removing the existing destination.
@@ -31,6 +19,7 @@ export async function replaceAtomic(temporary: string, file: string): Promise<vo
 // truncated write. A failed replacement leaves the previous document intact.
 export async function writeJsonAtomic(file: string, value: unknown): Promise<void> {
     const serialized = JSON.stringify(value);
+    if (sqlDocument(file)) return writeDocument(file, Buffer.from(serialized));
     await fs.mkdir(path.dirname(file), { recursive: true });
     const temporary = `${file}.${randomUUID()}.tmp`;
     try {

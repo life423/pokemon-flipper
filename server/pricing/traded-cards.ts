@@ -1,3 +1,4 @@
+import { readBoundedText } from "../lib/http.ts";
 import { readMarketData, saveMarketData } from "./market-cache.ts";
 import { createSharedWork } from "../lib/shared-work.ts";
 
@@ -31,17 +32,7 @@ export async function tradedCards(signal: AbortSignal, cachedOnly = false): Prom
         try {
             const response = await fetch(source, { signal: stop });
             if (!response.ok || !response.body) { await response.body?.cancel(); return []; }
-            const reader = response.body.getReader();
-            const chunks: Uint8Array[] = [];
-            let size = 0;
-            for (;;) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                size += value.length;
-                if (size > 800_000) { await reader.cancel(); return []; }
-                chunks.push(value);
-            }
-            cards = tradedCardSeeds(Buffer.concat(chunks).toString("utf8"));
+            cards = tradedCardSeeds(await readBoundedText(response, 800_000));
         } catch { workSignal.throwIfAborted(); return []; }
         if (cards.length) await saveMarketData(key, cards);
         return cards;

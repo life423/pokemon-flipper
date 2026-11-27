@@ -2,8 +2,7 @@ import "../fixtures/isolated-data.ts";
 import { closeMarketCache } from "../../server/pricing/market-cache.ts";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parsePokePriceMovers, parsePokePriceDetail, importPokePrice, recentPokePriceSeeds } from "../../server/pricing/pokeprice-movers.ts";
-import { observedPriceChange } from "../../shared/price-history.ts";
+import { parsePokePriceMovers, parsePokePriceDetail, importPokePrice, recentPokePriceSnapshot } from "../../server/pricing/pokeprice-movers.ts";
 
 const now = Date.parse("2026-11-26T14:00Z");
 const link = (sku: string) => `<li><a href="/cards/${sku}"><p>Pikachu</p><p>Neo Genesis</p><p>$15.76</p><span>+58.5%</span></a></li>`;
@@ -33,9 +32,6 @@ test("daily public gains separate asks, sold grades, TCGplayer variants and obse
     await Promise.all([run(), run()]);
     assert.equal((await run())?.rows[0].detail?.ebayAsks[0].grade, "CGC 9");
     assert.equal(calls, 2);
-    assert.equal((await recentPokePriceSeeds(now, "all"))[0].number, "70");
-    assert.equal((await recentPokePriceSeeds(now + 10 * 86_400_000, "all")).length, 0);
-    const points = [{ day: "2026-11-14", price: 9.94 }, { day: "2026-11-20", price: 15.76 }];
-    assert.equal(observedPriceChange(points)?.percent.toFixed(1), "58.6");
-    assert.equal(observedPriceChange(points.slice(1)), null);
+    assert.equal((await recentPokePriceSnapshot(now))?.rows[0].number, "70");
+    assert.equal(await recentPokePriceSnapshot(now + 10 * 86_400_000), null);
 });

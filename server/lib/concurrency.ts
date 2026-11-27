@@ -24,10 +24,3 @@ export function createLimiter(max: number) {
         }
     };
 }
-
-// items.map(fn), with at most `max` running at once. Results keep order.
-export function mapLimit<T, R>(items: T[], max: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-    const limit = createLimiter(max);
-
-    return Promise.all(items.map((item) => limit(() => fn(item))));
-}

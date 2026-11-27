@@ -1,13 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { listingEvidenceKey, photoEvidenceKey, searchPhotosFitDetails } from "../shared/listing-evidence.ts";
+import { photoEvidenceKey, searchPhotosFitDetails } from "../shared/listing-evidence.ts";
 
 const photo = (id: string, size = 500) => `https://i.ebayimg.com/images/g/${id}/s-l${size}.jpg`;
-test("thumbnail resizing does not invalidate evidence, but changed, reordered, removed photos or title do", () => {
-    const listing = { title: "Venusaur", images: [photo("front"), photo("back")] };
-    assert.equal(listingEvidenceKey(listing), listingEvidenceKey({ ...listing, images: [photo("front", 1600), photo("back", 1600)] }));
-    for (const changed of [{ ...listing, images: [photo("other")] }, { ...listing, images: [...listing.images].reverse() }, { ...listing, images: [photo("front")] }, { ...listing, title: "Charizard" }]) {
-        assert.notEqual(listingEvidenceKey(listing), listingEvidenceKey(changed));
+test("photo identity ignores eBay resizing but preserves replacement, order and removal", () => {
+    const images = [photo("front"), photo("back")];
+    assert.equal(photoEvidenceKey(images), photoEvidenceKey([photo("front", 1600), photo("back", 1600)]));
+    for (const changed of [[photo("other")], [...images].reverse(), [photo("front")]]) {
+        assert.notEqual(photoEvidenceKey(images), photoEvidenceKey(changed));
     }
     assert.notEqual(photoEvidenceKey(["https://other.example/s-l500.jpg"]), photoEvidenceKey(["https://other.example/s-l1600.jpg"]));
 });

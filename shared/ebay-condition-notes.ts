@@ -1,5 +1,3 @@
-import { sellerDisclosedCreasing } from "./conditions.ts";
-
 // Browse includes the same list of possible flaws on every card in each of
 // these condition categories. Match the whole category-specific list so an
 // isolated, listing-specific disclosure remains evidence.
@@ -23,8 +21,4 @@ export function cardSpecificNotes(condition: string | null | undefined, notes: s
 export function hasSavedConditionExamples(listing: { cardCondition?: string | null; conditionNotes?: string[] }): boolean {
     const notes = listing.conditionNotes;
     return !!notes && cardSpecificNotes(listing.cardCondition, notes) !== notes;
-}
-
-export function listingDisclosesCardCrease(listing: { cardCondition?: string | null; conditionNotes?: string[] }): boolean {
-    return !!listing.conditionNotes && sellerDisclosedCreasing(cardSpecificNotes(listing.cardCondition, listing.conditionNotes));
 }

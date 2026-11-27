@@ -1,8 +1,9 @@
+import { withShippingDestination } from "./shipping-destination.ts";
 import { createHash } from "node:crypto";
 import type { SniperCapabilities, SniperMode, SniperQuote } from "../../shared/sniper.ts";
 import { parseListingLink } from "../../shared/listing-link.ts";
-import { money } from "../../shared/money/cents.ts";
-import { withAiUsageContext } from "../ai/usage-context.ts";
+import { money } from "../../shared/money.ts";
+import { withProviderContext } from "../lib/provider-context.ts";
 import { fetchJson, ProviderError } from "../lib/http.ts";
 import { requireLiveProvider } from "../lib/saved-provider-evidence.ts";
 import { configuredShippingZip, getApplicationToken } from "./api.ts";
@@ -103,11 +104,11 @@ async function sandboxQuote(itemId: string, url: string, signal?: AbortSignal, e
     };
 }
 
-export async function readSniperQuote(itemId: string, mode: SniperMode, signal?: AbortSignal, searchId?: string, buyerId?: string): Promise<SniperQuote> {
+async function readSniperQuoteAtDestination(itemId: string, mode: SniperMode, signal?: AbortSignal, searchId?: string, buyerId?: string): Promise<SniperQuote> {
     const link = singleAuction(itemId);
     if (mode === "sandbox") return sandboxQuote(itemId, link.url.replace("www.ebay.com", "www.sandbox.ebay.com"), signal, buyerId);
     if (mode !== "reminder") throw new ProviderError("Unknown auction mode.");
-    const details = await withAiUsageContext({ searchId: searchId ?? `sniper-${itemId.split("|")[1]}`, listingId: itemId },
+    const details = await withProviderContext({ searchId: searchId ?? `sniper-${itemId.split("|")[1]}`, listingId: itemId },
         () => getListingDetails(itemId, { maxAgeHours: 0, keepReserve: true, signal }));
     if (details.id !== itemId || details.buyingOption !== "AUCTION" || details.itemGroupType || details.availability === "UNAVAILABLE" ||
         !details.title?.trim() || !details.retrievedAt || !details.endTime || !(Date.parse(details.endTime) > Date.now())) throw new ProviderError("eBay could not confirm this listing as an active auction.");
@@ -117,7 +118,7 @@ export async function readSniperQuote(itemId: string, mode: SniperMode, signal?:
     };
 }
 
-export async function submitSandboxBid(itemId: string, maxBid: number, signal: AbortSignal | undefined, buyerId: string): Promise<string> {
+async function submitSandboxBidAtDestination(itemId: string, maxBid: number, signal: AbortSignal | undefined, buyerId: string): Promise<string> {
     singleAuction(itemId);
     if (maxBid <= 0 || money(maxBid) !== maxBid) throw new SandboxBidRejected("Enter a positive USD maximum in dollars and cents.");
     // Single POST. A timeout, missing receipt or ambiguous response must
@@ -128,4 +129,12 @@ export async function submitSandboxBid(itemId: string, maxBid: number, signal: A
     if ([400, 401, 403, 404, 409, 429].includes(response.status)) throw new SandboxBidRejected(sandboxError(response));
     if (!response.ok || typeof body?.proxyBidId !== "string" || !body.proxyBidId.trim()) throw new ProviderError("The sandbox bid receipt could not be confirmed.");
     return body.proxyBidId;
+}
+
+export function readSniperQuote(...args: Parameters<typeof readSniperQuoteAtDestination>): Promise<SniperQuote> {
+    return withShippingDestination(() => readSniperQuoteAtDestination(...args));
+}
+
+export function submitSandboxBid(...args: Parameters<typeof submitSandboxBidAtDestination>): Promise<string> {
+    return withShippingDestination(() => submitSandboxBidAtDestination(...args));
 }

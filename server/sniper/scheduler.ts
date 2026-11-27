@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { withinReminderWindow } from "../../shared/sniper.ts";
 import { parseListingLink } from "../../shared/listing-link.ts";
-import { cents } from "../../shared/money/cents.ts";
+import { cents } from "../../shared/money.ts";
 import type { SniperArm, SniperJob, SniperMode, SniperQuote, SniperStatus } from "../../shared/sniper.ts";
 import { withFileLease } from "../lib/file-lease.ts";
 import { jsonStore } from "../lib/json-store.ts";

@@ -9,7 +9,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createPriceResearchBudget, PriceResearchBudgetError, reservePriceRequest,
     priceResearchSummary, assertPriceResearchAvailable, withPriceResearchSignal, getPriceResearchSignal } from "../../server/pricing/research-budget.ts";
-import { withAiUsageContext } from "../../server/ai/usage-context.ts";
+import { withProviderContext } from "../../server/lib/provider-context.ts";
 import { ROOT } from "../../server/lib/paths.ts";
 
 const execute = promisify(execFile);
@@ -230,7 +230,7 @@ test("default API preserves scope/signal, fails closed without a key, and namesp
     assert.equal(await priceResearchSummary(), null);
     assert.throws(() => reservePriceRequest("/cards"), error => error instanceof PriceResearchBudgetError && error.reason === "SCOPE");
     const searchId = randomUUID();
-    await withAiUsageContext({ searchId }, async () => {
+    await withProviderContext({ searchId }, async () => {
         assert.throws(() => reservePriceRequest("/cards"), error => error instanceof PriceResearchBudgetError && error.reason === "ACCOUNT");
         process.env.PKMNPRICES_API_KEY = "offline-namespace-one";
         const cancelled = new AbortController(); cancelled.abort();

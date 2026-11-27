@@ -2,7 +2,7 @@ import { silphSetSeeds } from "./silphco.ts";
 import type { TradedCard } from "./traded-cards.ts";
 import { setTimeout as pause } from "node:timers/promises";
 import { DomUtils, parseDocument } from "htmlparser2";
-import { fetchMarketHtml, importMarketDay, recentMarketDay, scheduleMarketImport, type MarketImportOptions } from "./daily-market-import.ts";
+import { fetchMarketHtml, importMarketDay, recentMarketDay, type MarketImportOptions } from "./daily-market-import.ts";
 
 type Element = ReturnType<typeof DomUtils.findAll>[number];
 
@@ -141,32 +141,6 @@ export async function importDailyDiscovery(options: MarketImportOptions = {}) {
     return { snapshot, silph };
 }
 
-export async function recentSilphSeeds(now: number) {
-    return await recentMarketDay<TradedCard[]>(silphPrefix, now) ?? [];
-}
-
-export function startPokePriceSchedule(signal: AbortSignal) {
-    scheduleMarketImport(prefix, signal, importDailyDiscovery);
-}
-
-export async function recentPokePriceSeeds(now: number, kind: "all" | "raw" | "graded") {
-    const snapshot = await recentMarketDay<PokePriceSnapshot>(prefix, now);
-    if (!snapshot) return [];
-    const age = now - Date.parse(snapshot.publishedDay + "T00:00:00Z");
-    if (!Number.isFinite(age) || age < -86_400_000 || age > 8 * 86_400_000) return [];
-    // Only compare like grade buckets. The shortlist still needs actual listing photos,
-    // shipping, exact completed sales and fees before it can produce a buyer decision.
-    const discount = (lead: PokePriceSnapshot["rows"][number]) => {
-        let best = 0;
-        const bucket = (s: string) => s.toLowerCase().replace(/\s+/g, "") === "raw/ungraded" ? "raw" : s.toLowerCase().replace(/\s+/g, "");
-        for (const ask of lead.detail?.ebayAsks ?? []) {
-            const grade = bucket(ask.grade);
-            if (kind !== "all" && (kind === "raw") !== (grade === "raw")) continue;
-            const sales = lead.detail?.ebaySales.find(row => bucket(row.grade) === grade);
-            if (sales) best = Math.max(best, 1 - ask.lowestUsd / sales.medianUsd);
-        }
-        return best;
-    };
-    return snapshot.rows.map(row => ({ row, discount: discount(row) })).sort((a, b) => b.discount - a.discount)
-        .map(({ row }) => ({ name: row.name, set: row.set, number: row.number, mover: "PokéPrice rising card" as const }));
+export function recentPokePriceSnapshot(now: number) {
+    return recentMarketDay<PokePriceSnapshot>(prefix, now);
 }

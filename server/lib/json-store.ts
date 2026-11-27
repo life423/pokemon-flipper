@@ -1,4 +1,4 @@
-import fs from "node:fs/promises";
+import { readDataFile } from "../storage/data-file.ts";
 import { writeJsonAtomic } from "./atomic-json.ts";
 
 // Serialize read/modify/write operations and replace atomically. A corrupt file
@@ -7,7 +7,7 @@ export function jsonStore<T>(file: string, initial: () => T, valid: (value: unkn
     let tail = Promise.resolve();
     const read = async (): Promise<T> => {
         try {
-            const value: unknown = JSON.parse(await fs.readFile(file, "utf8"));
+            const value: unknown = JSON.parse(await readDataFile(file, "utf8"));
             if (!valid(value)) throw new Error("Invalid saved data");
             return value;
         } catch (error) {

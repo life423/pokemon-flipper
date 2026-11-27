@@ -1,7 +1,7 @@
 import { DomUtils, parseDocument } from "htmlparser2";
 import { sameCardNumber } from "../../shared/card-number.ts";
 import { setKey } from "../../shared/sets.ts";
-import type { Identity } from "../../shared/types.ts";
+interface CardLookup { name: string; set: string | null; cardNumber: string | null }
 import { parseListingLink } from "../../shared/listing-link.ts";
 import { sameCatalogName } from "../identity/catalog-name.ts";
 import { requireLiveProvider } from "../lib/saved-provider-evidence.ts";
@@ -62,7 +62,7 @@ export function pokePriceSales(payload: unknown, sku: string, now: number) {
 
 // Resolve the provider's own catalog first. Edition and wear can be pooled on
 // the resulting page; these figures remain labeled context for the reviewer.
-export async function pokePriceCard(identity: Identity, signal: AbortSignal) {
+export async function pokePriceCard(identity: CardLookup, signal: AbortSignal) {
     if (!identity.set || !identity.cardNumber) return null;
     const sets = await page("/sets", 24, html => links(html, "sets"), signal);
     const canonical = (name: string) => setKey(name === "Base" ? "Base Set" : name);

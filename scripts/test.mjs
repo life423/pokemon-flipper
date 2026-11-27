@@ -9,7 +9,7 @@ const directory = await fs.mkdtemp(path.join(os.tmpdir(), "pokemon-test-suite-")
 try {
     const child = spawn(process.execPath, ["--import", "tsx", "--test", ...process.argv.slice(2), "test/**/*.test.*"], {
         stdio: "inherit",
-        env: { ...process.env, POKEMON_FLIPPER_DATA_DIR: directory, POKEMON_FLIPPER_STORAGE: "file" },
+        env: { ...process.env, TMPDIR: directory, TEMP: directory, TMP: directory, POKEMON_FLIPPER_DATA_DIR: directory, POKEMON_FLIPPER_STORAGE: "file", POKEMON_FLIPPER_SQL_TEST: "0" },
     });
     const stop = () => child.kill("SIGTERM");
     process.once("SIGINT", stop); process.once("SIGTERM", stop);

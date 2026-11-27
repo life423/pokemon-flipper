@@ -1,7 +1,7 @@
 import "../fixtures/isolated-data.ts";
 import { test } from "../fixtures/search-context.ts";
 import assert from "node:assert/strict";
-import { getListingDetails, searchListings } from "../../server/ebay/listings.ts";
+import { getListingDetails } from "../../server/ebay/listings.ts";
 import { offlineEbayCredentials } from "../fixtures/ebay-credentials.ts";
 
 test("Browse quotes shipping by destination and separates unknown shipping from free shipping across caches", async t => {
@@ -38,21 +38,21 @@ test("Browse quotes shipping by destination and separates unknown shipping from 
         const response = { ...item, shippingOptions: options };
         return Response.json(route === "search" ? { total: 1, itemSummaries: [response] } : response);
     });
-    const readShipping = async () => [(await searchListings(item.title)).listings[0].shipping, (await getListingDetails(id)).shipping];
+    const readShipping = async () => [(await getListingDetails(id)).shipping];
 
     process.env.EBAY_SHIP_TO_ZIP = " 10001-invalid ";
-    assert.deepEqual(await readShipping(), [null, null]);
+    assert.deepEqual(await readShipping(), [null]);
     delete process.env.EBAY_SHIP_TO_ZIP;
-    assert.deepEqual(await readShipping(), [null, null]);
+    assert.deepEqual(await readShipping(), [null]);
     process.env.EBAY_SHIP_TO_ZIP = " 10001 ";
-    assert.deepEqual(await readShipping(), [8.5, 8.5]);
+    assert.deepEqual(await readShipping(), [8.5]);
     process.env.EBAY_SHIP_TO_ZIP = "90001";
-    assert.deepEqual(await readShipping(), [0, 0]);
+    assert.deepEqual(await readShipping(), [0]);
     process.env.EBAY_SHIP_TO_ZIP = "10001-1234";
-    assert.deepEqual(await readShipping(), [9.25, 9.25]);
+    assert.deepEqual(await readShipping(), [9.25]);
     process.env.EBAY_SHIP_TO_ZIP = "10001";
-    assert.deepEqual(await readShipping(), [8.5, 8.5]);
+    assert.deepEqual(await readShipping(), [8.5]);
     delete process.env.EBAY_SHIP_TO_ZIP;
-    assert.deepEqual(await readShipping(), [null, null]);
-    assert.deepEqual(calls, [null, firstLocation, secondLocation, extendedLocation].flatMap(location => [["search", location], ["details", location]]));
+    assert.deepEqual(await readShipping(), [null]);
+    assert.deepEqual(calls, [null, firstLocation, secondLocation, extendedLocation].map(location => ["details", location]));
 });

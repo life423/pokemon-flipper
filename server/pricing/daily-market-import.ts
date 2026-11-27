@@ -1,5 +1,5 @@
+import { readBoundedText } from "../lib/http.ts";
 import { createHash } from "node:crypto";
-import { trackSharedWork } from "../lib/shared-work.ts";
 import { readMarketData, reserveMarketImport, saveMarketData } from "./market-cache.ts";
 
 const central = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Chicago", year: "numeric",
@@ -22,20 +22,7 @@ export async function fetchMarketHtml(url: string, fetchPage: typeof fetch, sign
         await response.body?.cancel();
         throw new Error(new URL(url).hostname + " returned HTTP " + response.status);
     }
-    const reader = response.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let bytes = 0;
-    for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        bytes += value.byteLength;
-        if (bytes > 2_000_000) {
-            await reader.cancel();
-            throw new Error("Market page exceeded the expected size.");
-        }
-        chunks.push(value);
-    }
-    return Buffer.concat(chunks).toString("utf8");
+    return readBoundedText(response, 2_000_000);
 }
 
 export async function importMarketDay<T>(prefix: string, now: number, collect: () => Promise<T>): Promise<T | null> {
@@ -54,20 +41,4 @@ export async function recentMarketDay<T>(prefix: string, now: number): Promise<T
         if (snapshot) return snapshot;
     }
     return null;
-}
-
-export function scheduleMarketImport(prefix: string, signal: AbortSignal, run: (options: { now: number; signal: AbortSignal }) => Promise<unknown>) {
-    let attemptedDay = "";
-    const tick = () => {
-        const now = Date.now(), { day, due } = marketImportSchedule(prefix, now);
-        if (!due || day === attemptedDay || signal.aborted) return;
-        attemptedDay = day;
-        void trackSharedWork(run({ now, signal })).catch(error => {
-            if (!signal.aborted) console.error("Daily market import failed for " + prefix, error);
-        });
-    };
-    const timer = setInterval(tick, 60_000);
-    timer.unref();
-    signal.addEventListener("abort", () => clearInterval(timer), { once: true });
-    tick();
 }

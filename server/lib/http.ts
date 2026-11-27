@@ -5,6 +5,25 @@ export class ProviderError extends Error {
     constructor(message: string, options?: ErrorOptions & { retryAfterMs?: number }) { super(message, options); this.retryAfterMs = options?.retryAfterMs; }
 }
 
+// Limit decoded page reads by received bytes, including chunked responses.
+export async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
+    if (!response.body) throw new ProviderError("The provider returned no response body.");
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let bytes = 0;
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bytes += value.byteLength;
+        if (bytes > maxBytes) {
+            await reader.cancel();
+            throw new ProviderError("Response exceeded the expected size.");
+        }
+        chunks.push(value);
+    }
+    return Buffer.concat(chunks).toString("utf8");
+}
+
 export async function fetchJson(
     url: string,
     init: RequestInit,

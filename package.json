@@ -1,22 +1,18 @@
 {
   "name": "pokemon-flipper",
   "version": "1.0.0",
-  "description": "Find eBay Pok\u00e9mon card listings worth flipping, priced to the exact printing, with a max bid for every one.",
+  "description": "Local Pok\u00c3\u00a9mon auction workspace with eBay connection and auction sniper.",
   "main": "server/app.ts",
   "scripts": {
     "dev": "tsx watch --clear-screen=false server/app.ts",
     "start": "node --import tsx scripts/start.mjs",
     "test": "node scripts/test.mjs",
-    "replay:flip-selection": "tsx scripts/replay-flip-selection.ts",
-    "backtest:raw-resale": "tsx scripts/check-raw-resale.ts",
+    "build": "vite build --config client/vite.config.js",
+    "typecheck": "tsc -p . && tsc -p client",
     "pricecharting:guide": "tsx scripts/pricecharting-guide.ts",
     "pokeprice:movers": "tsx scripts/pokeprice-movers.ts",
     "pricecharting:movers": "tsx scripts/pricecharting-movers.ts",
-    "evaluate": "tsx scripts/evaluate.ts",
-    "build": "vite build --config client/vite.config.js",
-    "typecheck": "tsc -p . && tsc -p client",
-    "db": "tsx scripts/database.ts",
-    "db:check": "tsx scripts/check-database.ts"
+    "data:migrate": "node --import tsx scripts/migrate-local-data.mjs"
   },
   "keywords": [],
   "author": "",
@@ -26,13 +22,11 @@
     "@azure/identity": "^4.14.1",
     "dotenv": "^18.0.4",
     "express": "^5.2.1",
-    "htmlparser2": "10.1.0",
     "mssql": "^12.7.13",
-    "openai": "^7.23.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "sharp": "^0.35.5",
-    "tsx": "^4.23.15"
+    "tsx": "^4.23.15",
+    "htmlparser2": "10.1.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

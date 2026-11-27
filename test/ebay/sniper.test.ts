@@ -3,7 +3,7 @@ import { test, type TestContext } from "node:test";
 import { readSniperQuote, sandboxBuyerId, sniperCapabilities, submitSandboxBid, SandboxBidRejected } from "../../server/ebay/sniper.ts";
 import { buyerConnection } from "../../server/ebay/buyer-connection.ts";
 import { browseSearchAllowance } from "../../server/ebay/search-budget.ts";
-import { withAiUsageContext } from "../../server/ai/usage-context.ts";
+import { withProviderContext } from "../../server/lib/provider-context.ts";
 import { offlineEbayCredentials } from "../fixtures/ebay-credentials.ts";
 
 const itemId = "v1|123456789012|0";
@@ -40,7 +40,7 @@ test("reminder rereads live auction terms against the same Browse allowance and 
     const first = await readSniperQuote(itemId, "reminder", undefined, "sniper-test");
     const second = await readSniperQuote(itemId, "reminder", undefined, "sniper-test");
     assert.deepEqual([first.currentBid, first.minimumBid, first.shipping, second.currentBid, second.minimumBid], [null, 10, 2, 10, 10.50]);
-    assert.equal(await withAiUsageContext({ searchId: "sniper-test" }, async () => (await browseSearchAllowance())?.used), 2);
+    assert.equal(await withProviderContext({ searchId: "sniper-test" }, async () => (await browseSearchAllowance())?.used), 2);
 });
 
 test("sandbox checks first bid and existing bidder with distinct tokens, and preserves unknown terms", async t => {

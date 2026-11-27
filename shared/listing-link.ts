@@ -25,8 +25,3 @@ export function parseListingLink(value: unknown): ListingLink | null {
     }
     return { itemId: `v1|${id}|${variation}`, url: `https://www.ebay.com/itm/${id}${variation !== "0" ? `?var=${variation}` : ""}` };
 }
-
-export function looksLikeListingLink(value: string): boolean {
-    const input = value.trim();
-    return Boolean(parseListingLink(input)) || /^(?:[a-z][a-z\d+.-]*:\/\/|(?:www\.|m\.)?ebay\.|v1\|)/i.test(input);
-}

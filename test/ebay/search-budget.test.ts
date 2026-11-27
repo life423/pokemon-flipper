@@ -115,7 +115,7 @@ test("actual mocked transport counts nested Browse calls by search, reuses cache
         import {ebayGet} from './server/ebay/api.ts';
         import {ebayUsage} from './server/ebay/usage.ts';
         import {getListingDetails} from './server/ebay/listings.ts';
-        import {withAiUsageContext} from './server/ai/usage-context.ts';
+        import {withProviderContext} from './server/lib/provider-context.ts';
         import {EBAY_SEARCH_BROWSE_LIMIT} from './server/ebay/search-budget.ts';
         const oldFile=path.join(process.env.POKEMON_FLIPPER_DATA_DIR,'ebay-development-budget.json');
         const oldLedger={version:1,expiresAt:'2020-01-01T00:00:00.000Z',limit:25,used:23,requireRenewal:true};
@@ -131,20 +131,20 @@ test("actual mocked transport counts nested Browse calls by search, reuses cache
         await assert.rejects(ebayGet('/buy/browse/v1/item/no-scope'),/valid search ID/);
         assert.equal(oauth,0,'missing IDs must fail before even OAuth');
         await ebayUsage({fresh:true});
-        await withAiUsageContext({searchId:'search-one'},async()=>{
+        await withProviderContext({searchId:'search-one'},async()=>{
             await getListingDetails('offline-search-cache');
             await getListingDetails('offline-search-cache');
-            await withAiUsageContext({listingId:'nested'},async()=>{
+            await withProviderContext({listingId:'nested'},async()=>{
                 for(let i=0;i<EBAY_SEARCH_BROWSE_LIMIT;i++)await ebayGet('/buy/browse/v1/item/nested-'+i);
             });
             const usage=await ebayUsage();assert.equal(usage.used,EBAY_SEARCH_BROWSE_LIMIT+1);
             assert.deepEqual(usage.searchBudget,{searchId:'search-one',limit:null,used:EBAY_SEARCH_BROWSE_LIMIT+1,remaining:null,policy:'daily-reserve',historicalLimit:null});
         });
-        await withAiUsageContext({searchId:'search-two'},async()=>{
+        await withProviderContext({searchId:'search-two'},async()=>{
             await ebayGet('/buy/browse/v1/item/new-search');
             const usage=await ebayUsage();assert.equal(usage.used,EBAY_SEARCH_BROWSE_LIMIT+2);assert.equal(usage.searchBudget.used,1);
         });
-        await withAiUsageContext({searchId:'search-one'},async()=>{
+        await withProviderContext({searchId:'search-one'},async()=>{
             nearReserve=true;
             await ebayUsage({fresh:true});
             await ebayGet('/buy/browse/v1/item/final-above-reserve');
@@ -153,7 +153,7 @@ test("actual mocked transport counts nested Browse calls by search, reuses cache
             assert.equal((await getListingDetails('offline-search-cache')).id,'offline-search-cache');
             assert.equal(usage.searchBudget.used,EBAY_SEARCH_BROWSE_LIMIT+2);
         });
-        await withAiUsageContext({searchId:'search-three'},()=>assert.rejects(
+        await withProviderContext({searchId:'search-three'},()=>assert.rejects(
             ebayGet('/buy/browse/v1/item/still-blocked',{keepReserve:true}),{code:'EBAY_DAILY_BUDGET'}));
         assert.deepEqual(JSON.parse(await fs.readFile(oldFile,'utf8')),oldLedger,'historical counts must stay untouched');
         assert.deepEqual({browse,oauth,analytics},{browse:EBAY_SEARCH_BROWSE_LIMIT+3,oauth:1,analytics:2});
@@ -167,12 +167,12 @@ test("actual mocked transport counts nested Browse calls by search, reuses cache
 
 test("two automatic grading-watch scans consume the same persisted Browse allowance", async () => {
     const { randomUUID } = await import("node:crypto");
-    const { withAiUsageContext } = await import("../../server/ai/usage-context.ts");
+    const { withProviderContext } = await import("../../server/lib/provider-context.ts");
     const { reserveSearchBrowseRequest, browseSearchAllowance } = await import("../../server/ebay/search-budget.ts");
     const owner = randomUUID(), ids = [randomUUID(), randomUUID()];
-    for (const searchId of ids) await withAiUsageContext({ searchId, watchBudgetId: owner }, () =>
+    for (const searchId of ids) await withProviderContext({ searchId, watchBudgetId: owner }, () =>
         reserveSearchBrowseRequest(async () => {}));
-    const ownerBudget = await withAiUsageContext({ searchId: owner }, browseSearchAllowance);
+    const ownerBudget = await withProviderContext({ searchId: owner }, browseSearchAllowance);
     assert.equal(ownerBudget?.used, 2);
-    for (const searchId of ids) assert.equal((await withAiUsageContext({ searchId }, browseSearchAllowance))?.used, 0);
+    for (const searchId of ids) assert.equal((await withProviderContext({ searchId }, browseSearchAllowance))?.used, 0);
 });

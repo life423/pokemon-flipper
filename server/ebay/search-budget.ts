@@ -1,4 +1,4 @@
-import fs from "node:fs/promises";
+import { readDataFile } from "../storage/data-file.ts";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import type { EbaySearchAllowance } from "../../shared/types.ts";
@@ -6,7 +6,7 @@ import { createLimiter } from "../lib/concurrency.ts";
 import { DATA_DIR } from "../lib/paths.ts";
 import { writeJsonAtomic } from "../lib/atomic-json.ts";
 import { withFileLease } from "../lib/file-lease.ts";
-import { getBudgetContext } from "../ai/usage-context.ts";
+import { getBudgetContext } from "../lib/provider-context.ts";
 import { EbayBudgetError } from "./daily-budget.ts";
 
 // Legacy ledgers and controlled offline benchmarks still use this bound.
@@ -33,7 +33,7 @@ export function createSearchBrowseBudget({ directory }: { directory: string }) {
     const fileFor = (id: string) => path.join(directory, `${createHash("sha256").update(id).digest("hex")}.json`);
     const read = async (id: string): Promise<Ledger> => {
         let value: unknown;
-        try { value = JSON.parse(await fs.readFile(fileFor(id), "utf8")); }
+        try { value = JSON.parse(await readDataFile(fileFor(id), "utf8")); }
         catch (error) {
             if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 2, policy: "daily-reserve", searchId: id, limit: null, historicalLimit: null, used: 0 };
             throw new EbaySearchBudgetError("The eBay per-search request accounting could not be read. No Browse request was sent.");

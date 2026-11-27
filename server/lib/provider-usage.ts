@@ -1,4 +1,4 @@
-import fs from "node:fs/promises";
+import { readDataFile } from "../storage/data-file.ts";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { DATA_DIR } from "./paths.ts";
@@ -54,7 +54,7 @@ export function createProviderUsageMonitor({ directory, now = Date.now }: { dire
     }
     async function load(file: string, provider: ProviderUsageProvider, accountHash: string): Promise<Ledger | null> {
         let value: unknown;
-        try { value = JSON.parse(await fs.readFile(file, "utf8")); }
+        try { value = JSON.parse(await readDataFile(file, "utf8")); }
         catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return null; throw error; }
         const ledger = value as Ledger | null;
         if (!ledger || typeof ledger !== "object" || Array.isArray(ledger) || Object.keys(ledger).length !== 4 || ledger.version !== 1 ||
@@ -109,7 +109,7 @@ export async function browsePressure() {
     const usage = await monitor.read("EBAY", key);
     return usage && shouldPaceBrowse(usage) ? usage : null;
 }
-// Local disk only: no Analytics, pricing, OAuth or other provider polling.
+// Stored observations only: no Analytics, pricing, OAuth or other provider polling.
 export async function dailyProviderUsage(): Promise<ProviderUsageSnapshot[]> {
     const configured: [ProviderUsageProvider, string | undefined][] = [["EBAY", process.env.EBAY_CLIENT_ID], ["PKMNPRICES", process.env.PKMNPRICES_API_KEY]];
     const samples = await Promise.all(configured.map(([provider, key]) => key?.trim() ? monitor.read(provider, key) : null));

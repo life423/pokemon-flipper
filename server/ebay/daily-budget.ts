@@ -1,4 +1,6 @@
-import fs from "node:fs/promises";
+import { readDataFile } from "../storage/data-file.ts";
+import { storageBackend } from "../storage/config.ts";
+import { DATA_DIR } from "../lib/paths.ts";
 import { setTimeout as delay } from "node:timers/promises";
 import { shouldPaceBrowse, type ProviderUsageSnapshot } from "../../shared/provider-usage.ts";
 import path from "node:path";
@@ -40,7 +42,7 @@ export function createDailyBrowseBudget({ file, now = Date.now }: { file: string
                     !Number.isSafeInteger(snapshot.remaining) || snapshot.remaining < 0 || snapshot.remaining > snapshot.limit)) {
                     throw new EbayBudgetError("eBay's quota response is invalid. No request was sent.");
                 }
-                const previous: Ledger | null | undefined = await fs.readFile(file, "utf8").then(JSON.parse).catch(error => {
+                const previous: Ledger | null | undefined = await readDataFile(file, "utf8").then(JSON.parse).catch(error => {
                     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
                     throw new EbayBudgetError("eBay quota accounting could not be read. No request was sent.");
                 });
@@ -83,7 +85,7 @@ export async function paceBrowse(file: string, usage: ProviderUsageSnapshot, sig
         const interval = Math.max(6000, Math.ceil((reset - at) / (usage.remaining - dailyBrowseReserve(usage.limit))));
         const pause = await withFileLease(file, async () => {
             const clock = now();
-            const prior = await fs.readFile(file, "utf8").then(JSON.parse).catch(error => {
+            const prior = await readDataFile(file, "utf8").then(JSON.parse).catch(error => {
                 if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
                 return null;
             });
@@ -101,8 +103,13 @@ function dailyAccountKey() {
     return createHash("sha256").update(process.env.EBAY_CLIENT_ID?.trim() ?? "missing").digest("hex");
 }
 
+function quotaFile(account: string, extension: string) {
+    return storageBackend() === "azure-sql" ? path.join(DATA_DIR, "ebay-daily-budget", account + extension)
+        : path.join(os.tmpdir(), "pokemon-flipper-ebay-quota", account + extension);
+}
+
 export function paceCurrentBrowse(usage: ProviderUsageSnapshot, signal?: AbortSignal) {
-    return paceBrowse(path.join(os.tmpdir(), "pokemon-flipper-ebay-quota", dailyAccountKey() + ".pace"), usage, signal);
+    return paceBrowse(quotaFile(dailyAccountKey(), ".pace"), usage, signal);
 }
 
 const accounts = new Map<string, ReturnType<typeof createDailyBrowseBudget>>();
@@ -110,7 +117,7 @@ export function reserveDailyBrowseCall(snapshot: EbayUsage | null, options?: Res
     const account = dailyAccountKey();
     let reserve = accounts.get(account);
     if (!reserve) {
-        reserve = createDailyBrowseBudget({ file: path.join(os.tmpdir(), "pokemon-flipper-ebay-quota", `${account}.json`) });
+        reserve = createDailyBrowseBudget({ file: quotaFile(account, ".json") });
         accounts.set(account, reserve);
     }
     return reserve(snapshot, options);

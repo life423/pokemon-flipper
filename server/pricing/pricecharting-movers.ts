@@ -1,5 +1,5 @@
 import { DomUtils, parseDocument } from "htmlparser2";
-import { fetchMarketHtml, importMarketDay, marketImportSchedule, recentMarketDay, scheduleMarketImport, type MarketImportOptions } from "./daily-market-import.ts";
+import { fetchMarketHtml, importMarketDay, marketImportSchedule, recentMarketDay, type MarketImportOptions } from "./daily-market-import.ts";
 
 export const moversUrl = "https://www.pricecharting.com/big-movers?category=pokemon-cards";
 const keyPrefix = "pricecharting:pokemon-big-movers:v1:";
@@ -43,23 +43,6 @@ export function importMovers({ now = Date.now(), signal, fetchPage = fetch }: Ma
     }));
 }
 
-export function startMoversSchedule(signal: AbortSignal) {
-    scheduleMarketImport(keyPrefix, signal, importMovers);
-}
-
-// Keep the full page for research. Only unambiguous, numbered singles can seed
-// the English card catalog. Special variants and sealed products stay in the snapshot.
-export function moverCardSeeds(snapshot: MoversSnapshot) {
-    return snapshot.rows.flatMap(row => {
-        const card = /^([^#[\]]+?)\s+#([a-z]*\d+[a-z]*)$/i.exec(row.title);
-        if (row.changeUsd <= 0 || !card || !/^Pok[eé]mon\s+/i.test(row.set) ||
-            /\b(?:Japanese|Chinese|Korean|German|French|Italian|Portuguese|Spanish|Indonesian|Thai)\b/i.test(row.set)) return [];
-        return [{ name: card[1], number: card[2], set: row.set.replace(/^Pok[eé]mon\s+/i, ""), mover: "PriceCharting Big Movers" as const }];
-    });
-}
-
-export async function recentMoverSeeds(now: number) {
-    if (process.env.PRICECHARTING_BUYER_USE_AUTHORIZED !== "true") return [];
-    const snapshot = await recentMarketDay<MoversSnapshot>(keyPrefix, now);
-    return snapshot ? moverCardSeeds(snapshot) : [];
+export function recentMoversSnapshot(now: number) {
+    return recentMarketDay<MoversSnapshot>(keyPrefix, now);
 }

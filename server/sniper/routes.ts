@@ -1,7 +1,7 @@
 import { Router, type ErrorRequestHandler, type Request, type Response } from "express";
 import { parseListingLink } from "../../shared/listing-link.ts";
 import { withinReminderWindow } from "../../shared/sniper.ts";
-import { cents } from "../../shared/money/cents.ts";
+import { cents } from "../../shared/money.ts";
 import { DEFAULT_SNIPER_LEAD_SECONDS, type SniperCapabilities, type SniperMode, type SniperQuote } from "../../shared/sniper.ts";
 import { EbayError } from "../ebay/api.ts";
 import { EbayBudgetError } from "../ebay/usage.ts";

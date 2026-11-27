@@ -1,3 +1,4 @@
+import { sqlDocument, withDocumentLock } from "../storage/documents.ts";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -13,6 +14,7 @@ export async function withFileLease<T>(file: string, run: () => Promise<T>, opti
     timeoutError: () => Error;
     signal?: AbortSignal;
 }): Promise<T> {
+    if (sqlDocument(file)) return withDocumentLock(file, run, options.signal);
     await fs.mkdir(path.dirname(file), { recursive: true });
     const lock = `${file}.lock`, nonce = randomUUID(), deadline = Date.now() + 10_000;
     for (;;) {

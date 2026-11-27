@@ -1,37 +1,16 @@
 import { configuredShippingZip, ebayGet, EbayError } from "./api.ts";
 import { withShippingDestination } from "./shipping-destination.ts";
-import { listingExclusion, normalizeText } from "./filters.ts";
 import { readCache, writeCache } from "../lib/cache.ts";
 import { ebayUsage, EbayBudgetError } from "./usage.ts";
 import { createSharedWork } from "../lib/shared-work.ts";
-import { getBudgetContext } from "../ai/usage-context.ts";
-import { EbaySearchBudgetError } from "./search-budget.ts";
 import { photoEvidenceKey, searchPhotosFitDetails } from "../../shared/listing-evidence.ts";
-import type { BuyingOption, ListingSummary, Seller } from "../../shared/types.ts";
-import type { ListingFilters } from "../../shared/listing-filters.ts";
-import { cardLanguageStatus, EnglishOnlyError } from "../../shared/card-language.ts";
-import type { SourceRejectionReason } from "../../shared/search-diagnostic.ts";
-import { money } from "../../shared/money/cents.ts";
+import type { BuyingOption, Seller } from "../../shared/types.ts";
+import { money } from "../../shared/money.ts";
 import { cardSpecificNotes, hasSavedConditionExamples } from "../../shared/ebay-condition-notes.ts";
 
-// Toys & Hobbies > Collectible Card Games > CCG Individual Cards
-export const CCG_INDIVIDUAL_CARDS = "183454";
-
-// eBay's condition IDs for ungraded and graded trading cards.
-const UNGRADED = "4000";
-const GRADED = "2750";
-
-// eBay's maximum page size.
-const PAGE_SIZE = 200;
-
-// eBay limits requests per day, so answers are saved. A search is saved
-// briefly, since its prices move. A listing's details (photos, item
-// specifics, seller) are saved for a week. Purchase terms come from
-// whichever provider response was observed more recently.
-const SEARCH_MAX_AGE_HOURS = 10 / 60;
+// Preserve the existing cache lifetime and destination-specific keys.
 export const DETAILS_MAX_AGE_HOURS = 24 * 7;
 
-const shareSearches = createSharedWork();
 const shareDetails = createSharedWork();
 
 // Quotes are destination-specific. Adding/changing a ZIP must not reuse a
@@ -232,189 +211,6 @@ function structuredCondition(item: EbayItem) {
     return { fields, cardCondition: fields["Card Condition"] ?? null, conditionNotes };
 }
 
-function toListing(item: EbayItem, termsCheckedAt: string): ListingSummary {
-    const { price, ...rest } = priceDetails(item);
-    const { cardCondition, conditionNotes } = structuredCondition(item);
-
-    return {
-        id: item.itemId,
-        title: item.title,
-        currentPrice: price,
-        shippingDestination: configuredShippingZip(),
-        termsCheckedAt,
-        ...rest,
-        ...listingDates(item),
-        ...(cardCondition ? { cardCondition } : {}),
-        ...(conditionNotes.length ? { conditionNotes } : {}),
-        isGraded: item.conditionId === GRADED,
-        categoryId: item.categories?.[0]?.categoryId,
-        seller: toSeller(item.seller),
-        images: photosOf(item),
-        url: item.itemWebUrl,
-    };
-}
-
-interface SearchResult {
-    listings: ListingSummary[];
-    total: number;
-    skipped: number;
-    // Earlier cache entries contain only the aggregate skipped count.
-    rejections?: { id: string; reason: SourceRejectionReason; listing?: ListingSummary }[];
-    unidentifiable?: number;
-    nextOffset?: number;
-    sourceLimitReached?: boolean;
-}
-
-export function searchListings(...args: Parameters<typeof searchListingsAtDestination>): Promise<SearchResult> {
-    return withShippingDestination(() => searchListingsAtDestination(...args));
-}
-
-async function searchListingsAtDestination(
-    search: string,
-    {
-        maxResults = PAGE_SIZE,
-        offset: firstOffset = 0,
-        anyCategory = false,
-        ccgInventory = false,
-        cacheMode,
-        keepReserve = false,
-        signal,
-        sort,
-        filters,
-    }: { maxResults?: number; offset?: number; anyCategory?: boolean; ccgInventory?: boolean; cacheMode?: "refresh" | "resume"; keepReserve?: boolean; signal?: AbortSignal; sort?: "newlyListed" | "price" | "endingSoonest"; filters?: ListingFilters } = {}
-): Promise<SearchResult> {
-    if (!Number.isSafeInteger(firstOffset) || firstOffset < 0 || firstOffset >= 10_000 || firstOffset % PAGE_SIZE !== 0)
-        throw new Error("Choose a valid eBay search continuation offset below 10,000.");
-    if (cardLanguageStatus(search) === "OTHER") throw new EnglishOnlyError();
-    const scope = ccgInventory ? "ccg-inventory" : anyCategory ? "any" : "cards";
-    signal?.throwIfAborted();
-    const buyingOption = filters?.typeFilter && filters.typeFilter !== "all" ? filters.typeFilter : undefined;
-    const kind = filters?.kindFilter && filters.kindFilter !== "all" ? filters.kindFilter : undefined;
-    // Preserve the cache keys for existing format/kind searches without an end-date filter.
-    const filterScope = buyingOption || kind ? `:filters:${JSON.stringify([buyingOption ?? null, kind ?? null, null])}` : "";
-    // Filter BIN prices before eBay selects the bounded page, or out-of-range
-    // inventory can hide every affordable listing. Auction current bids keep
-    // their local checks; the BIN minimum must never exclude low opening bids.
-    const validPrice = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
-    const lower = buyingOption === "FIXED_PRICE" && validPrice(filters?.minPrice) && filters.minPrice > 0 ? filters.minPrice : undefined;
-    const upper = buyingOption === "FIXED_PRICE" && validPrice(filters?.maxPrice) ? filters.maxPrice : undefined;
-    if (lower !== undefined && upper !== undefined && lower > upper) return { listings: [], total: 0, skipped: 0, rejections: [] };
-    const priceRange = upper !== undefined ? `${lower ?? ""}..${upper}` : lower !== undefined ? String(lower) : null;
-    const priceScope = priceRange === null ? "" : `:price:USD:${priceRange}`;
-    const key = `ebay:search:${maxResults}:${scope}:language:en:${sort ? `${sort}:` : ""}${normalizeText(search).trim()}${shippingCacheScope()}${filterScope}${priceScope}${firstOffset ? `:offset:${firstOffset}` : ""}`;
-    const load = async (signal: AbortSignal): Promise<SearchResult> => {
-        const saved = await readCache<SearchResult>(key, sort && cacheMode !== "resume" ? 1 / 60 : SEARCH_MAX_AGE_HOURS);
-        signal.throwIfAborted();
-
-        if (cacheMode !== "refresh" && saved) return { ...saved, listings: saved.listings.map(listing => cachedShippingDestination(
-            hasSavedConditionExamples(listing) ? { ...listing, conditionNotes: cardSpecificNotes(listing.cardCondition, listing.conditionNotes!) } : listing)) };
-
-        // Refresh the shared daily observation on uncached searches. Every
-        // Browse request is checked against the reserve at the transport.
-        const usage = await ebayUsage();
-
-        if (usage && usage.remaining < Math.ceil(maxResults / PAGE_SIZE)) {
-            throw new EbayBudgetError("eBay's daily limit is used up. It resets at midnight Pacific.", "QUOTA");
-        }
-
-        const listings: ListingSummary[] = [];
-        const seen = new Set<string>();
-        const rejections = new Map<string, NonNullable<SearchResult["rejections"]>[number]>();
-        let unidentifiable = 0;
-        let total = 0;
-        let nextOffset: number | undefined, sourceLimitReached = false;
-        // Junk the free rules dropped: lots, sealed product, merch, fakes.
-        let skipped = 0;
-
-        for (let offset = firstOffset; offset < Math.min(firstOffset + maxResults, 10_000); offset += PAGE_SIZE) {
-            signal.throwIfAborted();
-            if (keepReserve && (await ebayUsage())?.braking) {
-                throw new EbayBudgetError("Saving the rest of today's eBay allowance; extra searches paused.", "QUOTA");
-            }
-            const filter = [`buyingOptions:{${buyingOption ?? "AUCTION|FIXED_PRICE"}}`, `conditionIds:{${kind === "raw" ? UNGRADED : kind === "graded" ? GRADED : `${UNGRADED}|${GRADED}`}}`];
-            if (priceRange !== null) filter.push(`price:[${priceRange}]`, "priceCurrency:USD");
-            const params = new URLSearchParams({
-                // Exact card/number queries can look outside the CCG category.
-                // Broad release queries use the category and Pokémon keywords,
-                // leaving unstated seller language eligible for inspection.
-                q: scope === "any" || ccgInventory && /\bpokemon\b/.test(normalizeText(search)) ? search.trim() : `pokemon ${search}`.trim(),
-                ...(scope !== "any" && { category_ids: CCG_INDIVIDUAL_CARDS }),
-                ...(scope === "cards" && { aspect_filter: `categoryId:${CCG_INDIVIDUAL_CARDS},Language:{English}` }),
-                filter: filter.join(","),
-                limit: String(PAGE_SIZE),
-                offset: String(offset),
-                ...(sort ? { sort } : {}),
-            });
-
-            const page = await ebayGet<{ itemSummaries?: EbayItem[]; total?: number }>(
-                `/buy/browse/v1/item_summary/search?${params}`, { signal, keepReserve }
-            );
-            signal.throwIfAborted();
-            const termsCheckedAt = new Date().toISOString();
-            const items = page.itemSummaries ?? [];
-            total = page.total ?? total;
-
-            for (const item of items) {
-                if (seen.has(item.itemId)) continue;
-
-                if (typeof item.itemId !== "string" || !/^[\w|\-]{1,120}$/.test(item.itemId)) {
-                    unidentifiable++;
-                    skipped += 1;
-                    continue;
-                }
-                const exclusion = listingExclusion(item);
-                const language = exclusion ? null : cardLanguageStatus(item.title,
-                    item.localizedAspects?.filter(aspect => aspect.name.toLowerCase() === "language").map(aspect => aspect.value));
-                const reason = exclusion ?? (language === "OTHER" ? "OTHER_LANGUAGE" : null);
-                if (reason) {
-                    skipped += 1;
-                    rejections.set(item.itemId, { id: item.itemId, reason, listing: toListing(item, termsCheckedAt) });
-                    continue;
-                }
-
-                seen.add(item.itemId);
-                rejections.delete(item.itemId);
-                listings.push(toListing(item, termsCheckedAt));
-            }
-
-            nextOffset = items.length === PAGE_SIZE && offset + PAGE_SIZE < total && offset + PAGE_SIZE < 10_000 ? offset + PAGE_SIZE : undefined;
-            sourceLimitReached = items.length === PAGE_SIZE && offset + PAGE_SIZE >= 10_000 && total > 10_000;
-            if (items.length < PAGE_SIZE || offset + PAGE_SIZE >= total) break;
-        }
-
-        console.log(`Search ${JSON.stringify(search)}: eBay has ${total}; kept ${listings.length} single cards`);
-
-        const result: SearchResult = { listings, total, skipped,
-            rejections: [...rejections.values()],
-            ...(unidentifiable ? { unidentifiable } : {}),
-            ...(nextOffset !== undefined && { nextOffset }), ...(sourceLimitReached && { sourceLimitReached: true }),
-        };
-        await writeCache(key, result);
-        return result;
-    };
-
-    const { searchId } = getBudgetContext();
-    // A shared one-page response uses the initiating search's allowance.
-    // Multi-page work stays with its search ID, and reserve policies stay separate.
-    const sharedKey = JSON.stringify([key, keepReserve, cacheMode, maxResults > PAGE_SIZE ? searchId : null]);
-    for (;;) {
-        const outcome = await shareSearches(sharedKey, async workSignal => {
-            try { return { result: await load(workSignal) }; }
-            catch (error) {
-                if (!(error instanceof EbaySearchBudgetError)) throw error;
-                return { error, searchId };
-            }
-        }, signal);
-        if (outcome.result) return structuredClone(outcome.result);
-        if (outcome.searchId === searchId) throw outcome.error;
-        // A different search can still pay for this page if the initiating
-        // search could not reserve it. All waiting searches can share that work.
-    }
-}
-
-// A listing's details, saved for a week. maxAgeHours: 0 always asks eBay.
-// keepReserve also refreshes quota telemetry before optional detail work.
-// The transport guards the reserve even for deliberate or nested lookups.
 export function getListingDetails(...args: Parameters<typeof getListingDetailsAtDestination>): Promise<ListingDetails> {
     return withShippingDestination(() => getListingDetailsAtDestination(...args));
 }

@@ -1,4 +1,4 @@
-import fs from "node:fs/promises";
+import { readDataFile } from "../storage/data-file.ts";
 import path from "node:path";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
@@ -6,7 +6,7 @@ import { DATA_DIR } from "../lib/paths.ts";
 import { writeJsonAtomic } from "../lib/atomic-json.ts";
 import { withFileLease } from "../lib/file-lease.ts";
 import { createKeyedLock } from "../lib/keyed-lock.ts";
-import { getBudgetContext, type AiUsageContext } from "../ai/usage-context.ts";
+import { getBudgetContext, type ProviderContext } from "../lib/provider-context.ts";
 import { recordProviderUsage } from "../lib/provider-usage.ts";
 import { requireLiveProvider } from "../lib/saved-provider-evidence.ts";
 import type { PricingResearchUsage } from "../../shared/pricing-usage.ts";
@@ -114,7 +114,7 @@ export function createPriceResearchBudget({ directory, now = Date.now, providerK
     const fileFor = (id: string) => path.join(directory, `${hash(id)}.json`);
     async function read(id: string): Promise<Ledger> {
         let value: unknown;
-        try { value = JSON.parse(await fs.readFile(fileFor(id), "utf8")); }
+        try { value = JSON.parse(await readDataFile(fileFor(id), "utf8")); }
         catch (error) {
             if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 2, searchId: id, limit: null, historicalLimit: null, attempts: [] };
             throw new PriceResearchBudgetError("The price-research accounting could not be read. No new provider request was authorized.", "STORAGE");
@@ -148,7 +148,7 @@ export function createPriceResearchBudget({ directory, now = Date.now, providerK
             await read(scope(searchId));
             signal?.throwIfAborted();
         },
-        async reserve(path: string, context: AiUsageContext, signal?: AbortSignal): Promise<PriceRequestReservation> {
+        async reserve(path: string, context: ProviderContext, signal?: AbortSignal): Promise<PriceRequestReservation> {
             signal?.throwIfAborted(); const id = scope(context.searchId), target = request(path);
             const attempt: Attempt = { ...target, id: randomUUID(), listingId: context.listingId && LISTING.test(context.listingId) ? context.listingId : null,
                 reservedAt: new Date(now()).toISOString(), completedAt: null, state: "PENDING", status: null, headers: {}, rows: null };
